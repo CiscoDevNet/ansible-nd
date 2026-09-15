@@ -271,20 +271,23 @@ def test_port_channel_access_interface_00180(value, expected):
     """
     # Summary
 
-    Verify `normalize_ports` expands any case-insensitive NX-OS abbreviation of a member interface name to ND's
-    canonical `Ethernet` form so user input round-trips against the wire key.
+    Verify `normalize_ports` normalizes each member name through the shared cross-OS helper
+    (`ethernet_common.normalize_ethernet_interface_name`, via `normalize_member_interface_names`): a prefix that matches
+    exactly one canonical family (`Ethernet`, `GigabitEthernet`) expands to it, and anything else passes through verbatim.
 
     ## Test
 
-    - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
+    - Abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
     - Any casing of the full prefix canonicalizes to `Ethernet`
     - Already-canonical values pass through unchanged
     - Digits/separators after the prefix are preserved
     - Empty list and None pass through
+    - An unlisted family passes through verbatim (covered by `test_port_channel_access_interface_02120`)
 
     ## Classes and Methods
 
     - PortChannelAccessPolicyModel.normalize_ports()
+    - ethernet_common.normalize_member_interface_names()
     """
     with does_not_raise():
         instance = PortChannelAccessPolicyModel(ports=value)
@@ -1685,6 +1688,7 @@ def test_port_channel_access_interface_02050():
     assert xe.interface_name == "port-channel101"
     assert xe.to_payload()["interfaceName"] == "Port-channel101"
     assert xe.to_config()["interface_name"] == "port-channel101"
+    assert xe.to_diff_dict()["interfaceName"] == "port-channel101"
     # `get_diff` returns True when `other` is a subset of `self` with no removals, i.e. no difference.
     assert xe.get_diff(copy.deepcopy(xe)) is True
     nx = PortChannelAccessInterfaceModel.from_config(

@@ -31,6 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     PortChannelModeEnum,
     SpeedEnum,
     StormControlActionEnum,
+    XePortChannelModeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import (
     PortChannelTrunkHostConfigDataModel,
@@ -38,6 +39,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
     PortChannelTrunkHostNetworkOSModel,
     PortChannelTrunkHostPolicyModel,
     PortChannelTrunkHostVlanMappingEntryModel,
+    XePortChannelTrunkHostNetworkOSModel,
+    XePortChannelTrunkHostPolicyModel,
 )
 from pydantic import ValidationError
 
@@ -105,6 +108,9 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "bpdu_filter": "disable",
                 "link_type": "auto",
                 "description": "trunk to host",
+                # The branch discriminator is injected when omitted and is now surfaced in `to_config()` output,
+                # so the round-trip samples carry it explicitly (issue #537).
+                "policy_type": "trunkPoHost",
                 "speed": "10Gb",
                 "duplex_mode": "auto",
                 "mtu": "jumbo",
@@ -127,7 +133,7 @@ def test_port_channel_trunk_host_interface_00100():
     """
     # Summary
 
-    Verify every policy field defaults to None (except hardcoded `policy_type`).
+    Verify every policy field defaults to None (except `policy_type`, injected as the NX-OS branch discriminator).
 
     ## Test
 
@@ -218,7 +224,7 @@ def test_port_channel_trunk_host_interface_00110():
     assert instance.port_channel_mode == "active"
     assert instance.lacp_rate == "fast"
     assert instance.description == "test"
-    # Hardcoded model default; user no longer supplies this field.
+    # Branch discriminator, injected when the input omits it; the user may still supply it explicitly.
     assert instance.policy_type == "trunkPoHost"
     assert instance.speed == "10Gb"
     assert instance.link_type == "auto"
@@ -285,6 +291,8 @@ def test_port_channel_trunk_host_interface_00120():
         (None, None),
         # Digits and separators after the alphabetic prefix are preserved (breakout/subinterface forms).
         (["ethernet1/1/1"], ["Ethernet1/1/1"]),
+        # A prefix that matches no canonical family passes through verbatim; it is never re-cased.
+        (["TenGigabitEthernet1/1/1"], ["TenGigabitEthernet1/1/1"]),
     ],
     ids=[
         "lowercase_to_canonical",
@@ -295,26 +303,30 @@ def test_port_channel_trunk_host_interface_00120():
         "empty_list",
         "none_passthrough",
         "breakout_separators_preserved",
+        "unlisted_family_passthrough",
     ],
 )
 def test_port_channel_trunk_host_interface_00180(value, expected):
     """
     # Summary
 
-    Verify `normalize_ports` expands any case-insensitive NX-OS abbreviation of a member interface name to ND's
-    canonical `Ethernet` form so user input round-trips against the wire key.
+    Verify `normalize_ports` normalizes each member name through the shared cross-OS helper
+    (`ethernet_common.normalize_ethernet_interface_name`, via `normalize_member_interface_names`): a prefix that matches
+    exactly one canonical family (`Ethernet`, `GigabitEthernet`) expands to it, and anything else passes through verbatim.
 
     ## Test
 
-    - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
+    - Abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
     - Any casing of the full prefix canonicalizes to `Ethernet`
     - Already-canonical values pass through unchanged
     - Digits/separators after the prefix are preserved
+    - An unlisted family (`TenGigabitEthernet...`) passes through verbatim
     - Empty list and None pass through
 
     ## Classes and Methods
 
     - PortChannelTrunkHostPolicyModel.normalize_ports()
+    - ethernet_common.normalize_member_interface_names()
     """
     with does_not_raise():
         instance = PortChannelTrunkHostPolicyModel(ports=value)
@@ -1281,7 +1293,7 @@ def test_port_channel_trunk_host_interface_00620():
 
     ## Test
 
-    - Hardcoded model default for `policy_type` serializes as `"trunkPoHost"` under the `policyType` alias.
+    - The injected NX-OS branch discriminator serializes as `"trunkPoHost"` under the `policyType` alias.
 
     ## Classes and Methods
 
@@ -1403,24 +1415,24 @@ def test_port_channel_trunk_host_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` is omitted from `to_config()` output (the field is hardcoded by the model and is
-    not in the argspec, so surfacing the wire form `"trunkPoHost"` back to playbooks would only confuse
-    assertions that compare against the snake_case Ansible convention).
+    Verify `policy_type` IS surfaced in `to_config()` output. The field is now the per-network-OS branch discriminator
+    (`trunkPoHost` / `iosXeTrunkPoHost`) and is exposed in the argspec, so `before`/`after`/`gathered` output must show
+    which policy template the item resolved to rather than hiding it.
 
     ## Test
 
-    - From a full API response, to_config() does NOT include `policy_type` in the policy dict
-    - All other policy fields ARE present (sanity check that we only omitted policy_type)
+    - From a full API response, to_config() DOES include `policy_type` in the policy dict, as the wire value
+    - All other policy fields ARE present
 
     ## Classes and Methods
 
     - PortChannelTrunkHostInterfaceModel.to_config()
-    - PortChannelTrunkHostPolicyModel._strip_policy_type_in_config()
+    - PortChannelTrunkHostPolicyModel.default_policy_type()
     """
     instance = PortChannelTrunkHostInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
     policy = result["config_data"]["network_os"]["policy"]
-    assert "policy_type" not in policy
+    assert policy["policy_type"] == "trunkPoHost"
     assert policy["admin_state"] is True
     assert policy["allowed_vlans"] == "100-200,300"
 
@@ -1603,18 +1615,23 @@ def test_port_channel_trunk_host_interface_00910():
     """
     # Summary
 
-    Verify model hardcodes the `trunkPoHost` policy type regardless of input.
+    Verify the NX-OS branch injects the `trunkPoHost` discriminator when the input omits `policy_type`.
 
     ## Test
 
-    - After from_config (no policy_type in input), stored policy_type is the API value "trunkPoHost"
+    - After from_config with `policy_type` removed from the input, stored policy_type is the API value "trunkPoHost"
+    - The injected field is explicitly SET, so merge/diff treat it exactly like a user-supplied value
 
     ## Classes and Methods
 
     - PortChannelTrunkHostInterfaceModel.from_config()
+    - PortChannelTrunkHostPolicyModel.default_policy_type()
     """
-    instance = PortChannelTrunkHostInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
+    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    del config["config_data"]["network_os"]["policy"]["policy_type"]
+    instance = PortChannelTrunkHostInterfaceModel.from_config(config)
     assert instance.config_data.network_os.policy.policy_type == "trunkPoHost"
+    assert "policy_type" in instance.config_data.network_os.policy.model_fields_set
 
 
 def test_port_channel_trunk_host_interface_00920():
@@ -1848,7 +1865,7 @@ def test_port_channel_trunk_host_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - policy_type is not exposed in the argspec (hardcoded by the model)
+    - network_os_type is exposed with the `nx-os` default, and policy_type with both branch choices
 
     ## Classes and Methods
 
@@ -1864,15 +1881,17 @@ def test_port_channel_trunk_host_interface_01100():
     assert spec["config"]["elements"] == "dict"
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["state"]["default"] == "merged"
-    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
-    # and intentionally absent from the user-facing argument spec.
+    # interface_type and mode are hardcoded in the Pydantic model and intentionally absent from the
+    # user-facing argument spec. network_os_type and policy_type select the IOS-XE / NX-OS branch and are exposed.
     config_options = spec["config"]["options"]
     assert "interface_type" not in config_options
     config_data_spec = config_options["config_data"]["options"]
     assert "mode" not in config_data_spec
-    assert "network_os_type" not in config_data_spec["network_os"]["options"]
-    policy_spec = config_data_spec["network_os"]["options"]["policy"]["options"]
-    assert "policy_type" not in policy_spec
+    network_os_spec = config_data_spec["network_os"]["options"]
+    assert network_os_spec["network_os_type"]["default"] == "nx-os"
+    assert network_os_spec["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
+    policy_spec = network_os_spec["policy"]["options"]
+    assert policy_spec["policy_type"]["choices"] == ["trunkPoHost", "iosXeTrunkPoHost"]
 
 
 def test_port_channel_trunk_host_interface_01110():
@@ -1925,8 +1944,7 @@ def test_port_channel_trunk_host_interface_01115():
         ("duplex_mode", DuplexModeEnum),
         ("lacp_rate", LacpRateEnum),
         ("link_type", LinkTypeEnum),
-        ("mtu", MtuEnum),
-        ("port_channel_mode", PortChannelModeEnum),
+        ("port_channel_mode", XePortChannelModeEnum),
         ("speed", SpeedEnum),
         ("storm_control_action", StormControlActionEnum),
     ],
@@ -1936,7 +1954,6 @@ def test_port_channel_trunk_host_interface_01115():
         "duplex_mode",
         "lacp_rate",
         "link_type",
-        "mtu",
         "port_channel_mode",
         "speed",
         "storm_control_action",
@@ -1948,9 +1965,14 @@ def test_port_channel_trunk_host_interface_01120(field, enum_cls):
 
     Verify enum-constrained policy fields expose correct `choices` in the argument spec.
 
+    `port_channel_mode` carries the IOS-XE superset (`XePortChannelModeEnum`, which adds the PAgP `auto` / `desirable`
+    values); the per-branch subset is enforced by the Pydantic branch models. `mtu` is now an unconstrained `str` option
+    because the NX-OS branch takes the `default` / `jumbo` enum while the IOS-XE branch takes an integer.
+
     ## Test
 
     - Each enum field's choices list exactly matches the enum values
+    - `mtu` is `type: str` with no `choices`
 
     ## Classes and Methods
 
@@ -1960,6 +1982,8 @@ def test_port_channel_trunk_host_interface_01120(field, enum_cls):
     policy_spec = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
     expected = [e.value for e in enum_cls]
     assert policy_spec[field]["choices"] == expected
+    assert policy_spec["mtu"]["type"] == "str"
+    assert "choices" not in policy_spec["mtu"]
 
 
 def test_port_channel_trunk_host_interface_01130():
@@ -2011,3 +2035,202 @@ def test_port_channel_trunk_host_interface_01140():
         PortChannelTrunkHostPolicyModel(netflow=True, netflow_monitor="MONITOR-1")
         PortChannelTrunkHostPolicyModel(netflow=False)
         PortChannelTrunkHostPolicyModel()
+
+
+# =============================================================================
+# Test: IOS-XE branch, union, payload_defaults, create-name rewrite
+# =============================================================================
+
+
+XE_TRUNK_PO_RESPONSE = {
+    "switchIp": "192.168.12.181",
+    "interfaceName": "port-channel103",
+    "interfaceType": "portChannel",
+    "configData": {
+        "mode": "trunk",
+        "networkOS": {
+            "networkOSType": "ios-xe",
+            "policy": {
+                "adminState": True,
+                "allowedVlans": "none",
+                "bpduGuard": "enable",
+                "description": "xe trunk po",
+                "policyType": "iosXeTrunkPoHost",
+                "portChannelId": "Port-channel103",
+                "portChannelMode": "active",
+                "ports": ["GigabitEthernet1/0/4"],
+            },
+        },
+    },
+}
+
+
+def test_port_channel_trunk_host_interface_02010():
+    """
+    # Summary
+
+    Verify `network_os_type: ios-xe` selects the IOS-XE branch, `policy_type` is injected as `iosXeTrunkPoHost`, `allowed_vlans` parses
+    through the shared type, and `portChannelId` is tolerated on read.
+
+    ## Test
+
+    - from_config without `policy_type` -> `XePortChannelTrunkHostPolicyModel`, `policy_type == "iosXeTrunkPoHost"`
+    - `allowed_vlans: "10,20-30"` round-trips
+    - from_response of `XE_TRUNK_PO_RESPONSE` succeeds; `to_config()` policy has no `port_channel_id`
+
+    ## Classes and Methods
+
+    - XePortChannelTrunkHostPolicyModel.default_policy_type()
+    - PortChannelTrunkHostInterfaceModel.from_response()
+    """
+    with does_not_raise():
+        instance = PortChannelTrunkHostInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.181",
+                "interface_name": "port-channel103",
+                "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"allowed_vlans": "10,20-30", "ports": ["gi1/0/4"]}}},
+            }
+        )
+    assert isinstance(instance.config_data.network_os, XePortChannelTrunkHostNetworkOSModel)
+    assert isinstance(instance.config_data.network_os.policy, XePortChannelTrunkHostPolicyModel)
+    assert instance.policy_type == "iosXeTrunkPoHost"
+    assert instance.config_data.network_os.policy.allowed_vlans == "10,20-30"
+    assert instance.config_data.network_os.policy.ports == ["GigabitEthernet1/0/4"]
+    echoed = PortChannelTrunkHostInterfaceModel.from_response(copy.deepcopy(XE_TRUNK_PO_RESPONSE))
+    policy = echoed.to_config()["config_data"]["network_os"]["policy"]
+    assert "port_channel_id" not in policy and "portChannelId" not in policy
+    assert policy["policy_type"] == "iosXeTrunkPoHost"
+
+
+def test_port_channel_trunk_host_interface_02020():
+    """
+    # Summary
+
+    Verify `payload_defaults` injects `allowedVlans: none` into `to_payload()` only (ND 4.3.1 requires it, issue #564 class), never into
+    config or diff dumps, and never when the user set a value.
+
+    ## Test
+
+    - XE model without `allowed_vlans`: payload policy has `allowedVlans == "none"`, config policy has no `allowed_vlans`
+    - `get_diff` between two such models reports no difference
+    - With `allowed_vlans: "10"`, payload carries `"10"`
+
+    ## Classes and Methods
+
+    - XePortChannelTrunkHostPolicyModel.payload_defaults
+    - NDBaseModel._apply_payload_defaults()
+    """
+    bare = PortChannelTrunkHostInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "port-channel103",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"description": "x"}}},
+        }
+    )
+    assert bare.to_payload()["configData"]["networkOS"]["policy"]["allowedVlans"] == "none"
+    assert "allowed_vlans" not in bare.to_config()["config_data"]["network_os"]["policy"]
+    assert "allowedVlans" not in bare.to_diff_dict()["configData"]["networkOS"]["policy"]
+    # `get_diff` returns True when `other` is a subset of `self` with no removals, i.e. no difference.
+    assert bare.get_diff(copy.deepcopy(bare)) is True
+    explicit = PortChannelTrunkHostInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "port-channel103",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"allowed_vlans": "10"}}},
+        }
+    )
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["allowedVlans"] == "10"
+
+
+@pytest.mark.parametrize(
+    "policy, match",
+    [
+        ({"native_vlan": 5}, r"native_vlan|Extra inputs"),
+        ({"vlan_mapping": True}, r"vlan_mapping|Extra inputs"),
+        ({"policy_type": "trunkPoHost"}, r"policy_type"),
+    ],
+    ids=["nx_only_native_vlan", "nx_only_vlan_mapping", "wrong_branch_discriminator"],
+)
+def test_port_channel_trunk_host_interface_02030(policy, match):
+    """
+    # Summary
+
+    Verify the IOS-XE trunk branch rejects NX-OS-only fields (`native_vlan`, `vlan_mapping`) and a wrong-branch discriminator.
+
+    ## Test
+
+    - Each input raises `ValidationError` matching `match`
+
+    ## Classes and Methods
+
+    - XePortChannelTrunkHostPolicyModel (extra="forbid")
+    """
+    with pytest.raises(ValidationError, match=match):
+        PortChannelTrunkHostInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.181",
+                "interface_name": "port-channel103",
+                "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": policy}},
+            }
+        )
+
+
+def test_port_channel_trunk_host_interface_02040():
+    """
+    # Summary
+
+    Verify the create-name rewrite and `policy_type` visibility on the trunk-host model.
+
+    # workaround: xe-port-channel-create-requires-canonical-name
+
+    ## Test
+
+    - XE `to_payload()["interfaceName"] == "Port-channel103"`, `to_config()["interface_name"] == "port-channel103"`
+    - The diff dump keeps the lowercase identifier (no payload context, so no rewrite)
+    - NX `to_payload()["interfaceName"] == "port-channel501"` and `to_config()` policy carries `policy_type == "trunkPoHost"`
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceModel._canonical_xe_create_name()
+    """
+    xe = PortChannelTrunkHostInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "port-channel103",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"allowed_vlans": "all"}}},
+        }
+    )
+    assert xe.to_payload()["interfaceName"] == "Port-channel103"
+    assert xe.to_config()["interface_name"] == "port-channel103"
+    assert xe.to_diff_dict()["interfaceName"] == "port-channel103"
+    nx = PortChannelTrunkHostInterfaceModel.from_config(
+        {"switch_ip": "192.168.1.1", "interface_name": "port-channel501", "config_data": {"network_os": {"policy": {"allowed_vlans": "all"}}}}
+    )
+    assert nx.to_payload()["interfaceName"] == "port-channel501"
+    assert nx.to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "trunkPoHost"
+
+
+def test_port_channel_trunk_host_interface_02050():
+    """
+    # Summary
+
+    Verify the IOS-XE trunk `reverse_diff_defaults` scrub (`allowedVlans none`, `bpduGuard enable`, `portChannelMode active`).
+
+    ## Test
+
+    - Default-only echo reduces to `policyType`; a custom `allowedVlans` survives
+
+    ## Classes and Methods
+
+    - XePortChannelTrunkHostPolicyModel.reverse_diff_defaults
+    """
+    echo = {
+        "adminState": True,
+        "allowedVlans": "none",
+        "bpduGuard": "enable",
+        "portChannelMode": "active",
+        "policyType": "iosXeTrunkPoHost",
+        "portChannelId": "Port-channel103",
+    }
+    assert set(XePortChannelTrunkHostPolicyModel.from_response(echo).to_reverse_diff_dict()) <= {"policyType"}
+    assert XePortChannelTrunkHostPolicyModel.from_response({**echo, "allowedVlans": "10"}).to_reverse_diff_dict()["allowedVlans"] == "10"
