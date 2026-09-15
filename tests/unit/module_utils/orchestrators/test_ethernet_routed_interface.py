@@ -1598,3 +1598,131 @@ def test_ethernet_routed_orchestrator_01000() -> None:
     assert orchestrator._normalize_omits_description is False
     assert len(orchestrator.rest_send.responses) == 2
     assert orchestrator.rest_send.committed_payload["configData"]["networkOS"]["policy"]["description"] == ""
+
+
+# =============================================================================
+# Test: normalize freshness bookkeeping never copies the response history (PR #563 review)
+# =============================================================================
+
+
+def _switch_inventory_response(switch_id: str) -> dict:
+    """Build a GET-inventory-shaped response for `switch_id` so the RestSend history resembles a real per-switch query fan-out."""
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/interfaces?switchId={switch_id}",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [{"interfaceName": f"Ethernet1/{index}", "switchId": switch_id} for index in range(1, 65)]},
+    }
+
+
+def _scale_normalize_orchestrator(switch_count: int) -> EthernetRoutedInterfaceOrchestrator:
+    """
+    Build an orchestrator whose `_pending_normalizes` holds the SAME interface name on `switch_count` switches (so
+    `_normalize_groups` falls back to one request per switch) and whose RestSend history already holds one inventory response per
+    switch, mirroring the state after `query_all` on a fabric where every leaf has that port.
+    """
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), params={"state": "deleted"})
+    for index in range(switch_count):
+        switch_id = f"FDO{index:08d}"
+        orchestrator.rest_send.add_response(_switch_inventory_response(switch_id))
+        orchestrator._pending_normalizes.append(("Ethernet1/1", switch_id))
+    return orchestrator
+
+
+def _forbid_response_history_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any read of the deep-copying `RestSend.responses` property fail the test."""
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("normalize freshness bookkeeping must not read the deep-copying RestSend.responses property")
+
+    monkeypatch.setattr(RestSend, "responses", property(_no_copy))
+
+
+def test_ethernet_routed_orchestrator_01010(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Scale regression for the normalize freshness snapshot: with the same interface name queued on many switches the queue is sent
+    one group per switch, and the per-group snapshot must be a cheap counter, not a deep copy of the whole response history (which
+    grows with the switch count, making the run quadratic; PR #563 review benchmark: ~16 s of local copying at 200 switches).
+
+    ## Test
+
+    - Ethernet1/1 is queued on 50 switches; the RestSend history holds 50 inventory responses
+    - `RestSend.responses` is patched to raise if read; `_request` is replaced by a stub that records one response per POST
+    - `_normalize_interfaces` sends 50 groups, dequeues every pair, and never reads `responses`
+    - `response_count` grew by exactly one per group
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - EthernetBaseOrchestrator._post_normalize()
+    - RestSend.response_count
+    """
+    switch_count = 50
+    orchestrator = _scale_normalize_orchestrator(switch_count)
+    assert len(orchestrator._normalize_groups()) == switch_count
+    posted: list[list[dict]] = []
+
+    def _stub_request(self, path, verb, data=None, **kwargs):  # pylint: disable=unused-argument
+        posted.append(data["switchInterfaces"])
+        self.rest_send.add_response({"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": path, "MESSAGE": "Multi-Status", "DATA": {}})
+        return {}
+
+    monkeypatch.setattr(EthernetRoutedInterfaceOrchestrator, "_request", _stub_request)
+    _forbid_response_history_copy(monkeypatch)
+
+    with does_not_raise():
+        results = orchestrator._normalize_interfaces()
+
+    assert len(results) == switch_count
+    assert len(posted) == switch_count
+    assert all(len(group) == 1 and group[0]["interfaceName"] == "Ethernet1/1" for group in posted)
+    assert not orchestrator._pending_normalizes
+    assert orchestrator.rest_send.response_count == 2 * switch_count
+
+
+def test_ethernet_routed_orchestrator_01020(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the failure side of the normalize freshness check is also copy-free and still correct: when a group's request raises
+    WITHOUT the controller answering (the sender raised; issue #554 keeps the previous `response_current`), `_rejected_empty_description`
+    must see that the count did not grow, not resend, and let the error propagate, all without reading the deep-copying `responses`.
+
+    ## Test
+
+    - Ethernet1/1 is queued on 20 switches; the RestSend history holds 20 inventory responses
+    - `RestSend.responses` is patched to raise if read; `_request` succeeds for the first 3 groups and raises on the 4th without recording a response
+    - `remove_pending` raises `Bulk normalize failed` with `None of these interfaces were reset`; no resend happened
+    - The first 3 pairs are dequeued, the failing pair and the 16 not attempted stay queued; `response_count` grew by exactly 3
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - EthernetBaseOrchestrator._post_normalize()
+    - EthernetBaseOrchestrator._rejected_empty_description()
+    - RestSend.response_count
+    """
+    switch_count = 20
+    orchestrator = _scale_normalize_orchestrator(switch_count)
+    calls: list[str] = []
+
+    def _stub_request(self, path, verb, data=None, **kwargs):  # pylint: disable=unused-argument
+        calls.append(data["switchInterfaces"][0]["switchId"])
+        if len(calls) == 4:
+            raise RuntimeError("sender raised before any response")
+        self.rest_send.add_response({"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": path, "MESSAGE": "Multi-Status", "DATA": {}})
+        return {}
+
+    monkeypatch.setattr(EthernetRoutedInterfaceOrchestrator, "_request", _stub_request)
+    _forbid_response_history_copy(monkeypatch)
+
+    with pytest.raises(RuntimeError, match=r"Bulk normalize failed for \['Ethernet1/1'\]: .*None of these interfaces were reset\. Not attempted: "):
+        orchestrator._normalize_interfaces()
+
+    assert calls == [f"FDO{index:08d}" for index in range(4)]
+    assert orchestrator._normalize_omits_description is False
+    assert orchestrator._pending_normalizes == [("Ethernet1/1", f"FDO{index:08d}") for index in range(3, switch_count)]
+    assert orchestrator.rest_send.response_count == switch_count + 3
