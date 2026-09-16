@@ -38,7 +38,7 @@ class DpuInstanceValuesModel(NDNestedModel):
     """DPU instance values common to smart switch attachments."""
 
     identifiers: ClassVar[list[str]] = []
-    dpu_secure: bool | None = Field(default=False, alias="dpuSecure")
+    dpu_secure: bool | None = Field(default=None, alias="dpuSecure")
     dpu_affinity: DpuAffinity | None = Field(default=None, alias="dpuAffinity")
 
 

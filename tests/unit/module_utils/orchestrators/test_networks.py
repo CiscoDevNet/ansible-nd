@@ -1632,6 +1632,38 @@ def test_attachment_options_replace_instance_values():
     assert desired[("ATTACH_OPTIONS", "FDO123")]["extraConfig"] == "interface Ethernet1/1\n  description attached by test"
 
 
+def test_attachment_options_do_not_emit_dpu_secure_default():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "ATTACH_OPTIONS",
+            "layer": "layer2",
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                    "interfaces": [
+                        {
+                            "mode": "access",
+                            "interface_range": "Ethernet1/1",
+                        }
+                    ],
+                    "attachment_options": {
+                        "svi_enabled": True,
+                    },
+                }
+            ],
+        }
+    )
+    orchestrator = _orchestrator()
+    manager = NetworkAttachmentManager(coordinator=None)
+    module_args = {"config": [model.to_config()]}
+    manager.resolve_switch_ids = lambda *_args: {"10.1.1.11": "FDO123"}
+    desired = manager.desired_attachment_map(module_args, orchestrator.strategy)
+
+    assert desired[("ATTACH_OPTIONS", "FDO123")]["instanceValues"] == {
+        "sviEnabled": True,
+    }
+
+
 def test_empty_attachment_interfaces_are_preserved_in_payload():
     model = NetworkConfigModel.from_config(
         {
@@ -2607,6 +2639,7 @@ def test_network_attachment_post_validates_interfaces_before_attach():
             "networkName": "BLUE_NET",
             "switchId": "SERIAL1",
             "interfaces": [{"mode": "trunk", "interfaceRange": "Ethernet1/3"}],
+            "instanceValues": {"sviEnabled": True},
             "attach": True,
         }
     ]
@@ -2644,6 +2677,7 @@ def test_network_attachment_post_validates_interfaces_before_attach():
                         "nativeVlan": False,
                     }
                 ],
+                "instanceValues": {"sviEnabled": True},
                 "attach": True,
             }
         ]

@@ -15,6 +15,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import pytest
 from unittest.mock import patch
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import vrf_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
@@ -1091,6 +1092,148 @@ def test_vrf_workflow_coordinator_00005_attach_fields_map_to_api_payload():
     assert payload["instanceValues"]["loopbackId"] == 10
     assert payload["instanceValues"]["loopbackIpv4Address"] == "10.10.10.10"
     assert payload["instanceValues"]["routeTargetImport"] == ["65000:10"]
+
+
+def test_vrf_workflow_coordinator_attachment_options_do_not_emit_dpu_secure_default():
+    """
+    # Summary
+
+    Verify VRF attachment instanceValues do not emit the smart-switch
+    dpuSecure default unless the user explicitly sets it.
+    """
+    module_args = {
+        "fabric_name": "AK-VXLAN",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "attach": [
+                    {
+                        "ip_address": "192.0.2.10",
+                        "attachment_options": {
+                            "loopback_id": 10,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_StandaloneStrategy(),
+    )
+
+    object.__setattr__(coordinator, "_resolve_switch_ids", lambda *_args: {"192.0.2.10": "FDO123"})
+
+    desired = coordinator._desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "FDO123")]["instanceValues"] == {
+        "loopbackId": 10,
+    }
+
+
+def test_vrf_workflow_coordinator_explicit_false_dpu_secure_is_preserved():
+    """
+    # Summary
+
+    Verify explicit dpu_secure: false is still sent as user intent.
+    """
+    module_args = {
+        "fabric_name": "AK-VXLAN",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "attach": [
+                    {
+                        "ip_address": "192.0.2.10",
+                        "attachment_options": {
+                            "dpu_secure": False,
+                            "loopback_id": 10,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_StandaloneStrategy(),
+    )
+
+    object.__setattr__(coordinator, "_resolve_switch_ids", lambda *_args: {"192.0.2.10": "FDO123"})
+
+    desired = coordinator._desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "FDO123")]["instanceValues"] == {
+        "dpuSecure": False,
+        "loopbackId": 10,
+    }
+
+
+def test_vrf_attachment_post_preserves_only_requested_dpu_secure():
+    """
+    # Summary
+
+    Verify final VRF attachment POST omits unrequested dpuSecure and preserves
+    explicit dpuSecure false.
+    """
+    calls = []
+
+    class Module:
+        check_mode = False
+
+    class Coordinator:
+        module = Module()
+
+        def _new_vrf_orchestrator(self, _module_args, _strategy):
+            class Orchestrator:
+                def _make_endpoint(self, endpoint_cls):
+                    return endpoint_cls(fabric_name="fab1")
+
+                def _request(self, **kwargs):
+                    calls.append(kwargs)
+                    return {"results": [{"status": "success"}]}
+
+            return Orchestrator(), {}
+
+        def _finalize_api_trace(self, _results, deploy_targets=None):
+            return {"changed": True, "failed": False, "deploy_targets": deploy_targets or {}}
+
+    manager = VrfAttachmentManager(Coordinator())
+    payloads = [
+        {
+            "vrfName": "BLUE",
+            "switchId": "SERIAL1",
+            "attach": True,
+            "instanceValues": {"routeTargetImport": ["65000:101"]},
+        },
+        {
+            "vrfName": "GREEN",
+            "switchId": "SERIAL2",
+            "attach": True,
+            "instanceValues": {"dpuSecure": False, "routeTargetImport": ["65000:102"]},
+        },
+    ]
+
+    manager.post_vrf_attachments({}, _StandaloneStrategy(), payloads, {}, OperationType.CREATE)
+
+    assert calls[0]["data"] == {
+        "attachments": [
+            {
+                "vrfName": "BLUE",
+                "switchId": "SERIAL1",
+                "instanceValues": {"routeTargetImport": ["65000:101"]},
+                "attach": True,
+            },
+            {
+                "vrfName": "GREEN",
+                "switchId": "SERIAL2",
+                "instanceValues": {"dpuSecure": False, "routeTargetImport": ["65000:102"]},
+                "attach": True,
+            },
+        ]
+    }
 
 
 def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_shape():
