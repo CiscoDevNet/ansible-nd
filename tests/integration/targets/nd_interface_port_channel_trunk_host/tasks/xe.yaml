@@ -61,6 +61,7 @@
       - "'current policy=iosXeAccess' in nm_xe_bad_member.msg"
       - "'nd_interface_ethernet_trunk_host' in nm_xe_bad_member.msg"
 
+# ND 4.2.1 can report a just-detached member as still bundled (operData lags the removal deploy) for up to a minute; retry until the ethernet module accepts the reset.
 - name: "XE NEGATIVE: Reset the negative-test member to the fabric default"
   cisco.nd.nd_interface_ethernet_access:
     output_level: "{{ nd_info.output_level }}"
@@ -72,6 +73,10 @@
     config_actions:
       deploy: true
     state: deleted
+  register: xe_negative_reset
+  until: xe_negative_reset is not failed
+  retries: 8
+  delay: 15
 
 # --- XE MERGED CREATE ---
 
@@ -261,6 +266,7 @@
 # members (and any straggler) through the ethernet trunk-host module's IOS-XE reset path so the leaf is at fabric default
 # for the next target.
 
+# ND 4.2.1 can report a just-detached member as still bundled (operData lags the removal deploy) for up to a minute; retry until the ethernet module accepts the reset.
 - name: "XE CLEANUP: Reset the member ports to the fabric default"
   cisco.nd.nd_interface_ethernet_trunk_host:
     output_level: "{{ nd_info.output_level }}"
@@ -275,3 +281,7 @@
     config_actions:
       deploy: true
     state: deleted
+  register: xe_cleanup
+  until: xe_cleanup is not failed
+  retries: 8
+  delay: 15
