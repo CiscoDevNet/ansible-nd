@@ -21,13 +21,19 @@ import copy
 from contextlib import contextmanager
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SubinterfaceManagedPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    SubinterfaceManagedPolicyTypeEnum,
+    XeSubinterfacePolicyTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import (
     SubinterfaceManagedConfigDataModel,
     SubinterfaceManagedInterfaceModel,
     SubinterfaceManagedNetworkOSModel,
     SubinterfaceManagedOperDataModel,
     SubinterfaceManagedPolicyModel,
+    XeSubinterfaceNetworkOSModel,
+    XeSubinterfacePolicyModel,
+    XeSubinterfaceShutNoshutPolicyModel,
 )
 from pydantic import ValidationError
 
@@ -692,25 +698,27 @@ def test_subinterface_managed_interface_00710():
 
 @pytest.mark.parametrize(
     "value",
-    ["Loopback0.1", "Vlan10.2", "mgmt0.3", "Tunnel1.4"],
-    ids=["loopback", "vlan", "mgmt", "tunnel"],
+    ["Loopback0.1", "Vlan10.2", "mgmt0.3", "Tunnel1.4", "HundredGigE1/0/25.7"],
+    ids=["loopback", "vlan", "mgmt", "tunnel", "hundredgig"],
 )
 def test_subinterface_managed_interface_00720(value):
     """
     # Summary
 
-    Verify `normalize_interface_name` rejects parents that are neither Ethernet nor Port-channel.
+    Verify `normalize_interface_name` passes a parent that is not a case-insensitive prefix of exactly one canonical name
+    (`Ethernet`, `GigabitEthernet`, `Port-channel`) through verbatim rather than re-casing or rejecting it, so correctly typed
+    Catalyst families the canonical list does not know (e.g. `HundredGigE`) are never corrupted; ND validates the parent itself.
 
     ## Test
 
-    - A dotted name on a non-Ethernet/Port-channel parent raises ValidationError mentioning the allowed parents
+    - A dotted name on any other parent is stored unchanged
 
     ## Classes and Methods
 
     - SubinterfaceManagedInterfaceModel.normalize_interface_name()
     """
-    with pytest.raises(ValidationError, match="parent must be 'Ethernet...' or 'Port-channel...'"):
-        SubinterfaceManagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+    instance = SubinterfaceManagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+    assert instance.interface_name == value
 
 
 # =============================================================================
@@ -860,12 +868,13 @@ def test_subinterface_managed_interface_01000():
     # Summary
 
     Verify a full GET response round-trips through from_response and to_payload, producing the same shape minus
-    excluded fields. All fields present in SAMPLE_API_RESPONSE must round-trip cleanly with their API aliases.
+    excluded fields. All fields present in SAMPLE_API_RESPONSE must round-trip cleanly with their API aliases; the payload additionally
+    carries the `mtu` template default the NX-OS branch always emits (`payload_defaults`).
 
     ## Test
 
     - Build model from SAMPLE_API_RESPONSE
-    - to_payload result matches expected
+    - to_payload result matches expected, plus `mtu: 9216`
 
     ## Classes and Methods
 
@@ -875,8 +884,9 @@ def test_subinterface_managed_interface_01000():
     instance = SubinterfaceManagedInterfaceModel.from_response(SAMPLE_API_RESPONSE)
     payload = instance.to_payload()
 
-    expected_policy_keys = set(SAMPLE_API_RESPONSE["configData"]["networkOS"]["policy"].keys())
+    expected_policy_keys = set(SAMPLE_API_RESPONSE["configData"]["networkOS"]["policy"].keys()) | {"mtu"}
     assert set(payload["configData"]["networkOS"]["policy"].keys()) == expected_policy_keys
+    assert payload["configData"]["networkOS"]["policy"]["mtu"] == 9216
     assert payload["interfaceName"] == "Ethernet1/3.2"
     assert payload["interfaceType"] == "subInterface"
     assert payload["configData"]["mode"] == "managed"
@@ -940,14 +950,16 @@ def test_subinterface_managed_interface_01100():
     assert config_options["switch_ip"]["required"] is True
     assert config_options["interface_name"]["type"] == "str"
     assert config_options["interface_name"]["required"] is True
-    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
-    # and intentionally absent from the user-facing argument spec.
+    # interface_type and mode are hardcoded in the Pydantic model and intentionally absent from the user-facing
+    # argument spec; network_os_type and policy_type are the platform / template discriminators (issue #541).
     assert "interface_type" not in config_options
     assert "mode" not in config_options["config_data"]["options"]
-    assert "network_os_type" not in config_options["config_data"]["options"]["network_os"]["options"]
+    network_os_options = config_options["config_data"]["options"]["network_os"]["options"]
+    assert network_os_options["network_os_type"] == {"type": "str", "default": "nx-os", "choices": ["nx-os", "ios-xe"]}
 
-    policy_options = config_options["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
+    policy_options = network_os_options["policy"]["options"]
     expected_policy_fields = {
+        "policy_type",
         "admin_state",
         "description",
         "extra_config",
@@ -967,7 +979,7 @@ def test_subinterface_managed_interface_01100():
         "netflow_sampler",
     }
     assert set(policy_options.keys()) == expected_policy_fields
-    assert "policy_type" not in policy_options
+    assert policy_options["policy_type"] == {"type": "str", "choices": ["subinterface", "iosXeSubinterface", "iosXeSubinterfaceShutNoshut"]}
     assert policy_options["vlan_id"]["type"] == "int"
 
 
@@ -993,3 +1005,401 @@ def test_subinterface_managed_interface_01200():
     """
     instance = SubinterfaceManagedInterfaceModel(switch_ip="1.2.3.4", interface_name="Ethernet1/3.2")
     assert instance.interface_type == "subInterface"
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #541) — enums, union dispatch, write-strictness, ranges, Catalyst parent names
+# =============================================================================
+
+XE_SUBIF_RESPONSE = {
+    "interfaceName": "GigabitEthernet1/0/2.100",
+    "interfaceType": "subInterface",
+    "switchIp": "192.168.12.181",
+    "switchId": "CAT9KV1701",
+    "configData": {
+        "mode": "managed",
+        "networkOS": {
+            "networkOSType": "ios-xe",
+            "policy": {
+                "policyType": "iosXeSubinterface",
+                "adminState": True,
+                "description": "probe100",
+                "vlanId": 100,
+                "ip": "10.99.100.1",
+                "prefix": 24,
+                "ipv6": "2001:db8:100::1",
+                "ipv6Prefix": 64,
+                "vrfInterface": "default",
+            },
+        },
+    },
+    "operData": {"adminStatus": "up", "operationalStatus": "up", "switchName": "C1_LE1"},
+}
+
+
+def test_subinterface_managed_interface_02000():
+    """
+    # Summary
+
+    Verify the managed-subinterface policy-type enums carry exactly the create-side wire values on both network OS types.
+
+    ## Test
+
+    - `SubinterfaceManagedPolicyTypeEnum` has the single NX-OS member `subinterface`
+    - `XeSubinterfacePolicyTypeEnum` has `iosXeSubinterface` and `iosXeSubinterfaceShutNoshut` (the
+      `createInterfaceSubInterfaceManagedXeType` discriminator minus the ND-internal `iosXeInternalSubinterface` and `userDefined`)
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedPolicyTypeEnum
+    - XeSubinterfacePolicyTypeEnum
+    """
+    assert [e.value for e in SubinterfaceManagedPolicyTypeEnum] == ["subinterface"]
+    assert [e.value for e in XeSubinterfacePolicyTypeEnum] == ["iosXeSubinterface", "iosXeSubinterfaceShutNoshut"]
+
+
+def test_subinterface_managed_interface_02010():
+    """
+    # Summary
+
+    Verify `network_os_type: ios-xe` selects the IOS-XE branch and `policy_type` is injected as `iosXeSubinterface` when omitted (the
+    argspec passes an omitted suboption as `None`).
+
+    ## Test
+
+    - from_config with `network_os_type: ios-xe` and `policy_type: None`
+    - `config_data.network_os` is `XeSubinterfaceNetworkOSModel`, policy is `XeSubinterfacePolicyModel`
+    - `instance.policy_type == "iosXeSubinterface"`; `policy_type` is in `model_fields_set`
+    - The payload carries `networkOSType: ios-xe`, the injected `policyType` and the wire key `ipv6Prefix`
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedConfigDataModel.default_network_os_type()
+    - XeSubinterfaceNetworkOSModel.default_policy_type()
+    - SubinterfaceManagedInterfaceModel.policy_type
+    """
+    with does_not_raise():
+        instance = SubinterfaceManagedInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.181",
+                "interface_name": "GigabitEthernet1/0/2.100",
+                "config_data": {
+                    "network_os": {
+                        "network_os_type": "ios-xe",
+                        "policy": {
+                            "policy_type": None,
+                            "admin_state": True,
+                            "vlan_id": 100,
+                            "ip": "10.99.100.1",
+                            "prefix": 24,
+                            "ipv6": "2001:db8:100::1",
+                            "ipv6_prefix": 64,
+                            "vrf_interface": "default",
+                        },
+                    }
+                },
+            }
+        )
+    assert isinstance(instance.config_data.network_os, XeSubinterfaceNetworkOSModel)
+    assert isinstance(instance.config_data.network_os.policy, XeSubinterfacePolicyModel)
+    assert instance.policy_type == "iosXeSubinterface"
+    assert "policy_type" in instance.config_data.network_os.policy.model_fields_set
+    payload = instance.to_payload()["configData"]["networkOS"]
+    assert payload["networkOSType"] == "ios-xe"
+    assert payload["policy"]["policyType"] == "iosXeSubinterface"
+    assert payload["policy"]["ipv6Prefix"] == 64
+    assert payload["policy"]["vlanId"] == 100
+    assert instance.to_config()["config_data"]["network_os"]["policy"]["ipv6_prefix"] == 64
+
+
+def test_subinterface_managed_interface_02020():
+    """
+    # Summary
+
+    Verify an omitted `network_os_type` still selects the NX-OS branch with `policy_type` injected as `subinterface`, that `policy_type`
+    is visible in `to_config()` output for both branches, and that an IOS-XE response reads back onto the XE branch.
+
+    ## Test
+
+    - from_config without the `network_os` discriminator -> `SubinterfaceManagedNetworkOSModel`, `subinterface`
+    - `to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "subinterface"`
+    - XE response -> `to_config()` carries `network_os_type == "ios-xe"` and `policy_type == "iosXeSubinterface"`
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedPolicyModel.default_policy_type()
+    - SubinterfaceManagedInterfaceModel.to_config()
+    - SubinterfaceManagedInterfaceModel.from_response()
+    """
+    nx = SubinterfaceManagedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "Ethernet1/3.2",
+            "config_data": {"network_os": {"policy": {"admin_state": True, "vlan_id": 2, "ip": "10.20.30.40", "prefix": 24}}},
+        }
+    )
+    assert isinstance(nx.config_data.network_os, SubinterfaceManagedNetworkOSModel)
+    assert isinstance(nx.config_data.network_os.policy, SubinterfaceManagedPolicyModel)
+    assert nx.policy_type == "subinterface"
+    assert nx.to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "subinterface"
+    assert nx.to_config()["config_data"]["network_os"]["network_os_type"] == "nx-os"
+    xe = SubinterfaceManagedInterfaceModel.from_response(copy.deepcopy(XE_SUBIF_RESPONSE))
+    assert isinstance(xe.config_data.network_os, XeSubinterfaceNetworkOSModel)
+    assert xe.interface_name == "GigabitEthernet1/0/2.100"
+    config = xe.to_config()["config_data"]["network_os"]
+    assert config["network_os_type"] == "ios-xe"
+    assert config["policy"]["policy_type"] == "iosXeSubinterface"
+    assert config["policy"]["ipv6_prefix"] == 64
+    assert config["policy"]["vlan_id"] == 100
+
+
+@pytest.mark.parametrize(
+    "os_type, policy, match",
+    [
+        ("ios-xe", {"policy_type": "subinterface"}, r"policy_type|policyType"),
+        ("nx-os", {"policy_type": "iosXeSubinterface"}, r"policy_type|policyType"),
+        ("ios-xe", {"mtu": 9000}, r"mtu|Extra inputs"),
+        ("ios-xe", {"routing_tag": "100"}, r"routing_tag|Extra inputs"),
+        ("ios-xe", {"ip_redirects": True}, r"ip_redirects|Extra inputs"),
+        ("ios-xe", {"pim_sparse": True}, r"pim_sparse|Extra inputs"),
+        ("ios-xe", {"pim_dr_priority": 5}, r"pim_dr_priority|Extra inputs"),
+        ("ios-xe", {"netflow": True, "netflow_monitor": "m"}, r"netflow|Extra inputs"),
+        ("ios-xe", {"policy_type": "iosXeSubinterfaceShutNoshut", "vlan_id": 100}, r"vlan_id|Extra inputs"),
+        ("ios-xe", {"policy_type": "iosXeSubinterfaceShutNoshut", "ip": "10.99.100.1", "prefix": 24}, r"ip|Extra inputs"),
+    ],
+)
+def test_subinterface_managed_interface_02030(os_type, policy, match):
+    """
+    # Summary
+
+    Verify both branches are write-strict: a wrong-branch discriminator, an NX-OS-only field on the IOS-XE branch (mtu, routing tag,
+    ip-redirects, PIM, Netflow), and an L3 field on the admin-state-only `iosXeSubinterfaceShutNoshut` template are all rejected
+    before any controller call.
+
+    ## Test
+
+    - Each policy input raises `ValidationError` matching `match`
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedPolicyModel (extra="forbid")
+    - XeSubinterfacePolicyModel (extra="forbid")
+    - XeSubinterfaceShutNoshutPolicyModel (extra="forbid")
+    """
+    with pytest.raises(ValidationError, match=match):
+        SubinterfaceManagedInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.181",
+                "interface_name": "GigabitEthernet1/0/2.100",
+                "config_data": {"network_os": {"network_os_type": os_type, "policy": policy}},
+            }
+        )
+
+
+def test_subinterface_managed_interface_02040():
+    """
+    # Summary
+
+    Verify the admin-state-only `iosXeSubinterfaceShutNoshut` branch: an explicit `policy_type` selects
+    `XeSubinterfaceShutNoshutPolicyModel`, the payload carries only the discriminator and `adminState`, and a controller echo reads back
+    onto the same branch.
+
+    ## Test
+
+    - from_config with `policy_type: iosXeSubinterfaceShutNoshut`, `admin_state: false`
+    - `to_payload()` policy == `{"policyType": "iosXeSubinterfaceShutNoshut", "adminState": False}`
+    - from_response of the echo -> `XeSubinterfaceShutNoshutPolicyModel`
+
+    ## Classes and Methods
+
+    - XeSubinterfaceShutNoshutPolicyModel
+    - XeSubinterfaceNetworkOSModel.policy (discriminated on `policy_type`)
+    """
+    instance = SubinterfaceManagedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "GigabitEthernet1/0/2.101",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": "iosXeSubinterfaceShutNoshut", "admin_state": False}}},
+        }
+    )
+    assert isinstance(instance.config_data.network_os.policy, XeSubinterfaceShutNoshutPolicyModel)
+    assert instance.policy_type == "iosXeSubinterfaceShutNoshut"
+    assert instance.to_payload()["configData"]["networkOS"]["policy"] == {"policyType": "iosXeSubinterfaceShutNoshut", "adminState": False}
+    echo = SubinterfaceManagedInterfaceModel.from_response(
+        {
+            "interfaceName": "GigabitEthernet1/0/2.101",
+            "interfaceType": "subInterface",
+            "switchIp": "192.168.12.181",
+            "configData": {
+                "mode": "managed",
+                "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": False, "policyType": "iosXeSubinterfaceShutNoshut"}},
+            },
+        }
+    )
+    assert isinstance(echo.config_data.network_os.policy, XeSubinterfaceShutNoshutPolicyModel)
+    assert echo.policy_type == "iosXeSubinterfaceShutNoshut"
+
+
+@pytest.mark.parametrize(
+    "field,value,should_raise",
+    [
+        ("vlan_id", 1, False),
+        ("vlan_id", 4094, False),
+        ("vlan_id", 0, True),
+        ("vlan_id", 4095, True),
+        ("ipv6_prefix", 64, False),
+        ("ipv6_prefix", 127, False),
+        ("ipv6_prefix", 63, True),
+        ("ipv6_prefix", 128, True),
+        ("prefix", 8, False),
+        ("prefix", 31, False),
+        ("prefix", 7, True),
+        ("prefix", 32, True),
+        ("description", "d" * 200, False),
+        ("description", "d" * 201, True),
+        ("vrf_interface", "v" * 32, False),
+        ("vrf_interface", "v" * 33, True),
+    ],
+    ids=lambda v: str(v)[:12] if not isinstance(v, bool) else ("raise" if v else "ok"),
+)
+def test_subinterface_managed_interface_02050(field, value, should_raise):
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeSubinterface` branch enforces the `ios_xe_int_subintf` template ranges, which differ from the NX-OS
+    `int_subif` template: `vlanId` 1-4094 (NX-OS 2-4094), `ipv6Prefix` 64-127 (NX-OS 1-127), `prefix` 8-31, `description` 1-200
+    characters (NX-OS 254), `vrfInterface` 1-32 characters.
+
+    ## Test
+
+    - In-range values are accepted, out-of-range values raise `ValidationError`
+
+    ## Classes and Methods
+
+    - XeSubinterfacePolicyModel
+    """
+    kwargs = {field: value}
+    if field == "prefix":
+        kwargs["ip"] = "10.99.100.1"
+    if field == "ipv6_prefix":
+        kwargs["ipv6"] = "2001:db8:100::1"
+    if should_raise:
+        with pytest.raises(ValidationError):
+            XeSubinterfacePolicyModel(**kwargs)
+    else:
+        with does_not_raise():
+            instance = XeSubinterfacePolicyModel(**kwargs)
+        assert getattr(instance, field) == value
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("GigabitEthernet1/0/2.100", "GigabitEthernet1/0/2.100"),
+        ("gigabitethernet1/0/2.100", "GigabitEthernet1/0/2.100"),
+        ("gi1/0/2.100", "GigabitEthernet1/0/2.100"),
+        ("TenGigabitEthernet1/0/1.5", "TenGigabitEthernet1/0/1.5"),
+        ("te1/0/1.5", "TenGigabitEthernet1/0/1.5"),
+        ("twe1/0/1.5", "TwentyFiveGigE1/0/1.5"),
+        ("fo1/0/1.2", "FortyGigabitEthernet1/0/1.2"),
+        ("hu1/0/25.7", "HundredGigE1/0/25.7"),
+        ("t1/0/1.5", "t1/0/1.5"),
+        ("eth1/3.2", "Ethernet1/3.2"),
+        ("po10.5", "Port-channel10.5"),
+    ],
+    ids=[
+        "gig_canonical",
+        "gig_lowercase",
+        "gig_short",
+        "tengig_canonical",
+        "tengig_short",
+        "twentyfivegig_short",
+        "fortygig_short",
+        "hundredgig_short",
+        "ambiguous_t_verbatim",
+        "eth_short",
+        "po_short",
+    ],
+)
+def test_subinterface_managed_interface_02060(value, expected):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` accepts the Catalyst IOS-XE parent families: a prefix that is a case-insensitive prefix of exactly
+    one canonical name (`Ethernet`, `Port-channel` and the Catalyst `...GigabitEthernet` / `...GigE` families) is expanded to it, an
+    ambiguous abbreviation (`t` matches several) passes through verbatim, and the dot-separated sub-id is preserved. ND removes an
+    IOS-XE subinterface from the switch only under its canonical spelling (lab 2026-09-16), so the expansion is what makes delete work.
+
+    ## Test
+
+    - Each input normalizes to `expected`
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceModel.normalize_interface_name()
+    """
+    instance = SubinterfaceManagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+    assert instance.interface_name == expected
+
+
+def test_subinterface_managed_interface_02070():
+    """
+    # Summary
+
+    Verify the IOS-XE branch's `_validate_ip_prefix_paired` rejects a half-supplied address pair on either family, matching the NX-OS
+    branch.
+
+    ## Test
+
+    - `ip` without `prefix` raises; `ipv6_prefix` without `ipv6` raises
+
+    ## Classes and Methods
+
+    - XeSubinterfacePolicyModel._validate_ip_prefix_paired()
+    """
+    with pytest.raises(ValidationError, match="ip and prefix are required together"):
+        XeSubinterfacePolicyModel(ip="10.99.100.1")
+    with pytest.raises(ValidationError, match="ipv6 and ipv6_prefix are required together"):
+        XeSubinterfacePolicyModel(ipv6_prefix=64)
+
+
+def test_subinterface_managed_interface_02080():
+    """
+    # Summary
+
+    Verify the NX-OS `subinterface` branch always emits the `int_subif` template default `mtu: 9216` on the wire when the user did not set
+    it (ND 4.3.1 rejects a create that omits `mtu`, "Validation failed for following fields: [mtu]"; 4.2.1 stored 9216 either way), while
+    an explicit `mtu` is sent as given and the IOS-XE branch, whose template has no `mtu`, is unaffected.
+
+    ## Test
+
+    - NX-OS policy without `mtu` -> payload carries `mtu == 9216`, `to_config()` does not (payload-only default)
+    - NX-OS policy with `mtu: 1500` -> payload carries 1500
+    - IOS-XE policy -> payload carries no `mtu`
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    nx = SubinterfaceManagedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "Ethernet1/3.2",
+            "config_data": {"network_os": {"policy": {"vlan_id": 2, "ip": "10.20.30.40", "prefix": 24}}},
+        }
+    )
+    assert nx.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 9216
+    assert "mtu" not in nx.to_config()["config_data"]["network_os"]["policy"]
+    nx_explicit = SubinterfaceManagedInterfaceModel.from_config(
+        {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/3.2", "config_data": {"network_os": {"policy": {"vlan_id": 2, "mtu": 1500}}}}
+    )
+    assert nx_explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+    xe = SubinterfaceManagedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "GigabitEthernet1/0/2.100",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"vlan_id": 100, "ip": "10.99.100.1", "prefix": 24}}},
+        }
+    )
+    assert "mtu" not in xe.to_payload()["configData"]["networkOS"]["policy"]

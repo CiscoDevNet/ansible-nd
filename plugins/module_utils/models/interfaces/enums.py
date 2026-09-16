@@ -299,10 +299,26 @@ class SubinterfaceManagedPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for managed L3 subinterfaces.
+    NX-OS policy type managed by `nd_interface_subinterface_managed`: the `subinterface` member of the ND create-side
+    `createInterfaceSubInterfaceManagedNexusType` mapping (`int_subif` template). `ipfmSubinterface` (IPFM fabrics) and `userDefined` are
+    intentionally excluded.
     """
 
     SUBINTERFACE = "subinterface"
+
+
+class XeSubinterfacePolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_subinterface_managed` (issue #541): the `iosXeSubinterface` (`ios_xe_int_subintf` template)
+    and `iosXeSubinterfaceShutNoshut` (`ios_xe_int_subif_admin_state` template, admin state only) members of the ND create-side
+    `createInterfaceSubInterfaceManagedXeType` mapping. The ND-internal `iosXeInternalSubinterface` and `userDefined` are intentionally
+    excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SUBINTERFACE = "iosXeSubinterface"
+    IOS_XE_SUBINTERFACE_SHUT_NOSHUT = "iosXeSubinterfaceShutNoshut"
 
 
 class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):

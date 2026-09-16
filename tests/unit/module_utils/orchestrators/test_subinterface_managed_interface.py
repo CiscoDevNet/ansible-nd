@@ -12,7 +12,8 @@ Verifies that `SubinterfaceManagedInterfaceOrchestrator` correctly:
 - filters `query_all` results down to interfaceType=subInterface + managed policyType=subinterface
 - builds correct POST/PUT payloads on create/update
 - queues remove + deploy on delete (no immediate API call)
-- groups create_bulk by switch
+- groups create_bulk by (switch, policyType) through the shared `bulk_create_groups` (issue #409)
+- keeps the IOS-XE managed policy types in `query_all` and tolerates the policy-less records a Catalyst switch list carries (issue #541)
 - raises on 207 Multi-Status bodies that carry per-item failures
 
 Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as the `sender` injected into a real
@@ -90,11 +91,13 @@ def _build_orchestrator(
     return SubinterfaceManagedInterfaceOrchestrator(rest_send=rest_send)
 
 
-def _build_model(switch_ip: str = "192.168.1.1", interface_name: str = "Ethernet1/3.2", **policy_kwargs) -> SubinterfaceManagedInterfaceModel:
+def _build_model(
+    switch_ip: str = "192.168.1.1", interface_name: str = "Ethernet1/3.2", network_os_type: str = "nx-os", **policy_kwargs
+) -> SubinterfaceManagedInterfaceModel:
     """Build a SubinterfaceManagedInterfaceModel with optional policy fields populated."""
     config_data = None
     if policy_kwargs:
-        config_data = {"mode": "managed", "network_os": {"network_os_type": "nx-os", "policy": policy_kwargs}}
+        config_data = {"mode": "managed", "network_os": {"network_os_type": network_os_type, "policy": policy_kwargs}}
     return SubinterfaceManagedInterfaceModel.from_config(
         {"switch_ip": switch_ip, "interface_name": interface_name, "interface_type": "subInterface", "config_data": config_data}
     )
@@ -584,3 +587,149 @@ def test_subinterface_managed_orchestrator_01000() -> None:
     policy = payload["configData"]["networkOS"]["policy"]
     assert policy["policyType"] == "subinterface"
     assert policy["description"] == "just description"
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #541) — query_all managed set and create_bulk grouping
+# =============================================================================
+
+
+def test_subinterface_managed_orchestrator_00450() -> None:
+    """
+    # Summary
+
+    Verify `query_all` keeps both IOS-XE managed policy types (`iosXeSubinterface`, `iosXeSubinterfaceShutNoshut`), filters
+    `userDefined` and the ND-internal `iosXeInternalSubinterface`, and tolerates the records a Catalyst switch list carries that the
+    NX-OS-only filter never saw: a subinterface whose `policy` is `null` and one with no `configData` at all (shapes per the SVI lab
+    capture on ND 4.2.1.10, 2026-09-16).
+
+    ## Test
+
+    - state is `overridden`, one Catalyst switch
+    - Result contains exactly `GigabitEthernet1/0/2.100` (iosXeSubinterface) and `GigabitEthernet1/0/2.101`
+      (iosXeSubinterfaceShutNoshut) with `switchIp` injected
+    - `.102` (userDefined), `.103` (iosXeInternalSubinterface), `.104` (policy null), `.105` (no configData) and the routed parent are
+      filtered without raising
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceOrchestrator.query_all()
+    - SubinterfaceManagedInterfaceOrchestrator._managed_policy_types()
+    - SubinterfaceManagedInterfaceOrchestrator._policy_type_of()
+    """
+
+    def responses():
+        yield responses_subif("test_query_all_xe_00450a")
+        yield responses_subif("test_query_all_xe_00450b")
+        yield responses_subif("test_query_all_xe_00450c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
+        result = orchestrator.query_all()
+
+    by_name = {iface["interfaceName"]: iface for iface in result}
+    assert set(by_name) == {"GigabitEthernet1/0/2.100", "GigabitEthernet1/0/2.101"}
+    assert by_name["GigabitEthernet1/0/2.100"]["switchIp"] == "192.168.12.181"
+    assert by_name["GigabitEthernet1/0/2.101"]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeSubinterfaceShutNoshut"
+
+
+def test_subinterface_managed_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` sends one POST per `(switch, policyType)` group (shared `bulk_create_groups`, issue #409): ND rejects an
+    `interfaces[]` array that mixes policy types, which a Catalyst carrying both `iosXeSubinterface` and `iosXeSubinterfaceShutNoshut`
+    subinterfaces would otherwise produce.
+
+    ## Test
+
+    - Two IOS-XE subinterfaces of different policy types on the Catalyst and one NX-OS subinterface on a Nexus leaf
+    - Three POSTs consumed (switch GET + three create responses) and all three interfaces queued for deploy
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    """
+
+    def responses():
+        yield responses_subif("test_create_bulk_grouped_00910a")
+        yield responses_subif("test_create_bulk_grouped_00910b")
+        yield responses_subif("test_create_bulk_grouped_00910c")
+        yield responses_subif("test_create_bulk_grouped_00910d")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses)
+        models = [
+            _build_model(
+                switch_ip="192.168.12.181", interface_name="GigabitEthernet1/0/2.100", network_os_type="ios-xe", vlan_id=100, ip="10.99.100.1", prefix=24
+            ),
+            _build_model(
+                switch_ip="192.168.12.181",
+                interface_name="GigabitEthernet1/0/2.101",
+                network_os_type="ios-xe",
+                policy_type="iosXeSubinterfaceShutNoshut",
+                admin_state=False,
+            ),
+            _build_model(interface_name="Ethernet1/3.2", vlan_id=2, ip="10.20.30.40", prefix=24),
+        ]
+        results = orchestrator.create_bulk(models)
+
+    assert len(results) == 3
+    assert len(orchestrator.rest_send.responses) == 4
+    assert ("GigabitEthernet1/0/2.100", "CAT9KV1701") in orchestrator._pending_deploys
+    assert ("GigabitEthernet1/0/2.101", "CAT9KV1701") in orchestrator._pending_deploys
+    assert ("Ethernet1/3.2", "FDO11111AAA") in orchestrator._pending_deploys
+
+
+def test_subinterface_managed_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    Verify the grouping keys `bulk_create_groups` builds for the subinterface model: `policy_type` is read through the model's
+    discriminated union for both branches and the group order follows the first model of each group.
+
+    ## Test
+
+    - Same three models as test 00910
+    - Keys are `(CAT9KV1701, iosXeSubinterface)`, `(CAT9KV1701, iosXeSubinterfaceShutNoshut)`, `(FDO11111AAA, subinterface)` in that order
+    - Each payload carries the injected `switchId` and its `policyType`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    - NDBaseInterfaceOrchestrator._desired_policy_type()
+    """
+
+    def responses():
+        yield responses_subif("test_bulk_create_groups_00920a")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses)
+        models = [
+            _build_model(
+                switch_ip="192.168.12.181", interface_name="GigabitEthernet1/0/2.100", network_os_type="ios-xe", vlan_id=100, ip="10.99.100.1", prefix=24
+            ),
+            _build_model(
+                switch_ip="192.168.12.181",
+                interface_name="GigabitEthernet1/0/2.101",
+                network_os_type="ios-xe",
+                policy_type="iosXeSubinterfaceShutNoshut",
+                admin_state=False,
+            ),
+            _build_model(interface_name="Ethernet1/3.2", vlan_id=2, ip="10.20.30.40", prefix=24),
+        ]
+        groups = orchestrator.bulk_create_groups(models)
+
+    keys = [(key.switch_id, key.policy_type) for key in groups]
+    assert keys == [("CAT9KV1701", "iosXeSubinterface"), ("CAT9KV1701", "iosXeSubinterfaceShutNoshut"), ("FDO11111AAA", "subinterface")]
+    for key, items in groups.items():
+        for item in items:
+            assert item.payload["switchId"] == key.switch_id
+            assert item.payload["configData"]["networkOS"]["policy"]["policyType"] == key.policy_type

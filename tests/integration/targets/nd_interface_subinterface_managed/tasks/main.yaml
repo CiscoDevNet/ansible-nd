@@ -9,6 +9,15 @@
 # Run the test suite with ansible-test:
 #   ansible-test network-integration nd_interface_subinterface_managed
 #
+# --- Optional IOS-XE testbed configuration (issue #541) ---
+#
+#   nd_test_xe_fabric_name=<Catalyst fabric, defaults to nd_test_fabric_name>
+#   nd_test_xe_switch_ip=<Catalyst leaf switch IP; unset skips xe.yaml>
+#   nd_test_xe_parent_interface=<Catalyst front-panel port used as the routed parent, default GigabitEthernet1/0/2>
+#
+# The parent port must be a plain host port (not a port-channel member or a fabric link); xe.yaml converts it to a routed port for
+# the duration of the run and resets it to the fabric-default trunk host afterwards. Sub-ids 100-103 on it must be free.
+#
 # --- Optional test variables ---
 #
 # Set the variables below in the [nd:vars] section of tests/integration/inventory.networking
@@ -45,5 +54,9 @@
 
     - name: Run deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run IOS-XE tests (requires nd_test_xe_switch_ip)
+      ansible.builtin.include_tasks: xe.yaml
+      when: nd_test_xe_switch_ip is defined and nd_test_xe_switch_ip | length > 0
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
