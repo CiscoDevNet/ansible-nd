@@ -25,6 +25,26 @@
       deploy: true
     state: deleted
 
+# --- XE SETUP: switch id for the discovery waits below ---
+
+- name: "XE SETUP: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: xe_switches
+
+- name: "XE SETUP: Resolve the Catalyst switch id from its management IP"
+  vars:
+    matches: "{{ xe_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip) | map(attribute='switchId') | list }}"
+  ansible.builtin.set_fact:
+    xe_switch_id: "{{ (matches + ['']) | first }}"
+
+- name: "XE SETUP: Verify the Catalyst switch is in the fabric"
+  ansible.builtin.assert:
+    that:
+      - xe_switch_id | length > 0
+    fail_msg: "No switch with fabricManagementIp {{ test_xe_switch_ip }} in fabric {{ test_xe_fabric_name }}"
+
 # --- XE NEGATIVE: member converted to iosXeAccess ---
 
 - name: "XE NEGATIVE: Convert the negative-test member to iosXeAccess"
@@ -191,6 +211,25 @@
       - pc103.config_data.network_os.policy.allowed_vlans == "10,20-30"
       - pc103.config_data.network_os.policy.bpdu_guard is not defined
 
+# --- XE DISCOVERY WAIT (before overridden) ---
+# ND generates the switch-side `no interface Port-channel<N>` for an IOS-XE port-channel only once it has discovered the deployed
+# interface (operData leaves `unknown` 25-45 s after the create deploy); a removal before that drops the intent and pushes nothing,
+# leaving the interface on the Catalyst. Real playbooks delete long after creating; this scenario does both in one run, so wait here.
+
+- name: "XE DISCOVERY WAIT: Wait until ND has discovered port-channel103 and port-channel104 on the Catalyst"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_discovery
+  until: >-
+    xe_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', ['port-channel103', 'port-channel104'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 2
+  retries: 12
+  delay: 10
+
 # --- XE OVERRIDDEN ---
 
 - name: "XE OVERRIDDEN: Keep only port-channel103 (check mode)"
@@ -225,6 +264,25 @@
   ansible.builtin.assert:
     that:
       - nm_xe_overridden_idem is not changed
+
+# --- XE DISCOVERY WAIT (before deleted) ---
+# ND generates the switch-side `no interface Port-channel<N>` for an IOS-XE port-channel only once it has discovered the deployed
+# interface (operData leaves `unknown` 25-45 s after the create deploy); a removal before that drops the intent and pushes nothing,
+# leaving the interface on the Catalyst. Real playbooks delete long after creating; this scenario does both in one run, so wait here.
+
+- name: "XE DISCOVERY WAIT: Wait until ND has discovered port-channel103 on the Catalyst"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_discovery
+  until: >-
+    xe_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', ['port-channel103'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 1
+  retries: 12
+  delay: 10
 
 # --- XE DELETED ---
 
