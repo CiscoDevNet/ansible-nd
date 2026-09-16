@@ -2148,14 +2148,16 @@ def test_port_channel_trunk_host_interface_02020():
         ({"native_vlan": 5}, r"native_vlan|Extra inputs"),
         ({"vlan_mapping": True}, r"vlan_mapping|Extra inputs"),
         ({"policy_type": "trunkPoHost"}, r"policy_type"),
+        ({"port_channel_mode": "desirable", "policy_type": None}, r"port_channel_mode"),
     ],
-    ids=["nx_only_native_vlan", "nx_only_vlan_mapping", "wrong_branch_discriminator"],
+    ids=["nx_only_native_vlan", "nx_only_vlan_mapping", "wrong_branch_discriminator", "nx_rejects_pagp_mode"],
 )
 def test_port_channel_trunk_host_interface_02030(policy, match):
     """
     # Summary
 
     Verify the IOS-XE trunk branch rejects NX-OS-only fields (`native_vlan`, `vlan_mapping`) and a wrong-branch discriminator.
+    (The fourth case is the NX-OS branch rejecting the PAgP `desirable` mode.)
 
     ## Test
 
@@ -2164,13 +2166,15 @@ def test_port_channel_trunk_host_interface_02030(policy, match):
     ## Classes and Methods
 
     - XePortChannelTrunkHostPolicyModel (extra="forbid")
+    - PortChannelTrunkHostPolicyModel.port_channel_mode
     """
+    os_type = "nx-os" if policy.get("port_channel_mode") == "desirable" else "ios-xe"
     with pytest.raises(ValidationError, match=match):
         PortChannelTrunkHostInterfaceModel.from_config(
             {
                 "switch_ip": "192.168.12.181",
                 "interface_name": "port-channel103",
-                "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": policy}},
+                "config_data": {"network_os": {"network_os_type": os_type, "policy": policy}},
             }
         )
 

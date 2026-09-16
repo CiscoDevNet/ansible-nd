@@ -432,7 +432,6 @@ EXAMPLES = r"""
             policy:
               admin_state: true
               allowed_vlans: "10,20-30"
-              mtu: "8000"
               port_channel_mode: active
               ports:
                 - GigabitEthernet1/0/4

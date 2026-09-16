@@ -405,7 +405,10 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if a `switch_ip` does not match any switch in the fabric.
+        - Via `_switch_interfaces` if the interface-list API request fails.
         """
         requirement = self.XE_MEMBER_HOST_POLICY.get(self._desired_policy_type(model_instance) or "")
         if requirement is None:
@@ -439,9 +442,10 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         owner = str(policy.get("portChannelId") or "").lower()
         if current == host_type or (current == member_type and owner == po_name):
             return None
+        current_description = "absent from the switch inventory" if record is None else (current or "no policy")
         return (
             f"(switch_ip={model_instance.switch_ip}, port-channel={model_instance.interface_name}, member={member}, "
-            f"current policy={current or 'absent'}, required={host_type}; convert it with {module_name} first)"
+            f"current policy={current_description}, required={host_type}; convert it with {module_name} first)"
         )
 
     @staticmethod

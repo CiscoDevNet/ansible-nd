@@ -93,7 +93,7 @@
       - pc101.config_data.network_os.policy.access_vlan == 100
       - pc101.config_data.network_os.policy.ports | length == 2
 
-- name: "XE MERGED IDEMPOTENT: Re-apply (check + normal)"
+- name: "XE MERGED IDEMPOTENT: Re-apply (check mode)"
   cisco.nd.nd_interface_port_channel_access: *xe_merge
   check_mode: true
   register: cm_xe_merged_idem
@@ -110,7 +110,7 @@
 
 # --- XE MERGED UPDATE ---
 
-- name: "XE MERGED UPDATE: Change vlan and description on port-channel101 (check mode)"
+- name: "XE MERGED UPDATE: Change vlan, bpdu_guard and description on port-channel101 (check mode)"
   cisco.nd.nd_interface_port_channel_access: &xe_merge_updated
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_xe_fabric_name }}"
@@ -122,7 +122,7 @@
   check_mode: true
   register: cm_xe_update
 
-- name: "XE MERGED UPDATE: Change vlan and description on port-channel101 (normal mode)"
+- name: "XE MERGED UPDATE: Change vlan, bpdu_guard and description on port-channel101 (normal mode)"
   cisco.nd.nd_interface_port_channel_access: *xe_merge_updated
   register: nm_xe_update
 
@@ -134,6 +134,7 @@
       - cm_xe_update is changed
       - nm_xe_update is changed
       - pc101.config_data.network_os.policy.access_vlan == 150
+      - pc101.config_data.network_os.policy.bpdu_guard == "enable"
       - pc101.config_data.network_os.policy.description == "Updated XE PC 101"
 
 - name: "XE MERGED UPDATE IDEMPOTENT: Re-apply"
@@ -171,6 +172,7 @@
       - cm_xe_replaced is changed
       - nm_xe_replaced is changed
       - pc101.config_data.network_os.policy.access_vlan == 100
+      - pc101.config_data.network_os.policy.bpdu_guard is not defined
 
 # --- XE OVERRIDDEN ---
 

@@ -198,6 +198,7 @@ xe_pc_103_updated:
       policy:
         admin_state: true
         allowed_vlans: "all"
+        bpdu_guard: disable
         port_channel_mode: active
         ports:
           - "{{ test_xe_pc_member_a }}"
