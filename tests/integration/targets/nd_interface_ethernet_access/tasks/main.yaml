@@ -37,6 +37,12 @@
       output_level: '{{ api_key_output_level | default("debug") }}'
 
 - name: Run nd_interface_ethernet_access state tests with optional logging env
+  # 300s gives ND enough time to complete a multi-switch bulk interfaceActions/deploy
+  # (e.g. the overridden phase) on slow testbeds (e.g. 9000v) where the default 30s is
+  # too short. The native Ansible connection variable is scoped to this block, matching
+  # the port-channel targets.
+  vars:
+    ansible_command_timeout: 300
   block:
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml

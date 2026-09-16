@@ -8,7 +8,7 @@ from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
+from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER, has_removals, issubset
 
 
 def _strip_none_values(data):
@@ -72,6 +72,23 @@ class NDBaseModel(BaseModel, ABC):
     payload_exclude_fields: ClassVar[Set[str]] = set()
     config_exclude_fields: ClassVar[Set[str]] = set()
 
+    # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
+    # ND echoes the schema-declared template default for every field the user never set, so an existing-side
+    # value equal to its declared default is normalized to absent during removal detection -- omitting it from
+    # proposed config is not a pending reset. Source the values from the ND OpenAPI template schema for the
+    # model's policyType (see the `nd-openapi` MCP); a wrong value here breaks replaced/overridden idempotency.
+    # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
+    # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
+    # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
+    reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
+
+    # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of
+    # value. For server-populated fields the proposed config can never express (e.g. the orchestrator-injected
+    # `peerSwitchId` on vPC policy models): their presence on the existing side is not a pending reset, and
+    # unlike `reverse_diff_defaults` they have no single constant value to match against. Applies at the
+    # declaring model's own nesting level, so nested models scope their own exclusions.
+    reverse_diff_exclude: ClassVar[Set[str]] = set()
+
     # --- Subclass Validation ---
 
     def __init_subclass__(cls, **kwargs):
@@ -117,6 +134,43 @@ class NDBaseModel(BaseModel, ABC):
 
         return result
 
+    @classmethod
+    def secret_field_keys(cls, by_alias: bool = False) -> set[str]:
+        """Names of fields tagged ``json_schema_extra={"secret": True}``.
+
+        Aliases when ``by_alias`` is True (payload shape), else Python field
+        names (config/input shape). The single source of truth for which fields
+        are secret, used both to keep them out of output and to register their
+        values for ``no_log`` masking.
+        """
+        keys: set[str] = set()
+        for field_name, field_info in cls.model_fields.items():
+            extra = field_info.json_schema_extra
+            if isinstance(extra, dict) and extra.get("secret"):
+                keys.add((field_info.alias or field_name) if by_alias else field_name)
+        return keys
+
+    @classmethod
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
+        """Secret string values in a raw Ansible config item, for no_log masking.
+
+        Ansible auto-masks ``no_log`` argument-spec params, but not values in
+        free-form/nested dicts it does not statically model. ``NDStateMachine``
+        registers whatever this returns with ``module.no_log_values`` so the
+        value-based scrubber strips them from the invocation echo and result.
+
+        Default: top-level fields tagged secret. Models with secrets nested in a
+        free-form dict (e.g. links ``template_inputs``) override to add those.
+        """
+        values: set[str] = set()
+        if not isinstance(config_item, dict):
+            return values
+        for key in cls.secret_field_keys(by_alias=False):
+            value = config_item.get(key)
+            if value:
+                values.add(value)
+        return values
+
     def to_payload(self, **kwargs) -> Dict[str, Any]:
         """Convert model to API payload format (aliased keys, nested structures)."""
         data = self.model_dump(
@@ -130,25 +184,51 @@ class NDBaseModel(BaseModel, ABC):
         return self._build_payload_nested(data)
 
     def to_config(self, **kwargs) -> Dict[str, Any]:
-        """Convert model to Ansible config format (Python field names, flat structure)."""
-        return self.model_dump(
+        """Convert model to Ansible config format (Python field names, flat structure).
+
+        Secret-tagged fields are masked to ``NO_LOG_PLACEHOLDER`` in output
+        (after/before/proposed): the key stays visible so callers see
+        the field is set, but the value is never shown. The real value remains
+        only in to_payload() (the controller request).
+        """
+        data = self.model_dump(
             by_alias=False,
             exclude_none=True,
             context={"mode": "config"},
             exclude=self.config_exclude_fields or None,
             **kwargs,
         )
+        for key in self.secret_field_keys(by_alias=False):
+            if key in data:
+                data[key] = NO_LOG_PLACEHOLDER
+        return data
+
+    def to_gathered_config(self, **kwargs) -> Dict[str, Any]:
+        """Convert the model to replay-safe gathered configuration.
+
+        Most resources use the normal Ansible config representation. Models
+        containing write-only fields may override this method to omit values that
+        cannot be read back from the controller and therefore cannot safely be
+        replayed as declarative input.
+        """
+        return self.to_config(**kwargs)
 
     # --- Core Deserialization ---
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from API response dict (validation context ``mode=response``)."""
-        context = {"mode": "response", **(kwargs.pop("context", None) or {})}
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
+        """Create model instance from API response dict.
+
+        Marks the validation context with both ``mode="response"`` (resource-manager
+        convention) and ``source="response"`` (links tolerant-read convention) so
+        models can be lenient about controller-only shapes (e.g. links tolerate
+        policy types they cannot model) without relaxing validation of user input.
+        """
+        context = {"mode": "response", **(kwargs.pop("context", None) or {}), "source": "response"}
         return cls.model_validate(response, by_alias=True, context=context, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "NDBaseModel":
         """Create model instance from Ansible config dict.
 
         Strips None values recursively before validation so that Ansible's
@@ -212,14 +292,92 @@ class NDBaseModel(BaseModel, ABC):
     # --- Diff & Merge ---
 
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
-        """Export for diff comparison, excluding sensitive fields."""
+        """Export for diff comparison, excluding sensitive fields.
+
+        Secret-tagged fields are excluded from the comparison so a change to
+        only a secret is not (and cannot be) detected as a diff, keeping runs
+        idempotent when the controller does not echo secrets back on read.
+        """
+        exclude = set(self.exclude_from_diff) | self.secret_field_keys(by_alias=False)
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
-            exclude=self.exclude_from_diff or None,
+            exclude=exclude or None,
             mode="json",
             **kwargs,
         )
+
+    def to_reverse_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Export for the reverse pass of `get_diff` (issue #410), scoped to payload shape: fields in `exclude_from_diff` or
+        `payload_exclude_fields` are excluded, so only fields the PUT body can express participate in removal detection.
+        The dump is then scrubbed recursively, each nested model applying its own declarations: values equal to their
+        `reverse_diff_defaults` entry are stripped (ND echoes template defaults for unset fields), keys in
+        `reverse_diff_exclude` are stripped unconditionally (server-populated fields the proposed config can never
+        express), and keys retained by `extra="allow"` are stripped (undeclared server keys are not expressible in
+        config and must not count as removals). Like `to_diff_dict`, the top-level exclusion sets apply at the top
+        level only; nested exclusions are declared on the nested model via `reverse_diff_exclude`.
+
+        Derived from `to_diff_dict` (one dump, then in-place scoping) rather than a second `model_dump`, so subclass
+        `to_diff_dict` overrides scope the reverse pass too, and `get_diff` can reuse its forward dumps instead of
+        re-dumping both models.
+
+        ## Raises
+
+        None
+        """
+        data = self.to_diff_dict(**kwargs)
+        self._apply_reverse_diff_scope(data)
+        return data
+
+    def _apply_reverse_diff_scope(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Convert a `to_diff_dict` export into the reverse-pass shape, in place: pop the aliases of top-level
+        `payload_exclude_fields` (already absent when a field is also in `exclude_from_diff`), then run
+        `_scrub_reverse_diff_dict` so each nested model applies its own exclusions/extras/defaults declarations.
+
+        ## Raises
+
+        None
+        """
+        for field_name in self.payload_exclude_fields:
+            field_info = type(self).model_fields.get(field_name)
+            data.pop(field_info.alias if field_info is not None and field_info.alias else field_name, None)
+        self._scrub_reverse_diff_dict(data)
+
+    def _scrub_reverse_diff_dict(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Scrub `data` (an aliased dump of `self`) for removal detection: drop keys listed in `reverse_diff_exclude`, keys
+        retained only via `extra="allow"` (undeclared server keys), and keys whose value equals the model's declared
+        `reverse_diff_defaults` entry, then recurse into nested `NDBaseModel` fields so each nested model applies its own
+        declarations.
+
+        ## Raises
+
+        None
+        """
+        for alias in self.reverse_diff_exclude:
+            data.pop(alias, None)
+        # `model_extra` keys are stored under their wire spelling, matching the aliased dump.
+        for extra_key in getattr(self, "model_extra", None) or {}:
+            data.pop(extra_key, None)
+        for alias, default in self.reverse_diff_defaults.items():
+            if alias in data and data[alias] == default:
+                del data[alias]
+        for field_name, field_info in type(self).model_fields.items():
+            value = getattr(self, field_name, None)
+            if isinstance(value, NDBaseModel):
+                alias = field_info.alias or field_name
+                nested = data.get(alias)
+                if isinstance(nested, dict):
+                    # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
+                    value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
 
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.
@@ -234,12 +392,38 @@ class NDBaseModel(BaseModel, ABC):
                 to catch merge side effects the one-way subset test cannot see
                 (e.g. mutually exclusive counterpart fields that the merge
                 would clear).
+
+                When False (the ``replaced``/``overridden`` path), a subset
+                match is additionally cross-checked with ``has_removals`` over
+                the payload-scoped dumps (issue #410): a field present on
+                ``self`` (device) but absent from ``other`` (proposed) means
+                the full-payload PUT would reset it, so it must classify as a
+                difference. Empty existing values (``""``, ``[]``, ``{}``) are
+                normalized to absent so ND-echoed empty markers keep runs
+                idempotent.
+
+        Raises:
+            TypeError: If ``other`` is not an instance of this model's type
+                (same contract as ``merge``). The reverse pass applies
+                ``other``'s own ``reverse_diff_*`` declarations, so a
+                cross-type comparison is a programming error, not a diff.
         """
+        if not isinstance(other, type(self)):
+            raise TypeError(f"Cannot diff {type(other).__name__} against {type(self).__name__}. Both must be the same type.")
+
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False
+        if is_subset and not exclude_unset:
+            # Reuse the forward dumps for the reverse pass (they are not read again): scoping them in place
+            # avoids a second full model_dump per side (PR #422 review, efficiency finding).
+            self._apply_reverse_diff_scope(self_data)
+            # Same-class access; pylint cannot infer `other` shares this NDBaseModel API.
+            other._apply_reverse_diff_scope(other_data)  # pylint: disable=protected-access
+            if has_removals(self_data, other_data):
+                return False
         return is_subset
 
     def merge_would_change(self, other: "NDBaseModel") -> bool:
@@ -268,12 +452,21 @@ class NDBaseModel(BaseModel, ABC):
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
-        Merge another model's explicitly set, non-None values into this instance.
-        Recursively merges nested NDBaseModel fields.
-        Only fields present in ``other.model_fields_set`` are applied so that
-        Pydantic default values do not overwrite existing configuration.
+        # Summary
 
-        Returns self for chaining.
+        Merge another model's explicitly set, non-None values into this instance. Recursively merges nested `NDBaseModel` fields. Only fields present in
+        `other.model_fields_set` are applied so that Pydantic default values do not overwrite existing configuration. Returns `self` for chaining.
+
+        ## Raises
+
+        ### TypeError
+
+        - If `other` is not an instance of `type(self)`
+
+        ### ValueError
+
+        - If merging would change the discriminator value of a nested discriminated-union field (e.g. `policy_type`). Two union branches have disjoint
+          field sets, so a field-by-field merge across them is undefined; the transition is rejected with a message pointing at `state: replaced`
         """
         if not isinstance(other, type(self)):
             raise TypeError(f"Cannot merge {type(other).__name__} into {type(self).__name__}. " f"Both must be the same type.")
@@ -288,6 +481,13 @@ class NDBaseModel(BaseModel, ABC):
 
             current = getattr(self, field_name)
             if isinstance(current, NDBaseModel) and isinstance(value, NDBaseModel):
+                if type(current) is not type(value):
+                    discriminator = type(self).model_fields[field_name].discriminator
+                    if isinstance(discriminator, str):
+                        raise ValueError(
+                            f"Cannot change {discriminator} from '{getattr(current, discriminator)}' to '{getattr(value, discriminator)}' "
+                            f"with state: merged. Use state: replaced (or delete and re-create the resource) to change {discriminator}."
+                        )
                 current.merge(value)
             else:
                 setattr(self, field_name, value)

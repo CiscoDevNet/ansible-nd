@@ -1,0 +1,144 @@
+---
+# Replaced state tests for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Entry state (from merged.yaml): Ethernet1/31 carries routed_31_updated
+# (ip 10.99.31.5, routing_tag 54321); Ethernet1/32 and Ethernet1/33 carry
+# their base configs; Ethernet1/34 is a defaults-only routedHost.
+
+# --- REPLACED ---
+# routed_31 omits routing_tag, which routed_31_updated set - replacing with
+# routed_31 must clear it (field-removal detection in replaced state).
+#
+# Clearing the omitted routing_tag rides the replaced-state reverse diff pass
+# (PR #422) plus the routed models' reverse_diff_defaults tables. The module's
+# `after` output on this path is the proposed model itself (the state machine
+# replaces the existing item with it), so asserting routing_tag is absent from
+# `after` would pass vacuously - the wire is read back via nd_rest instead. The
+# REPLACED IDEMPOTENT block is the lab guard that the defaults tables correctly
+# normalize ND's echoed schema defaults.
+
+- name: "REPLACED: Replace Ethernet1/31 config entirely (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &replace_routed_31
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_31 }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_31
+
+- name: "REPLACED: Replace Ethernet1/31 config entirely (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_31
+  register: nm_replaced_31
+
+- name: "REPLACED: Verify Ethernet1/31 was replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_31 is changed
+      - nm_replaced_31 is changed
+
+- name: "REPLACED: Verify replaced values in after state"
+  vars:
+    routed_31_after: "{{ nm_replaced_31.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | first }}"
+  ansible.builtin.assert:
+    that:
+      - routed_31_after.config_data.network_os.policy.ip == "10.99.31.1"
+      - routed_31_after.config_data.network_os.policy.description == "Ansible integration test routed Ethernet1/31"
+
+- name: "REPLACED: Resolve test switch id for wire read-back"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: replaced_switches
+
+# Resolved at runtime from test_switch_ip; never hardcode it (9000v serials change on reload).
+- name: "REPLACED: Extract switch id for {{ test_switch_ip }}"
+  ansible.builtin.set_fact:
+    replaced_switch_id: >-
+      {{ (replaced_switches.current.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+         | first).switchId }}
+
+- name: "REPLACED: Read back Ethernet1/31 intent from the wire"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ replaced_switch_id }}/interfaces/Ethernet1%2F31"
+    method: get
+  register: replaced_31_readback
+
+- name: "REPLACED: Verify the omitted routing_tag was actually cleared on ND"
+  vars:
+    routed_31_wire_policy: "{{ replaced_31_readback.current.configData.networkOS.policy }}"
+  ansible.builtin.assert:
+    that:
+      - routed_31_wire_policy.ip == "10.99.31.1"
+      - (routed_31_wire_policy.routingTag | default('')) | string == ""
+
+# --- REPLACED IDEMPOTENCY ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply Ethernet1/31 replacement (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_31
+  check_mode: true
+  register: cm_replaced_idem_31
+
+- name: "REPLACED IDEMPOTENT: Re-apply Ethernet1/31 replacement (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_31
+  register: nm_replaced_idem_31
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_idem_31 is not changed
+      - nm_replaced_idem_31 is not changed
+
+# --- REPLACED DEFAULTS-ONLY (two-run convergence, PR #550 review) ---
+# Ethernet1/34 enters as a defaults-only routedHost. Replacing it with a
+# configured policy is a change; replacing back to policy_type only must clear
+# the configured fields (a change) and then converge on the next run, which
+# only works if the named defaults-only interface stays in before[].
+
+- name: "REPLACED DEFAULTS-ONLY: Replace Ethernet1/34 with a configured policy"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_34_configured }}"
+    state: replaced
+  register: nm_replaced_34_configured
+
+- name: "REPLACED DEFAULTS-ONLY: Replace Ethernet1/34 back to template defaults (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &replace_routed_34_defaults
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ routed_34_defaults_only }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_34_defaults
+
+- name: "REPLACED DEFAULTS-ONLY: Replace Ethernet1/34 back to template defaults (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_34_defaults
+  register: nm_replaced_34_defaults
+
+- name: "REPLACED DEFAULTS-ONLY: Verify both replacements were changes"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_34_configured is changed
+      - cm_replaced_34_defaults is changed
+      - nm_replaced_34_defaults is changed
+
+- name: "REPLACED DEFAULTS-ONLY IDEMPOTENT: Re-apply template defaults (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_34_defaults
+  check_mode: true
+  register: cm_replaced_34_defaults_idem
+
+- name: "REPLACED DEFAULTS-ONLY IDEMPOTENT: Re-apply template defaults (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *replace_routed_34_defaults
+  register: nm_replaced_34_defaults_idem
+
+- name: "REPLACED DEFAULTS-ONLY IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_34_defaults_idem is not changed
+      - nm_replaced_34_defaults_idem is not changed

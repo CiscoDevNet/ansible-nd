@@ -18,11 +18,13 @@
         peer2_switch_id: "{{ test_switch_ip_peer2 }}"
     state: deleted
   ignore_errors: true
+  when: test_manage_vpc_pairs
   tags: always
 
 - name: "SETUP: Pause for unpair convergence"
   ansible.builtin.pause:
     seconds: 30
+  when: test_manage_vpc_pairs
   tags: always
 
 - name: "SETUP: Create vPC pair"
@@ -32,9 +34,11 @@
     config:
       - "{{ vpc_pair_setup }}"
     state: merged
+  when: test_manage_vpc_pairs
   tags: always
 
 - name: "SETUP: Pause for pair-establishment convergence"
   ansible.builtin.pause:
     seconds: 30
+  when: test_manage_vpc_pairs
   tags: always

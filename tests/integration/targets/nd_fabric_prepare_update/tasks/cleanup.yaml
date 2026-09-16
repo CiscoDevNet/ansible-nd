@@ -1,0 +1,16 @@
+---
+# Post-test cleanup for nd_fabric_prepare_update.
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+#
+# Remove the update groups created by setup.yaml. Runs from an `always` block so the groups are
+# cleaned up even when a test fails.
+
+- name: "CLEANUP: Remove the update groups created by these tests"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: "{{ test_leaf_group_name }}"
+      - update_group_name: "{{ test_mixed_group_name }}"
+    state: deleted
+  failed_when: false

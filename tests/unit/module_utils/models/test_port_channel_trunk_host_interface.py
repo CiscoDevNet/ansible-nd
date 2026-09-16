@@ -168,7 +168,6 @@ def test_port_channel_trunk_host_interface_00100():
     assert instance.port_channel_mode is None
     assert instance.port_type_edge_trunk is None
     assert instance.ports is None
-    assert instance.ptp is None
     assert instance.qos is None
     assert instance.qos_policy is None
     assert instance.queuing_policy is None
@@ -1548,14 +1547,15 @@ def test_port_channel_trunk_host_interface_00840():
     # Summary
 
     Verify `from_response` accepts the wire-format response shape with `portChannelId` and `ptp` fields that
-    ND auto-fills. These fields are present in actual API responses but not always in the OpenAPI spec.
+    ND auto-fills. These fields are present in actual API responses but not in `intPortChannelTrunkHostTemplate`.
 
     ## Test
 
     - Response with portChannelId and ptp fields constructs valid model
     - `portChannelId` is a response-only echo of interface_name and is silently ignored (extra="ignore"), so it
       never leaks into config-shaped output
-    - `ptp` is a modeled field and is stored
+    - `ptp` is deliberately not modeled (ND persists a client-sent value but generates no CLI from it; deviation
+      interface-get-undocumented-ptp-field) and is likewise dropped at parse time
 
     ## Classes and Methods
 
@@ -1567,7 +1567,7 @@ def test_port_channel_trunk_host_interface_00840():
     with does_not_raise():
         instance = PortChannelTrunkHostInterfaceModel.from_response(response)
     assert not hasattr(instance.config_data.network_os.policy, "port_channel_id")
-    assert instance.config_data.network_os.policy.ptp is False
+    assert not hasattr(instance.config_data.network_os.policy, "ptp")
 
 
 # =============================================================================
