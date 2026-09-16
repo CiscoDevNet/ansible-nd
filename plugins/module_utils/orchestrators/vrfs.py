@@ -334,6 +334,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         transformed["core_data"] = core_data.to_payload()
         is_parent = getattr(self.strategy, "is_parent", False)
         is_multicluster = getattr(self.strategy, "is_multicluster", False)
+        if is_parent and is_multicluster:
+            transformed.pop("vlan_id", None)
         if not is_parent or (is_multicluster and self._has_explicit_fabric_data(config)):
             transformed["fabric_data"] = fabric_data.to_payload()
         return transformed
@@ -652,6 +654,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             normalized["vrfType"] = self._default_vrf_type()
         if normalized.get("vrfStatus") == "NA":
             normalized["vrfStatus"] = "notApplicable"
+        core_data = normalized.get("coreData")
+        if isinstance(core_data, dict):
+            core_data = dict(core_data)
+            for key in ("vrfVlanName", "vrfInterfaceDescription"):
+                core_data.setdefault(key, "")
+            normalized["coreData"] = core_data
         template_config = normalized.get("vrfTemplateConfig")
         if isinstance(template_config, str):
             try:
@@ -729,6 +737,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _enrich_mcfg_parent_vrfs_from_children(self, items: list[Any]) -> list[Any]:
         if not self._is_mcfg_parent() or not items:
+            return items
+        if self.rest_send.params.get("state") != "gathered":
             return items
 
         child_records = self._child_vrf_records_for_mcfg_parent()

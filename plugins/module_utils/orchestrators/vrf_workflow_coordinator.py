@@ -356,6 +356,9 @@ class VrfWorkflowCoordinator:
                                 f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
+                    if not self._has_child_vrf_options(child_cfg):
+                        self._trace("child_task_skipped_without_child_options", child_fabric=child_fabric_name, state=state)
+                        continue
                     child_tasks_dict = self._accumulate_child_task(
                         vrf,
                         child_cfg,
@@ -423,6 +426,11 @@ class VrfWorkflowCoordinator:
         return result
 
     # ── Config splitting helpers ──────────────────────────────────
+
+    @staticmethod
+    def _has_child_vrf_options(child_cfg: dict[str, Any]) -> bool:
+        """Return True when a child_fabric_config entry contains fabric-data options."""
+        return any(key != "fabric_name" and value is not None for key, value in child_cfg.items())
 
     @staticmethod
     def _remove_defaulted_mcfg_parent_fabric_options(parent_vrf: dict[str, Any]) -> None:

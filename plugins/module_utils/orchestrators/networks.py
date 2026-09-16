@@ -340,7 +340,52 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             l3_data = self._l3_data(config, network_type)
             if l3_data:
                 transformed["l3_data"] = l3_data
+        if self._is_mcfg_parent():
+            self._remove_mcfg_parent_non_echoed_fields(transformed)
         return transformed
+
+    @staticmethod
+    def _remove_mcfg_parent_non_echoed_fields(transformed: dict[str, Any]) -> None:
+        """
+        Remove parent-scope fields that oneManage does not echo for MCFG Networks.
+
+        The MCFG parent endpoint owns Network identity and parent L3 gateway
+        fields.  VLAN values and default child-fabric flags are not echoed by
+        oneManage parent GETs, so retaining them in the proposed parent model
+        causes repeated PUTs on idempotent replaced/overridden runs.
+        """
+        transformed.pop("vlan_id", None)
+
+        l2_data = transformed.get("l2_data")
+        if isinstance(l2_data, dict):
+            l2_data = dict(l2_data)
+            l2_data.pop("vlanName", None)
+            if l2_data.get("xConnect") is False:
+                l2_data.pop("xConnect")
+            if l2_data.get("fabricData") in ({}, None):
+                l2_data.pop("fabricData", None)
+            if l2_data:
+                transformed["l2_data"] = l2_data
+            else:
+                transformed.pop("l2_data", None)
+
+        l3_data = transformed.get("l3_data")
+        if isinstance(l3_data, dict):
+            l3_data = dict(l3_data)
+            fabric_data = l3_data.get("fabricData")
+            if isinstance(fabric_data, dict):
+                fabric_data = dict(fabric_data)
+                for key in ("gatewayOnBorder", "ipv4Trm", "ipv6Trm", "netflow"):
+                    if fabric_data.get(key) is False:
+                        fabric_data.pop(key)
+                if fabric_data:
+                    l3_data["fabricData"] = fabric_data
+                else:
+                    l3_data.pop("fabricData", None)
+            if l3_data:
+                transformed["l3_data"] = l3_data
+            else:
+                transformed.pop("l3_data", None)
 
     @staticmethod
     def _normalize_vlan_network_type(value: Any) -> str:
@@ -732,6 +777,15 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 normalized["vlanNetworkType"] = VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value
             elif template_type == "isolated":
                 normalized["vlanNetworkType"] = VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value
+        if self._is_mcfg_parent():
+            l3_data = normalized.get("l3Data")
+            if isinstance(l3_data, dict):
+                l3_data = dict(l3_data)
+                if l3_data.get("secondaryGatewayIpv4Collection") == []:
+                    l3_data.pop("secondaryGatewayIpv4Collection")
+                if l3_data.get("secondaryGatewayIpv6Collection") == []:
+                    l3_data.pop("secondaryGatewayIpv6Collection")
+                normalized["l3Data"] = l3_data
         return normalized
 
     def _normalize_query_network_items(self, items: Any) -> list[Any]:
@@ -945,7 +999,10 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             l2_data = dict(l2_data)
             l2_data["vlanName"] = ""
             l2_data["fabricData"] = {}
+            l2_data.setdefault("xConnect", False)
             payload["l2Data"] = l2_data
+        else:
+            payload["l2Data"] = {"vlanName": "", "fabricData": {}, "xConnect": False}
 
         if not self._allows_l3_data(payload.get("vlanNetworkType")):
             payload.pop("l3Data", None)
@@ -954,6 +1011,15 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if payload.get("networkMode") == NetworkLayer.LAYER2.value:
             payload["l3Data"] = self._mcfg_parent_default_l3_data()
             return payload
+
+        l3_data = payload.get("l3Data")
+        if isinstance(l3_data, dict):
+            l3_data = dict(l3_data)
+            fabric_data = dict(l3_data.get("fabricData") or {})
+            for key in ("gatewayOnBorder", "ipv4Trm", "ipv6Trm", "netflow"):
+                fabric_data.setdefault(key, False)
+            l3_data["fabricData"] = fabric_data
+            payload["l3Data"] = l3_data
 
         return payload
 
