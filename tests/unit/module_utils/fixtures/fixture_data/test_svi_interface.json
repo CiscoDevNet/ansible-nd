@@ -291,5 +291,233 @@
                 {"name": "vlan334", "status": "success"}
             ]
         }
+    },
+    "test_query_all_xe_00450a": {
+        "TEST_NOTES": [
+            "Fabric summary (fabric exists)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "nd"
+        }
+    },
+    "test_query_all_xe_00450b": {
+        "TEST_NOTES": [
+            "Switch list: one Catalyst leaf"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_query_all_xe_00450c": {
+        "TEST_NOTES": [
+            "Catalyst switch interfaces, shaped like the ND 4.2.1.10 echo of 2026-09-16: iosXeSvi (kept), iosXeSviShutNoShut (kept), a userDefined SVI (filtered), the discovered Vlan1 record with policy null (filtered, must not raise), an svi record with no configData (filtered), an ethernet (filtered)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vlan990",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "description": "probe-xe",
+                                "ip": "10.99.90.1",
+                                "ipRedirects": true,
+                                "policyType": "iosXeSvi",
+                                "prefix": 24
+                            }
+                        }
+                    },
+                    "operData": {
+                        "adminStatus": "unknown",
+                        "operationalDescription": "Not discovered",
+                        "operationalStatus": "unknown",
+                        "portChannelId": -1,
+                        "switchName": "C1_LE1",
+                        "vlanRange": "0"
+                    }
+                },
+                {
+                    "interfaceName": "Vlan991",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": false,
+                                "policyType": "iosXeSviShutNoShut"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Vlan992",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "userDefined"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Vlan1",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": null
+                        }
+                    },
+                    "operData": {
+                        "adminStatus": "unknown",
+                        "operationalDescription": "Not discovered",
+                        "operationalStatus": "unknown",
+                        "portChannelId": -1,
+                        "switchName": "C1_LE1",
+                        "vlanRange": "0"
+                    }
+                },
+                {
+                    "interfaceName": "Vlan2",
+                    "interfaceType": "svi"
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910a": {
+        "TEST_NOTES": [
+            "Switch list: one Catalyst leaf and one Nexus leaf"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910b": {
+        "TEST_NOTES": [
+            "POST /interfaces on CAT9KV1701: one (switch, policyType) group"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "vlan990",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910c": {
+        "TEST_NOTES": [
+            "POST /interfaces on CAT9KV1701: one (switch, policyType) group"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "vlan991",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910d": {
+        "TEST_NOTES": [
+            "POST /interfaces on FDO11111AAA: one (switch, policyType) group"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "vlan333",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_bulk_create_groups_00920a": {
+        "TEST_NOTES": [
+            "Switch list: one Catalyst leaf and one Nexus leaf"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
     }
 }

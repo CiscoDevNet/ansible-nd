@@ -275,10 +275,24 @@ class SviPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for SVI (switched virtual interface) interfaces.
+    NX-OS policy type managed by `nd_interface_svi`: the `svi` member of the ND create-side `createInterfaceSviManagedNexus` mapping
+    (`int_vlan` template). `vpcBackupSvi` / `underlaySvi` are fabric-provisioned and `userDefined` is intentionally excluded.
     """
 
     SVI = "svi"
+
+
+class XeSviPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_svi` (issue #540): the `iosXeSvi` (`ios_xe_int_vlan` template) and `iosXeSviShutNoShut`
+    (`ios_xe_int_vlan_admin_state` template, admin state only) members of the ND create-side `createInterfaceSviManagedXe` mapping.
+    `userDefined` is intentionally excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SVI = "iosXeSvi"
+    IOS_XE_SVI_SHUT_NO_SHUT = "iosXeSviShutNoShut"
 
 
 class SubinterfaceManagedPolicyTypeEnum(str, Enum):
