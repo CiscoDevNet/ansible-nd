@@ -390,7 +390,6 @@ EXAMPLES = r"""
             policy:
               admin_state: true
               access_vlan: 100
-              mtu: "8000"
               port_channel_mode: active
               ports:
                 - GigabitEthernet1/0/2
@@ -532,9 +531,9 @@ after:
     interface_name: port-channel501
     config_data:
       network_os:
-        network_os_type: ios-xe
+        network_os_type: nx-os
         policy:
-          policy_type: iosXeAccessPoHost
+          policy_type: accessPoHost
           admin_state: true
           access_vlan: 200
           ports:

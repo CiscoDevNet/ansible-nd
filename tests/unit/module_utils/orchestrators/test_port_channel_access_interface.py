@@ -1351,7 +1351,7 @@ def test_port_channel_access_orchestrator_01020() -> None:
     "ports, match",
     [
         (["GigabitEthernet1/0/2"], r"member=GigabitEthernet1/0/2, current policy=iosXeTrunkHost, required=iosXeAccess.*nd_interface_ethernet_access"),
-        (["GigabitEthernet1/0/9"], r"member=GigabitEthernet1/0/9, current policy=absent"),
+        (["GigabitEthernet1/0/9"], r"member=GigabitEthernet1/0/9, current policy=absent from the switch inventory"),
     ],
 )
 def test_port_channel_access_orchestrator_01100(ports, match) -> None:

@@ -779,7 +779,7 @@
         }
     },
     "test_port_channel_trunk_host_orchestrator_01100a": {
-        "TEST_NOTES": ["IOS-XE member-mode preflight (issues #536/#537): switches list (1 switch); shared verbatim by 01100a/01110a/01120a"],
+        "TEST_NOTES": ["IOS-XE member-mode preflight (issues #536/#537): switches list (1 switch) for the single trunk preflight test test_port_channel_trunk_host_orchestrator_01100."],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
@@ -788,7 +788,7 @@
     },
     "test_port_channel_trunk_host_orchestrator_01100b": {
         "TEST_NOTES": [
-            "IOS-XE member-mode preflight (issues #536/#537) inventory for FDO11111AAA: GigabitEthernet1/0/2 (iosXeTrunkHost), GigabitEthernet1/0/3 (free iosXeAccess), GigabitEthernet1/0/4 (iosXeAccessPoMember, portChannelId Port-channel101, and port-channel101 lists it in ports so it reads as owned by the same port-channel for an idempotent re-apply), GigabitEthernet1/0/5 (iosXeAccessPoMember, portChannelId Port-channel102, and port-channel102 lists it in ports), plus an unrelated NX-OS Ethernet1/1 trunkHost. GigabitEthernet1/0/9 is absent. Shared verbatim by 01100b/01110b/01120b."
+            "IOS-XE member-mode preflight (issues #536/#537) inventory for FDO11111AAA: GigabitEthernet1/0/3 carries iosXeAccess, the member the iosXeTrunkPoHost negative case in test_port_channel_trunk_host_orchestrator_01100 names. The remaining records (GigabitEthernet1/0/2 iosXeTrunkHost, GigabitEthernet1/0/4 and GigabitEthernet1/0/5 iosXeAccessPoMember, port-channel101/port-channel102, and the unrelated NX-OS Ethernet1/1 trunkHost) are unused context."
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
