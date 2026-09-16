@@ -89,11 +89,11 @@ def _build_orchestrator(
     return SviInterfaceOrchestrator(rest_send=rest_send)
 
 
-def _build_model(switch_ip: str = "192.168.1.1", interface_name: str = "vlan333", **policy_kwargs) -> SviInterfaceModel:
+def _build_model(switch_ip: str = "192.168.1.1", interface_name: str = "vlan333", network_os_type: str = "nx-os", **policy_kwargs) -> SviInterfaceModel:
     """Build an SviInterfaceModel with optional policy fields populated."""
     config_data = None
     if policy_kwargs:
-        config_data = {"mode": "managed", "network_os": {"network_os_type": "nx-os", "policy": policy_kwargs}}
+        config_data = {"mode": "managed", "network_os": {"network_os_type": network_os_type, "policy": policy_kwargs}}
     return SviInterfaceModel.from_config({"switch_ip": switch_ip, "interface_name": interface_name, "interface_type": "svi", "config_data": config_data})
 
 
@@ -548,3 +548,128 @@ def test_svi_orchestrator_01000() -> None:
     assert policy["policyType"] == "svi"
     assert policy["description"] == "just description"
     assert "hsrpVersion" not in policy
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #540) — query_all managed set and create_bulk grouping
+# =============================================================================
+
+
+def test_svi_orchestrator_00450() -> None:
+    """
+    # Summary
+
+    Verify `query_all` keeps both IOS-XE managed policy types (`iosXeSvi`, `iosXeSviShutNoShut`), filters `userDefined`, and
+    tolerates the records a Catalyst switch list carries that the NX-OS-only filter never saw: the discovered `Vlan1` record whose
+    `policy` is `null` and an `svi` record with no `configData` at all (lab-verified shapes, ND 4.2.1.10, 2026-09-16).
+
+    ## Test
+
+    - state is `overridden`, one Catalyst switch
+    - Result contains exactly `vlan990` (iosXeSvi) and `Vlan991` (iosXeSviShutNoShut) with `switchIp` injected
+    - `Vlan992` (userDefined), `Vlan1` (policy null), `Vlan2` (no configData) and the ethernet are filtered without raising
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_svi("test_query_all_xe_00450a")
+        yield responses_svi("test_query_all_xe_00450b")
+        yield responses_svi("test_query_all_xe_00450c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
+        result = orchestrator.query_all()
+
+    by_name = {iface["interfaceName"]: iface for iface in result}
+    assert set(by_name) == {"vlan990", "Vlan991"}
+    assert by_name["vlan990"]["switchIp"] == "192.168.12.181"
+    assert by_name["Vlan991"]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeSviShutNoShut"
+
+
+def test_svi_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` sends one POST per `(switch, policyType)` group (shared `bulk_create_groups`, issue #409): ND rejects an
+    `interfaces[]` array that mixes `iosXeSvi` and `iosXeSviShutNoShut` on one switch (lab-verified 2026-09-16 on 4.2.1.10 and
+    4.3.1.175, "Mixed policy types ... are not allowed in bulk interface creation").
+
+    ## Test
+
+    - Two IOS-XE SVIs of different policy types on the Catalyst and one NX-OS SVI on a Nexus leaf
+    - Three POSTs consumed (switch GET + three create responses) and all three interfaces queued for deploy
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    """
+
+    def responses():
+        yield responses_svi("test_create_bulk_grouped_00910a")
+        yield responses_svi("test_create_bulk_grouped_00910b")
+        yield responses_svi("test_create_bulk_grouped_00910c")
+        yield responses_svi("test_create_bulk_grouped_00910d")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses)
+        models = [
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan990", network_os_type="ios-xe", admin_state=True, ip="10.99.90.1", prefix=24),
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan991", network_os_type="ios-xe", policy_type="iosXeSviShutNoShut", admin_state=False),
+            _build_model(interface_name="vlan333", admin_state=True, ip="10.99.99.1", prefix=24),
+        ]
+        results = orchestrator.create_bulk(models)
+
+    assert len(results) == 3
+    assert len(orchestrator.rest_send.responses) == 4
+    assert ("vlan990", "CAT9KV1701") in orchestrator._pending_deploys
+    assert ("vlan991", "CAT9KV1701") in orchestrator._pending_deploys
+    assert ("vlan333", "FDO11111AAA") in orchestrator._pending_deploys
+
+
+def test_svi_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    Verify the grouping keys `bulk_create_groups` builds for the SVI model: `policy_type` is read through the model's discriminated
+    union for both branches and the group order follows the first model of each group.
+
+    ## Test
+
+    - Same three models as test 00910
+    - Keys are `(CAT9KV1701, iosXeSvi)`, `(CAT9KV1701, iosXeSviShutNoShut)`, `(FDO11111AAA, svi)` in that order
+    - Each payload carries the injected `switchId` and its `policyType`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    - NDBaseInterfaceOrchestrator._desired_policy_type()
+    """
+
+    def responses():
+        yield responses_svi("test_bulk_create_groups_00920a")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses)
+        models = [
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan990", network_os_type="ios-xe", admin_state=True, ip="10.99.90.1", prefix=24),
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan991", network_os_type="ios-xe", policy_type="iosXeSviShutNoShut", admin_state=False),
+            _build_model(interface_name="vlan333", admin_state=True, ip="10.99.99.1", prefix=24),
+        ]
+        groups = orchestrator.bulk_create_groups(models)
+
+    keys = [(key.switch_id, key.policy_type) for key in groups]
+    assert keys == [("CAT9KV1701", "iosXeSvi"), ("CAT9KV1701", "iosXeSviShutNoShut"), ("FDO11111AAA", "svi")]
+    for key, items in groups.items():
+        for item in items:
+            assert item.payload["switchId"] == key.switch_id
+            assert item.payload["configData"]["networkOS"]["policy"]["policyType"] == key.policy_type
