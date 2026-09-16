@@ -27,6 +27,9 @@ description:
 - On IOS-XE the members named in O(config[].config_data.network_os.policy.ports) must already be trunk-host interfaces
   (C(iosXeTrunkHost), the fabric default); convert them with M(cisco.nd.nd_interface_ethernet_trunk_host) first. The
   module fails before any change when they are not.
+- On IOS-XE switches, O(state=deleted) and O(state=overridden) remove the port-channel from Nexus Dashboard and detach its
+  members, but Nexus Dashboard does not remove the C(interface Port-channelN) object from the switch running configuration.
+  Remove it on the switch if it must not remain.
 author:
 - Allen Robel (@allenrobel)
 options:
