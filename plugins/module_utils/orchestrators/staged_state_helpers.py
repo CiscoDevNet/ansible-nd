@@ -9,7 +9,6 @@ from typing import Any
 
 STAGED_STATE = "staged"
 STAGED_CRUD_STATE = "replaced"
-STAGED_QUERY_STATE = "overridden"
 
 
 def crud_module_args(module_args: dict) -> dict:
@@ -38,35 +37,6 @@ def crud_module_args(module_args: dict) -> dict:
     return crud_args
 
 
-def query_module_args(module_args: dict) -> dict:
-    """
-    # Summary
-
-    Return module arguments for the current-state query phase.
-
-    The staged workflow uses overridden query behavior with an empty config so
-    omitted resources can be discovered without validating desired write data
-    under the overridden state context.
-
-    Args:
-        module_args: Original module arguments.
-
-    Returns:
-        Original module arguments, or a shallow copy with staged mapped to overridden
-        and config cleared for query-only discovery.
-
-    ## Raises
-
-    This function does not raise directly.
-    """
-    if module_args.get("state") != STAGED_STATE:
-        return module_args
-    query_args = dict(module_args)
-    query_args["state"] = STAGED_QUERY_STATE
-    query_args["config"] = []
-    return query_args
-
-
 def prepare_crud_state(state_machine: Any, requested_state: str) -> None:
     """
     # Summary
@@ -90,6 +60,10 @@ def prepare_crud_state(state_machine: Any, requested_state: str) -> None:
     """
     if requested_state != STAGED_STATE:
         return
+    # Staged construction intentionally uses the user-requested state for one
+    # unscoped current-state query.  Existing/before models are built from API
+    # response without state context; current VRF/Network models do not read the
+    # proposed-config validation context, so flipping before CRUD is sufficient.
     state_machine.state = STAGED_CRUD_STATE
     results = getattr(state_machine, "results", None)
     if results is not None:

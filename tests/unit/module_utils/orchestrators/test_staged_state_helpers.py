@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.staged_state_helpers import (
     crud_module_args,
     prepare_crud_state,
-    query_module_args,
 )
 
 
@@ -23,20 +22,10 @@ def test_staged_crud_module_args_maps_to_replaced_without_mutating_original():
     assert module_args["state"] == "staged"
 
 
-def test_staged_query_module_args_maps_to_overridden_without_mutating_original():
-    module_args = {"state": "staged", "config": [{"name": "BLUE"}]}
-
-    result = query_module_args(module_args)
-
-    assert result == {"state": "overridden", "config": []}
-    assert module_args["state"] == "staged"
-
-
 def test_non_staged_module_args_are_returned_unchanged():
     module_args = {"state": "merged", "config": []}
 
     assert crud_module_args(module_args) is module_args
-    assert query_module_args(module_args) is module_args
 
 
 def test_prepare_crud_state_maps_only_staged_to_replaced():

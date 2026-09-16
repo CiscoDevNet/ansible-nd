@@ -425,8 +425,9 @@ def test_network_staged_detaches_omitted_networks_without_running_overridden_cru
     )
 
     assert result["changed"] is True
-    assert ("new_state_machine", "overridden", []) in coordinator.calls
-    assert ("new_state_machine", "replaced", config) in coordinator.calls
+    assert coordinator.calls.count(("new_state_machine", "staged", config)) == 1
+    assert not any(call[0] == "new_state_machine" and call[1] == "overridden" for call in coordinator.calls)
+    assert not any(call[0] == "new_state_machine" and call[1] == "replaced" for call in coordinator.calls)
     assert ("manage_state", "replaced") in coordinator.calls
     assert ("attachment_query", ["BLUE_NET", "OMIT_NET"]) in coordinator.calls
     assert (

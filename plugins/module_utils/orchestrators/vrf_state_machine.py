@@ -32,7 +32,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.staged_state_helpers import (
     crud_module_args,
     prepare_crud_state,
-    query_module_args,
 )
 
 
@@ -171,19 +170,10 @@ class VrfStateMachine:
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_vrf_names = self.coordinator._configured_vrf_names(config)
 
-        current_vrf_names = []
-        if state == "staged":
-            query_sm, query_original_config, query_original_state = self.coordinator._new_state_machine(query_module_args(module_args), strategy)
-            try:
-                current_vrf_names = self._vrf_names_from_models(query_sm.existing)
-            finally:
-                self.coordinator._restore_state_machine_params(query_original_config, query_original_state)
-
-        sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
+        sm, original_config, original_state = self.coordinator._new_state_machine(module_args, strategy)
         try:
             prepare_crud_state(sm, state)
-            if state != "staged":
-                current_vrf_names = self._vrf_names_from_models(sm.existing)
+            current_vrf_names = self._vrf_names_from_models(sm.existing)
             current_vrf_name_set = set(current_vrf_names)
             desired_vrf_name_set = set(desired_vrf_names)
             current_desired_vrf_names = [vrf_name for vrf_name in desired_vrf_names if vrf_name in current_vrf_name_set]
