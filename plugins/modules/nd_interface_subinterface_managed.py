@@ -10,12 +10,14 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_subinterface_managed
 version_added: "2.0.0"
-short_description: Manage L3 (managed) subinterfaces on Cisco Nexus Dashboard
+short_description: Manage L3 (managed) subinterfaces (subinterface, iosXeSubinterface, iosXeSubinterfaceShutNoshut) on Cisco Nexus Dashboard
 description:
 - Manage L3 subinterfaces (managed variant) on Cisco Nexus Dashboard.
-- A subinterface is created on an Ethernet or Port-channel parent interface; the parent type is encoded in the
-  O(config[].interface_name) value (e.g. C(Ethernet1/3.2) or C(Port-channel10.5)).
-- This module manages the managed variant only (C(policyType) C(subinterface)).
+- Supports NX-OS (C(subinterface)) and IOS-XE (C(iosXeSubinterface), C(iosXeSubinterfaceShutNoshut)) subinterfaces; select the
+  platform with O(config[].config_data.network_os.network_os_type).
+- A subinterface is created on a physical or Port-channel parent interface; the parent type is encoded in the
+  O(config[].interface_name) value (e.g. C(Ethernet1/3.2), C(GigabitEthernet1/0/2.100) or C(Port-channel10.5)).
+- This module manages the managed variant only.
   The unmanaged variant (C(policyType) C(monitorSubinterface)) is handled by C(nd_interface_subinterface_unmanaged).
 - It supports creating, updating, and deleting subinterface configurations on switches within a fabric.
 - Each config item targets a single subinterface identified by O(config[].interface_name).
@@ -46,8 +48,11 @@ options:
         required: true
       interface_name:
         description:
-        - The full subinterface name, including the dot-separated sub-id (e.g. C(Ethernet1/3.2), C(Port-channel10.5)).
-        - The parent kind is inferred from the prefix; only Ethernet and Port-channel parents are supported.
+        - The full subinterface name, including the dot-separated sub-id (e.g. C(Ethernet1/3.2), C(GigabitEthernet1/0/2.100),
+          C(Port-channel10.5)).
+        - The parent kind is inferred from the prefix. Abbreviated C(Ethernet), C(GigabitEthernet) and C(Port-channel) parents
+          (e.g. C(eth1/3.2), C(gi1/0/2.100), C(po10.5)) are expanded to their canonical spelling; other Catalyst interface families
+          (e.g. C(TenGigabitEthernet1/0/1.5)) are passed through as typed.
         type: str
         required: true
       config_data:
@@ -60,87 +65,126 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                type: str
+                default: nx-os
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
                 - The policy configuration for the subinterface.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The subinterface policy template to apply. This is a discriminator that determines which of the remaining
+                      C(policy) suboptions are applicable.
+                    - Optional. When omitted it is derived from O(config[].config_data.network_os.network_os_type),
+                      V(subinterface) for C(nx-os) and V(iosXeSubinterface) for C(ios-xe).
+                    - V(iosXeSubinterfaceShutNoshut) is the IOS-XE admin-state-only template; it accepts only
+                      O(config[].config_data.network_os.policy.admin_state).
+                    type: str
+                    choices: [ subinterface, iosXeSubinterface, iosXeSubinterfaceShutNoshut ]
                   admin_state:
                     description:
                     - The administrative state of the subinterface.
                     - Defaults to V(true) when unset during creation.
+                    - Applies to all policy_type values.
                     type: bool
                   description:
                     description:
                     - Subinterface description.
-                    - Maximum 254 characters.
+                    - Maximum 254 characters for C(subinterface), 1-200 characters for C(iosXeSubinterface).
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: str
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the subinterface.
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: str
                   mtu:
                     description:
                     - Subinterface MTU.
                     - Valid range is 576-9216.
+                    - Applies when policy_type is C(subinterface).
                     type: int
                   vlan_id:
                     description:
                     - 802.1Q VLAN tag for the subinterface.
-                    - Valid range is 2-4094.
+                    - Valid range is 2-4094 for C(subinterface) and 1-4094 for C(iosXeSubinterface).
+                    - Required by the controller when creating an C(iosXeSubinterface).
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: int
                   vrf_interface:
                     description:
                     - VRF the subinterface is bound to.
-                    - Use V(default) for the default VRF.
+                    - On NX-OS use V(default) for the default VRF. On IOS-XE omit this option for the global routing table; the value is
+                      rendered as C(vrf forwarding) on the Catalyst and must name a VRF that exists there.
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: str
                   ip:
                     description:
                     - IPv4 address of the subinterface.
+                    - Required by the controller when creating an C(iosXeSubinterface).
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: str
                   prefix:
                     description:
                     - IPv4 netmask length used with O(config[].config_data.network_os.policy.ip).
                     - Valid range is 8-31.
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: int
                   ipv6:
                     description:
                     - IPv6 address of the subinterface.
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: str
                   ipv6_prefix:
                     description:
                     - IPv6 netmask length used with O(config[].config_data.network_os.policy.ipv6).
-                    - Valid range is 1-127.
+                    - Valid range is 1-127 for C(subinterface) and 64-127 for C(iosXeSubinterface).
+                    - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
                     type: int
                   routing_tag:
                     description:
                     - Routing tag associated with the subinterface IP address.
+                    - Applies when policy_type is C(subinterface).
                     type: str
                   ip_redirects:
                     description:
                     - Disable both IPv4/IPv6 redirects on the subinterface.
+                    - Applies when policy_type is C(subinterface).
                     type: bool
                   pim_sparse:
                     description:
                     - Enable PIM sparse-mode on the subinterface.
+                    - Applies when policy_type is C(subinterface).
                     type: bool
                   pim_dr_priority:
                     description:
                     - Priority for PIM DR election on the subinterface.
                     - Valid range is 1-4294967295.
+                    - Applies when policy_type is C(subinterface).
                     type: int
                   netflow:
                     description:
                     - Whether netflow is enabled on the subinterface.
+                    - Applies when policy_type is C(subinterface).
                     type: bool
                   netflow_monitor:
                     description:
                     - Layer 3 Netflow monitor name.
                     - Required when O(config[].config_data.network_os.policy.netflow=true).
+                    - Applies when policy_type is C(subinterface).
                     type: str
                   netflow_sampler:
                     description:
                     - Netflow sampler name (applicable to N7K only).
+                    - Applies when policy_type is C(subinterface).
                     type: str
   config_actions:
     description:
@@ -179,15 +223,18 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS L3 subinterfaces only (interface_type C(subInterface), mode C(managed),
-  network_os_type C(nx-os), policy_type C(subinterface)). These values are hardcoded by the module and are not user-configurable.
+- This module supports both NX-OS and IOS-XE managed L3 subinterfaces (interface_type C(subInterface), mode C(managed)), selected via
+  O(config[].config_data.network_os.network_os_type).
+- This module manages the C(subinterface) (NX-OS) and C(iosXeSubinterface) / C(iosXeSubinterfaceShutNoshut) (IOS-XE) policy
+  templates. Subinterfaces carrying any other policy type (e.g. C(ipfmSubinterface), the ND-internal C(iosXeInternalSubinterface), or
+  C(userDefined)) are never read or modified by this module.
 - The unmanaged variant (C(policyType) C(monitorSubinterface)) is handled by C(nd_interface_subinterface_unmanaged).
 - The parent interface must be in routed (L3) mode before a subinterface can be created on it.
   ND rejects subinterface POST against L2 access/trunk parents with the message
   "Sub-interface can be created only on routed physical or port-channel interfaces (discovered mode is not routed)".
   In practice this blocks subinterfaces on typical vPC port-channels and peer-link port-channels, which are L2.
-  Change the parent's policy to a routed type (e.g. routedHost for Ethernet, l3PortChannel for Port-channel) before
-  using this module; the module does not auto-normalize the parent.
+  Change the parent's policy to a routed type (e.g. routedHost / iosXeRoutedHost for a physical parent, l3PortChannel for
+  Port-channel) before using this module; the module does not auto-normalize the parent.
 """
 
 EXAMPLES = r"""
@@ -244,6 +291,35 @@ EXAMPLES = r"""
       deploy: true
     state: merged
 
+- name: Create IOS-XE subinterfaces on a Catalyst routed parent (a full iosXeSubinterface and an admin-state-only iosXeSubinterfaceShutNoshut)
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: CAMPUS1
+    config:
+      - switch_ip: 192.168.12.181
+        interface_name: GigabitEthernet1/0/2.100
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              admin_state: true
+              description: Catalyst campus subinterface 100
+              vlan_id: 100
+              ip: 10.99.100.1
+              prefix: 24
+              ipv6: 2001:db8:100::1
+              ipv6_prefix: 64
+      - switch_ip: 192.168.12.181
+        interface_name: GigabitEthernet1/0/2.101
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeSubinterfaceShutNoshut
+              admin_state: false
+    config_actions:
+      deploy: true
+    state: merged
+
 - name: Replace the configuration of a specific subinterface
   cisco.nd.nd_interface_subinterface_managed:
     fabric_name: my_fabric
@@ -288,6 +364,18 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: Ethernet1/3.2
+    config_actions:
+      deploy: true
+    state: deleted
+
+- name: Delete IOS-XE subinterfaces from a Catalyst leaf
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: CAMPUS1
+    config:
+      - switch_ip: 192.168.12.181
+        interface_name: GigabitEthernet1/0/2.100
+      - switch_ip: 192.168.12.181
+        interface_name: GigabitEthernet1/0/2.101
     config_actions:
       deploy: true
     state: deleted
