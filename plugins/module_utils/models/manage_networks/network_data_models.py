@@ -321,7 +321,7 @@ class NetworkCommonModel(NDBaseModel):
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set[str]] = {"network_status"}
     payload_exclude_fields: ClassVar[set[str]] = {"network_status"}
-    reverse_diff_exclude: ClassVar[set[str]] = {"displayName"}
+    reverse_diff_exclude: ClassVar[set[str]] = {"displayName", "primaryNetworkName", "normalNetworkName"}
 
     fabric_name: str | None = Field(default=None, alias="fabricName")
     network_name: str = Field(default=..., alias="networkName", max_length=128)
@@ -389,7 +389,59 @@ class NetworkBaseModel(NetworkCommonModel):
                 fabric_data.pop("enableIr", None)
                 l2_data["fabricData"] = fabric_data
             normalized["l2Data"] = l2_data
+        if (
+            normalized.get("layer") == NetworkLayer.LAYER2.value
+            and normalized.get("vlanNetworkType") == VlanNetworkType.PRIVATE_PRIMARY.value
+            and cls._is_layer2_default_l3_data(normalized.get("l3Data"))
+        ):
+            normalized.pop("l3Data", None)
         return super().from_response(normalized, **kwargs)
+
+    @staticmethod
+    def _is_layer2_default_l3_data(l3_data: Any) -> bool:
+        """
+        # Summary
+
+        Return True when an L2 network readback contains only controller-supplied L3 defaults.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(l3_data, dict):
+            return False
+        defaults = dict(l3_data)
+        fabric_data = defaults.pop("fabricData", None)
+        if isinstance(fabric_data, dict):
+            fabric_defaults = dict(fabric_data)
+            for key in ("gatewayOnBorder", "ipv4Trm", "ipv6Trm", "netflow"):
+                if fabric_defaults.get(key) is False:
+                    fabric_defaults.pop(key)
+            for key in ("dhcpServers", "loopbackId", "igmpVersion", "l2NetflowMonitor", "l3NetflowMonitor"):
+                if fabric_defaults.get(key) in (None, "", [], {}):
+                    fabric_defaults.pop(key, None)
+            if fabric_defaults:
+                return False
+        elif fabric_data not in (None, "", [], {}):
+            return False
+
+        for key, value in {
+            "arpSuppression": False,
+            "mtu": 9216,
+        }.items():
+            if defaults.get(key) == value:
+                defaults.pop(key)
+        for key in (
+            "gatewayIpv4Address",
+            "gatewayIpv6Address",
+            "secondaryGatewayIpv4Collection",
+            "secondaryGatewayIpv6Collection",
+            "vlanInterfaceDescription",
+            "routingTag",
+        ):
+            if defaults.get(key) in (None, "", [], {}):
+                defaults.pop(key, None)
+        return not defaults
 
 
 class VxlanNetworkModel(NetworkBaseModel):

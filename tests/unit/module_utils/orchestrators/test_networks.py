@@ -529,6 +529,7 @@ def test_private_secondary_network_payload_is_generated_from_primary_id():
     assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
     assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
     assert payload["networkTemplateConfig"] == {
+        "enableIR": "true",
         "isLayer2Only": "true",
         "networkMode": "layer2",
         "networkName": "PVLAN_COMMUNITY",
@@ -541,8 +542,119 @@ def test_private_secondary_network_payload_is_generated_from_primary_id():
         "vlanName": "PVLAN_COMMUNITY_VLAN",
         "mcastGroup": "239.1.1.101",
     }
+    assert "l2Data" not in payload
     assert "l3Data" not in payload
     assert model.to_config()["vlan_network_type"] == "community"
+
+
+def test_private_secondary_readback_is_idempotent_after_template_defaults():
+    orchestrator = _orchestrator()
+
+    existing = orchestrator.model_class.from_response(
+        orchestrator._normalize_query_network_item(
+            {
+                "networkName": "PVLAN_COMMUNITY",
+                "displayName": "PVLAN_COMMUNITY",
+                "networkType": "userDefined",
+                "vlanNetworkType": "privateSecondaryCommunity",
+                "vrfName": "NA",
+                "primaryNetworkId": 50100,
+                "primaryNetworkName": "PVLAN_PRIMARY",
+                "networkTemplateName": "Pvlan_Secondary_Network",
+                "networkExtensionTemplateName": "Pvlan_Secondary_Network",
+                "networkTemplateConfig": {
+                    "networkMode": "layer2",
+                    "isLayer2Only": "true",
+                    "vlanId": "2101",
+                    "segmentId": "50101",
+                    "networkName": "PVLAN_COMMUNITY",
+                    "vlanName": "PVLAN_COMMUNITY_VLAN",
+                    "type": "Community",
+                    "networkType": "userDefined",
+                    "enableIR": "true",
+                    "nveId": "1",
+                    "vrfName": "NA",
+                },
+            }
+        )
+    )
+    proposed = orchestrator.model_class.from_config(
+        orchestrator.prepare_config_data(
+            [
+                {
+                    "network_name": "PVLAN_COMMUNITY",
+                    "display_name": "PVLAN_COMMUNITY",
+                    "network_id": 50101,
+                    "vlan_id": 2101,
+                    "vlan_network_type": "community",
+                    "primary_network_id": 50100,
+                    "vlan_name": "PVLAN_COMMUNITY_VLAN",
+                }
+            ]
+        )[0]
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+    payload = orchestrator._create_or_update_payload(proposed)
+    assert "vlanId" not in payload
+    assert "l2Data" not in payload
+    assert payload["networkTemplateConfig"]["vlanId"] == "2101"
+    assert payload["networkTemplateConfig"]["enableIR"] == "true"
+
+
+def test_private_primary_l2_readback_defaults_do_not_force_update():
+    orchestrator = _orchestrator()
+
+    existing = orchestrator.model_class.from_response(
+        orchestrator._normalize_query_network_item(
+            {
+                "displayName": "PVLAN_PRIMARY",
+                "fabricName": "fab1",
+                "l2Data": {
+                    "disableRtAuto": False,
+                    "fabricData": {"enableIr": True},
+                    "vlanName": "PVLAN_PRIMARY_VLAN",
+                    "xConnect": False,
+                },
+                "l3Data": {
+                    "arpSuppression": False,
+                    "fabricData": {
+                        "gatewayOnBorder": False,
+                        "ipv4Trm": False,
+                        "ipv6Trm": False,
+                        "netflow": False,
+                    },
+                },
+                "networkId": 50100,
+                "networkMode": "layer2",
+                "networkName": "PVLAN_PRIMARY",
+                "networkStatus": "notApplicable",
+                "networkType": "vxlanIbgp",
+                "vlanId": 2100,
+                "vlanNetworkType": "privatePrimary",
+                "vrfName": "NA",
+            }
+        )
+    )
+    proposed = orchestrator.model_class.from_config(
+        orchestrator.prepare_config_data(
+            [
+                {
+                    "network_name": "PVLAN_PRIMARY",
+                    "display_name": "PVLAN_PRIMARY",
+                    "network_id": 50100,
+                    "vlan_id": 2100,
+                    "vlan_network_type": "primary",
+                    "vlan_name": "PVLAN_PRIMARY_VLAN",
+                    "layer": "layer2",
+                }
+            ]
+        )[0]
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+    assert existing.get_diff(proposed, exclude_unset=False) is True
 
 
 def test_private_secondary_query_infers_vlan_type_from_template_config_for_manage_read():
@@ -1171,8 +1283,8 @@ def test_network_query_all_scopes_targeted_state_reads_with_batch_filter():
     object.__setattr__(orchestrator, "_request", request)
 
     assert orchestrator.query_all() == [
-        {"networkName": "BLUE_NET"},
-        {"networkName": "GREEN_NET"},
+        {"networkName": "BLUE_NET", "fabricName": "fab1"},
+        {"networkName": "GREEN_NET", "fabricName": "fab1"},
     ]
     assert requested_paths == [
         "/api/v1/manage/fabrics/fab1/networks?max=10000&filter=%28BLUE_NET%20OR%20GREEN_NET%29",
@@ -1211,7 +1323,7 @@ def test_network_query_all_encodes_reserved_filter_characters_once():
 
     object.__setattr__(orchestrator, "_request", request)
 
-    assert orchestrator.query_all() == [{"networkName": network_name}]
+    assert orchestrator.query_all() == [{"networkName": network_name, "fabricName": "fab1"}]
     assert requested_paths == [
         "/api/v1/manage/fabrics/fab1/networks?filter=networkName%3ABLUE%20NET%2650%25",
     ]
@@ -1251,8 +1363,8 @@ def test_network_query_all_scoped_falls_back_to_unfiltered_when_batch_query_fail
     object.__setattr__(orchestrator, "_request", request)
 
     assert orchestrator.query_all() == [
-        {"networkName": "BLUE_NET"},
-        {"networkName": "GREEN_NET"},
+        {"networkName": "BLUE_NET", "fabricName": "fab1"},
+        {"networkName": "GREEN_NET", "fabricName": "fab1"},
     ]
     assert requested_paths == [
         "/api/v1/manage/fabrics/fab1/networks?max=10000&filter=%28BLUE_NET%20OR%20GREEN_NET%29",
@@ -1293,8 +1405,8 @@ def test_network_query_all_scoped_filters_unfielded_batch_query_locally():
     object.__setattr__(orchestrator, "_request", request)
 
     assert orchestrator.query_all() == [
-        {"networkName": "BLUE_NET"},
-        {"networkName": "GREEN_NET"},
+        {"networkName": "BLUE_NET", "fabricName": "fab1"},
+        {"networkName": "GREEN_NET", "fabricName": "fab1"},
     ]
     assert requested_paths == [
         "/api/v1/manage/fabrics/fab1/networks?max=10000&filter=%28BLUE_NET%20OR%20GREEN_NET%29",
@@ -1324,7 +1436,7 @@ def test_network_query_all_uses_unfiltered_read_at_scoped_threshold():
 
     object.__setattr__(orchestrator, "_request", request)
 
-    assert orchestrator.query_all() == [{"networkName": "NET_0"}]
+    assert orchestrator.query_all() == [{"networkName": "NET_0", "fabricName": "fab1"}]
     assert requested_paths == ["/api/v1/manage/fabrics/fab1/networks?offset=0&max=10000"]
 
 
