@@ -712,6 +712,42 @@ def test_port_channel_access_orchestrator_00330() -> None:
     assert instance._pending_deploys == []
 
 
+def test_port_channel_access_orchestrator_00340() -> None:
+    """
+    # Summary
+
+    Verify `delete` of an IOS-XE port-channel queues the switch-canonical spelling `Port-channel<N>` for both the remove and the
+    deploy, so the controller generates `no interface Port-channel<N>` (workaround: xe-port-channel-remove-leaves-switch-interface).
+
+    ## Test
+
+    - Model is an `ios-xe` `iosXeAccessPoHost` named `port-channel101` (the lowercase identifier ND echoes)
+    - `_pending_removes` contains `(Port-channel101, FDO11111AAA)`
+    - `_pending_deploys` contains `(Port-channel101, FDO11111AAA)` (same pair identity as the remove queue, for the finalizer)
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.delete()
+    - PortChannelBaseOrchestrator._delete_side_name()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_xe_pc_model(interface_name="port-channel101")
+
+    with does_not_raise():
+        result = instance.delete(model)
+
+    assert result is None
+    assert instance._pending_removes == [("Port-channel101", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Port-channel101", "FDO11111AAA")]
+
+
 # =============================================================================
 # Test: create_bulk
 # =============================================================================
@@ -878,6 +914,45 @@ def test_port_channel_access_orchestrator_00600() -> None:
 
     assert result is None
     expected = [("port-channel501", "FDO11111AAA"), ("port-channel601", "FDO22222BBB")]
+    assert sorted(instance._pending_removes) == sorted(expected)
+    assert sorted(instance._pending_deploys) == sorted(expected)
+
+
+def test_port_channel_access_orchestrator_00610() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` canonicalizes only the IOS-XE port-channels: an NX-OS port-channel keeps its lowercase name while an
+    `ios-xe` one is queued as `Port-channel<N>` (workaround: xe-port-channel-remove-leaves-switch-interface).
+
+    ## Test
+
+    - NX-OS `port-channel501` on switch A and IOS-XE `port-channel101` on switch B
+    - `_pending_removes` and `_pending_deploys` each contain `(port-channel501, FDO11111AAA)` and `(Port-channel101, FDO22222BBB)`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.delete_bulk()
+    - PortChannelBaseOrchestrator._delete_side_name()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_pc_model(switch_ip="192.168.1.1", interface_name="port-channel501", include_config=False),
+        _build_xe_pc_model(switch_ip="192.168.1.2", interface_name="port-channel101"),
+    ]
+
+    with does_not_raise():
+        result = instance.delete_bulk(models)
+
+    assert result is None
+    expected = [("port-channel501", "FDO11111AAA"), ("Port-channel101", "FDO22222BBB")]
     assert sorted(instance._pending_removes) == sorted(expected)
     assert sorted(instance._pending_deploys) == sorted(expected)
 

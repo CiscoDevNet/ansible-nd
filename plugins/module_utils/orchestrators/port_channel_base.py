@@ -18,7 +18,8 @@ IOS-XE policy type for their interface flavor (issues #536/#537).
 
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch
 resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific functionality:
-- Standard remove-based deletion (port-channels are virtual interfaces and are deletable)
+- Standard remove-based deletion (port-channels are virtual interfaces and are deletable); IOS-XE port-channels are queued under
+  their switch-canonical `Port-channel<N>` spelling so ND generates the switch-side deletion (`_delete_side_name`)
 - Fabric-wide `query_all()` filtered by `interfaceType: "portChannel"` and per-type policy filtering
 - A member-already-in-use `preflight()` that rejects, before any write, a port-channel whose member ethernet is
   already owned by a different port-channel (issue #369)
@@ -34,6 +35,7 @@ on standalone ethernet modules are enforced separately by the ethernet orchestra
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import ClassVar
 
@@ -50,6 +52,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = NDBaseModel
+
+# The lowercase port-channel identifier the models keep (ND echoes `port-channel<N>`); the delete side rewrites it to the
+# switch-canonical `Port-channel<N>` for IOS-XE (`_delete_side_name`).
+_XE_PORT_CHANNEL_NAME_RE = re.compile(r"^port-channel(\d+)$")
 
 
 class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
@@ -184,8 +190,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Via `_resolve_switch_id` if no switch matches `model_instance.switch_ip` in the fabric.
         """
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
-        self._queue_remove(model_instance.interface_name, switch_id)
-        self._queue_deploy(model_instance.interface_name, switch_id)
+        name = self._delete_side_name(model_instance)
+        self._queue_remove(name, switch_id)
+        self._queue_deploy(name, switch_id)
 
     def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         """
@@ -232,8 +239,36 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._queue_remove(model_instance.interface_name, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
+            name = self._delete_side_name(model_instance)
+            self._queue_remove(name, switch_id)
+            self._queue_deploy(name, switch_id)
+
+    @staticmethod
+    def _delete_side_name(model_instance: ModelType) -> str:
+        """
+        # Summary
+
+        Return the interface name to queue on the delete side (`interfaceActions/remove` + `interfaceActions/deploy`): the model's
+        lowercase `interface_name` for NX-OS, and the switch-canonical `Port-channel<N>` for an `ios-xe` port-channel. Both queues get
+        the same spelling so the pair identity the failure-path finalizer relies on (`_unsent_delete_pairs`) is preserved.
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) xe-port-channel-remove-leaves-switch-interface
+        # ND keys the IOS-XE intent record by the lowercase name it echoes but the discovered switch object by `Port-channel<N>`.
+        # A remove naming the lowercase record drops the intent and detaches the members only; the configured `interface Port-channel<N>`
+        # stays on the Catalyst and ND's diff never lists it. A remove naming the canonical spelling flips the record to `userDefined`
+        # and queues `no interface Port-channel<N>` for the next deploy (lab-verified 2026-09-16 on 4.2.1.10; the GUI delete does the
+        # same through the per-interface DELETE). NX-OS deletes correctly with either spelling. The deletion is generated only once ND has
+        # discovered the deployed interface (25-45 s after the create deploy), which is a separate ND-side race this rewrite cannot close.
+        network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
+        name = model_instance.interface_name
+        if getattr(network_os, "network_os_type", None) != "ios-xe":
+            return name
+        match = _XE_PORT_CHANNEL_NAME_RE.match(name)
+        return f"Port-channel{match.group(1)}" if match else name
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """

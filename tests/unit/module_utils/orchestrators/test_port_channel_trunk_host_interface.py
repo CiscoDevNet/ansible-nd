@@ -628,3 +628,79 @@ def test_port_channel_trunk_host_orchestrator_01100() -> None:
     match = r"required=iosXeTrunkHost.*nd_interface_ethernet_trunk_host"
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3"])])
+
+
+# =============================================================================
+# Test: delete / delete_bulk -- IOS-XE canonical name on the delete side (workaround: xe-port-channel-remove-leaves-switch-interface)
+# =============================================================================
+
+
+def test_port_channel_trunk_host_orchestrator_01200() -> None:
+    """
+    # Summary
+
+    Verify `delete` of an IOS-XE port-channel queues the switch-canonical spelling `Port-channel<N>` for both the remove and the
+    deploy, so the controller generates `no interface Port-channel<N>` (workaround: xe-port-channel-remove-leaves-switch-interface).
+
+    ## Test
+
+    - Model is an `ios-xe` `iosXeTrunkPoHost` named `port-channel103` (the lowercase identifier ND echoes)
+    - `_pending_removes` contains `(Port-channel103, FDO11111AAA)`
+    - `_pending_deploys` contains `(Port-channel103, FDO11111AAA)` (same pair identity as the remove queue, for the finalizer)
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.delete()
+    - PortChannelBaseOrchestrator._delete_side_name()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+    model = _build_xe_pc_model(interface_name="port-channel103")
+
+    with does_not_raise():
+        result = instance.delete(model)
+
+    assert result is None
+    assert instance._pending_removes == [("Port-channel103", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Port-channel103", "FDO11111AAA")]
+
+
+def test_port_channel_trunk_host_orchestrator_01210() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` canonicalizes only the IOS-XE port-channels: an NX-OS port-channel keeps its lowercase name while an
+    `ios-xe` one is queued as `Port-channel<N>` (workaround: xe-port-channel-remove-leaves-switch-interface).
+
+    ## Test
+
+    - NX-OS `port-channel501` on switch A and IOS-XE `port-channel103` on switch B
+    - `_pending_removes` and `_pending_deploys` each contain `(port-channel501, FDO11111AAA)` and `(Port-channel103, FDO22222BBB)`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.delete_bulk()
+    - PortChannelBaseOrchestrator._delete_side_name()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+    models = [
+        _build_pc_model(switch_ip="192.168.1.1", interface_name="port-channel501"),
+        _build_xe_pc_model(switch_ip="192.168.1.2", interface_name="port-channel103"),
+    ]
+
+    with does_not_raise():
+        result = instance.delete_bulk(models)
+
+    assert result is None
+    expected = [("port-channel501", "FDO11111AAA"), ("Port-channel103", "FDO22222BBB")]
+    assert sorted(instance._pending_removes) == sorted(expected)
+    assert sorted(instance._pending_deploys) == sorted(expected)
