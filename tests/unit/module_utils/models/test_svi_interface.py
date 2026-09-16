@@ -18,15 +18,21 @@ Tests the SVI (switched virtual interface) Pydantic model classes.
 from __future__ import annotations
 
 import copy
+import json
 from contextlib import contextmanager
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SviPolicyTypeEnum, XeSviPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.svi_interface import (
     SviConfigDataModel,
     SviInterfaceModel,
     SviNetworkOSModel,
     SviOperDataModel,
     SviPolicyModel,
+    XeSviDhcpServerModel,
+    XeSviNetworkOSModel,
+    XeSviPolicyModel,
+    XeSviShutNoShutPolicyModel,
 )
 from pydantic import ValidationError
 
@@ -539,19 +545,22 @@ def test_svi_interface_00510():
     """
     # Summary
 
-    Verify SviConfigDataModel rejects construction without network_os.
+    Verify SviConfigDataModel defaults `network_os` to the NX-OS branch when it is omitted, so playbooks written before the IOS-XE
+    branch existed (issue #540) keep selecting `SviNetworkOSModel`.
 
     ## Test
 
     - Construct with no network_os
-    - ValidationError raised
+    - `network_os` is an `SviNetworkOSModel` with `network_os_type == "nx-os"` and no policy
 
     ## Classes and Methods
 
     - SviConfigDataModel.__init__()
     """
-    with pytest.raises(ValidationError):
-        SviConfigDataModel()  # network_os is required
+    instance = SviConfigDataModel()
+    assert isinstance(instance.network_os, SviNetworkOSModel)
+    assert instance.network_os.network_os_type == "nx-os"
+    assert instance.network_os.policy is None
 
 
 # =============================================================================
@@ -780,21 +789,21 @@ def test_svi_interface_00900():
         (2, False),
         (0, True),
         (3, True),
-        ("1", True),  # API requires int, string-form must be rejected client-side
+        ("x", True),  # non-numeric strings are still rejected; numeric strings are coerced (test 02080, issue #380)
     ],
-    ids=["v1_ok", "v2_ok", "below_min_rejected", "above_max_rejected", "string_rejected"],
+    ids=["v1_ok", "v2_ok", "below_min_rejected", "above_max_rejected", "non_numeric_string_rejected"],
 )
 def test_svi_interface_00910(value, should_raise):
     """
     # Summary
 
-    Verify `hsrp_version` is `Literal[1, 2]`. Strings are rejected to keep the wire format aligned with the OpenAPI
-    schema, which declares `hsrpVersion` as integer.
+    Verify `hsrp_version` is `Literal[1, 2]`: the wire format stays aligned with the OpenAPI schema, which declares `hsrpVersion` as an
+    integer. A numeric string is coerced to the integer (the ND 4.3.1 echo, see test 02080); anything else is rejected.
 
     ## Test
 
     - Integers 1 and 2 accepted
-    - Other integers and string `"1"` rejected by Pydantic
+    - Other integers and the non-numeric string `"x"` rejected by Pydantic
 
     ## Classes and Methods
 
@@ -1058,14 +1067,17 @@ def test_svi_interface_01100():
     assert config_options["switch_ip"]["required"] is True
     assert config_options["interface_name"]["type"] == "str"
     assert config_options["interface_name"]["required"] is True
-    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
-    # and intentionally absent from the user-facing argument spec.
+    # interface_type and mode are hardcoded in the Pydantic model and intentionally absent from the user-facing argument spec;
+    # network_os_type and policy_type are the platform / template discriminators (issue #540).
     assert "interface_type" not in config_options
     assert "mode" not in config_options["config_data"]["options"]
-    assert "network_os_type" not in config_options["config_data"]["options"]["network_os"]["options"]
+    network_os_options = config_options["config_data"]["options"]["network_os"]["options"]
+    assert network_os_options["network_os_type"]["default"] == "nx-os"
+    assert network_os_options["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
 
-    policy_options = config_options["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
+    policy_options = network_os_options["policy"]["options"]
     expected_policy_fields = {
+        "policy_type",
         "admin_state",
         "description",
         "extra_config",
@@ -1098,11 +1110,18 @@ def test_svi_interface_01100():
         "netflow",
         "netflow_monitor",
         "netflow_sampler",
+        "vlan_name",
+        "dhcp_servers",
     }
     assert set(policy_options.keys()) == expected_policy_fields
-    assert "policy_type" not in policy_options
+    assert "required" not in policy_options["policy_type"]
+    assert policy_options["policy_type"]["choices"] == ["svi", "iosXeSvi", "iosXeSviShutNoShut"]
     assert policy_options["hsrp_version"]["type"] == "int"
     assert policy_options["hsrp_version"]["choices"] == [1, 2]
+    assert policy_options["dhcp_servers"]["type"] == "list"
+    assert policy_options["dhcp_servers"]["elements"] == "dict"
+    assert policy_options["dhcp_servers"]["options"]["server_ip_address"]["required"] is True
+    assert policy_options["dhcp_servers"]["options"]["server_vrf"]["required"] is True
 
 
 # =============================================================================
@@ -1127,3 +1146,449 @@ def test_svi_interface_01200():
     """
     instance = SviInterfaceModel(switch_ip="1.2.3.4", interface_name="vlan333")
     assert instance.interface_type == "svi"
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #540) — enums, union selection, write-strictness, DHCP relay list, hsrpVersion coercion
+# =============================================================================
+
+
+XE_SVI_RESPONSE_421 = {
+    "switchIp": "192.168.12.181",
+    "interfaceName": "vlan990",
+    "interfaceType": "svi",
+    "switchId": "CAT9KV1701",
+    "configData": {
+        "mode": "managed",
+        "networkOS": {
+            "networkOSType": "ios-xe",
+            "policy": {
+                "adminState": True,
+                "description": "probe-xe-full",
+                "dhcpServers": [{"srvrAddr": "10.10.10.10", "srvrVrf": "default"}, {"srvrAddr": "10.10.10.11", "srvrVrf": "global"}],
+                "extraConfig": "no shutdown",
+                "ip": "10.99.93.1",
+                "ipRedirects": False,
+                "ipv6": "2001:db8:93::1",
+                "ipv6Prefix": 64,
+                "policyType": "iosXeSvi",
+                "prefix": 24,
+                "vlanName": "probe93",
+                "vrfInterface": "default",
+            },
+        },
+    },
+    "operData": {
+        "adminStatus": "unknown",
+        "operationalDescription": "Not discovered",
+        "operationalStatus": "unknown",
+        "portChannelId": -1,
+        "switchName": "C1_LE1",
+        "vlanRange": "0",
+    },
+}
+
+
+def test_svi_interface_02000():
+    """
+    # Summary
+
+    Verify the SVI policy-type enums carry exactly the create-side wire values on both network OS types.
+
+    ## Test
+
+    - `SviPolicyTypeEnum` has the single NX-OS member `svi`
+    - `XeSviPolicyTypeEnum` has `iosXeSvi` and `iosXeSviShutNoShut` (the `iosXeIntVlanTemplate` discriminator minus `userDefined`)
+
+    ## Classes and Methods
+
+    - SviPolicyTypeEnum
+    - XeSviPolicyTypeEnum
+    """
+    assert [e.value for e in SviPolicyTypeEnum] == ["svi"]
+    assert [e.value for e in XeSviPolicyTypeEnum] == ["iosXeSvi", "iosXeSviShutNoShut"]
+
+
+def test_svi_interface_02010():
+    """
+    # Summary
+
+    Verify `network_os_type: ios-xe` selects the IOS-XE branch and `policy_type` is injected as `iosXeSvi` when omitted (the argspec
+    passes an omitted suboption as `None`).
+
+    ## Test
+
+    - from_config with `network_os_type: ios-xe` and `policy_type: None`
+    - `config_data.network_os` is `XeSviNetworkOSModel`, policy is `XeSviPolicyModel`
+    - `instance.policy_type == "iosXeSvi"`; `policy_type` is in `model_fields_set`
+    - `prefixv6` (the shared option name) is stored on the XE branch and serialized as the wire key `ipv6Prefix`
+
+    ## Classes and Methods
+
+    - SviConfigDataModel.default_network_os_type()
+    - XeSviNetworkOSModel.default_policy_type()
+    - SviInterfaceModel.policy_type
+    """
+    with does_not_raise():
+        instance = SviInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.181",
+                "interface_name": "Vlan990",
+                "config_data": {
+                    "network_os": {
+                        "network_os_type": "ios-xe",
+                        "policy": {
+                            "policy_type": None,
+                            "admin_state": True,
+                            "ip": "10.99.90.1",
+                            "prefix": 24,
+                            "ipv6": "2001:db8:90::1",
+                            "prefixv6": 64,
+                            "vlan_name": "probe",
+                        },
+                    }
+                },
+            }
+        )
+    assert instance.interface_name == "vlan990"
+    assert isinstance(instance.config_data.network_os, XeSviNetworkOSModel)
+    assert isinstance(instance.config_data.network_os.policy, XeSviPolicyModel)
+    assert instance.policy_type == "iosXeSvi"
+    assert "policy_type" in instance.config_data.network_os.policy.model_fields_set
+    payload = instance.to_payload()["configData"]["networkOS"]
+    assert payload["networkOSType"] == "ios-xe"
+    assert payload["policy"]["policyType"] == "iosXeSvi"
+    assert payload["policy"]["ipv6Prefix"] == 64
+    assert "prefixv6" not in payload["policy"]
+    assert payload["policy"]["vlanName"] == "probe"
+    assert instance.to_config()["config_data"]["network_os"]["policy"]["prefixv6"] == 64
+
+
+def test_svi_interface_02020():
+    """
+    # Summary
+
+    Verify an omitted `network_os_type` still selects the NX-OS branch with `policy_type` injected as `svi`, that `policy_type` is
+    visible in `to_config()` output for both branches, and that an IOS-XE response reads back onto the XE branch.
+
+    ## Test
+
+    - from_config without the `network_os` discriminator -> `SviNetworkOSModel`, `svi`
+    - `to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "svi"`
+    - XE response -> `to_config()` carries `network_os_type == "ios-xe"` and `policy_type == "iosXeSvi"`
+
+    ## Classes and Methods
+
+    - SviPolicyModel.default_policy_type()
+    - SviInterfaceModel.to_config()
+    - SviInterfaceModel.from_response()
+    """
+    nx = SviInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "vlan333",
+            "config_data": {"network_os": {"policy": {"admin_state": True, "ip": "10.99.99.1", "prefix": 24}}},
+        }
+    )
+    assert isinstance(nx.config_data.network_os, SviNetworkOSModel)
+    assert isinstance(nx.config_data.network_os.policy, SviPolicyModel)
+    assert nx.policy_type == "svi"
+    assert nx.to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "svi"
+    assert nx.to_config()["config_data"]["network_os"]["network_os_type"] == "nx-os"
+    xe = SviInterfaceModel.from_response(copy.deepcopy(XE_SVI_RESPONSE_421))
+    assert isinstance(xe.config_data.network_os, XeSviNetworkOSModel)
+    config = xe.to_config()["config_data"]["network_os"]
+    assert config["network_os_type"] == "ios-xe"
+    assert config["policy"]["policy_type"] == "iosXeSvi"
+    assert config["policy"]["prefixv6"] == 64
+    assert config["policy"]["vlan_name"] == "probe93"
+
+
+@pytest.mark.parametrize(
+    "os_type, policy, match",
+    [
+        ("ios-xe", {"policy_type": "svi"}, r"policy_type|policyType"),
+        ("nx-os", {"policy_type": "iosXeSvi"}, r"policy_type|policyType"),
+        ("ios-xe", {"hsrp": True, "hsrp_vip": "10.0.0.254"}, r"hsrp|Extra inputs"),
+        ("ios-xe", {"mtu": 9000}, r"mtu|Extra inputs"),
+        ("ios-xe", {"dhcp_server_address1": "10.10.10.10"}, r"dhcp_server_address1|Extra inputs"),
+        ("nx-os", {"vlan_name": "x"}, r"vlan_name|Extra inputs"),
+        ("nx-os", {"dhcp_servers": [{"server_ip_address": "10.10.10.10", "server_vrf": "default"}]}, r"dhcp_servers|Extra inputs"),
+        ("ios-xe", {"policy_type": "iosXeSviShutNoShut", "ip": "10.99.90.1", "prefix": 24}, r"ip|Extra inputs"),
+    ],
+)
+def test_svi_interface_02030(os_type, policy, match):
+    """
+    # Summary
+
+    Verify both branches are write-strict: a wrong-branch discriminator, an NX-OS-only field on the IOS-XE branch (HSRP, mtu, flat DHCP
+    relay), an IOS-XE-only field on the NX-OS branch (`vlan_name`, `dhcp_servers`), and an L3 field on the admin-state-only
+    `iosXeSviShutNoShut` template are all rejected before any controller call.
+
+    ## Test
+
+    - Each policy input raises `ValidationError` matching `match`
+
+    ## Classes and Methods
+
+    - SviPolicyModel (extra="forbid")
+    - XeSviPolicyModel (extra="forbid")
+    - XeSviShutNoShutPolicyModel (extra="forbid")
+    """
+    with pytest.raises(ValidationError, match=match):
+        SviInterfaceModel.from_config(
+            {"switch_ip": "192.168.12.181", "interface_name": "vlan990", "config_data": {"network_os": {"network_os_type": os_type, "policy": policy}}}
+        )
+
+
+def test_svi_interface_02040():
+    """
+    # Summary
+
+    Verify the admin-state-only `iosXeSviShutNoShut` branch: an explicit `policy_type` selects `XeSviShutNoShutPolicyModel`, the payload
+    carries only the discriminator and `adminState`, and a controller echo reads back onto the same branch.
+
+    ## Test
+
+    - from_config with `policy_type: iosXeSviShutNoShut`, `admin_state: false`
+    - `to_payload()` policy == `{"policyType": "iosXeSviShutNoShut", "adminState": False}`
+    - from_response of the echo -> `XeSviShutNoShutPolicyModel`
+
+    ## Classes and Methods
+
+    - XeSviShutNoShutPolicyModel
+    - XeSviNetworkOSModel.policy (discriminated on `policy_type`)
+    """
+    instance = SviInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "vlan991",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": "iosXeSviShutNoShut", "admin_state": False}}},
+        }
+    )
+    assert isinstance(instance.config_data.network_os.policy, XeSviShutNoShutPolicyModel)
+    assert instance.policy_type == "iosXeSviShutNoShut"
+    assert instance.to_payload()["configData"]["networkOS"]["policy"] == {"policyType": "iosXeSviShutNoShut", "adminState": False}
+    echo = SviInterfaceModel.from_response(
+        {
+            "interfaceName": "Vlan991",
+            "interfaceType": "svi",
+            "switchIp": "192.168.12.181",
+            "configData": {"mode": "managed", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": False, "policyType": "iosXeSviShutNoShut"}}},
+        }
+    )
+    assert isinstance(echo.config_data.network_os.policy, XeSviShutNoShutPolicyModel)
+    assert echo.interface_name == "vlan991"
+
+
+def test_svi_interface_02050():
+    """
+    # Summary
+
+    Verify the IOS-XE DHCP relay list: the ND 4.2.1 echo keys `srvrAddr` / `srvrVrf` are read onto the spec fields, config and
+    payload dumps carry only the spec spellings (`server_ip_address` / `serverIpAddress`, `server_vrf` / `serverVrf`), and an item without
+    a `server_vrf` is rejected.
+
+    # workaround: xe-svi-dhcpservers-echo-keys
+    # workaround: xe-svi-dhcpservers-servervrf-required
+
+    ## Test
+
+    - from_response of the 4.2.1 echo -> two `XeSviDhcpServerModel` items with the spec field names populated
+    - `to_payload()` emits `serverIpAddress` / `serverVrf` and never `srvrAddr` / `srvrVrf`
+    - `to_config()` emits `server_ip_address` / `server_vrf`
+    - the 4.3.1 echo (spec keys) reads identically
+    - `XeSviDhcpServerModel` without `server_vrf`, or with an empty one, raises `ValidationError`
+
+    ## Classes and Methods
+
+    - XeSviDhcpServerModel.accept_echo_keys()
+    - XeSviPolicyModel.dhcp_servers
+    """
+    xe = SviInterfaceModel.from_response(copy.deepcopy(XE_SVI_RESPONSE_421))
+    servers = xe.config_data.network_os.policy.dhcp_servers
+    assert [(s.server_ip_address, s.server_vrf) for s in servers] == [("10.10.10.10", "default"), ("10.10.10.11", "global")]
+    wire = xe.to_payload()["configData"]["networkOS"]["policy"]["dhcpServers"]
+    assert wire == [{"serverIpAddress": "10.10.10.10", "serverVrf": "default"}, {"serverIpAddress": "10.10.10.11", "serverVrf": "global"}]
+    assert "srvrAddr" not in json.dumps(xe.to_payload()) and "srvrVrf" not in json.dumps(xe.to_config())
+    config = xe.to_config()["config_data"]["network_os"]["policy"]["dhcp_servers"]
+    assert config == [{"server_ip_address": "10.10.10.10", "server_vrf": "default"}, {"server_ip_address": "10.10.10.11", "server_vrf": "global"}]
+    echo_431 = copy.deepcopy(XE_SVI_RESPONSE_421)
+    echo_431["configData"]["networkOS"]["policy"]["dhcpServers"] = wire
+    assert SviInterfaceModel.from_response(echo_431).to_config() == xe.to_config()
+    with pytest.raises(ValidationError, match=r"server_vrf|serverVrf"):
+        XeSviDhcpServerModel(server_ip_address="10.10.10.10")
+    with pytest.raises(ValidationError, match=r"server_vrf|serverVrf"):
+        XeSviDhcpServerModel(server_ip_address="10.10.10.10", server_vrf="")
+
+
+def test_svi_interface_02060():
+    """
+    # Summary
+
+    Verify the IOS-XE `reverse_diff_defaults` scrub: the two defaults ND injects on an `iosXeSvi` echo for fields the user never set
+    (`adminState: true`, `ipRedirects: true`, lab-verified on 4.2.1.10 and 4.3.1.175) read back as no user configuration, while a
+    non-default value survives. The NX-OS table is unchanged.
+
+    ## Test
+
+    - Echo `{adminState true, ipRedirects true, policyType}` -> `to_reverse_diff_dict()` has no keys beyond `policyType`
+    - Echo with `ipRedirects: false` keeps it
+    - `SviPolicyModel.reverse_diff_defaults` still carries the NX-OS `int_vlan` defaults
+
+    ## Classes and Methods
+
+    - XeSviPolicyModel.reverse_diff_defaults
+    - SviPolicyModel.reverse_diff_defaults
+    """
+    defaults = XeSviPolicyModel.from_response({"adminState": True, "ipRedirects": True, "policyType": "iosXeSvi"})
+    assert set(defaults.to_reverse_diff_dict()) <= {"policyType"}
+    custom = XeSviPolicyModel.from_response({"adminState": True, "ipRedirects": False, "policyType": "iosXeSvi"})
+    assert custom.to_reverse_diff_dict()["ipRedirects"] is False
+    assert XeSviPolicyModel.reverse_diff_defaults == {"adminState": True, "ipRedirects": True}
+    assert SviPolicyModel.reverse_diff_defaults["hsrpVersion"] == 1
+    assert SviPolicyModel.reverse_diff_defaults["adminState"] is True
+
+
+def test_svi_interface_02070():
+    """
+    # Summary
+
+    Verify diff and merge behave across the DHCP relay list: an identical XE model reports no difference, a changed server list is
+    a difference, and `merge()` replaces the list wholesale (a merged update that names one server drops the others, matching the
+    controller's full-replace PUT semantics).
+
+    ## Test
+
+    - `get_diff` against a deep copy is True (no difference)
+    - `get_diff` against a copy with a different `dhcp_servers` list is False
+    - `merge()` of a proposed single-server list onto the two-server existing model leaves one server
+
+    ## Classes and Methods
+
+    - SviInterfaceModel.get_diff()
+    - SviInterfaceModel.merge()
+    """
+    existing = SviInterfaceModel.from_response(copy.deepcopy(XE_SVI_RESPONSE_421))
+    assert existing.get_diff(copy.deepcopy(existing)) is True
+    proposed = SviInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.181",
+            "interface_name": "vlan990",
+            "config_data": {
+                "network_os": {"network_os_type": "ios-xe", "policy": {"dhcp_servers": [{"server_ip_address": "10.10.10.12", "server_vrf": "default"}]}}
+            },
+        }
+    )
+    assert existing.get_diff(proposed, exclude_unset=True) is False
+    merged = copy.deepcopy(existing)
+    merged.merge(proposed)
+    assert [s.server_ip_address for s in merged.config_data.network_os.policy.dhcp_servers] == ["10.10.10.12"]
+    assert merged.config_data.network_os.policy.vlan_name == "probe93"
+
+
+@pytest.mark.parametrize(
+    "value, expected, should_raise", [(1, 1, False), (2, 2, False), ("1", 1, False), ("2", 2, False), ("3", None, True), (3, None, True), ("x", None, True)]
+)
+def test_svi_interface_02080(value, expected, should_raise):
+    """
+    # Summary
+
+    Verify `hsrp_version` coerces the string ND 4.3.1 echoes (`"1"`) to the integer the spec and the PUT gateway require, and still
+    rejects values outside 1-2. Issue #380.
+
+    # workaround: svi-hsrpversion-string-echo-431
+
+    ## Test
+
+    - `1`, `2`, `"1"`, `"2"` parse to the int; `3`, `"3"`, `"x"` raise
+    - A 4.3.1-shaped response echo (`hsrpVersion: "1"`) reads and serializes as int `1`
+
+    ## Classes and Methods
+
+    - SviPolicyModel.coerce_hsrp_version_to_int()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError):
+            SviPolicyModel(hsrp_version=value)
+        return
+    assert SviPolicyModel(hsrp_version=value).hsrp_version == expected
+    echo = SviPolicyModel.from_response({"policyType": "svi", "adminState": True, "hsrpVersion": str(value)})
+    assert echo.hsrp_version == expected
+    assert echo.to_payload()["hsrpVersion"] == expected
+
+
+def test_svi_interface_02090():
+    """
+    # Summary
+
+    Verify a ND 4.3.1-shaped NX-OS SVI echo (`hsrpVersion: "1"`, no `hsrpGroup` / `pimDrPriority`) reads back onto the NX-OS branch and
+    scrubs to no user configuration: the coerced `hsrpVersion: 1` matches the `reverse_diff_defaults` entry.
+
+    # workaround: svi-hsrpversion-string-echo-431
+
+    ## Test
+
+    - from_response succeeds
+    - `to_reverse_diff_dict()` of the policy carries nothing beyond `policyType` and the user-set `description` / `ip` / `prefix`
+
+    ## Classes and Methods
+
+    - SviInterfaceModel.from_response()
+    - SviPolicyModel.reverse_diff_defaults
+    """
+    echo = {
+        "interfaceName": "vlan990",
+        "interfaceType": "svi",
+        "switchIp": "192.168.14.131",
+        "configData": {
+            "mode": "managed",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "adminState": True,
+                    "advertiseSubnetInUnderlay": False,
+                    "description": "probe380",
+                    "hsrpVersion": "1",
+                    "ip": "10.99.90.1",
+                    "ipRedirects": True,
+                    "netflow": False,
+                    "pimSparse": False,
+                    "policyType": "svi",
+                    "preempt": False,
+                    "prefix": 24,
+                },
+            },
+        },
+    }
+    instance = SviInterfaceModel.from_response(echo)
+    assert instance.config_data.network_os.policy.hsrp_version == 1
+    scrubbed = instance.config_data.network_os.policy.to_reverse_diff_dict()
+    assert set(scrubbed) == {"policyType", "description", "ip", "prefix"}
+
+
+@pytest.mark.parametrize(
+    "os_type, length, should_raise",
+    [("nx-os", 254, False), ("nx-os", 255, True), ("ios-xe", 200, False), ("ios-xe", 201, True), ("ios-xe", 0, True)],
+)
+def test_svi_interface_02100(os_type, length, should_raise):
+    """
+    # Summary
+
+    Verify the per-template `description` limits: 254 on the NX-OS `int_vlan` template, 1-200 on the IOS-XE `ios_xe_int_vlan` template.
+
+    ## Test
+
+    - Boundary lengths are accepted; one past the limit (and the empty IOS-XE string) raise
+
+    ## Classes and Methods
+
+    - SviPolicyModel.description
+    - XeSviPolicyModel.description
+    """
+    model_cls = SviPolicyModel if os_type == "nx-os" else XeSviPolicyModel
+    if should_raise:
+        with pytest.raises(ValidationError):
+            model_cls(description="d" * length)
+        return
+    assert model_cls(description="d" * length).description == "d" * length

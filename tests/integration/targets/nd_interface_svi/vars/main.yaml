@@ -215,3 +215,96 @@ cleanup_config:
     interface_name: vlan500
   - switch_ip: "{{ test_switch_ip }}"
     interface_name: vlan501
+
+# --- IOS-XE coverage (issue #540) ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name) in inventory/extra-vars to enable; xe.yaml is skipped when
+# nd_test_xe_switch_ip is unset. VLAN IDs 980-983 are reserved on the Catalyst leaf. Lab-verified on CAMPUS1 Catalyst 9000v leaves
+# against ND 4.2.1.10 and 4.3.1.175.
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+
+xe_svi_980:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: vlan980
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type (iosXeSvi); xe.yaml asserts the echo carries it.
+        admin_state: true
+        description: "Ansible integration test XE vlan980"
+        vlan_name: ansible-980
+        ip: 10.99.80.1
+        prefix: 24
+        ipv6: "2001:db8:80::1"
+        prefixv6: 64
+        dhcp_servers:
+          - server_ip_address: 10.10.10.10
+            server_vrf: default
+
+xe_svi_981_shut:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: vlan981
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSviShutNoShut
+        admin_state: false
+
+xe_svi_982:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: vlan982
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSvi
+        admin_state: true
+        description: "Ansible integration test XE vlan982"
+        ip: 10.99.82.1
+        prefix: 24
+
+xe_svi_980_updated:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: vlan980
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        description: "Updated XE vlan980"
+        vlan_name: ansible-980
+        ip: 10.99.80.1
+        prefix: 24
+        ipv6: "2001:db8:80::1"
+        prefixv6: 64
+        ip_redirects: false
+        dhcp_servers:
+          - server_ip_address: 10.10.10.10
+            server_vrf: default
+          - server_ip_address: 10.10.10.11
+            server_vrf: global
+
+# NX-OS-only field on the IOS-XE branch: must fail argument/model validation before any controller call.
+xe_svi_bad_hsrp:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: vlan983
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        ip: 10.99.83.1
+        prefix: 24
+        hsrp: true
+        hsrp_vip: 10.99.83.254
+
+xe_cleanup_config:
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: vlan980
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: vlan981
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: vlan982
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: vlan983
