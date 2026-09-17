@@ -901,5 +901,441 @@
                 }
             ]
         }
+    },
+    "test_named_default_retained_00450a": {
+        "TEST_NOTES": [
+            "00450: fabric exists (validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_named_default_retained_00450b": {
+        "TEST_NOTES": [
+            "00450: one NX-OS switch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA",
+                    "additionalData": {
+                        "platformType": "nx-os"
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00450c": {
+        "TEST_NOTES": [
+            "00450 (merged): Ethernet1/2 and Ethernet1/4 both read as the unconfigured int_trunk_host default signature; the task names only",
+            "Ethernet1/2 (as 'eth1/2', exercising name normalization). Expect Ethernet1/2 retained (so a defaults-only desired config is",
+            "idempotent), Ethernet1/4 hidden, Ethernet1/1 (configured) retained as before."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "1-100",
+                                "nativeVlan": 10,
+                                "description": "uplink"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "none",
+                                "description": "",
+                                "nativeVlan": 1
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/4",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "none",
+                                "description": "",
+                                "nativeVlan": 1
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00460a": {
+        "TEST_NOTES": [
+            "00460: fabric exists (validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_named_default_retained_00460b": {
+        "TEST_NOTES": [
+            "00460: one Catalyst switch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00460c": {
+        "TEST_NOTES": [
+            "00460 (replaced): GigabitEthernet1/0/1 and 1/0/2 both read as the ios_xe_int_trunk_host default echo; the task names only",
+            "GigabitEthernet1/0/1. Expect it retained and 1/0/2 hidden."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "description": "",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "description": "",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00470a": {
+        "TEST_NOTES": [
+            "00470: fabric exists (validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_named_default_retained_00470b": {
+        "TEST_NOTES": [
+            "00470: NX-OS and Catalyst switches (overridden scans the whole fabric)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA",
+                    "additionalData": {
+                        "platformType": "nx-os"
+                    }
+                },
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00470c": {
+        "TEST_NOTES": [
+            "00470 (overridden): Ethernet1/2 (named) and Ethernet1/4 (unnamed) are both default-signature trunkHost.",
+            "Expect Ethernet1/2 retained (idempotent), Ethernet1/4 hidden (already at the reset target, so no delete intent)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "none",
+                                "description": "",
+                                "nativeVlan": 1
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/4",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "none",
+                                "description": "",
+                                "nativeVlan": 1
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00470d": {
+        "TEST_NOTES": [
+            "00470 (overridden): GigabitEthernet1/0/1 (named) and 1/0/2 (unnamed) are both default-echo iosXeTrunkHost.",
+            "Expect 1/0/1 retained, 1/0/2 hidden (defaults-only AND merge-only)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "description": "",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "description": "",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00480a": {
+        "TEST_NOTES": [
+            "00480: fabric exists (validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_named_default_retained_00480b": {
+        "TEST_NOTES": [
+            "00480: NX-OS and Catalyst switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA",
+                    "additionalData": {
+                        "platformType": "nx-os"
+                    }
+                },
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00480c": {
+        "TEST_NOTES": [
+            "00480 (deleted): Ethernet1/2 is named but already at the unconfigured default. Expect it hidden: deletion is satisfied,",
+            "so no normalize is queued and the run reports no change."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "none",
+                                "description": "",
+                                "nativeVlan": 1
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_named_default_retained_00480d": {
+        "TEST_NOTES": [
+            "00480 (deleted): GigabitEthernet1/0/1 is named but already at the XE reset target. Expect it hidden."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "description": "",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
     }
 }
