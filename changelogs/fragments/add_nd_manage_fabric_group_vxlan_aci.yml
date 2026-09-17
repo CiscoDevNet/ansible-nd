@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - Add ``nd_manage_fabric_group_vxlan_aci`` module to manage VXLAN-to-ACI Fabric Groups on Cisco Nexus Dashboard.
