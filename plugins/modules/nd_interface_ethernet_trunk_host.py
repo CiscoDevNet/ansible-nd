@@ -393,6 +393,8 @@ notes:
   interface in the fabric to its fabric default configuration.
 - IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
   are never reset when absent from it. To reset an IOS-XE interface, name it explicitly under O(state=deleted).
+- The ND 4.3.1 C(deviceTrackingPolicy) and C(flowMonitors) properties of the C(iosXeTrunkHost) policy are intentionally not exposed.
+  The module writes one policy shape that both ND 4.2.1 and ND 4.3.1 accept, so these properties cannot be configured through it.
 """
 
 EXAMPLES = r"""
