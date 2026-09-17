@@ -17,6 +17,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
     FromClusterMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
@@ -25,6 +28,26 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 # API path covered by this file:
 # /api/v1/manage/fabrics/{fabricName}/actions/deploy
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
+
+
+class FabricDeployQueryParams(EndpointQueryParams):
+    """
+    Query parameters for the fabric config deploy endpoint.
+
+    ``inclAllFabricGroupsSwitches`` defaults to ``false`` in the Manage API, which
+    does not deploy pending changes to a fabric group's member-fabric switches.
+    Setting it to ``true`` makes a fabric group ``global`` deploy reach every
+    member-fabric switch.
+    """
+
+    incl_all_fabric_groups_switches: bool = False
+
+    def to_query_string(self) -> str:
+        # Emit the flag only when enabled so ordinary single-fabric deploy URLs
+        # stay unchanged (no query string).
+        if not self.incl_all_fabric_groups_switches:
+            return ""
+        return "inclAllFabricGroupsSwitches=true"
 
 
 class EpFabricDeployPost(
@@ -40,12 +63,17 @@ class EpFabricDeployPost(
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
     class_name: Literal["EpFabricDeployPost"] = Field(default="EpFabricDeployPost")
+    endpoint_params: FabricDeployQueryParams = Field(default_factory=FabricDeployQueryParams)
 
     @property
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name is required")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "deploy")
+        base = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "deploy")
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:

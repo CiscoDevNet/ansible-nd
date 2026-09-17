@@ -253,7 +253,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
             "MVPN VRI ID (minimum: 1, maximum: 65535) for vPC, applicable when TRM enabled "
             "with IPv6 underlay, or mvpnVrfRouteImportId enabled with IPv4 underlay"
         ),
-        default="",
+        default=None,
     )
     vrf_route_import_id_reallocation: bool = Field(
         alias="vrfRouteImportIdReallocation", description="One time VRI ID re-allocation based on 'MVPN VRI ID Range'", default=False
@@ -368,7 +368,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         default=BgpAuthenticationKeyTypeEnum.THREE_DES,
     )
     bgp_authentication_key: Optional[SecretStr] = Field(
-        alias="bgpAuthenticationKey", description="Encrypted BGP authentication key based on type", default="", json_schema_extra={"secret": True}
+        alias="bgpAuthenticationKey", description="Encrypted BGP authentication key based on type", default=None, json_schema_extra={"secret": True}
     )
 
     # Protocol Settings — BFD
@@ -377,13 +377,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
     bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
     bfd_authentication_key: Optional[SecretStr] = Field(
-        alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default="", json_schema_extra={"secret": True}
+        alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default=None, json_schema_extra={"secret": True}
     )
 
     # Protocol Settings — PIM
     pim_hello_authentication: bool = Field(alias="pimHelloAuthentication", description="Valid for IPv4 Underlay only", default=False)
     pim_hello_authentication_key: Optional[SecretStr] = Field(
-        alias="pimHelloAuthenticationKey", description="3DES Encrypted", default="", json_schema_extra={"secret": True}
+        alias="pimHelloAuthenticationKey", description="3DES Encrypted", default=None, json_schema_extra={"secret": True}
     )
 
     # Management Settings
@@ -401,9 +401,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: str = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default="")
-    dhcp_end_address: str = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default="")
-    management_gateway: str = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default="")
+    dhcp_start_address: Optional[str] = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_end_address: Optional[str] = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
+    management_gateway: Optional[str] = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
@@ -415,8 +415,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False
     )
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
-    scheduled_backup_time: str = Field(
-        alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=""
+    scheduled_backup_time: Optional[str] = Field(
+        alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=None
     )
 
     # VRF Lite / Sub-Interface
@@ -619,14 +619,16 @@ class VxlanEbgpManagementModel(NDNestedModel):
         description=("Queuing Policy based on predominant fabric link speed: 800G / 400G / 100G / 25G. User-defined allows for custom configuration."),
         default=AimlQosPolicyEnum.V_400G,
     )
-    roce_v2: str = Field(
+    # Omitted when unset so ND applies its own release-specific default; the declared
+    # default changed between ND 4.2.1 ("26") and 4.3.1 ("24-31").
+    roce_v2: Optional[str] = Field(
         alias="roceV2",
         description=(
             "DSCP for RDMA traffic: numeric (0-63) with ranges/comma, named values "
             "(af11,af12,af13,af21,af22,af23,af31,af32,af33,af41,af42,af43,"
             "cs1,cs2,cs3,cs4,cs5,cs6,cs7,default,ef)"
         ),
-        default="26",
+        default=None,
     )
     cnp: str = Field(
         description=(
@@ -713,7 +715,10 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="macsecCipherSuite", description="Configure Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
     macsec_key_string: Optional[SecretStr] = Field(
-        alias="macsecKeyString", description="MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String", default="", json_schema_extra={"secret": True}
+        alias="macsecKeyString",
+        description="MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String",
+        default=None,
+        json_schema_extra={"secret": True},
     )
     macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="macsecAlgorithm", description="MACsec Primary Cryptographic Algorithm.  AES_128_CMAC or AES_256_CMAC", default=MacsecAlgorithmEnum.AES_128_CMAC
@@ -721,7 +726,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     macsec_fallback_key_string: Optional[SecretStr] = Field(
         alias="macsecFallbackKeyString",
         description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String",
-        default="",
+        default=None,
         json_schema_extra={"secret": True},
     )
     macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(

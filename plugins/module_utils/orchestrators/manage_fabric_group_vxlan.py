@@ -18,11 +18,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsPost,
     EpManageFabricsPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
+    EpFabricDeployPost,
+    FabricDeployQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.enums import FabricGroupTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
@@ -48,3 +52,16 @@ class ManageFabricGroupVxlanOrchestrator(ConfigActionsMixin, NDBaseOrchestrator)
             return [f for f in fabrics if f.get("management", {}).get("type") == FabricGroupTypeEnum.VXLAN.value]
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def deploy_global_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
+        """Deploy the entire fabric group, including member-fabric switches.
+
+        The Manage deploy API defaults ``inclAllFabricGroupsSwitches`` to ``false``,
+        which does not deploy pending changes to a fabric group's member fabrics.
+        A fabric group ``global`` deploy must reach every member switch, so this
+        override sets the flag to ``true``.
+        """
+        return EpFabricDeployPost(
+            fabric_name=fabric_name,
+            endpoint_params=FabricDeployQueryParams(incl_all_fabric_groups_switches=True),
+        )

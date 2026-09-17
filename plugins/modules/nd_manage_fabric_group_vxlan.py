@@ -587,6 +587,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_grou
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_vxlan import ManageFabricGroupVxlanOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 
 
 def main():
@@ -603,14 +606,14 @@ def main():
     # Parse and validate config_actions BEFORE any state mutation so invalid
     # input fails deterministically on every run, including idempotent no-drift
     # runs, and never mutates ND before failing.
-    config_actions = module.params.get("config_actions") or {}
-    save = config_actions.get("save", False)
-    deploy = config_actions.get("deploy", False)
-    deploy_type = config_actions.get("type", "switch")
     state = module.params.get("state", "merged")
-
     try:
-        ManageFabricGroupVxlanOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
     except ValueError as e:
         module.fail_json(msg=str(e))
 
@@ -625,7 +628,7 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        # Execute config save/deploy actions via the shared controller (only on real changes)
         if state != "deleted" and len(nd_state_machine.sent) > 0:
             fabric_names = []
             for item in nd_state_machine.sent:
@@ -633,11 +636,11 @@ def main():
                 if name and name not in fabric_names:
                     fabric_names.append(name)
             if fabric_names:
-                nd_state_machine.model_orchestrator.execute_config_actions(
+                nd_state_machine.model_orchestrator.run_config_actions(
+                    actions=config_actions,
                     fabric_names=fabric_names,
-                    save=save,
-                    deploy=deploy,
-                    deploy_type=deploy_type,
+                    state=state,
+                    check_mode=module.check_mode,
                 )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
