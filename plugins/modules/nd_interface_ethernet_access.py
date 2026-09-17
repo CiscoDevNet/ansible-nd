@@ -369,6 +369,8 @@ notes:
 - Interfaces that are port-channel members have restricted mutability.
 - IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
   are never reset when absent from it. To reset an IOS-XE interface, name it explicitly under O(state=deleted).
+- The ND 4.3.1 C(deviceTrackingPolicy) and C(flowMonitors) properties of the C(iosXeAccess) policy are intentionally not exposed.
+  The module writes one policy shape that both ND 4.2.1 and ND 4.3.1 accept, so these properties cannot be configured through it.
 """
 
 EXAMPLES = r"""
@@ -453,6 +455,44 @@ EXAMPLES = r"""
       deploy: true
     state: merged
 
+- name: Replace the configuration of specific accessHost interfaces
+  cisco.nd.nd_interface_ethernet_access:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/1
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 300
+              description: Reprovisioned access port
+    config_actions:
+      deploy: true
+    state: replaced
+
+# state=overridden is fabric-wide for NX-OS: every accessHost interface in the fabric that is NOT listed
+# below is reset to its fabric default configuration. An empty config list resets ALL NX-OS accessHost
+# interfaces in the fabric. IOS-XE interfaces are merge-only under this state (see notes). Use with caution.
+- name: Enforce accessHost interfaces fabric-wide, resetting all others to fabric default
+  cisco.nd.nd_interface_ethernet_access:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/1
+          - Ethernet1/2
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 100
+              description: Access ports to keep; all other accessHost interfaces reset
+    config_actions:
+      deploy: true
+    state: overridden
+
 - name: Configure IOS-XE access interfaces on a Catalyst switch
   cisco.nd.nd_interface_ethernet_access:
     fabric_name: my_campus_fabric
@@ -505,6 +545,86 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed, or in check mode would change, the fabric configuration.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - An empty list when no matching interface configuration existed.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_names:
+    - Ethernet1/1
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          access_vlan: 100
+after:
+  description:
+  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - In check mode, the configuration that would result had the module run outside of check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_names:
+    - Ethernet1/1
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          access_vlan: 200
+diff:
+  description: The per-interface difference between C(before) and C(after).
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_names:
+    - Ethernet1/1
+    config_data:
+      network_os:
+        policy:
+          access_vlan: 200
+proposed:
+  description: The configuration the module proposed to apply, before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_names:
+    - Ethernet1/1
+    config_data:
+      network_os:
+        policy:
+          access_vlan: 200
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+  - "Querying existing accessHost interface configuration"
+msg:
+  description: A human-readable error message, present only when the module fails.
+  returned: on failure
+  type: str
+  sample: "Configuration error: ..."
 """
 
 import copy
