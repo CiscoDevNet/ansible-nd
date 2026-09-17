@@ -222,7 +222,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         1. Resolve every `switch_ip` to a `switchId` via `_require_resolvable_switches`. This runs for every interface
            orchestrator, including those that opt out of the capability preflight, so an unknown switch is reported in check
            mode too (PR #550 review).
-        2. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
+        2. Platform check via `_check_platform_match`: each proposed `network_os_type` must agree with the `platformType` the
+           switch reports in the inventory fetched by step 1, so a mismatch fails in check mode too (PR #558 review).
+        3. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
            `interface_type`/`interface_mode` ClassVars.
 
         ## Raises
@@ -230,10 +232,52 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         ### RuntimeError
 
         - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
+        - Propagated from `_check_platform_match` (requested `network_os_type` differs from the switch's `platformType`).
         - Propagated from `validate_switches_capable` (see its docstring).
         """
         self._require_resolvable_switches(model_instances)
+        self._check_platform_match(model_instances)
         self.validate_switches_capable(model_instances)
+
+    def _check_platform_match(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Refuse any proposed interface whose `config_data.network_os.network_os_type` disagrees with the `platformType` its switch reports,
+        so a `--check` run fails on a platform mismatch exactly like a normal run would when ND rejects the write (PR #558 review). The
+        controller rejects the incompatible request before persisting intent, so this guard changes no outcome; it makes the outcome the
+        same in both modes and reports it in the module's own words before any request is sent.
+
+        Reads only the switch inventory `_require_resolvable_switches` already fetched (`FabricContext.get_platform_type` is an O(1)
+        index lookup), so no request is added. Each unique `(switch_ip, network_os_type)` pair is compared once and every mismatch is
+        aggregated into a single `RuntimeError`. A switch that reports no recognizable `platformType`, or a model without a
+        `network_os_type`, is skipped: there is no evidence of a mismatch to act on.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more proposed interfaces request a `network_os_type` that differs from the switch's reported `platformType`.
+        """
+        by_pair: dict[tuple[str, str], list[str]] = {}
+        for model_instance in model_instances:
+            network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
+            requested = getattr(network_os, "network_os_type", None)
+            switch_ip = getattr(model_instance, "switch_ip", None)
+            if not isinstance(requested, str) or not isinstance(switch_ip, str):
+                continue
+            by_pair.setdefault((switch_ip, requested), []).append(str(getattr(model_instance, "interface_name", "")))
+        mismatches: list[str] = []
+        for (switch_ip, requested), interface_names in by_pair.items():
+            platform = self.fabric_context.get_platform_type(switch_ip)
+            if platform is None or platform.value == requested:
+                continue
+            mismatches.append(
+                f"Switch {switch_ip} reports platformType '{platform.value}', but the requested network_os_type is '{requested}' "
+                f"({', '.join(interface_names)})"
+            )
+        if mismatches:
+            raise RuntimeError(f"{'; '.join(mismatches)}. No changes were made.")
 
     def _require_resolvable_switches(self, model_instances: Sequence[ModelType]) -> set[str]:
         """
