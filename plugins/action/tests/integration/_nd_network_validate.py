@@ -154,23 +154,6 @@ FIELD_PATHS = {
         ("l3Data", "arpSuppression"),
     ),
     "routing_tag": (("routing_tag",), ("routingTag",), ("l3_data", "routing_tag"), ("l3_data", "routingTag"), ("l3Data", "routingTag")),
-    "rt_auto": (
-        ("rt_auto",),
-        ("rtAuto",),
-        ("l2_data", "rt_auto"),
-        ("l2_data", "rtAuto"),
-        ("l2Data", "rtAuto"),
-        ("l3_data", "rt_auto"),
-        ("l3_data", "rtAuto"),
-        ("l3Data", "rtAuto"),
-    ),
-    "enable_ir": (
-        ("enable_ir",),
-        ("enableIr",),
-        ("l2_data", "fabric_data", "enable_ir"),
-        ("l2_data", "fabricData", "enableIr"),
-        ("l2Data", "fabricData", "enableIr"),
-    ),
     "multicast_group_address": (
         ("multicast_group_address",),
         ("multicastGroup"),

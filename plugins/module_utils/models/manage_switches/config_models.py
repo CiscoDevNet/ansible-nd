@@ -18,6 +18,7 @@ from ipaddress import ip_address
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     ValidationInfo,
     computed_field,
@@ -106,6 +107,7 @@ class POAPConfigModel(NDNestedModel):
     Used when ``poap`` is specified alone (bootstrap-only operation).
     ``serial_number`` and ``hostname`` are mandatory; all other fields are optional.
     Model, version, and config data are sourced from the bootstrap API at runtime.
+    ``software_image`` can be provided to select the software image used during POAP import.
     If the bootstrap API reports a different hostname or role, the API value overrides
     the user-provided value and a warning is logged.
     """
@@ -131,10 +133,11 @@ class POAPConfigModel(NDNestedModel):
         alias="discoveryPassword",
         description="Password for device discovery during POAP",
     )
-    image_policy: str | None = Field(
+    software_image: str | None = Field(
         default=None,
-        alias="imagePolicy",
-        description="Name of the image policy to be applied on switch",
+        alias="softwareImage",
+        min_length=1,
+        description="Software image file to use during POAP import",
     )
 
     @field_validator("hostname", mode="before")
@@ -166,6 +169,7 @@ class PreprovisionConfigModel(NDNestedModel):
     """
 
     identifiers: ClassVar[list[str]] = []
+    model_config = ConfigDict(extra="forbid")
 
     # Mandatory
     serial_number: str = Field(
@@ -191,11 +195,6 @@ class PreprovisionConfigModel(NDNestedModel):
         default=None,
         alias="discoveryPassword",
         description="Password for device discovery during pre-provision",
-    )
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Image policy to apply during pre-provision",
     )
 
     @field_validator("hostname", mode="before")
@@ -239,11 +238,6 @@ class RMAConfigModel(NDNestedModel):
     )
 
     # Optional
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Name of the image policy to be applied on the replacement switch",
-    )
     discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
@@ -788,7 +782,7 @@ class SwitchConfigModel(NDBaseModel):
                             hostname=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            image_policy=dict(type="str"),
+                            software_image=dict(type="str"),
                         ),
                     ),
                     preprovision=dict(
@@ -800,7 +794,6 @@ class SwitchConfigModel(NDBaseModel):
                             hostname=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            image_policy=dict(type="str"),
                             config_data=dict(
                                 type="dict",
                                 required=True,
@@ -822,7 +815,6 @@ class SwitchConfigModel(NDBaseModel):
                             new_serial_number=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            image_policy=dict(type="str"),
                         ),
                     ),
                 ),

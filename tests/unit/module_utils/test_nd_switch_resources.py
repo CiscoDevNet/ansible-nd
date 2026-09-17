@@ -309,10 +309,13 @@ def _bootstrap_entry(serial="POAP1", hostname="api-host"):
         "serialNumber": serial,
         "model": "N9K-C93180YC-EX",
         "softwareVersion": "10.3(1)",
+        "softwareImage": "nxos64-cs.10.3.1.F.bin",
         "hostname": hostname,
         "gatewayIpMask": "192.0.2.1/24",
         "fingerPrint": "fingerprint",
         "publicKey": "public-key",
+        "dhcpBootstrapIp": "192.0.2.50",
+        "seedSwitch": False,
         "switchRole": "spine",
         "data": {"models": ["N9K-C93180YC-EX"], "gatewayIpMask": "192.0.2.1/24"},
     }
@@ -1212,10 +1215,25 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     fabric_ops = RecordingFabricOps()
     handler = POAPHandler(ctx, fabric_ops, RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
 
-    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+    handler.handle(
+        [
+            _cfg(
+                "192.0.2.10",
+                poap={
+                    "serial_number": "POAP1",
+                    "hostname": "user-host",
+                    "software_image": "nxos64-cs.10.6.4.M.bin",
+                },
+            )
+        ]
+    )
     assert ctx.results.metadata[-1]["action"] == "bootstrap"
     assert ctx.results.diffs[-1]["switches"][0]["hostname"] == "api-host"
     assert ctx.results.diffs[-1]["switches"][0]["switchRole"] == "spine"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareImage"] == "nxos64-cs.10.6.4.M.bin"
+    assert ctx.results.diffs[-1]["switches"][0]["dhcpBootstrapIp"] == "192.0.2.50"
+    assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
+    assert "reAdd" not in ctx.results.diffs[-1]["switches"][0]
     assert fabric_ops.post_add_calls[-1].context == "bootstrap"
 
     preprov_cfg = _cfg(
@@ -1231,6 +1249,9 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     handler.handle([preprov_cfg])
     assert ctx.results.metadata[-1]["action"] == "preprovision"
     assert ctx.results.diffs[-1]["switches"][0]["serialNumber"] == "PRE1"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
+    assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
 
     swap_cfg = _cfg(
         "192.0.2.30",
@@ -1248,6 +1269,18 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     swap_handler.handle([swap_cfg], [_sw("192.0.2.30", "OLD1")])
     assert cache.refreshes == 1
     assert [entry["action"] for entry in swap_handler.ctx.results.metadata] == ["swap_serial", "bootstrap"]
+
+
+def test_poap_handler_omits_software_image_when_not_requested():
+    """POAP import sends softwareImage only when the playbook selects one."""
+    bootstrap = _bootstrap_entry("POAP1")
+    ctx = _ctx(results=Results())
+    handler = POAPHandler(ctx, RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
+
+    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
 
 
 def test_poap_handler_requires_bootstrap_identity_fields():
@@ -1334,10 +1367,11 @@ def test_rma_handler_requires_bootstrap_identity_fields():
 def test_rma_handler_full_success_and_ready_finalize_failures():
     """RMA success submits provision, waits for replacement, saves credentials, and finalizes."""
     old_switch = _sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="maintenance", hostname="old-host")
-    cfg = _cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1", "image_policy": "gold"}])
+    cfg = _cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])
     fabric_ops = RecordingFabricOps()
     wait = RecordingWait()
-    ctx = _ctx(results=Results())
+    nd = FakeND()
+    ctx = _ctx(nd=nd, results=Results())
     handler = RMAHandler(ctx, fabric_ops, wait, StaticBootstrapCache({"NEW1": _bootstrap_entry("NEW1")}))
 
     handler.handle([cfg], [old_switch])
@@ -1345,6 +1379,9 @@ def test_rma_handler_full_success_and_ready_finalize_failures():
     assert ctx.results.metadata[0]["action"] == "rma"
     assert ctx.results.diffs[0]["old_switch_id"] == "OLD1"
     assert ctx.results.diffs[0]["new_switch_id"] == "NEW1"
+    assert "oldSwitchId" not in nd.calls[0]["data"]
+    assert "imagePolicy" not in nd.calls[0]["data"]
+    assert nd.calls[0]["data"]["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
     assert wait.rma_calls == [["NEW1"]]
     assert fabric_ops.saved_credentials == [[("NEW1", cfg)]]
     assert fabric_ops.finalized == [["NEW1"]]

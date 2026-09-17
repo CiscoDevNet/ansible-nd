@@ -14,7 +14,7 @@
     target_fabric: "{{ nd_network_msd_parent_fabric }}"
     nd_network_msd_delete_seed:
       - network_name: ansible-nd-net-msd-deleted
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 231 }}"
         vlan_id: "{{ nd_network_base_vlan + 231 }}"
         vlan_name: ansible_nd_net_msd_deleted
@@ -23,7 +23,7 @@
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_delete_request:
       - network_name: ansible-nd-net-msd-deleted
-        is_l2only: true
+        layer: layer2
   delegate_to: localhost
   tags:
     - msd
