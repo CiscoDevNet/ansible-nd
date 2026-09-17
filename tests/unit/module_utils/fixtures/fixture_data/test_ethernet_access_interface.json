@@ -1937,5 +1937,289 @@
                 }
             }
         }
+    },
+    "test_platform_mismatch_00900a": {
+        "TEST_NOTES": [
+            "00900 (orchestrator): 192.168.2.1 -> FDO22222BBB reports platformType nx-os; the task requests network_os_type ios-xe.",
+            "preflight must refuse before any interfaceList or links GET."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "nx-os"
+                    }
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00910a": {
+        "TEST_NOTES": [
+            "00910 (orchestrator): 192.168.1.1 -> FDO11111AAA reports platformType ios-xe; the task requests network_os_type nx-os (the default).",
+            "preflight must refuse before any interfaceList GET."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00920a": {
+        "TEST_NOTES": [
+            "00920 (orchestrator): 192.168.2.1 -> FDO22222BBB is a Catalyst (platformType ios-xe); the task omits network_os_type, which defaults to nx-os.",
+            "preflight must refuse the defaulted nx-os branch."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00930a": {
+        "TEST_NOTES": [
+            "00930 (orchestrator): 192.168.2.1 -> FDO22222BBB platformType ios-xe matches the requested ios-xe."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00930b": {
+        "TEST_NOTES": [
+            "00930 (orchestrator): interfaceList for FDO22222BBB. GigabitEthernet1/0/1 carries no policy at all; the platform check must not depend on one."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00930c": {
+        "TEST_NOTES": [
+            "00930 (orchestrator): no fabric links, so the IOS-XE fabric-link guard passes."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [],
+            "meta": {
+                "counts": {
+                    "total": 0,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_platform_mismatch_00940a": {
+        "TEST_NOTES": [
+            "00940 (orchestrator, scale): FDO22222BBB reports ios-xe; FDO33333CCC reports no platformType (unverifiable, skipped).",
+            "Exactly this one switch-inventory GET must serve every platform lookup in the run."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.2.1",
+                    "switchId": "FDO22222BBB",
+                    "additionalData": {
+                        "platformType": "ios-xe"
+                    }
+                },
+                {
+                    "fabricManagementIp": "192.168.2.2",
+                    "switchId": "FDO33333CCC"
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00940b": {
+        "TEST_NOTES": [
+            "00940 (orchestrator, scale): interfaceList for FDO22222BBB, two defaults-only iosXeTrunkHost ports (convertible)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_platform_mismatch_00940c": {
+        "TEST_NOTES": [
+            "00940 (orchestrator, scale): no fabric links; fetched once for the first IOS-XE target."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links?fabricName=fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "links": [],
+            "meta": {
+                "counts": {
+                    "total": 0,
+                    "remaining": 0
+                }
+            }
+        }
+    },
+    "test_platform_mismatch_00940d": {
+        "TEST_NOTES": [
+            "00940 (orchestrator, scale): interfaceList for FDO33333CCC, two defaults-only iosXeTrunkHost ports (convertible)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO33333CCC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/1",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO33333CCC",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO33333CCC",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
     }
 }

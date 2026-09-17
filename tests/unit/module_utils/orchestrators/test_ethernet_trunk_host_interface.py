@@ -838,3 +838,118 @@ def test_ethernet_trunk_host_orchestrator_00840() -> None:
     assert orchestrator._pending_deploys == []
     assert len(orchestrator.rest_send.responses) == 2
     assert set(orchestrator._fabric_link_endpoints()) == {("FDO22222BBB", "gigabitethernet1/0/48"), ("FDO33333CCC", "gigabitethernet1/0/1")}
+
+
+# =============================================================================
+# Test: platform / network_os_type preflight (PR #558 review)
+# =============================================================================
+
+
+def test_ethernet_trunk_host_orchestrator_00900() -> None:
+    """
+    # Summary
+
+    Verify `preflight` refuses an IOS-XE (`iosXeTrunkHost`) target whose switch reports `platformType` `nx-os`, so a `--check` run
+    fails with the same module-level error a normal run raises instead of reporting the change as viable (PR #558 review). The check
+    runs off the switch inventory already fetched for `switch_ip` resolution: no interfaceList or links GET is issued.
+
+    ## Test
+
+    - Switches GET reports 192.168.2.1 as `nx-os`
+    - `preflight` (check mode) raises `RuntimeError` naming the switch, the reported platform, and the requested OS
+    - Exactly one response (the switch-inventory GET) was issued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._check_platform_match()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_platform_mismatch_00900a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged", "check_mode": True})
+    model = _build_xe_trunk_model({"allowed_vlans": "10"})
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Switch 192\.168\.2\.1 reports platformType 'nx-os', but the requested network_os_type is 'ios-xe' \(GigabitEthernet1/0/1\)\. No changes were made\.",
+    ):
+        orchestrator.preflight([model])
+    assert len(orchestrator.rest_send.responses) == 1
+
+
+def test_ethernet_trunk_host_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    Verify the platform check refuses the opposite direction too: an NX-OS (`trunkHost`) target whose switch reports `platformType`
+    `ios-xe`.
+
+    ## Test
+
+    - Switches GET reports 192.168.1.1 as `ios-xe`
+    - `preflight` raises `RuntimeError` naming the switch, `ios-xe`, and the requested `nx-os`
+    - Exactly one response (the switch-inventory GET) was issued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._check_platform_match()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_platform_mismatch_00910a")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    model = EthernetTrunkHostInterfaceModel(
+        switch_ip="192.168.1.1", interface_name="Ethernet1/1", config_data={"network_os": {"policy": {"allowed_vlans": "10"}}}
+    )
+    assert model.config_data.network_os.network_os_type == "nx-os"
+
+    with pytest.raises(
+        RuntimeError, match=r"Switch 192\.168\.1\.1 reports platformType 'ios-xe', but the requested network_os_type is 'nx-os' \(Ethernet1/1\)"
+    ):
+        orchestrator.preflight([model])
+    assert len(orchestrator.rest_send.responses) == 1
+
+
+def test_ethernet_trunk_host_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    Verify the platform check adds no requests at scale: four IOS-XE targets across two switches reuse the single switch-inventory
+    GET issued for `switch_ip` resolution, and a switch that reports no recognizable `platformType` is skipped rather than refused.
+
+    ## Test
+
+    - Switches GET reports 192.168.2.1 as `ios-xe` and 192.168.2.2 with no `additionalData`
+    - Two `iosXeTrunkHost` targets per switch
+    - `preflight` does not raise
+    - Responses: exactly one switch-inventory GET, one interfaceList GET per switch, one links GET (four total)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_platform_match()
+    - EthernetBaseOrchestrator.preflight()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_platform_mismatch_00920a")
+        yield responses_trunk_host("test_platform_mismatch_00920b")
+        yield responses_trunk_host("test_platform_mismatch_00920c")
+        yield responses_trunk_host("test_platform_mismatch_00920d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    models = [
+        _build_xe_trunk_model({"allowed_vlans": "10"}, interface_name="GigabitEthernet1/0/1", switch_ip="192.168.2.1"),
+        _build_xe_trunk_model({"allowed_vlans": "10"}, interface_name="GigabitEthernet1/0/2", switch_ip="192.168.2.1"),
+        _build_xe_trunk_model({"allowed_vlans": "10"}, interface_name="GigabitEthernet1/0/1", switch_ip="192.168.2.2"),
+        _build_xe_trunk_model({"allowed_vlans": "10"}, interface_name="GigabitEthernet1/0/2", switch_ip="192.168.2.2"),
+    ]
+
+    with does_not_raise():
+        orchestrator.preflight(models)
+    paths = [response.get("REQUEST_PATH", "") for response in orchestrator.rest_send.responses]
+    assert len(paths) == 4
+    assert sum(1 for path in paths if path.endswith("/switches")) == 1
