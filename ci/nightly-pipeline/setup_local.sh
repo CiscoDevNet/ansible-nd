@@ -133,7 +133,7 @@ fork-safety vars OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES and no_proxy='*'):
     source "$VENV/bin/activate"
     cd "$COLLECTIONS_DIRECTORY"
 
-Run a smoke playbook (needs Cisco VPN to reach the lab 192.0.2.117):
+Run a smoke playbook (needs Cisco VPN to reach the lab 10.122.84.117):
     ansible-playbook -i inventory.yaml nd_manage_vrfs.yaml
 
 Run one integration module:

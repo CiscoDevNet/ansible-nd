@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 
 CONSUL = os.environ.get(
-    "ND_CONSUL_BASE", "http://198.51.100.155:8500/v1/kv/ansible-nd"
+    "ND_CONSUL_BASE", "http://10.78.210.155:8500/v1/kv/ansible-nd"
 )
 WORKSPACE = "/Users/sivakasi/Library/CloudStorage/OneDrive-Cisco/2/Ansible work/NX_ansible/jenkins/jenkins_nd"
 ROOT = os.environ.get("ND_LOCAL_ROOT", WORKSPACE)

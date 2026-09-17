@@ -14,8 +14,16 @@
 #     exits non-zero with a greppable NDP_SWITCH_PREFLIGHT_FAIL line.
 #   * ENFORCE (nd_switch_apply=true): add every missing canonical switch (state:
 #     merged, additive - never deletes), then RECALCULATE & DEPLOY its fabric
-#     (config_actions save + deploy), then re-gather and REQUIRE the full canonical
-#     roster to be present before returning. This is a hard gate, not a best-effort
+#     (config_actions save + deploy, scope global = a full-fabric Recalculate &
+#     Deploy so peers converge too), then ACTIVELY CLEAR any switch stuck in a
+#     read-only Migration/Maintenance system mode (Maintenance -> Normal via
+#     cisco.nd.nd_maintenance_mode; Migration via a fabric Recalculate & Deploy),
+#     then WAIT until every switch is actually in sync (system mode Normal, not a
+#     read-only Migration/Maintenance mode that silently blocks config pushes), then
+#     re-gather and REQUIRE the full canonical roster to be present before returning.
+#     Because the Jenkins pre-flight, per-module guard and post-suite restore all run
+#     this playbook, the read-only self-heal happens at the start of the pipeline,
+#     before every module, and at the end. This is a hard gate, not a best-effort
 #     self-heal: a switch that will not onboard/deploy fails the play (no
 #     ignore_errors), and deploy is ON by default (nd_switch_deploy=true) so a switch
 #     is never left a member with un-pushed config. The Jenkins pre-flight uses this
@@ -28,6 +36,11 @@
   hosts: nd
   gather_facts: false
   vars:
+    # Switch onboarding credentials are supplied by the Jenkins-bound masked
+    # environment, not copied from ND controller credentials or stored in the
+    # canonical roster.
+    nd_switch_username: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME') }}"
+    nd_switch_password: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD') }}"
     # Explicit roster override; empty means auto-discover from the candidates below.
     nd_switch_roster_file: ""
     # Roster search order (first existing wins). Covers the source layout (playbook
@@ -59,6 +72,71 @@
     # present, so the pipeline never starts on a partial topology. Set false only for
     # a deploy-without-final-assert dry run.
     nd_switch_require_full_roster: true
+    # Scope of the post-add Recalculate & Deploy. 'global' issues a full-fabric
+    # Recalculate & Deploy (all pending changes for the fabric, so the re-added
+    # switch AND its peers converge), matching the NDFC "Recalculate & Deploy"
+    # action; 'switch' would deploy only the added switch. Global is the default
+    # because a switch that dropped out usually needs its fabric recalculated too.
+    nd_switch_deploy_scope: global
+    # After add + Recalculate & Deploy, WAIT until every canonical switch is actually
+    # in sync before the confirmation gate asserts the roster. nd_manage_switches
+    # returns as soon as ND queues the deploy, but a switch can still be converging -
+    # or stuck in a read-only Migration/Maintenance system mode that silently blocks
+    # every later config push - so fabric membership alone is not proof of a healthy
+    # heal. Set false to skip the sync wait (membership-only confirmation).
+    nd_switch_wait_insync: true
+    # Bounded poll for the in-sync wait: retries x delay seconds is the wall-clock
+    # cap (30 x 20s = up to 10 min, under the caller's ND_SWITCH_SYNC_TIMEOUT guard).
+    # The poll exits as soon as the switches are in sync, so a healthy heal costs one
+    # REST call; only a genuinely stuck switch waits the full window.
+    nd_switch_insync_retries: 30
+    nd_switch_insync_delay: 20
+    # After a read-only/Maintenance/role heal issues its Recalculate & Deploy, pause
+    # this many seconds before the in-sync verification and the tests so ND actually
+    # programs the switch (a switch can report Normal a moment before its config push
+    # lands). Only fires when a heal was issued this run; 0 disables the pause.
+    nd_switch_settle_seconds: 45
+    # System modes that count as "in sync / deployable". Anything else (Migration /
+    # Maintenance) is read-only and cannot accept config, so the heal is not complete
+    # until the switch leaves that mode.
+    nd_switch_insync_ok_modes:
+      - Normal
+      - normal
+    # ACTIVELY clear a read-only system mode instead of only waiting for it to lift.
+    # When true (default) the ENFORCE-mode confirmation gate, before it waits for
+    # every switch to be in sync, detects any switch stuck in a read-only mode and
+    # remediates it: a switch in Maintenance mode is changed back to Normal
+    # (cisco.nd.nd_maintenance_mode), and every fabric that has a read-only switch
+    # gets a Recalculate & Deploy (REST configSave + deploy) - which is what clears
+    # Migration mode. The existing in-sync wait then VERIFIES the switches actually
+    # reached a deployable mode and the gate still fails if they did not. Set false to
+    # fall back to wait-then-fail (no active change).
+    nd_switch_heal_readonly: true
+    # As part of the read-only self-heal, UNPAIR a vPC pair whose member is stuck
+    # read-only BEFORE the Recalculate & Deploy. A switch that is one half of a vPC
+    # pair can fail its own deploy because ND's vPC consistency check requires BOTH
+    # peers to be editable, so a single read-only peer keeps the pair - and therefore
+    # its partner - stuck in "read-only mode, no configuration deployment is
+    # permitted". Removing the pair from fabric intent first (cisco.nd.nd_manage_vpc_pair
+    # state: deleted - the SAME call reset_fabric.yaml uses to clear a leftover pair)
+    # lets each switch recover on its own. Nothing re-pairs afterwards on purpose: this
+    # lab keeps NO standing vPC pair (virtual peering is unsupported here and the
+    # standalone nd_vpc_pair test is disabled), and reset_fabric.yaml already treats a
+    # vPC pair as a removable leftover, so unpair-without-repair is the established,
+    # consistent behaviour. Set false to recover read-only switches without touching
+    # vPC pairing.
+    nd_switch_heal_unpair_vpc: true
+    # RECONCILE switch ROLES back to the roster after the destructive integration
+    # targets run. A delete + brownfield re-add can restore a switch with the
+    # controller-default role instead of its roster role (e.g. external_edge_1 must
+    # be edgeRouter for the l3out planner). When true (default) the confirmation gate
+    # detects any PRESENT switch whose role drifted from tests/integration_config.yml
+    # and corrects it with cisco.nd.nd_manage_switches state: merged - for a switch
+    # already in the fabric a differing role routes to the surgical switchActions/
+    # changeRoles API (no delete / no re-onboard, so it will NOT re-trigger read-only
+    # Migration mode) - then Recalculate & Deploy. Set false to only add/heal presence
+    # and read-only mode without touching roles.
+    nd_switch_heal_roles: true
 
   tasks:
     - name: Locate the canonical roster file across both layouts
@@ -178,6 +256,7 @@
             config_actions:
               save: true
               deploy: "{{ nd_switch_deploy | bool }}"
+              type: "{{ nd_switch_deploy_scope }}"
             config:
               - seed_ip: "{{ _sw.seed_ip }}"
                 role: "{{ _sw.role }}"
@@ -198,6 +277,494 @@
     - name: Confirm the full canonical roster is present after onboarding
       when: nd_switch_apply | bool
       block:
+        # ---- Active read-only (Migration/Maintenance) self-heal -----------------
+        # Before waiting for the switches to be in sync, actively clear any switch
+        # stuck in a read-only system mode (the "Selected switches are in read-only
+        # mode. No configuration deployment is permitted" cause behind builds #21/#22
+        # and #26) and put it back to an editable (Normal) mode. The authoritative
+        # per-switch mode comes from the ND 4.x fabric-switches REST inventory
+        # (/api/v1/manage/fabrics/<fabric>/switches -> .current.switches[], each with
+        # additionalData.systemMode / intendedSystemMode and top-level switchId) - the
+        # SAME proven read nd_prerequisite_capture.yaml uses. (The legacy lan-fabric
+        # switchesByFabric endpoint 404s on ND 4.x, which is why this heal used to go
+        # blind and report READONLY_NONE while modules still hit read-only switches.)
+        # Maintenance mode is changed back to Normal with cisco.nd.nd_maintenance_mode
+        # (which by design refuses a switch in migration mode, so only Maintenance
+        # switches are sent to it); Migration mode is cleared by a Recalculate & Deploy
+        # (REST configSave + switchActions/deploy of the affected switches). The in-sync
+        # wait below then VERIFIES convergence and still fails the gate if a switch
+        # cannot be recovered. Gated by nd_switch_heal_readonly; every heal step is
+        # non-fatal here (failed_when: false) so the wait + assert stay the source of
+        # truth.
+        - name: Probe each fabric for switches in a read-only system mode
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ _fab.key }}/switches"
+          loop: "{{ nd_test_fabric_switches | dict2items }}"
+          loop_control:
+            loop_var: _fab
+            label: "{{ _fab.key }}"
+          register: nd_readonly_probe
+          failed_when: false
+          when: nd_switch_heal_readonly | bool
+
+        - name: Compute canonical switches currently in a read-only system mode
+          ansible.builtin.set_fact:
+            nd_readonly_switches: >-
+              {{ nd_readonly_switches | default([]) + (
+                   _res._fab.value
+                   | selectattr('serial', 'in',
+                       (((((_res.current | default({})).switches | default([]))
+                          | rejectattr('additionalData.systemMode', 'in', nd_switch_insync_ok_modes)
+                          | map(attribute='switchId') | list)
+                         + (((_res.current | default({})).switches | default([]))
+                          | rejectattr('additionalData.intendedSystemMode', 'in', nd_switch_insync_ok_modes)
+                          | map(attribute='switchId') | list))
+                        | unique | list))
+                   | map('combine', {'fabric': _res._fab.key})
+                   | list
+                 ) }}
+          loop: "{{ nd_readonly_probe.results | default([]) }}"
+          loop_control:
+            loop_var: _res
+            label: "{{ _res._fab.key | default('?') }}"
+          when:
+            - nd_switch_heal_readonly | bool
+            - nd_readonly_probe.results is defined
+
+        - name: Compute canonical switches specifically in Maintenance mode
+          ansible.builtin.set_fact:
+            nd_maint_switches: >-
+              {{ nd_maint_switches | default([]) + (
+                   _res._fab.value
+                   | selectattr('serial', 'in',
+                       ((((_res.current | default({})).switches | default([]))
+                         | selectattr('additionalData.systemMode', 'search', '(?i)maintenance')
+                         | map(attribute='switchId') | list)))
+                   | map('combine', {'fabric': _res._fab.key})
+                   | list
+                 ) }}
+          loop: "{{ nd_readonly_probe.results | default([]) }}"
+          loop_control:
+            loop_var: _res
+            label: "{{ _res._fab.key | default('?') }}"
+          when:
+            - nd_switch_heal_readonly | bool
+            - nd_readonly_probe.results is defined
+
+        - name: Report the read-only self-heal detection
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('NDP_SWITCH_READONLY_DETECTED ' ~ ((nd_readonly_switches | default([])) | length)
+                  ~ ' switch(es) in a read-only system mode: '
+                  ~ ((nd_readonly_switches | default([])) | map(attribute='serial') | list)
+                  ~ ' fabrics: ' ~ ((nd_readonly_switches | default([])) | map(attribute='fabric') | unique | list)
+                  ~ '; Maintenance-mode: ' ~ ((nd_maint_switches | default([])) | map(attribute='serial') | list)
+                  ~ ' -> clearing to Normal + Recalculate & Deploy')
+                 if ((nd_readonly_switches | default([])) | length > 0)
+                 else 'NDP_SWITCH_READONLY_NONE no canonical switch is in a read-only system mode' }}
+          when: nd_switch_heal_readonly | bool
+
+        - name: Probe each fabric's read-only (Monitor) mode flag
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ _fab.key }}"
+          loop: "{{ nd_test_fabric_switches | dict2items }}"
+          loop_control:
+            loop_var: _fab
+            label: "{{ _fab.key }}"
+          register: nd_fabric_ro_probe
+          failed_when: false
+          when: nd_switch_heal_readonly | bool
+
+        - name: Detect fabrics in read-only (Monitor) mode
+          # ND 4.x manage API exposes Monitor mode as .current.management.monitoredMode (bool), not nvPairs.IS_READ_ONLY.
+          ansible.builtin.set_fact:
+            nd_ro_fabrics: >-
+              {{ (nd_ro_fabrics | default([]))
+                 + ([_res._fab.key]
+                    if (((_res.current | default({})).management | default({})).get('monitoredMode', false) | bool)
+                    else []) }}
+          loop: "{{ nd_fabric_ro_probe.results | default([]) }}"
+          loop_control:
+            loop_var: _res
+            label: "{{ _res._fab.key | default('?') }}"
+          when:
+            - nd_switch_heal_readonly | bool
+            - nd_fabric_ro_probe.results is defined
+
+        - name: Report fabric read-only (Monitor) status
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('NDP_FABRIC_READONLY ' ~ ((nd_ro_fabrics | default([])) | join(', '))
+                  ~ ' in Monitor/read-only mode (IS_READ_ONLY=true): a fabric in Monitor mode blocks ALL'
+                  ~ ' deployment and is a deliberate fabric setting, so it is reported but NOT auto-changed.'
+                  ~ ' Switch it to Managed mode on ND if the suite must deploy.')
+                 if ((nd_ro_fabrics | default([])) | length > 0)
+                 else 'NDP_FABRIC_READONLY_NONE no fabric is in Monitor/read-only mode' }}
+          when: nd_switch_heal_readonly | bool
+
+        # ---- Unpair a vPC pair that is blocking read-only recovery --------------
+        # A switch stuck read-only that is one half of a vPC pair can block its own
+        # Recalculate & Deploy: ND runs a vPC consistency check and refuses to deploy
+        # unless BOTH peers are editable, so the configSave/deploy below can loop back
+        # to "read-only mode, no configuration deployment is permitted" while a peer is
+        # stuck. Remove the vPC pair from fabric intent FIRST, but ONLY on a fabric
+        # where a read-only switch is itself a vPC LEAF (the pair members here are the
+        # two role: leaf switches) - a read-only spine/border is not a vPC-consistency
+        # blocker, so its pair is left intact. The following Recalculate & Deploy then
+        # recomputes vPC-free config and each leaf converges on its own. This mirrors
+        # reset_fabric.yaml, which likewise deletes a leftover pair with
+        # cisco.nd.nd_manage_vpc_pair (state: deleted, peer1_switch_id/peer2_switch_id).
+        # A fabric without a 2-leaf pair (e.g. the external edge-router fabric) is
+        # skipped by the >= 2 leaves guard. Nothing re-pairs afterwards on purpose (see
+        # nd_switch_heal_unpair_vpc). Grouped per fabric and non-fatal
+        # (failed_when: false): a no-op when the fabric has no vPC pair.
+        - name: Unpair the vPC leaf pair on each fabric with a read-only leaf (before deploy)
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ _rf }}"
+            state: deleted
+            config:
+              - peer1_switch_id: "{{ _leaf_serials[0] }}"
+                peer2_switch_id: "{{ _leaf_serials[1] }}"
+          vars:
+            _leaf_serials: >-
+              {{ (nd_test_fabric_switches[_rf] | default([]))
+                 | selectattr('role', 'equalto', 'leaf')
+                 | map(attribute='serial') | list }}
+          loop: "{{ (nd_readonly_switches | default([])) | map(attribute='fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_readonly_unpair
+          failed_when: false
+          when:
+            - nd_switch_heal_readonly | bool
+            - nd_switch_heal_unpair_vpc | bool
+            - (nd_readonly_switches | default([])) | length > 0
+            # only unpair when a LEAF (a vPC-pair member) on THIS fabric is the stuck
+            # switch - a read-only spine/border is not a vPC-consistency blocker
+            - ((nd_readonly_switches | default([])) | selectattr('fabric', 'equalto', _rf) | selectattr('role', 'equalto', 'leaf') | list | length) > 0
+            # ...and only when the fabric actually has a 2-leaf pair to remove
+            - ((nd_test_fabric_switches[_rf] | default([])) | selectattr('role', 'equalto', 'leaf') | list | length) >= 2
+
+        - name: Change each Maintenance-mode switch back to Normal (and deploy the mode change)
+          cisco.nd.nd_maintenance_mode:
+            fabric_name: "{{ _sw.fabric }}"
+            state: merged
+            config:
+              mode: normal
+              deploy: true
+              blocking: false
+              switches:
+                - switch_ip: "{{ _sw.seed_ip }}"
+          loop: "{{ nd_maint_switches | default([]) }}"
+          loop_control:
+            loop_var: _sw
+            label: "{{ _sw.serial }} ({{ _sw.fabric }})"
+          register: nd_maint_heal
+          failed_when: false
+          when:
+            - nd_switch_heal_readonly | bool
+            - (nd_maint_switches | default([])) | length > 0
+
+        - name: Recalculate each affected fabric (config save) to clear Migration mode
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
+            content: {}
+          loop: "{{ (nd_readonly_switches | default([])) | map(attribute='fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_heal_save
+          failed_when: false
+          when:
+            - nd_switch_heal_readonly | bool
+            - (nd_readonly_switches | default([])) | length > 0
+
+        # Deploy the read-only switches so ND actually moves them Migration -> Normal
+        # (editable). switchActions/deploy with the affected switchIds is the proven
+        # ND 4.x Recalculate & Deploy the collection itself issues; a bare fabric
+        # /actions/deploy is NOT the ND 4.x path.
+        - name: Deploy each read-only switch (switchActions/deploy) to make it editable
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
+            content:
+              switchIds: >-
+                {{ (nd_readonly_switches | default([]))
+                   | selectattr('fabric', 'equalto', _rf)
+                   | map(attribute='serial') | list }}
+          loop: "{{ (nd_readonly_switches | default([])) | map(attribute='fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_heal_deploy
+          failed_when: false
+          when:
+            - nd_switch_heal_readonly | bool
+            - (nd_readonly_switches | default([])) | length > 0
+
+        - name: Report the read-only self-heal actions issued
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_READONLY_HEAL_DONE Recalculate & Deploy issued for fabrics
+              {{ (nd_readonly_switches | default([])) | map(attribute='fabric') | unique | list }};
+              {{ 'NDP_SWITCH_VPC_UNPAIR vPC leaf pair unpaired first where a pair exists; '
+                 if (nd_switch_heal_unpair_vpc | bool) else '' }}Maintenance->Normal issued for
+              {{ (nd_maint_switches | default([])) | map(attribute='serial') | list }}.
+              Verifying convergence via the in-sync wait below.
+          when:
+            - nd_switch_heal_readonly | bool
+            - (nd_readonly_switches | default([])) | length > 0
+
+        # ---- Role-drift reconciliation (present switches with the wrong role) -----
+        # The destructive nd_manage_switches / nd_manage_fabric targets delete then
+        # re-add fabric members, and a re-add can land a switch back with the
+        # controller-default role instead of its roster role. The onboard step above
+        # only sets role on switches it ADDS, so a switch that is PRESENT but mis-roled
+        # is not corrected there. Detect that drift against the roster and fix it with
+        # the SAME module: for a switch already in the fabric, nd_manage_switches
+        # state: merged with a differing role routes to the surgical switchActions/
+        # changeRoles API (it does NOT delete/re-onboard, so it will not push the
+        # switch back into read-only Migration mode), then config save + deploy
+        # (Recalculate & Deploy) makes the change take. Role normalisation is
+        # separator/case-insensitive so the roster 'edge_router' matches ND's
+        # 'edgeRouter'. Gated by nd_switch_heal_roles; correction is non-fatal so the
+        # confirm asserts below stay the source of truth. Runs before the in-sync wait
+        # so the existing wait converges the role deploy too.
+        - name: Flatten the roster into (fabric, switch) pairs for role checks
+          ansible.builtin.set_fact:
+            nd_role_flat: >-
+              {{ (nd_role_flat | default([])) + ([_fab.key] | product(_fab.value) | list) }}
+          loop: "{{ nd_test_fabric_switches | dict2items }}"
+          loop_control:
+            loop_var: _fab
+            label: "{{ _fab.key }}"
+          when: nd_switch_heal_roles | bool
+
+        - name: Map each fabric to its present seed_ip -> current role
+          ansible.builtin.set_fact:
+            nd_present_roles: >-
+              {{ dict((nd_test_fabric_switches.keys() | list)
+                      | zip(nd_gathered.results
+                            | map(attribute='gathered')
+                            | map('items2dict', key_name='seed_ip', value_name='role')
+                            | list)) }}
+          when: nd_switch_heal_roles | bool
+
+        - name: Detect present canonical switches whose role drifted from the roster
+          ansible.builtin.set_fact:
+            nd_role_drift: >-
+              {{ (nd_role_drift | default([])) + [ {
+                    'fabric': _rsw.0,
+                    'seed_ip': _rsw.1.seed_ip,
+                    'serial': _rsw.1.serial,
+                    'name': _rsw.1.name | default(_rsw.1.serial),
+                    'expected': _rsw.1.role,
+                    'actual': (nd_present_roles[_rsw.0][_rsw.1.seed_ip] | default('unknown'))
+                 } ] }}
+          loop: "{{ nd_role_flat | default([]) }}"
+          loop_control:
+            loop_var: _rsw
+            label: "{{ _rsw.1.name | default(_rsw.1.serial) }} ({{ _rsw.0 }})"
+          when:
+            - nd_switch_heal_roles | bool
+            - _rsw.1.role is defined
+            - _rsw.1.seed_ip in (nd_present_roles[_rsw.0] | default({}))
+            - (nd_present_roles[_rsw.0][_rsw.1.seed_ip] | default('') | string | length) > 0
+            - (_rsw.1.role | string | lower | replace('_', '') | replace(' ', ''))
+              != (nd_present_roles[_rsw.0][_rsw.1.seed_ip] | string | lower | replace('_', '') | replace(' ', ''))
+
+        - name: Report the role-drift detection
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('NDP_SWITCH_ROLE_DRIFT ' ~ ((nd_role_drift | default([])) | length)
+                  ~ ' present switch(es) hold the wrong role (fabric/name/expected/actual): '
+                  ~ (nd_role_drift | default([])))
+                 if ((nd_role_drift | default([])) | length > 0)
+                 else 'NDP_SWITCH_ROLE_OK all present canonical switches hold their roster role' }}
+          when: nd_switch_heal_roles | bool
+
+        - name: Correct role drift on present switches, then recalculate and deploy
+          cisco.nd.nd_manage_switches:
+            fabric: "{{ _sw.fabric }}"
+            state: merged
+            config_actions:
+              save: true
+              deploy: "{{ nd_switch_deploy | bool }}"
+              type: "{{ nd_switch_deploy_scope }}"
+            config:
+              - seed_ip: "{{ _sw.seed_ip }}"
+                role: "{{ _sw.expected }}"
+                username: "{{ nd_switch_username | default(switch_username) }}"
+                password: "{{ nd_switch_password | default(switch_password) }}"
+                preserve_config: "{{ nd_switch_preserve_config | bool }}"
+          loop: "{{ nd_role_drift | default([]) }}"
+          loop_control:
+            loop_var: _sw
+            label: "{{ _sw.name }} {{ _sw.actual }} -> {{ _sw.expected }} ({{ _sw.fabric }})"
+          register: nd_role_heal
+          failed_when: false
+          no_log: true
+          when:
+            - nd_switch_heal_roles | bool
+            - (nd_role_drift | default([])) | length > 0
+            - (nd_switch_username | default(switch_username | default(''))) | string | length > 0
+            - (nd_switch_password | default(switch_password | default(''))) | string | length > 0
+
+        - name: Report the role-drift heal actions issued
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_ROLE_HEAL_DONE changeRoles + Recalculate & Deploy issued for
+              {{ (nd_role_drift | default([])) | map(attribute='name') | list }}
+              in fabrics {{ (nd_role_drift | default([])) | map(attribute='fabric') | unique | list }};
+              verifying convergence via the in-sync wait and the role re-check below.
+          when:
+            - nd_switch_heal_roles | bool
+            - (nd_role_drift | default([])) | length > 0
+
+        # Give the Recalculate & Deploy time to actually program the switches before the
+        # in-sync verification and the tests. A switch can report Normal a moment before
+        # its config push lands, so the first module could otherwise race an only-just-
+        # editable switch. Pauses only when a read-only, Maintenance, or role heal was
+        # issued this run (nothing to settle for an already-Normal roster).
+        - name: Settle after Recalculate & Deploy so ND programs the switches before the tests
+          ansible.builtin.wait_for:
+            timeout: "{{ nd_switch_settle_seconds | int }}"
+          delegate_to: localhost
+          run_once: true
+          when:
+            - (nd_switch_settle_seconds | int) > 0
+            - ((nd_readonly_switches | default([])) | length > 0)
+              or ((nd_maint_switches | default([])) | length > 0)
+              or ((nd_role_drift | default([])) | length > 0)
+
+        # Self-heal is only complete once the switches are actually in sync, not the
+        # instant the deploy is accepted: nd_manage_switches returns as soon as ND
+        # queues the deploy, but a re-added switch can still be converging - or stuck
+        # in a read-only Migration/Maintenance system mode that silently blocks every
+        # later config push (the root cause of the "Selected switches are in read-only
+        # mode. No configuration deployment is permitted" suite failures). Poll ND per
+        # fabric until every canonical switch reports a deployable system mode, matched
+        # to the roster by serial. Authoritative per-switch mode comes from the
+        # lan-fabric REST inventory because state: gathered does not expose it. The
+        # poll is bounded (retries x delay) and non-fatal here; the explicit gate below
+        # then refuses to start the pipeline with a greppable NDP_SWITCH_INSYNC line.
+        - name: Wait until every canonical switch reports in sync (deployable system mode)
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ _fab.key }}/switches"
+          loop: "{{ nd_test_fabric_switches | dict2items }}"
+          loop_control:
+            loop_var: _fab
+            label: "{{ _fab.key }}"
+          register: nd_insync_probe
+          until: >-
+            (_fab.value
+             | rejectattr('serial', 'in',
+                 (((nd_insync_probe.current | default({})).switches | default([]))
+                  | selectattr('switchId', 'defined')
+                  | selectattr('additionalData.systemMode', 'in', nd_switch_insync_ok_modes)
+                  | map(attribute='switchId') | list))
+             | list | length) == 0
+          retries: "{{ nd_switch_insync_retries | int }}"
+          delay: "{{ nd_switch_insync_delay | int }}"
+          failed_when: false
+          when: nd_switch_wait_insync | bool
+
+        # Split the roster by what the probe ACTUALLY returned, not by absence.
+        # nd_not_insync = switches the probe returned with a non-deployable mode
+        # (genuine Migration/Maintenance read-only) -> these fail the gate.
+        # nd_insync_unverified = switches the probe returned no mode for at all
+        # (empty/errored switchesByFabric; failed_when:false hides a non-2xx) ->
+        # UNVERIFIED, never failed: presence is already guaranteed by the roster
+        # gate, so an unreadable mode must not be mistaken for read-only (the build
+        # #23 false positive that failed all 6 on an empty probe).
+        - name: Compute canonical switches the probe returned in a read-only (non-deployable) mode
+          ansible.builtin.set_fact:
+            nd_not_insync: >-
+              {{ nd_not_insync | default([]) + (
+                   _res._fab.value
+                   | selectattr('serial', 'in',
+                       (((_res.current | default({})).switches | default([]))
+                        | selectattr('switchId', 'defined')
+                        | rejectattr('additionalData.systemMode', 'in', nd_switch_insync_ok_modes)
+                        | map(attribute='switchId') | list))
+                   | map('combine', {'fabric': _res._fab.key})
+                   | list
+                 ) }}
+          loop: "{{ nd_insync_probe.results | default([]) }}"
+          loop_control:
+            loop_var: _res
+            label: "{{ _res._fab.key | default('?') }}"
+          when:
+            - nd_switch_wait_insync | bool
+            - nd_insync_probe.results is defined
+
+        - name: Compute canonical switches the probe never returned a mode for (unverified)
+          ansible.builtin.set_fact:
+            nd_insync_unverified: >-
+              {{ nd_insync_unverified | default([]) + (
+                   _res._fab.value
+                   | rejectattr('serial', 'in',
+                       (((_res.current | default({})).switches | default([]))
+                        | selectattr('switchId', 'defined')
+                        | selectattr('additionalData.systemMode', 'defined')
+                        | map(attribute='switchId') | list))
+                   | map('combine', {'fabric': _res._fab.key})
+                   | list
+                 ) }}
+          loop: "{{ nd_insync_probe.results | default([]) }}"
+          loop_control:
+            loop_var: _res
+            label: "{{ _res._fab.key | default('?') }}"
+          when:
+            - nd_switch_wait_insync | bool
+            - nd_insync_probe.results is defined
+
+        - name: Summarize the in-sync probe health per fabric
+          ansible.builtin.set_fact:
+            nd_insync_probe_summary: >-
+              {{ nd_insync_probe_summary | default([]) + [ {
+                   'fabric': _res._fab.key,
+                   'returned': (((_res.current | default({})).switches | default([]))
+                                | selectattr('switchId', 'defined') | list | length),
+                   'status': (_res.status | default('n/a')),
+                   'attempts': (_res.attempts | default(0)),
+                   'failed': (_res.failed | default(false))
+                 } ] }}
+          loop: "{{ nd_insync_probe.results | default([]) }}"
+          loop_control:
+            loop_var: _res
+            label: "{{ _res._fab.key | default('?') }}"
+          when:
+            - nd_switch_wait_insync | bool
+            - nd_insync_probe.results is defined
+
+        - name: Report the in-sync wait result
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('NDP_SWITCH_INSYNC_TIMEOUT ' ~ ((nd_not_insync | default([])) | length)
+                  ~ ' switch(es) present but in a read-only (non-deployable) mode within '
+                  ~ ((nd_switch_insync_retries | int) * (nd_switch_insync_delay | int)) ~ 's: '
+                  ~ ((nd_not_insync | default([])) | map(attribute='serial') | list)
+                  ~ ' fabrics: ' ~ ((nd_not_insync | default([])) | map(attribute='fabric') | list)
+                  ~ ' (Migration/Maintenance = read-only, blocks config deployment)')
+                 if ((nd_not_insync | default([])) | length > 0)
+                 else (('NDP_SWITCH_INSYNC_UNVERIFIED could not read a system mode for '
+                        ~ ((nd_insync_unverified | default([])) | length) ~ ' switch(es): '
+                        ~ ((nd_insync_unverified | default([])) | map(attribute='serial') | list)
+                        ~ '; switchesByFabric returned no usable data (per-fabric '
+                        ~ (nd_insync_probe_summary | default([])) ~ '). Roster presence is already'
+                        ~ ' confirmed and no switch is read-only, so proceeding without a false timeout.')
+                       if ((nd_insync_unverified | default([])) | length > 0)
+                       else ('NDP_SWITCH_INSYNC_OK all '
+                             ~ (nd_test_fabric_switches | dict2items | map(attribute='value') | map('length') | sum)
+                             ~ ' canonical switches report a deployable system mode')) }}
+          when: nd_switch_wait_insync | bool
+
         - name: Re-gather every fabric to establish ground truth
           cisco.nd.nd_manage_switches:
             fabric: "{{ _fab.key }}"
@@ -246,6 +813,53 @@
                        ~ (nd_test_fabric_switches | dict2items | map(attribute='value') | map('length') | sum)
                        ~ ' switches across ' ~ (nd_test_fabric_switches | length) ~ ' fabrics)') }}
 
+        # Re-confirm ROLES on the post-heal ground truth (reuses nd_gathered_confirm,
+        # the same re-gather the roster/in-sync asserts use). If changeRoles + deploy
+        # above converged, every present switch now holds its roster role and this
+        # prints NDP_SWITCH_ROLE_CONFIRM_OK; otherwise it names what is still drifted.
+        - name: Map each fabric to its post-heal seed_ip -> current role
+          ansible.builtin.set_fact:
+            nd_present_roles_confirm: >-
+              {{ dict((nd_test_fabric_switches.keys() | list)
+                      | zip(nd_gathered_confirm.results
+                            | map(attribute='gathered')
+                            | map('items2dict', key_name='seed_ip', value_name='role')
+                            | list)) }}
+          when: nd_switch_heal_roles | bool
+
+        - name: Compute any present canonical switch whose role is still drifted
+          ansible.builtin.set_fact:
+            nd_role_drift_final: >-
+              {{ (nd_role_drift_final | default([])) + [ {
+                    'fabric': _rsw.0,
+                    'seed_ip': _rsw.1.seed_ip,
+                    'serial': _rsw.1.serial,
+                    'name': _rsw.1.name | default(_rsw.1.serial),
+                    'expected': _rsw.1.role,
+                    'actual': (nd_present_roles_confirm[_rsw.0][_rsw.1.seed_ip] | default('unknown'))
+                 } ] }}
+          loop: "{{ nd_role_flat | default([]) }}"
+          loop_control:
+            loop_var: _rsw
+            label: "{{ _rsw.1.name | default(_rsw.1.serial) }} ({{ _rsw.0 }})"
+          when:
+            - nd_switch_heal_roles | bool
+            - _rsw.1.role is defined
+            - _rsw.1.seed_ip in (nd_present_roles_confirm[_rsw.0] | default({}))
+            - (nd_present_roles_confirm[_rsw.0][_rsw.1.seed_ip] | default('') | string | length) > 0
+            - (_rsw.1.role | string | lower | replace('_', '') | replace(' ', ''))
+              != (nd_present_roles_confirm[_rsw.0][_rsw.1.seed_ip] | string | lower | replace('_', '') | replace(' ', ''))
+
+        - name: Report the role reconciliation result
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('NDP_SWITCH_ROLE_CONFIRM_FAIL ' ~ ((nd_role_drift_final | default([])) | length)
+                  ~ ' switch(es) still hold the wrong role after changeRoles + Recalculate & Deploy'
+                  ~ ' (fabric/name/expected/actual): ' ~ (nd_role_drift_final | default([])))
+                 if ((nd_role_drift_final | default([])) | length > 0)
+                 else 'NDP_SWITCH_ROLE_CONFIRM_OK every present canonical switch holds its roster role' }}
+          when: nd_switch_heal_roles | bool
+
         - name: Require the full canonical roster before the pipeline may start
           ansible.builtin.assert:
             that:
@@ -258,6 +872,28 @@
             success_msg: >-
               NDP_SWITCH_CONFIRM_OK: full canonical roster present and deployed; safe to start the pipeline.
           when: nd_switch_require_full_roster | bool
+
+        # Membership alone is not a healthy heal: a switch can be a fabric member yet
+        # still be read-only (Migration/Maintenance), which passes the roster assert
+        # above but fails every later config push. Refuse to start ONLY for switches the
+        # probe actually returned in a read-only mode (nd_not_insync). Switches the probe
+        # could not read a mode for (nd_insync_unverified) are reported above as
+        # NDP_SWITCH_INSYNC_UNVERIFIED and do NOT fail the gate - presence is already
+        # guaranteed by the roster assert, so an empty/errored probe must not false-fail
+        # the whole roster (the build #23 regression).
+        - name: Require every canonical switch to be in sync before the pipeline may start
+          ansible.builtin.assert:
+            that:
+              - ((nd_not_insync | default([])) | length) == 0
+            fail_msg: >-
+              NDP_SWITCH_INSYNC_TIMEOUT: {{ (nd_not_insync | default([])) | map(attribute='serial') | list }}
+              present but in a read-only (Migration/Maintenance) system mode in
+              {{ (nd_not_insync | default([])) | map(attribute='fabric') | list }} after add + Recalculate &
+              Deploy. A read-only switch ("Selected switches are in read-only mode. No configuration deployment
+              is permitted") will fail the suite; take it out of that mode on ND and re-run.
+            success_msg: >-
+              NDP_SWITCH_INSYNC_OK: no canonical switch is in a read-only mode; safe to start the pipeline.
+          when: nd_switch_wait_insync | bool
 
     - name: Audit-only notice when switches are missing but apply is off
       ansible.builtin.debug:

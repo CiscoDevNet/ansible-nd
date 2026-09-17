@@ -14,7 +14,7 @@
     nd_fabric_name: VXLAN_EVPN_Fabric
     vl_vrf_name: TENANT_A
     vl_vlan_id: 500
-    vl_switch_ip: 192.0.2.195
+    vl_switch_ip: 10.122.84.195
     vl_interface: Ethernet1/4
   pre_tasks:
     - name: Prepare and confirm ND topology prerequisites

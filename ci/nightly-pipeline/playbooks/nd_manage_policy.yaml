@@ -1,7 +1,7 @@
 ---
 # Nightly integration playbook for cisco.nd.nd_manage_policy.
 # Policies are switch-scoped, so this test only runs when `switch1` (a switch
-# serial number) is provided, e.g. -e switch1=SERIAL00007. Without it the play
+# serial number) is provided, e.g. -e switch1=FDO23040Q85. Without it the play
 # is skipped (nightly stays green). The created policy is idempotent
 # (create_additional_policy: false + use_description_as_key).
 - name: cisco.nd nightly - nd_manage_policy
@@ -15,7 +15,7 @@
       switch_roles: [leaf]
     nd_fabric_name: VXLAN_EVPN_Fabric
     nd_policy_template: switch_freeform
-    switch1: SERIAL00001   # <-- set to a real switch serial to enable this test
+    switch1: 9PICV0LTD7C   # <-- set to a real switch serial to enable this test
   pre_tasks:
     - name: Prepare and confirm ND topology prerequisites
       ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml

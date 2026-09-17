@@ -4,4 +4,5 @@
 requests_toolbelt
 jsonpath-ng
 lxml
+deepdiff
 pydantic==2.12.5

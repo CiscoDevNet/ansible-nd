@@ -48,15 +48,28 @@ def confirm(registry, profile_id):
     return result
 
 
+# Peer-links the lab owner records once leaf_1<->leaf_2 / edge_1<->edge_2 are physically cabled
+# (see nd_prerequisite_profiles.yaml integration.nd_vpc_pair executions). Virtual peering is
+# unsupported on these switches, so a physical pair is only concrete once these are present.
+LEAF_PEER_LINKS = [{
+    "local": "vxlan_leaf_1", "local_interfaces": ["Ethernet1/3", "Ethernet1/4"],
+    "remote": "vxlan_leaf_2", "remote_interfaces": ["Ethernet1/3", "Ethernet1/4"],
+}]
+EDGE_PEER_LINKS = [{
+    "local": "external_edge_1", "local_interfaces": ["Ethernet1/2", "Ethernet1/3"],
+    "remote": "external_edge_2", "remote_interfaces": ["Ethernet1/2", "Ethernet1/3"],
+}]
+
+
 def confirm_vpc_executions(registry):
     result = confirm(registry, "integration.nd_vpc_pair")
     executions = result["profile_executions"]["integration.nd_vpc_pair"]
-    executions[0].update(pair_mode="virtual", physical_peer_links=[])
+    executions[0].update(pair_mode="physical", physical_peer_links=copy.deepcopy(LEAF_PEER_LINKS))
     executions[1].update(
         switch_refs=["external_edge_1", "external_edge_2"],
         desired_roles=["edge_router", "edge_router"],
-        pair_mode="virtual",
-        physical_peer_links=[],
+        pair_mode="physical",
+        physical_peer_links=copy.deepcopy(EDGE_PEER_LINKS),
     )
     for execution in executions:
         execution["confirmation"] = {
@@ -77,15 +90,22 @@ def test_allow_auto_confirm_resolves_concrete_pending_execution(registry):
     resolved = resolve_execution(registry, "integration.nd_manage_policy", allow_auto_confirm=True)
     assert resolved["profile_id"] == "integration.nd_manage_policy"
 
-    advanced = resolve_execution(registry, "integration.nd_vpc_pair.advanced", allow_auto_confirm=True)
-    assert advanced["execution_id"] == "integration.nd_vpc_pair.advanced"
-    assert advanced["execution"]["pair_mode"] == "virtual"
+    # Both vpc_pair executions are physical with no peer-links cabled yet -> auto-confirm refuses
+    # them until the lab owner records physical_peer_links (virtual peering is unsupported here).
+    for execution_id in ("integration.nd_vpc_pair.advanced", "integration.nd_vpc_pair.external"):
+        with pytest.raises(OrchestrationError, match="physical pair requires peer-link interfaces"):
+            resolve_execution(registry, execution_id, allow_auto_confirm=True)
 
-    with pytest.raises(OrchestrationError, match="pair_mode is unresolved"):
-        resolve_execution(registry, "integration.nd_vpc_pair.external", allow_auto_confirm=True)
+    # Once the leaf_1<->leaf_2 peer-links are cabled and recorded, the concrete physical execution
+    # auto-confirms and schedules alongside the concrete policy profile.
+    cabled = copy.deepcopy(registry)
+    cabled["profile_executions"]["integration.nd_vpc_pair"][0]["physical_peer_links"] = copy.deepcopy(LEAF_PEER_LINKS)
+    advanced = resolve_execution(cabled, "integration.nd_vpc_pair.advanced", allow_auto_confirm=True)
+    assert advanced["execution_id"] == "integration.nd_vpc_pair.advanced"
+    assert advanced["execution"]["pair_mode"] == "physical"
 
     schedule = build_phase_schedule(
-        registry,
+        cabled,
         ["integration.nd_manage_policy", "integration.nd_vpc_pair.advanced"],
         allow_auto_confirm=True,
     )
@@ -134,7 +154,7 @@ def test_ordinary_profiles_refuse_switch_topology_mutation(registry, valid_state
     assert plan_topology_delta(policy_registry, policy, missing) == [{
         "operation": "ensure_switch_membership",
         "switch_ref": "vxlan_leaf_1",
-        "serial": "SERIAL00001",
+        "serial": "9PICV0LTD7C",
         "fabric_ref": "advanced",
         "desired_role": "leaf",
     }]
@@ -167,7 +187,7 @@ def test_permitted_switch_profile_can_reconcile_role_drift(registry, valid_state
     assert operations == [{
         "operation": "change_role",
         "switch_ref": "vxlan_spine_1",
-        "serial": "SERIAL00003",
+        "serial": "9FKMQG17900",
         "fabric_ref": "advanced",
         "current_role": "leaf",
         "desired_role": "spine",
@@ -308,8 +328,8 @@ def test_runtime_vars_are_fresh_and_execution_specific(registry):
     vpc_runtime = runtime_vars_for_execution(vpc, "run-23", "phase-baseline-4")
     assert vpc_runtime["fabric_name"] == "VXLAN_EVPN_Fabric"
     assert vpc_runtime["fabric_type"] == "vxlanIbgp"
-    assert vpc_runtime["switch1_serial"] == "SERIAL00001"
-    assert vpc_runtime["switch2_serial"] == "SERIAL00002"
+    assert vpc_runtime["switch1_serial"] == "9PICV0LTD7C"
+    assert vpc_runtime["switch2_serial"] == "9VISBXAWYYB"
 
     resolved["profile"]["runtime_vars"]["nd_test_fabric_switches"] = {}
     with pytest.raises(OrchestrationError, match="collide with canonical topology"):
@@ -371,11 +391,19 @@ def test_cli_plan_and_schedule_emit_json(capsys):
 
     assert main([
         "schedule", "--registry", str(registry_path),
-        "--selected", "integration.nd_manage_policy,integration.nd_vpc_pair.advanced",
+        "--selected", "integration.nd_manage_policy",
         "--allow-auto-confirm",
     ]) == 0
     schedule_output = json.loads(capsys.readouterr().out)
-    assert [phase["phase_id"] for phase in schedule_output] == ["advanced_leaf", "vpc_pair_isolated"]
+    assert [phase["phase_id"] for phase in schedule_output] == ["advanced_leaf"]
+
+    # vpc_pair executions are physical with no peer-links cabled yet -> the CLI fails closed on a
+    # schedule or plan that selects them, matching the profile's documented "not met" state.
+    assert main([
+        "schedule", "--registry", str(registry_path),
+        "--selected", "integration.nd_manage_policy,integration.nd_vpc_pair.advanced",
+        "--allow-auto-confirm",
+    ]) == 1
 
     assert main([
         "plan", "--registry", str(registry_path),

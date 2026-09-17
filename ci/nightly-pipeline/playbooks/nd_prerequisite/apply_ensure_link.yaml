@@ -21,81 +21,165 @@
 #   { sourceFabric, destinationFabric, sourceDevice(serial), destinationDevice(serial),
 #     sourceSwitchName, destinationSwitchName, sourceInterface, destinationInterface,
 #     templateName, nvPairs }
-# (The ND manage-API /api/v1/manage/links is READ-ONLY for links -- its GET is used below
-# for the idempotency/adjacency checks, but POSTing to it returns 500 "problem proxying".)
 #
-# Idempotent: GET the source fabric's links first and only act when NO link of the
-# requested template already spans the two endpoints. The discovered physical link
-# (linkType 'ethisl') is deliberately NOT treated as satisfying the template requirement.
+# Detection uses the control/links API (GET
+#   /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric=<fabric>) because
+# that is where NDFC lists BOTH discovered physical adjacencies (link-type 'ethisl',
+# empty templateName) AND logical inter-fabric IFCs (templateName set). The older
+# /api/v1/manage/links?fabricName=<fabric> endpoint only returns configured logical links
+# and reports zero for a raw discovered ethisl cable, which made this prerequisite falsely
+# conclude "physical link missing".
+#
+# Self-heal: when the requested endpoints have no discovered ethisl adjacency yet and
+# `nd_link_admin_up` is true (default), BOTH endpoint interfaces are admin-upped
+# (no-shutdown, idempotent) via admin_up_interface.yaml and the links are re-probed before
+# the hard physical-adjacency assert -- this recovers an accidentally-shut port without
+# operator intervention. A genuinely un-cabled pair still fails with the exact cabling
+# instruction.
+#
+# Idempotent: only act when NO logical link of the requested template already spans the
+# two endpoints. A bare discovered ethisl link is NOT treated as satisfying the template.
 # `_ndp_operation` is self-contained (the offline planner already resolved fabric names,
-# serials, switch names and interfaces), so this file needs no reconcile reference maps.
-- name: "ensure_link GET current links on {{ _ndp_operation.src.fabric_name }}"
+# serials, switch names and interfaces); the reconcile reference maps are available too.
+- name: "ensure_link GET current links on {{ _ndp_operation.src.fabric_name }} (control/links: discovered ethisl + logical IFCs)"
   cisco.nd.nd_rest:
-    path: "/api/v1/manage/links?fabricName={{ _ndp_operation.src.fabric_name }}"
+    path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric={{ _ndp_operation.src.fabric_name }}"
     method: get
   register: _ndp_link_current
   run_once: true
   no_log: true
 
-- name: "ensure_link find any existing link on the requested endpoints"
+- name: "ensure_link normalize raw link list from the control/links response"
   ansible.builtin.set_fact:
-    _ndp_link_endpoint_matches: >-
-      {{
-        (_ndp_link_current.current.links | default([]))
-        | selectattr('srcSwitchId', 'equalto', _ndp_operation.src.serial)
-        | selectattr('srcInterfaceName', 'equalto', _ndp_operation.src.interface)
-        | selectattr('dstSwitchId', 'equalto', _ndp_operation.dst.serial)
-        | selectattr('dstInterfaceName', 'equalto', _ndp_operation.dst.interface)
-        | list
-      }}
+    _ndp_links_all: >-
+      {{ (_ndp_link_current.current)
+         if (_ndp_link_current.current is not mapping)
+         else (_ndp_link_current.current.DATA
+               | default(_ndp_link_current.current.links | default([]))) }}
   run_once: true
 
-- name: "ensure_link determine whether a {{ _ndp_operation.template }} link already exists"
+- name: "ensure_link determine whether a {{ _ndp_operation.template }} (logical IFC) already exists"
   ansible.builtin.set_fact:
     _ndp_link_exists: >-
-      {{
-        (_ndp_link_endpoint_matches
-         | selectattr('linkType', 'defined')
-         | selectattr('linkType', 'equalto', _ndp_operation.template)
-         | list | length) > 0
-        or
-        (_ndp_link_endpoint_matches
-         | selectattr('templateName', 'defined')
-         | selectattr('templateName', 'equalto', _ndp_operation.template)
-         | list | length) > 0
-      }}
+      {{ ((_ndp_links_all
+           | selectattr('templateName', 'defined')
+           | selectattr('templateName', 'equalto', _ndp_operation.template)
+           | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+           | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+           | list | length) > 0)
+         or
+         ((_ndp_links_all
+           | selectattr('templateName', 'defined')
+           | selectattr('templateName', 'equalto', _ndp_operation.template)
+           | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+           | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+           | list | length) > 0) }}
   run_once: true
 
 - name: "ensure_link detect discovered physical (ethisl) adjacency between the two switches"
   ansible.builtin.set_fact:
     _ndp_phys_exists: >-
-      {{
-        ((_ndp_link_current.current.links | default([]))
-         | selectattr('linkType', 'defined')
-         | selectattr('linkType', 'equalto', 'ethisl')
-         | selectattr('srcSwitchId', 'equalto', _ndp_operation.src.serial)
-         | selectattr('dstSwitchId', 'equalto', _ndp_operation.dst.serial)
-         | list | length) > 0
-        or
-        ((_ndp_link_current.current.links | default([]))
-         | selectattr('linkType', 'defined')
-         | selectattr('linkType', 'equalto', 'ethisl')
-         | selectattr('srcSwitchId', 'equalto', _ndp_operation.dst.serial)
-         | selectattr('dstSwitchId', 'equalto', _ndp_operation.src.serial)
-         | list | length) > 0
-      }}
+      {{ ((_ndp_links_all
+           | selectattr('link-type', 'defined')
+           | selectattr('link-type', 'equalto', 'ethisl')
+           | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+           | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+           | list | length) > 0)
+         or
+         ((_ndp_links_all
+           | selectattr('link-type', 'defined')
+           | selectattr('link-type', 'equalto', 'ethisl')
+           | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+           | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+           | list | length) > 0) }}
   run_once: true
 
 - name: "ensure_link provision {{ _ndp_operation.template }}: {{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }} <-> {{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }}"
   when: not (_ndp_link_exists | bool)
   run_once: true
   block:
+    - name: "ensure_link self-heal: admin-up both endpoints when no physical adjacency is discovered"
+      when:
+        - not (_ndp_phys_exists | bool)
+        - _ndp_operation.requires_physical | default(true) | bool
+        - nd_link_admin_up | default(true) | bool
+      block:
+        - name: "ensure_link admin-up src+dst endpoints (no-shutdown) then re-probe"
+          ansible.builtin.include_tasks: admin_up_interface.yaml
+          run_once: true
+          loop:
+            - serial: "{{ _ndp_operation.src.serial }}"
+              ifname: "{{ _ndp_operation.src.interface }}"
+              label: "{{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }}"
+            - serial: "{{ _ndp_operation.dst.serial }}"
+              ifname: "{{ _ndp_operation.dst.interface }}"
+              label: "{{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }}"
+          loop_control:
+            loop_var: _auif
+            label: "{{ _auif.label }}"
+
+        - name: "ensure_link re-GET links until the ethisl adjacency is re-discovered (post admin-up)"
+          cisco.nd.nd_rest:
+            path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric={{ _ndp_operation.src.fabric_name }}"
+            method: get
+          register: _ndp_link_current
+          retries: "{{ nd_link_probe_retries | default(6) | int }}"
+          delay: "{{ nd_link_probe_delay | default(15) | int }}"
+          until: >-
+            {{ (((_ndp_link_current.current if _ndp_link_current.current is not mapping
+                  else (_ndp_link_current.current.DATA | default(_ndp_link_current.current.links | default([]))))
+                 | selectattr('link-type', 'defined') | selectattr('link-type', 'equalto', 'ethisl')
+                 | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                 | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                 | list | length) > 0)
+               or
+               (((_ndp_link_current.current if _ndp_link_current.current is not mapping
+                  else (_ndp_link_current.current.DATA | default(_ndp_link_current.current.links | default([]))))
+                 | selectattr('link-type', 'defined') | selectattr('link-type', 'equalto', 'ethisl')
+                 | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                 | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                 | list | length) > 0) }}
+          failed_when: false
+          no_log: true
+
+        - name: "ensure_link recompute normalized raw list after admin-up"
+          ansible.builtin.set_fact:
+            _ndp_links_all: >-
+              {{ (_ndp_link_current.current)
+                 if (_ndp_link_current.current is not mapping)
+                 else (_ndp_link_current.current.DATA
+                       | default(_ndp_link_current.current.links | default([]))) }}
+
+        - name: "ensure_link recompute physical adjacency after admin-up"
+          ansible.builtin.set_fact:
+            _ndp_phys_exists: >-
+              {{ ((_ndp_links_all
+                   | selectattr('link-type', 'defined')
+                   | selectattr('link-type', 'equalto', 'ethisl')
+                   | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                   | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                   | list | length) > 0)
+                 or
+                 ((_ndp_links_all
+                   | selectattr('link-type', 'defined')
+                   | selectattr('link-type', 'equalto', 'ethisl')
+                   | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                   | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                   | list | length) > 0) }}
+      rescue:
+        - name: "ensure_link self-heal admin-up unavailable -- continuing to hard assert"
+          ansible.builtin.debug:
+            msg: >-
+              admin_up_interface self-heal could not run (helper missing or API error);
+              falling back to the physical-adjacency assert below.
+
     - name: "ensure_link require the underlying physical link to be cabled/discovered first"
       ansible.builtin.assert:
         that:
           - _ndp_phys_exists | bool
         fail_msg: >-
-          PHYSICAL CONNECTIVITY MISSING: no discovered (ethisl) link exists between
+          PHYSICAL CONNECTIVITY MISSING (an admin-up of both endpoints was attempted first):
+          no discovered (ethisl) link exists between
           {{ _ndp_operation.src.switch_name }} ({{ _ndp_operation.src.serial }}) in
           {{ _ndp_operation.src.fabric_name }} and
           {{ _ndp_operation.dst.switch_name }} ({{ _ndp_operation.dst.serial }}) in

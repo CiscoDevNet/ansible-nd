@@ -165,8 +165,10 @@ def test_integration_vpc_pair_expands_to_two_blocked_executions(registry):
     ]
     assert [item["fabric_ref"] for item in executions] == ["advanced", "external"]
     assert all(item["confirmation"]["status"] == "pending" for item in executions)
-    assert executions[0]["pair_mode"] == "virtual"
-    assert executions[1]["pair_mode"] is None
+    # Both pairs are physical (virtual peering is unsupported on these switches) and blocked until
+    # the lab owner cables and records the peer-links.
+    assert all(item["pair_mode"] == "physical" for item in executions)
+    assert all(item["physical_peer_links"] == [] for item in executions)
 
 
 def test_selected_pending_profile_is_an_execution_blocker(registry):
@@ -191,13 +193,14 @@ def test_allow_auto_confirm_runs_concrete_pending_but_blocks_unresolved_and_reje
         registry, ["integration.nd_manage_policy"], allow_auto_confirm=True
     ) == []
 
+    # Physical pairs with no cabled peer-links stay blocked even under auto-confirm (fail-closed).
     assert validate_selected_profiles(
         registry, ["integration.nd_vpc_pair.advanced"], allow_auto_confirm=True
-    ) == []
+    ) == ["integration.nd_vpc_pair.advanced: physical pair requires peer-link interfaces"]
     external = validate_selected_profiles(
         registry, ["integration.nd_vpc_pair.external"], allow_auto_confirm=True
     )
-    assert any("pair_mode is unresolved" in error for error in external)
+    assert any("physical pair requires peer-link interfaces" in error for error in external)
 
     rejected = copy.deepcopy(registry)
     rejected["profiles"]["integration.nd_manage_policy"]["confirmation"] = {
@@ -223,7 +226,11 @@ def test_logical_multi_execution_selection_requires_every_child(registry):
         execution["confirmation"] = {
             "status": "confirmed", "owner": "owner", "evidence": "ticket", "reasons": [],
         }
-    assert any("pair_mode is unresolved" in error for error in validate_registry(candidate))
+    # A confirmed physical execution with no recorded peer-links is caught by full-registry validation.
+    assert any(
+        "physical pair requires peer-link interfaces" in error
+        for error in validate_registry(candidate)
+    )
 
 
 def test_pending_values_are_reasons_not_executable_placeholders(registry):
@@ -278,6 +285,123 @@ def test_jenkins_derives_every_switch_alias_from_canonical_names(registry):
         assert f"{alias}: {switches[name]['serial']}" in jenkins_text, alias
 
 
+def test_runner_rejects_cross_fabric_positional_switch_mapping():
+    runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    # The old Build 30 failure passed external_edge_1 as switch_serial_3 to a
+    # primary-fabric module. Keep the runtime assertion and Jenkins guard in
+    # place so a stale Consul copy cannot silently repeat that mismatch.
+    assert "NDP_SWITCH_MAPPING_FAIL" in runner_text
+    assert "switch_serial_3 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric" in runner_text
+    assert "switch_serial_3 not in (nd_test_fabric_switches.External_Connectivity_Fabric" in runner_text
+    assert "refusing to run the module" in jenkins_text
+    assert "canonical switch pre-flight is unavailable; refusing to run" in jenkins_text
+
+
+def test_l3out_runner_verifies_required_vrfs_before_running_role():
+    runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
+
+    # Build 30 continued into nd_manage_l3out after the raw VRF create had
+    # failed. A duplicate POST is acceptable only when the follow-up GET proves
+    # that both role-required VRFs are present on their declared fabrics.
+    assert "SETUP - verify L3Out VRF on fabric1" in runner_text
+    assert "SETUP - verify L3Out VRF on fabric2" in runner_text
+    assert "NDP_L3OUT_VRF_PREREQUISITE_FAIL" in runner_text
+    assert "NDP_L3OUT_VRF_PREREQUISITE_OK" in runner_text
+    assert "vrfType: vxlanIbgp" in runner_text
+    assert "vrfType: externalConnectivity" in runner_text
+    assert runner_text.count("failed_when: false") >= 2
+    assert "ignore_errors so an already-present VRF" not in runner_text
+
+
+def test_nd42_contract_workarounds_cover_acl_and_ibgp():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    # ND 4.2.1 returns IPv6 ACLs with the ipv6 wire type and rejects the
+    # upstream iBGP fixtures' asdot ASN and four-RR switchless combination.
+    assert 'ipv6_acl_wire.type == "ipv6"' in jenkins_text
+    assert "item8: nd_manage_acl IPv6 wire type ipv4->ipv6" in jenkins_text
+    assert 's/bgp_asn: "65001\\\\.55"/bgp_asn: "65001"/g' in jenkins_text
+    assert "item9: nd_manage_fabric iBGP asdot->asplain" in jenkins_text
+    assert "s/route_reflector_count: 4/route_reflector_count: 2/g" in jenkins_text
+    assert "item10: nd_manage_fabric iBGP route-reflector count 4->2" in jenkins_text
+
+
+def test_nd42_runtime_patches_cover_empty_rest_network_and_vrf_contracts():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    # Build 42 showed three controller/module contract defects: empty REST
+    # responses raised in nd_rest, write-only network fields were falsely
+    # compared, and VRF BGP key type 3 was sent instead of ND's string enum.
+    assert 'ND_REST_MODULE="${COLLECTIONS_DIRECTORY}/plugins/modules/nd_rest.py"' in jenkins_text
+    assert "item11 nd_rest empty-body handling" in jenkins_text
+    assert 'NETWORK_VALIDATE="${COLLECTIONS_DIRECTORY}/plugins/action/tests/integration/_nd_network_validate.py"' in jenkins_text
+    assert "item12 network omitted-field handling" in jenkins_text
+    assert 'VRFS_ORCHESTRATOR="${COLLECTIONS_DIRECTORY}/plugins/module_utils/orchestrators/vrfs.py"' in jenkins_text
+    assert "item13 VRF BGP key-type wire enum" in jenkins_text
+    assert 'fabric_data[\\"bgpPasswordKeyType\\"] = {3: \\"3des\\"' in jenkins_text
+
+
+def test_nd42_policy_contract_patches_accept_only_known_noop_cases():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    # The retained switch may already have the requested command.  The repeat
+    # delete accepts the known ND no-op response, while the policy-group
+    # force-create baseline avoids requesting that duplicate deployment.
+    assert "item14 policy repeat-delete no-op" in jenkins_text
+    assert "No Commands to execute" in jenkins_text
+    assert "item15 policy-group baseline no deploy" in jenkins_text
+    assert "POLICY_GROUP_SPECIAL_TEST" in jenkins_text
+
+
+def test_local_runner_l3out_projection_uses_border_and_external_edge():
+    runner_text = (ROOT / "run_all_integ.sh").read_text()
+
+    # Keep the local runner aligned with the confirmed L3Out profile and the
+    # Jenkins runner: border_1 is the VXLAN endpoint, edge_1 is the external endpoint.
+    assert "nd_test_switch1_id=9FTTP2QGS0H" in runner_text
+    assert "nd_test_switch1_mgmt_ip=10.122.84.88" in runner_text
+    assert "nd_test_switch2_id=9V1IZP23KBG" in runner_text
+    assert "nd_test_switch2_mgmt_ip=10.122.84.89" in runner_text
+    assert "nd_test_switch1_id=9PICV0LTD7C -e nd_test_switch1_mgmt_ip=10.122.84.195" not in runner_text
+
+
+def test_webex_results_table_uses_module_specific_log_links():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    # Webex receives a Markdown table, not an ASCII code block, so the artifact
+    # link can remain in the same row as the module result. Keep the link label
+    # concise and module-specific (for example, policy-logs).
+    assert "def markdownHeaders = ['Status', 'Playbook', 'Fabric', 'ND', 'Passed', 'Failed', 'Skipped', 'Duration', 'Logs']" in jenkins_text
+    assert '"[${artifactLabel(r[1])}](${JOB_URL}${BUILD_NUMBER}/artifact/${artifact})"' in jenkins_text
+    assert ".replaceFirst(/^nd_manage_/, '')" in jenkins_text
+    assert '"${token ?: \'module\'}-logs"' in jenkins_text
+    assert "Artifact links:" not in jenkins_text
+
+
+def test_switch_credentials_are_separate_and_runtime_bound():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
+    ensure_text = (ROOT / "playbooks/nd_ensure_switches.yaml").read_text()
+    fallback_inventory = (ROOT / "consul/inventory.yaml").read_text()
+
+    # Controller credentials must not be silently reused for switch onboarding;
+    # both the module runner and membership guard read a separately bound Jenkins
+    # username/password credential at execution time.
+    assert "credentialsId: 'ANSIBLE_NXOS_SWITCH_CREDENTIALS'" in jenkins_text
+    assert "usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME'" in jenkins_text
+    assert "passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD'" in jenkins_text
+    assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME')" in runner_text
+    assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD')" in runner_text
+    assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME')" in ensure_text
+    assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD')" in ensure_text
+    assert "lookup('env', 'NDFC_USER')" in fallback_inventory
+    assert "lookup('env', 'NDFC_PASSWORD')" in fallback_inventory
+    assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME')" in fallback_inventory
+    assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD')" in fallback_inventory
+
+
 def test_integration_config_declares_complete_canonical_fabric_membership():
     config = yaml.safe_load((ROOT / "tests/integration_config.yml").read_text())
     fabrics = config["nd_test_fabric_switches"]
@@ -307,8 +431,10 @@ def test_integration_config_declares_complete_canonical_fabric_membership():
 def test_border_and_external_edge_counts_match_canonical_lab(registry):
     topology = registry["topology_templates"]["border_edges"]
     assert topology["required_count"] == 3
-    # Assert every member's fabric + role, so the border (advanced/border) is verified
-    # symmetrically with the two edges (external/edge_router), not just its name.
+    # vxlan_border_1 (baseline role 'border') hosts the L3Out: it is now cabled to external_edge_1
+    # (border_1 Eth1/1 routed <-> edge_1 Eth1/3, probe-confirmed up/up) for the ext_l3_dci_link.
+    # desired_role 'border' == its baseline role, so nd_manage_l3out (verify-only for switch
+    # topology) requests no role change. vxlan_leaf_1 stays a plain leaf and is not in the L3Out.
     assert [
         (item["ref"], item["desired_fabric_ref"], item["desired_role"])
         for item in topology["members"]
@@ -408,7 +534,7 @@ def test_interface_sanitizer_is_recursive_allowlisted_and_normalization_is_stric
             }}},
         }
     }
-    sanitized = sanitize_interface_payload(payload, "SERIAL00001", True, registry)
+    sanitized = sanitize_interface_payload(payload, "9PICV0LTD7C", True, registry)
     policy = sanitized["configData"]["networkOS"]["policy"]
     assert policy == {"adminState": True, "nested": {"value": 7}}
     assert normalized_equal("switches", [{"uuid": "a", "id": 1}], [{"uuid": "b", "id": 1}])
@@ -416,11 +542,11 @@ def test_interface_sanitizer_is_recursive_allowlisted_and_normalization_is_stric
         normalized_equal("unknown", [], [])
     payload["current"]["interfaceName"] = "Ethernet99/99"
     with pytest.raises(ValueError, match="allowlisted"):
-        sanitize_interface_payload(payload, "SERIAL00001", True, registry)
+        sanitize_interface_payload(payload, "9PICV0LTD7C", True, registry)
     tampered = copy.deepcopy(registry)
     tampered["lab"]["interface_allowlist"]["vxlan_leaf_1"].append("Ethernet99/99")
     with pytest.raises(ValueError, match="registry failed validation"):
-        sanitize_interface_payload(payload, "SERIAL00001", True, tampered)
+        sanitize_interface_payload(payload, "9PICV0LTD7C", True, tampered)
 
 
 def test_registry_requires_exact_switches_and_canonical_profile_fabrics(registry):

@@ -3,13 +3,13 @@
 # it is separate from module-specific positional aliases such as ansible_switch1.
 nd_test_fabric_switches:
   VXLAN_EVPN_Fabric:
-    - {name: vxlan_leaf_1, seed_ip: 192.0.2.195, serial: SERIAL00001, role: leaf}
-    - {name: vxlan_leaf_2, seed_ip: 192.0.2.196, serial: SERIAL00002, role: leaf}
-    - {name: vxlan_spine_1, seed_ip: 192.0.2.194, serial: SERIAL00003, role: spine}
-    - {name: vxlan_border_1, seed_ip: 192.0.2.88, serial: SERIAL00004, role: border}
+    - {name: vxlan_leaf_1, seed_ip: 10.122.84.195, serial: 9PICV0LTD7C, role: leaf}
+    - {name: vxlan_leaf_2, seed_ip: 10.122.84.196, serial: 9VISBXAWYYB, role: leaf}
+    - {name: vxlan_spine_1, seed_ip: 10.122.84.194, serial: 9FKMQG17900, role: spine}
+    - {name: vxlan_border_1, seed_ip: 10.122.84.88, serial: 9FTTP2QGS0H, role: border}
   External_Connectivity_Fabric:
-    - {name: external_edge_1, seed_ip: 192.0.2.89, serial: SERIAL00005, role: edge_router}
-    - {name: external_edge_2, seed_ip: 192.0.2.90, serial: SERIAL00006, role: edge_router}
+    - {name: external_edge_1, seed_ip: 10.122.84.89, serial: 9V1IZP23KBG, role: edge_router}
+    - {name: external_edge_2, seed_ip: 10.122.84.90, serial: 9GRLA6ZC4Z0, role: edge_router}
 
 # NOT a switch inventory, and NOT missing switches. All SIX lab switches (4 VXLAN +
 # 2 External, each with IP + serial + role) are defined once above in
@@ -18,6 +18,6 @@ nd_test_fabric_switches:
 # ansible_switch2->spine, ansible_switch3->border). The module has no 4th..6th slot, so
 # this is a deliberate leaf/spine/border 3-of-6 subset, not incomplete data.
 nd_manage_switches_test_projection:
-  ansible_switch1: 192.0.2.195   # vxlan_leaf_1   -> role leaf
-  ansible_switch2: 192.0.2.194   # vxlan_spine_1  -> role spine
-  ansible_switch3: 192.0.2.88    # vxlan_border_1 -> role border
+  ansible_switch1: 10.122.84.195   # vxlan_leaf_1   -> role leaf
+  ansible_switch2: 10.122.84.194   # vxlan_spine_1  -> role spine
+  ansible_switch3: 10.122.84.88    # vxlan_border_1 -> role border
