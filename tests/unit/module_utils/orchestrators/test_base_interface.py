@@ -24,6 +24,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -845,6 +846,251 @@ def test_base_interface_00670() -> None:
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
 
 
+def test_base_interface_00671() -> None:
+    """
+    # Summary
+
+    Verify `deploy_accepted_mutations` issues no API call and returns an empty list once `deploy_pending` has already attempted the
+    normal deployment and failed: the retained queue is the failed deployment itself, not accepted-but-undeployed intent, so the
+    failure-path finalizer must not resubmit it (PR #547 review).
+
+    ## Test
+
+    - `deploy` is enabled and one pair is queued
+    - `deploy_pending` POSTs to `interfaceActions/deploy`, receives 500, and raises `RuntimeError` with the queue retained
+    - `deploy_accepted_mutations` returns an empty list
+    - Exactly one response was recorded (no second deploy request); the queue is still retained
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.deploy_pending()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    with pytest.raises(RuntimeError, match=r"Bulk deploy failed"):
+        instance.deploy_pending()
+
+    with does_not_raise():
+        result = instance.deploy_accepted_mutations()
+
+    assert result == []
+    assert len(rest_send.responses) == 1
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: finalize_accepted_intent (module-side failure-path helper)
+# =============================================================================
+
+
+def test_base_interface_00680() -> None:
+    """
+    # Summary
+
+    Verify `finalize_accepted_intent` returns an empty string when the failure preceded orchestrator creation (`orchestrator`
+    is `None`).
+
+    ## Test
+
+    - `orchestrator` is None
+    - The returned string is empty
+
+    ## Classes and Methods
+
+    - finalize_accepted_intent()
+    """
+    with does_not_raise():
+        result = finalize_accepted_intent(None, False, logging.getLogger("test"))
+
+    assert result == ""
+
+
+def test_base_interface_00681() -> None:
+    """
+    # Summary
+
+    Verify `finalize_accepted_intent` returns an empty string without any API call in check mode, even with `deploy` enabled
+    and mutation-backed pairs queued (no mutations were sent in check mode, so there is nothing accepted to finalize).
+
+    ## Test
+
+    - `deploy` is enabled and one pair is queued
+    - `check_mode` is True
+    - No API call is made (the response generator is never consulted)
+    - The returned string is empty and the queue is untouched
+
+    ## Classes and Methods
+
+    - finalize_accepted_intent()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    with does_not_raise():
+        result = finalize_accepted_intent(instance, True, logging.getLogger("test"))
+
+    assert result == ""
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+    assert rest_send.committed_payload is None
+
+
+def test_base_interface_00682() -> None:
+    """
+    # Summary
+
+    Verify `finalize_accepted_intent` returns an empty string when the orchestrator is not an `NDBaseInterfaceOrchestrator`
+    (a non-interface orchestrator has no deploy queue to finalize).
+
+    ## Test
+
+    - `orchestrator` is a `SimpleNamespace` stand-in
+    - The returned string is empty
+
+    ## Classes and Methods
+
+    - finalize_accepted_intent()
+    """
+    with does_not_raise():
+        result = finalize_accepted_intent(SimpleNamespace(deploy=True), False, logging.getLogger("test"))  # type: ignore[arg-type]
+
+    assert result == ""
+
+
+def test_base_interface_00683() -> None:
+    """
+    # Summary
+
+    Verify `finalize_accepted_intent` returns an empty string without any API call when `deploy` is False, even with
+    mutation-backed pairs queued (staged intent is the documented contract for `deploy: false`).
+
+    ## Test
+
+    - `deploy` is False (the default) and one pair is queued
+    - No API call is made
+    - The returned string is empty and the queue is untouched
+
+    ## Classes and Methods
+
+    - finalize_accepted_intent()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    with does_not_raise():
+        result = finalize_accepted_intent(instance, False, logging.getLogger("test"))
+
+    assert result == ""
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+    assert rest_send.committed_payload is None
+
+
+def test_base_interface_00684() -> None:
+    """
+    # Summary
+
+    Verify `finalize_accepted_intent` deploys the accepted pairs and returns a NOTE sentence naming them in sorted order.
+
+    ## Test
+
+    - `deploy` is enabled and two mutation-backed pairs are queued (out of sorted order)
+    - POST is issued to `/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy` with both pairs
+    - The returned sentence names both pairs, sorted, and says they were deployed
+    - `_pending_deploys` is empty afterwards
+
+    ## Classes and Methods
+
+    - finalize_accepted_intent()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback20", "FDO12345ABD")
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    with does_not_raise():
+        result = finalize_accepted_intent(instance, False, logging.getLogger("test"))
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert result == (
+        " NOTE: before the failure, the controller had already accepted changes for interface(s) "
+        "[loopback10 (switchId FDO12345ABC), loopback20 (switchId FDO12345ABD)]; those changes were deployed."
+    )
+    assert instance._pending_deploys == []
+
+
+def test_base_interface_00685(caplog: pytest.LogCaptureFixture) -> None:
+    """
+    # Summary
+
+    Verify `finalize_accepted_intent` folds a failure-path deploy error into the returned sentence (so it cannot mask the
+    original module error), logs it, and leaves the accepted pairs queued.
+
+    ## Test
+
+    - `deploy` is enabled and one mutation-backed pair is queued
+    - POST returns 500
+    - The returned sentence reports the changes remain staged and carries the `RuntimeError` text
+    - The failure is logged at ERROR level and `_pending_deploys` still contains the pair
+
+    ## Classes and Methods
+
+    - finalize_accepted_intent()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+
+    log = logging.getLogger("test_base_interface_00685")
+    with caplog.at_level(logging.ERROR, logger=log.name):
+        with does_not_raise():
+            result = finalize_accepted_intent(instance, False, log)
+
+    assert result.startswith(" NOTE: the controller accepted some interface changes before the failure and deploying them also failed; they remain staged: ")
+    assert "Failure-path deploy failed for accepted interfaces [('loopback10', 'FDO12345ABC')]" in result
+    assert "Failure-path deploy of accepted mutations failed" in caplog.text
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
 # =============================================================================
 # Test: remove_pending
 # =============================================================================
@@ -956,6 +1202,137 @@ def test_base_interface_00720() -> None:
         instance.remove_pending()
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00730() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` reconciles a mixed HTTP 207 from `interfaceActions/remove`: the pairs the controller reports as an exact
+    `success` are dequeued (their removal IS on the controller, so the failure-path finalizer must still deploy them) while the
+    rejected pairs stay queued, and the raised message names both sets. Matching is on the `(interfaceName, switchId)` pair, so
+    the same interface name on two switches is told apart (PR #547 review).
+
+    ## Test
+
+    - Three pairs are queued: loopback10 on switch A, loopback10 on switch B, loopback20 on switch A
+    - POST returns 207: loopback10/A `success`, loopback10/B `Failed`, loopback20/A `failed`
+    - `RuntimeError` matches `Bulk remove failed` and names the accepted pair
+    - `_pending_removes` retains only loopback10/B and loopback20/A, in queue order
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback10", "FDO12345ABD")
+    instance._queue_remove("loopback20", "FDO12345ABC")
+
+    match = (
+        r"Bulk remove failed for interfaces \[\('loopback10', 'FDO12345ABD'\), \('loopback20', 'FDO12345ABC'\)\]"
+        r".*accepted the removal of \[\('loopback10', 'FDO12345ABC'\)\]"
+    )
+    with pytest.raises(RuntimeError, match=match):
+        instance.remove_pending()
+
+    assert instance._pending_removes == [("loopback10", "FDO12345ABD"), ("loopback20", "FDO12345ABC")]
+
+
+def test_base_interface_00740() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` trusts only an exact (case/whitespace-tolerant) `success` item status when reconciling a 207 and
+    ignores everything else: `error`, a missing `status` key, a non-dict item, and a `success` for a pair that was never submitted
+    (vault: `multi-status-207-status-field-inconsistent`).
+
+    ## Test
+
+    - Three pairs are queued: loopback10, loopback20, loopback30, all on switch A
+    - POST returns 207: `Loopback10` ` Success ` (case and whitespace differ), loopback20 `error`, loopback30 without a status key,
+      an unsubmitted loopback99 `success`, and a bare string item
+    - `RuntimeError` matches `Bulk remove failed`
+    - Only loopback10 is dequeued; loopback20 and loopback30 remain queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback20", "FDO12345ABC")
+    instance._queue_remove("loopback30", "FDO12345ABC")
+
+    with pytest.raises(RuntimeError, match=r"Bulk remove failed"):
+        instance.remove_pending()
+
+    assert instance._pending_removes == [("loopback20", "FDO12345ABC"), ("loopback30", "FDO12345ABC")]
+
+
+def test_base_interface_00750() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` does not reconcile against a stale response: when the sender raises before any response is recorded,
+    `response_current` still holds the previous request's all-success 207, and none of its pairs may be dequeued from the new
+    request (issue #554 freshness requirement).
+
+    ## Test
+
+    - First call: loopback10 on switches A and B are queued; POST returns an all-success 207; the queue is cleared
+    - The same two pairs are re-queued and the sender is set to raise `ValueError` from `commit`
+    - Second call: `RuntimeError` matches `Bulk remove failed` and does not claim any accepted removal
+    - Both pairs remain queued; still exactly one response was recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback10", "FDO12345ABD")
+
+    with does_not_raise():
+        instance.remove_pending()
+    assert instance._pending_removes == []
+    assert rest_send.return_code == 207
+
+    instance._queue_remove("loopback10", "FDO12345ABC")
+    instance._queue_remove("loopback10", "FDO12345ABD")
+    rest_send.sender.raise_method = "commit"
+    rest_send.sender.raise_exception = ValueError("simulated transport failure")
+
+    with pytest.raises(RuntimeError, match=r"Bulk remove failed") as exc_info:
+        instance.remove_pending()
+
+    assert "accepted the removal" not in str(exc_info.value)
+    assert instance._pending_removes == [("loopback10", "FDO12345ABC"), ("loopback10", "FDO12345ABD")]
+    assert len(rest_send.responses) == 1
 
 
 # =============================================================================
