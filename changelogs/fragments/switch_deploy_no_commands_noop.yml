@@ -1,0 +1,4 @@
+---
+bugfixes:
+  - Treat the exact ``switchActions/deploy`` HTTP 207 ``notExecuted`` / ``No Commands to execute`` outcome as a
+    successful no-op, so repeated policy and policy-group cleanup deployments do not fail after the switch is already in sync.

@@ -75,6 +75,14 @@ _MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "linkId", "i
 # (fabric update-group attach) are both in use.
 _MULTISTATUS_ITEM_MESSAGE_KEYS = ("message", "warningMessage", "status")
 
+# ``switchActions/deploy`` reports an already-in-sync switch as a per-item
+# ``notExecuted`` outcome on HTTP 207.  That exact status/message pair is a
+# successful no-op for this endpoint, but ``notExecuted`` remains untrusted for
+# every other endpoint and response envelope.
+_SWITCH_DEPLOY_PATH_SUFFIX = "/switchactions/deploy"
+_SWITCH_DEPLOY_NOOP_STATUS = "notexecuted"
+_SWITCH_DEPLOY_NOOP_MESSAGE = "no commands to execute"
+
 
 def _get_typed_value(mapping: Mapping[str, Any], key: str, expected_type: type[T], default: T) -> T:
     """
@@ -200,18 +208,64 @@ def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
     return _multistatus_items_with_status(response, _MULTISTATUS_FAILURE_STATUSES)
 
 
+def _is_benign_switch_deploy_noop(response: Mapping[str, Any], envelope_key: str, item: Mapping[str, Any]) -> bool:
+    """
+    # Summary
+
+    Return whether a Multi-Status item is the known switch-deploy no-op.
+
+    ## Description
+
+    ND returns HTTP 207 with an identified ``DATA.switchIds[]`` item carrying
+    ``status=notExecuted`` and the message ``No Commands to execute`` when
+    ``switchActions/deploy`` finds no pending configuration for a switch. Treat
+    only that endpoint-, envelope-, identity-, status-, and message-specific
+    combination as benign. Query parameters and a trailing slash in
+    ``REQUEST_PATH`` are ignored; all comparisons are case/whitespace tolerant.
+
+    ## Parameters
+
+    - response: Full response dict, including ``REQUEST_PATH``.
+    - envelope_key: The DATA envelope currently being inspected.
+    - item: One per-item result from the envelope.
+
+    ## Returns
+
+    - True only for the documented switch-deploy no-op, False otherwise.
+
+    ## Raises
+
+    None
+    """
+    if envelope_key != "switchIds":
+        return False
+
+    switch_id = str(item.get("switchId") or "").strip()
+    if not switch_id:
+        return False
+
+    request_path = str(response.get("REQUEST_PATH") or "").split("?", 1)[0].rstrip("/").lower()
+    if not request_path.endswith(_SWITCH_DEPLOY_PATH_SUFFIX):
+        return False
+
+    status = str(item.get("status") or "").strip().lower()
+    message = " ".join(str(item.get("message") or "").split()).lower()
+    return status == _SWITCH_DEPLOY_NOOP_STATUS and message == _SWITCH_DEPLOY_NOOP_MESSAGE
+
+
 def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
     """
     # Summary
 
-    Return the per-item entries in a Multi-Status body whose `status` is anything other than an exact `success`.
+    Return the per-item entries in a Multi-Status body that are not accepted outcomes.
 
     ## Description
 
     Allowlist counterpart to `_failed_multistatus_items`, used for HTTP 207 responses only: on a 207 the per-item `status` vocabulary is unreliable —
     `failed`, `error`, `Failed`, softer literals like `warning`/`notexecuted`, or the key absent entirely (vault:
-    `multi-status-207-status-field-inconsistent`; issue #397) — so only an exact `success` (case/whitespace-tolerant) may be trusted. A missing or
-    empty `status` counts as non-success. Scans the same envelope arrays as `_failed_multistatus_items` (`DATA.results[]`, `DATA.switchIds[]`,
+    `multi-status-207-status-field-inconsistent`; issue #397) — so only an exact `success` (case/whitespace-tolerant) may normally be trusted. The
+    sole exception is the endpoint-specific ``switchActions/deploy`` no-op recognized by `_is_benign_switch_deploy_noop`. A missing or empty
+    `status` counts as non-success. Scans the same envelope arrays as `_failed_multistatus_items` (`DATA.results[]`, `DATA.switchIds[]`,
     `DATA.links[]`). NOT for plain-200 bodies: ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope), which the
     failure-literal denylist correctly ignores.
 
@@ -221,7 +275,7 @@ def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
 
     ## Returns
 
-    - List of item dicts whose `status` is not exactly `success` (empty list when every item reports `success` or no envelope array is present)
+    - List of item dicts that are neither exact `success` nor the recognized switch-deploy no-op
 
     ## Raises
 
@@ -231,9 +285,15 @@ def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
     data = _get_typed_value(response, "DATA", dict, {})
     for key in _MULTISTATUS_ITEM_KEYS:
         items = _get_typed_value(data, key, list, [])
-        non_success.extend(
-            item for item in items if isinstance(item, dict) and str(item.get("status") or "").strip().lower() not in _MULTISTATUS_SUCCESS_STATUSES
-        )
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").strip().lower()
+            if status in _MULTISTATUS_SUCCESS_STATUSES:
+                continue
+            if _is_benign_switch_deploy_noop(response, key, item):
+                continue
+            non_success.append(item)
     return non_success
 
 
@@ -328,8 +388,9 @@ class NdV1Strategy:
           for some endpoints (e.g. the L3Out batch POST).
         - On `RETURN_CODE` 207 specifically, any envelope item whose `status` is not exactly `success` — softer literals like
           `warning`/`notexecuted`, unknown literals, or the `status` key absent entirely — because the 207 per-item status vocabulary is
-          unreliable (issue #397; vault: `multi-status-207-status-field-inconsistent`). Plain-200 bodies keep the failure-literal denylist
-          because ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope).
+          unreliable (issue #397; vault: `multi-status-207-status-field-inconsistent`). The one known exception is the exact
+          `switchActions/deploy` no-command outcome, which is a successful no-op. Plain-200 bodies keep the failure-literal denylist because ND
+          ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope).
 
         ## Parameters
 
@@ -357,9 +418,10 @@ class NdV1Strategy:
         # on plain 200 -- so any success-code response with a failing item must not be
         # classified as success. See issue #295.
         # On a 207 specifically, the per-item status vocabulary is unreliable (softer literals,
-        # or the key absent entirely), so only an exact `success` is trusted there (issue #397;
-        # vault: multi-status-207-status-field-inconsistent). Plain-200 bodies keep the
-        # failure-literal denylist because ND ships legitimately status-less item arrays on 200.
+        # or the key absent entirely), so only an exact `success` and the narrowly recognized
+        # switchActions/deploy no-command no-op are trusted there (issue #397; vault:
+        # multi-status-207-status-field-inconsistent). Plain-200 bodies keep the failure-literal
+        # denylist because ND ships legitimately status-less item arrays on 200.
         if response.get("RETURN_CODE") == 207 and _non_success_multistatus_items(response):
             return False
         if _failed_multistatus_items(response):
@@ -633,8 +695,9 @@ class NdV1Strategy:
                 msg = f"ND Error: {'; '.join(str(e) for e in errors)}"
 
         # Multi-Status per-item failures (results[]/switchIds[]/links[]). Mirrors is_success:
-        # on a 207 every non-exact-success item is reported (including status-less items), so the
-        # message names the item ND rejected rather than falling through to the generic fallback.
+        # on a 207 every item other than exact success or the narrowly recognized switch-deploy
+        # no-op is reported (including status-less items), so the message names the item ND
+        # rejected rather than falling through to the generic fallback.
         if msg is None:
             failed_items = _non_success_multistatus_items(response) if return_code == 207 else _failed_multistatus_items(response)
             if failed_items:

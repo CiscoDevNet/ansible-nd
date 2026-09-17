@@ -1956,7 +1956,17 @@ def test_manage_policy_group_orchestrator_00810() -> None:
             },
         ]
     }
-    rest_send = _build_rest_send([_resp(body, method="POST")])
+    rest_send = _build_rest_send(
+        [
+            _resp(
+                body,
+                return_code=207,
+                method="POST",
+                path="/appcenter/cisco/ndfc/api/v1/manage/fabrics/fab1/switchActions/deploy",
+                message="Multi-Status",
+            )
+        ]
+    )
     instance = _make_orchestrator(rest_send)
 
     with does_not_raise():
