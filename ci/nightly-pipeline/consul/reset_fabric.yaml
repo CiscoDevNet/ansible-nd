@@ -27,11 +27,11 @@
     # fabric so the external fabric uses its own switches, not the main pair.
     reset_fabric_switches:
       - fabric: VXLAN_EVPN_Fabric
-        serials: [SERIAL00001, SERIAL00002, SERIAL00003, SERIAL00004]
-        ips: [192.0.2.195, 192.0.2.196, 192.0.2.194, 192.0.2.88]
+        serials: [9PICV0LTD7C, 9VISBXAWYYB, 9FKMQG17900, 9FTTP2QGS0H]
+        ips: [10.122.84.195, 10.122.84.196, 10.122.84.194, 10.122.84.88]
       - fabric: External_Connectivity_Fabric
-        serials: [SERIAL00005, SERIAL00006]
-        ips: [192.0.2.89, 192.0.2.90]
+        serials: [9V1IZP23KBG, 9GRLA6ZC4Z0]
+        ips: [10.122.84.89, 10.122.84.90]
     ebgp_fabric_name: ANSIBLE_NIGHTLY_EBGP
     ibgp_fabric_name: ANSIBLE_NIGHTLY_IBGP
     ai_ebgp_fabric_name: ANSIBLE_NIGHTLY_AI_EBGP
@@ -94,17 +94,66 @@
     #       - vrf_name: TENANT_A
     #   ignore_errors: true
 
-    - name: Delete leftover vPC pair on both fabrics
+    # --- vPC pairs (both fabrics) --- MANDATORY UNPAIR (not silently ignored) ---
+    # Gather EVERY existing vPC pair per fabric, then delete each one -- not just
+    # the canonical serials[0]/serials[1] pair -- so multi-pair or off-canonical
+    # leftovers are also cleared. Same gather-then-delete-each idiom used for
+    # networks below. The GATHER and per-pair DELETE stay tolerant so we attempt
+    # every pair, but unpair is a MANDATORY operation: after the deletes we WAIT
+    # for the fabric to converge to vPC-free and HARD-ASSERT it (NDP_RESET_VPC_
+    # UNPAIR_OK/FAIL). A pair that cannot be torn down FAILS the reset instead of
+    # silently proceeding to delete dependent objects/fabrics on a still-paired
+    # fabric. Disable the gate with -e reset_vpc_require_unpair=false if ever needed.
+    - name: Gather every existing vPC pair on both fabrics
       cisco.nd.nd_manage_vpc_pair:
         fabric_name: "{{ item.fabric }}"
-        state: deleted
-        config:
-          - peer1_switch_id: "{{ item.serials[0] }}"
-            peer2_switch_id: "{{ item.serials[1] }}"
+        state: gathered
       loop: "{{ reset_fabric_switches }}"
       loop_control:
         label: "{{ item.fabric }}"
+      register: reset_gathered_vpc_pairs
       ignore_errors: true
+
+    - name: Delete every existing vPC pair on both fabrics
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ item.0.item.fabric }}"
+        state: deleted
+        config:
+          - peer1_switch_id: "{{ item.1.switch_id }}"
+            peer2_switch_id: "{{ item.1.peer_switch_id }}"
+      loop: "{{ reset_gathered_vpc_pairs.results | default([]) | subelements('gathered.vpc_pairs', skip_missing=true) }}"
+      loop_control:
+        label: "{{ item.0.item.fabric }} / {{ item.1.switch_id }}-{{ item.1.peer_switch_id }}"
+      ignore_errors: true
+
+    # Wait for the unpair to CONVERGE (re-gather until each fabric reports zero
+    # vPC pairs) BEFORE we delete any dependent objects/fabrics. No pairs -> the
+    # first attempt is already empty, so this is a no-op in the normal (unpaired)
+    # lab; it only spins when a teardown is genuinely in flight.
+    - name: Wait for every vPC pair to unpair (convergence) before deleting dependents
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ item.fabric }}"
+        state: gathered
+      loop: "{{ reset_fabric_switches }}"
+      loop_control:
+        label: "{{ item.fabric }}"
+      register: reset_vpc_converge
+      until: (reset_vpc_converge.gathered.vpc_pairs | default([]) | length) == 0
+      retries: "{{ reset_vpc_unpair_retries | default(12) }}"
+      delay: "{{ reset_vpc_unpair_delay | default(10) }}"
+      ignore_errors: true
+
+    - name: Fail the reset if any vPC pair could not be unpaired (mandatory unpair)
+      ansible.builtin.assert:
+        that:
+          - "(item.gathered.vpc_pairs | default([]) | length) == 0"
+        fail_msg: "NDP_RESET_VPC_UNPAIR_FAIL: {{ item.item.fabric }} still has vPC pair(s) after convergence wait: {{ item.gathered.vpc_pairs | default([]) }}"
+        success_msg: "NDP_RESET_VPC_UNPAIR_OK: {{ item.item.fabric }} is vPC-free"
+        quiet: true
+      loop: "{{ reset_vpc_converge.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.fabric }}"
+      when: reset_vpc_require_unpair | default(true) | bool
 
     # --- Switch policy on every switch of both fabrics ---
     - name: Delete leftover switch policy on every switch of both fabrics (by description key)
@@ -267,4 +316,35 @@
         state: deleted
         config:
           - fabric_name: "{{ ai_ibgp_fabric_name }}"
+      ignore_errors: true
+
+    # --- Recalculate & Deploy the persistent fabrics so every deletion above is
+    # pushed to the switches (clears the pending / out-of-sync config the deletes
+    # leave behind). configSave = Recalculate, deploy = Deploy -- the same
+    # Recalculate & Deploy the switch-onboard and change-role paths run. Tolerant
+    # like the rest of the reset: a fabric that is absent or has nothing pending
+    # is ignored. The disposable ANSIBLE_NIGHTLY_ fabrics are deleted outright
+    # above, so they are intentionally NOT deployed here.
+    - name: Recalculate & Deploy - recalculate (config save) each persistent fabric
+      cisco.nd.nd_rest:
+        method: post
+        path: "/api/v1/manage/fabrics/{{ item }}/actions/configSave"
+      loop:
+        - "{{ nd_fabric_name }}"
+        - "{{ nd_external_fabric_name }}"
+        - "{{ nd_msd_fabric_name }}"
+      loop_control:
+        label: "{{ item }}"
+      ignore_errors: true
+
+    - name: Recalculate & Deploy - deploy each persistent fabric
+      cisco.nd.nd_rest:
+        method: post
+        path: "/api/v1/manage/fabrics/{{ item }}/actions/deploy?forceShowRun=true"
+      loop:
+        - "{{ nd_fabric_name }}"
+        - "{{ nd_external_fabric_name }}"
+        - "{{ nd_msd_fabric_name }}"
+      loop_control:
+        label: "{{ item }}"
       ignore_errors: true

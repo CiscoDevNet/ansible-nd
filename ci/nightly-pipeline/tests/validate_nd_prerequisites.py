@@ -44,24 +44,24 @@ CANONICAL_FABRICS = {
     "disposable_external": {"ref": "disposable_external", "name": "ANSIBLE_NIGHTLY_EXTERNAL", "type": "externalConnectivity", "lifecycle": "disposable"},
 }
 CANONICAL_SWITCHES = {
-    "vxlan_leaf_1": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00001", "seed_ip": "192.0.2.195"},
-    "vxlan_leaf_2": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00002", "seed_ip": "192.0.2.196"},
-    "vxlan_spine_1": {"baseline_fabric_ref": "advanced", "baseline_role": "spine", "serial": "SERIAL00003", "seed_ip": "192.0.2.194"},
-    "vxlan_border_1": {"baseline_fabric_ref": "advanced", "baseline_role": "border", "serial": "SERIAL00004", "seed_ip": "192.0.2.88"},
-    "external_edge_1": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "SERIAL00005", "seed_ip": "192.0.2.89"},
-    "external_edge_2": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "SERIAL00006", "seed_ip": "192.0.2.90"},
+    "vxlan_leaf_1": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "9PICV0LTD7C", "seed_ip": "10.122.84.195"},
+    "vxlan_leaf_2": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "9VISBXAWYYB", "seed_ip": "10.122.84.196"},
+    "vxlan_spine_1": {"baseline_fabric_ref": "advanced", "baseline_role": "spine", "serial": "9FKMQG17900", "seed_ip": "10.122.84.194"},
+    "vxlan_border_1": {"baseline_fabric_ref": "advanced", "baseline_role": "border", "serial": "9FTTP2QGS0H", "seed_ip": "10.122.84.88"},
+    "external_edge_1": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "9V1IZP23KBG", "seed_ip": "10.122.84.89"},
+    "external_edge_2": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "9GRLA6ZC4Z0", "seed_ip": "10.122.84.90"},
 }
 CANONICAL_RUNTIME_DEFAULTS = {
     "nd_test_fabric_switches": {
         "VXLAN_EVPN_Fabric": [
-            {"name": "vxlan_leaf_1", "seed_ip": "192.0.2.195", "serial": "SERIAL00001", "role": "leaf"},
-            {"name": "vxlan_leaf_2", "seed_ip": "192.0.2.196", "serial": "SERIAL00002", "role": "leaf"},
-            {"name": "vxlan_spine_1", "seed_ip": "192.0.2.194", "serial": "SERIAL00003", "role": "spine"},
-            {"name": "vxlan_border_1", "seed_ip": "192.0.2.88", "serial": "SERIAL00004", "role": "border"},
+            {"name": "vxlan_leaf_1", "seed_ip": "10.122.84.195", "serial": "9PICV0LTD7C", "role": "leaf"},
+            {"name": "vxlan_leaf_2", "seed_ip": "10.122.84.196", "serial": "9VISBXAWYYB", "role": "leaf"},
+            {"name": "vxlan_spine_1", "seed_ip": "10.122.84.194", "serial": "9FKMQG17900", "role": "spine"},
+            {"name": "vxlan_border_1", "seed_ip": "10.122.84.88", "serial": "9FTTP2QGS0H", "role": "border"},
         ],
         "External_Connectivity_Fabric": [
-            {"name": "external_edge_1", "seed_ip": "192.0.2.89", "serial": "SERIAL00005", "role": "edge_router"},
-            {"name": "external_edge_2", "seed_ip": "192.0.2.90", "serial": "SERIAL00006", "role": "edge_router"},
+            {"name": "external_edge_1", "seed_ip": "10.122.84.89", "serial": "9V1IZP23KBG", "role": "edge_router"},
+            {"name": "external_edge_2", "seed_ip": "10.122.84.90", "serial": "9GRLA6ZC4Z0", "role": "edge_router"},
         ],
     },
 }
@@ -70,7 +70,7 @@ CANONICAL_INTERFACE_ALLOWLIST = {
     "vxlan_leaf_2": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4"],
     "vxlan_spine_1": [],
     "vxlan_border_1": ["Ethernet1/1", "Ethernet1/2"],
-    "external_edge_1": ["Ethernet1/1", "Ethernet1/2"],
+    "external_edge_1": ["Ethernet1/2", "Ethernet1/3"],
     "external_edge_2": [],
 }
 

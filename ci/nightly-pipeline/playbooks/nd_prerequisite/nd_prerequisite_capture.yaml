@@ -215,7 +215,7 @@
 - name: Discover configured vPC pairs from the live controller
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ _ndp_registry.lab.fabrics[_ndp_vpc_pair.fabric_ref].name }}"
-    state: query
+    state: gathered
     config:
       - peer1_switch_id: "{{ _ndp_registry.lab.switches[_ndp_vpc_pair.peer_refs[0]].serial }}"
         peer2_switch_id: "{{ _ndp_registry.lab.switches[_ndp_vpc_pair.peer_refs[1]].serial }}"
@@ -234,7 +234,7 @@
   ansible.builtin.assert:
     that:
       - not (_ndp_vpc_result.failed | default(false))
-      - _ndp_vpc_result.query.vpc_pairs is defined
+      - _ndp_vpc_result.gathered.vpc_pairs is defined
     fail_msg: "Unable to query vPC state for {{ _ndp_vpc_result._ndp_vpc_pair.fabric_ref }}."
   loop: "{{ _ndp_live_vpc_results.results | default([]) }}"
   loop_control:
@@ -254,7 +254,7 @@
             + [{
               'fabric_ref': _ndp_vpc_result._ndp_vpc_pair.fabric_ref,
               'peer_refs': _ndp_vpc_result._ndp_vpc_pair.peer_refs,
-              'mode': 'virtual' if (_ndp_vpc_result.query.vpc_pairs | first).use_virtual_peer_link | bool else 'physical'
+              'mode': 'virtual' if (_ndp_vpc_result.gathered.vpc_pairs | first).use_virtual_peer_link | bool else 'physical'
             }]
         })
       }}
@@ -266,7 +266,7 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - _ndp_profile.vpc_pairs | length > 0
-    - _ndp_vpc_result.query.vpc_pairs | length > 0
+    - _ndp_vpc_result.gathered.vpc_pairs | length > 0
 
 - name: Discover declared inter-fabric links from the live controller
   cisco.nd.nd_rest:

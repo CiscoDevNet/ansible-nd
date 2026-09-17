@@ -1,8 +1,9 @@
 ---
-# ensure_interface: admin-up readiness for an allowlisted physical interface.
-# There is no safe generic "admin state only" module, so we assert the interface
-# is allowlisted and surface the intended change; the operator wires the concrete
-# interface module for the lab once validated against the controller.
+# ensure_interface: administratively bring up an allowlisted physical interface.
+# NDFC carries admin state as the ADMIN_STATE nvPair of the interface policy, so the
+# actual no-shutdown is delegated to the shared admin_up_interface.yaml helper (GET
+# policy -> force ADMIN_STATE=true via combine -> PUT globalInterface -> deploy). The
+# guard below still refuses anything that is not an Ethernet<x>/<y> physical port.
 - name: "ensure_interface guard {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
   ansible.builtin.assert:
     that:
@@ -11,7 +12,11 @@
     fail_msg: "Refusing to touch a non-allowlisted interface: {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
   run_once: true
 
-- name: "ensure_interface intended admin-up {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
-  ansible.builtin.debug:
-    msg: "Ensure {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }} is admin-up before the module runs."
+- name: "ensure_interface admin-up {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }} (no-shutdown)"
+  ansible.builtin.include_tasks: admin_up_interface.yaml
+  vars:
+    _auif:
+      serial: "{{ _ndp_switch_serial[_ndp_operation.switch_ref] }}"
+      ifname: "{{ _ndp_operation.interface }}"
+      label: "{{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
   run_once: true

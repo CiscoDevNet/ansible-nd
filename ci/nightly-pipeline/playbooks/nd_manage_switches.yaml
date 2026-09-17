@@ -34,7 +34,7 @@
     #     fabric: "{{ nd_fabric_name }}"
     #     state: merged
     #     config:
-    #       - seed_ip: 192.0.2.195
+    #       - seed_ip: 10.122.84.195
     #         username: admin
     #         password: "{{ switch_password }}"
     #         role: leaf
@@ -45,4 +45,4 @@
     #     fabric: "{{ nd_fabric_name }}"
     #     state: deleted
     #     config:
-    #       - seed_ip: 192.0.2.195
+    #       - seed_ip: 10.122.84.195

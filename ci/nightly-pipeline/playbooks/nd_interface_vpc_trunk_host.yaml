@@ -17,9 +17,9 @@
     vpc_allowed_vlans: "100,200,300,400,500"
     vpc_native_vlan: 99
     vpc_po_id: 500
-    vpc_switch_ip: 192.0.2.195        # <-- set to a vPC-paired switch to enable
-    vpc_peer1_switch_id: SERIAL00001
-    vpc_peer2_switch_id: SERIAL00002
+    vpc_switch_ip: 10.122.84.195        # <-- set to a vPC-paired switch to enable
+    vpc_peer1_switch_id: 9PICV0LTD7C
+    vpc_peer2_switch_id: 9VISBXAWYYB
     vpc_peer1_members: [Ethernet1/3]
     vpc_peer2_members: [Ethernet1/3]
   pre_tasks:

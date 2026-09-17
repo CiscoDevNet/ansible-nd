@@ -42,12 +42,16 @@
     test_groups: [standalone]
     # Consumed by the integration tests (Jenkins supplies module-specific overrides via -e):
     fabric_name: VXLAN_EVPN_Fabric
+    # Device credentials are injected only by Jenkins for the test process. They
+    # are intentionally separate from the ND controller credentials in inventory.
+    switch_username: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME') }}"
+    switch_password: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD') }}"
     # ansible-test normally defines this; alias it here since this harness bypasses ansible-test.
     ansible_it_fabric: "{{ fabric_name }}"
-    ansible_switch1: 192.0.2.195
-    ansible_switch2: 192.0.2.196
-    ansible_sno_1: SERIAL00001
-    ansible_sno_2: SERIAL00002
+    ansible_switch1: 10.122.84.195
+    ansible_switch2: 10.122.84.196
+    ansible_sno_1: 9PICV0LTD7C
+    ansible_sno_2: 9VISBXAWYYB
     intf_1_2: Ethernet1/2
     intf_1_3: Ethernet1/3
     intf_1_10: Ethernet1/10
@@ -56,19 +60,25 @@
     nd_test_fabric_name: "{{ fabric_name }}"
     nd_test_fabric1_name: "{{ fabric_name }}"
     nd_test_fabric2_name: External_Connectivity_Fabric
-    # switch1 = vxlan_leaf_1 (SERIAL00001 / .195): only VXLAN-side switch physically cabled to
-    # external_edge_1 (leaf_1 Eth1/1 <-> edge_1 Eth1/1) for the ext_l3_dci_link. Jenkins/run_all_integ.sh
-    # pass the same pair via -e; this default keeps a bare manual run on the cabled endpoint too.
-    nd_test_switch1_id: SERIAL00001
-    nd_test_switch2_id: SERIAL00005
-    nd_test_switch1_mgmt_ip: 192.0.2.195
-    nd_test_switch2_mgmt_ip: 192.0.2.89
+    # switch1 = vxlan_border_1 (9FTTP2QGS0H / .88, role border): cabled to external_edge_1
+    # (border_1 Eth1/1 routed <-> edge_1 Eth1/3, probe-confirmed up/up) for the ext_l3_dci_link.
+    # Jenkins/run_all_integ.sh pass the same pair via -e; this default keeps a bare manual run
+    # on the cabled border endpoint too. (Was leaf_1 while border_1 was uncabled -- build #26
+    # proved a plain leaf is rejected: "not a supported role for BGP L3Out".)
+    nd_test_switch1_id: 9FTTP2QGS0H
+    nd_test_switch2_id: 9V1IZP23KBG
+    nd_test_switch1_mgmt_ip: 10.122.84.88
+    nd_test_switch2_mgmt_ip: 10.122.84.89
     nd_test_switch1_interface: Ethernet1/1
-    nd_test_switch2_interface: Ethernet1/1
+    nd_test_switch2_interface: Ethernet1/3
     nd_test_switch1_subif: Ethernet1/2
     nd_test_switch2_subif: Ethernet1/2
     nd_network_test_topology: standalone
     nd_vrf_test_topology: standalone
+    # Fabric VRF VLAN range is 2000-2299; the collection default nd_vrf_base_vlan=2800
+    # makes every generated VRF VLAN (base+1..base+42) out of range -> deterministic
+    # create failure. Pin in-range (yields 2101-2142, clear of smoke 2250 / l3out 2290-2291).
+    nd_vrf_base_vlan: 2100
     
     ansible_msd_parent_fabric: ""
     ansible_msd_child_fabric: ""
@@ -76,11 +86,11 @@
     ansible_mcfg_parent_fabric: ""
     ansible_mcfg_child_fabric: ""
     ansible_mcfg_switch1: ""
-    switch_serial_1: SERIAL00001
-    switch_serial_2: SERIAL00002
-    # switch_serial_3 MUST be in VXLAN_EVPN_Fabric. SERIAL00005 is external_edge_1
+    switch_serial_1: 9PICV0LTD7C
+    switch_serial_2: 9VISBXAWYYB
+    # switch_serial_3 MUST be in VXLAN_EVPN_Fabric. 9V1IZP23KBG is external_edge_1
     # (External_Connectivity_Fabric) -> nd_manage_policy_group TC13 400 "Invalid switchId(s)".
-    switch_serial_3: SERIAL00003   # vxlan_spine_1 (in-fabric); matches profiles L298
+    switch_serial_3: 9FKMQG17900   # vxlan_spine_1 (in-fabric); matches profiles L298
     save: true
     deploy: true
     config_actions_type: switch
@@ -169,6 +179,24 @@
           - nd_test_fabric_switches.External_Connectivity_Fabric | length == 2
           - nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='name') | list == ['external_edge_1', 'external_edge_2']
         fail_msg: "integration_config.yml does not match the canonical four-switch primary and two-switch external topology."
+
+    # Positional switch variables are consumed by older role test cases. Keep
+    # them tied to the primary fabric so an old Consul runner cannot accidentally
+    # pass external_edge_1 (9V1IZP23KBG) as switch_serial_3 and produce an ND
+    # "Invalid switchId" response from a primary-fabric policy-group request.
+    - name: "[{{ test_module }}] validate positional switches belong to the primary fabric"
+      ansible.builtin.assert:
+        that:
+          - switch_serial_1 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='serial') | list)
+          - switch_serial_2 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='serial') | list)
+          - switch_serial_3 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='serial') | list)
+          - switch_serial_1 not in (nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list)
+          - switch_serial_2 not in (nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list)
+          - switch_serial_3 not in (nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list)
+        fail_msg: >-
+          NDP_SWITCH_MAPPING_FAIL [{{ test_module }}]: positional switch_serial_1..3 must resolve to
+          switches in VXLAN_EVPN_Fabric. Got [{{ switch_serial_1 }}, {{ switch_serial_2 }}, {{ switch_serial_3 }}].
+          External_Connectivity_Fabric contains [{{ nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list }}].
 
     - name: "[{{ test_module }}] validate prerequisite-only mode"
       ansible.builtin.assert:
@@ -301,10 +329,9 @@
     # fabric2). On ND 4.2.1 the L3Out create then 207s "VRF production not found
     # in fabric VXLAN_EVPN_Fabric" (build #30). Pre-create the VRFs here. The
     # nd_manage_vrfs MODULE is broken on 4.2.1 (bgpPasswordKeyType), so use raw
-    # REST. Best-effort: ignore_errors so an already-present VRF (duplicate 400)
-    # or an external-fabric type mismatch does not abort the play; l3out itself
-    # surfaces any residual gap. fabric2 'external' is a best-effort attempt --
-    # the confirmed #30 blocker was 'production' on fabric1.
+    # REST. A duplicate create is allowed, but the GET checks below are the
+    # authoritative gate: the L3Out module is not started unless each required
+    # VRF is present on its declared fabric.
     - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric1"
       cisco.nd.nd_rest:
         method: post
@@ -314,33 +341,126 @@
             - vrfType: vxlanIbgp
               fabricName: "{{ nd_test_fabric1_name }}"
               vrfName: "{{ nd_test_vrf1_name | default('production') }}"
-              vrfId: 58900
-              vlanId: 2290
+              vrfId: "{{ nd_test_vrf1_id | default(58900) }}"
+              vlanId: "{{ nd_test_vrf1_vlan | default(2290) }}"
       register: l3out_vrf1_precreate
-      ignore_errors: true
+      # ND may return a duplicate-object error when the prerequisite already
+      # exists. The GET + assert below decides whether the prerequisite is valid.
+      failed_when: false
       when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
-    - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric2 (best effort)"
+    - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric2"
       cisco.nd.nd_rest:
         method: post
         path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
         content:
           vrfs:
-            - vrfType: vxlanIbgp
+            - vrfType: externalConnectivity
               fabricName: "{{ nd_test_fabric2_name }}"
               vrfName: "{{ nd_test_vrf2_name | default('external') }}"
-              vrfId: 58901
-              vlanId: 2291
+              vrfId: "{{ nd_test_vrf2_id | default(58901) }}"
+              vlanId: "{{ nd_test_vrf2_vlan | default(2291) }}"
       register: l3out_vrf2_precreate
-      ignore_errors: true
+      failed_when: false
       when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
-    - name: "[{{ test_module }}] SETUP - report L3Out VRF pre-create outcome"
-      ansible.builtin.debug:
-        msg:
-          - "fabric1 {{ nd_test_fabric1_name }} vrf {{ nd_test_vrf1_name | default('production') }}: {{ 'created' if l3out_vrf1_precreate is succeeded else 'not created (may already exist)' }}"
-          - "fabric2 {{ nd_test_fabric2_name }} vrf {{ nd_test_vrf2_name | default('external') }}: {{ 'created' if l3out_vrf2_precreate is succeeded else 'not created (may already exist / type mismatch)' }}"
+    - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric1"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
+      register: l3out_vrf1_live
       when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric2"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
+      register: l3out_vrf2_live
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - fail closed if L3Out VRFs are missing"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (nd_test_vrf1_name | default('production')) in
+            (l3out_vrf1_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
+          - >-
+            (nd_test_vrf2_name | default('external')) in
+            (l3out_vrf2_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
+        fail_msg: >-
+          NDP_L3OUT_VRF_PREREQUISITE_FAIL: required VRFs were not confirmed before
+          nd_manage_l3out. Expected
+          {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
+          {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
+          Check the raw VRF POST response and controller permissions.
+        success_msg: >-
+          NDP_L3OUT_VRF_PREREQUISITE_OK: confirmed
+          {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
+          {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_interface_subinterface_* only): a subinterface (e.g. Eth1/35.2)
+    # can only be created on a parent that is a routed (Layer 3) port. The
+    # target's vars/main.yaml requires the parent "free of any L2 mode
+    # conflicts" and its setup.yaml only cleans up, so nothing makes the parent
+    # routed; the nd_prerequisite system reconciles fabrics/switches/links/
+    # resources but has NO interface-L3-mode capability. Provision the parent as
+    # routedHost here (no IP -- each subif carries its own) before the suite.
+    #
+    # GUARD: refuse Ethernet1/1-1/3 on vxlan_leaf_1 -- those are the spine<->leaf
+    # p2p/OSPF underlay uplinks; turning one into a routedHost strips that config
+    # and forces the whole fabric into migration mode. If the parent still
+    # resolves to an underlay port (e.g. a live Jenkins inline job not yet
+    # mirrored to Ethernet1/35), FAIL FAST so neither this pre-step nor the test
+    # itself can touch the underlay.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] SUBIF SETUP - compute underlay-uplink guard"
+      ansible.builtin.set_fact:
+        _subif_parent_is_underlay: "{{ (nd_test_ethernet_parent | default('') | lower | regex_replace('^eth(ernet)?', 'ethernet')) in ['ethernet1/1', 'ethernet1/2', 'ethernet1/3'] }}"
+      when:
+        - test_module in ['nd_interface_subinterface_managed', 'nd_interface_subinterface_unmanaged']
+        - not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SUBIF SETUP - refuse fabric underlay uplink as routed parent"
+      ansible.builtin.assert:
+        that:
+          - nd_test_ethernet_parent | default('') | length > 0
+          - nd_test_switch_ip | default('') | length > 0
+          - not (_subif_parent_is_underlay | bool)
+        fail_msg: >-
+          SUBIF_PARENT_GUARD_FAIL [{{ test_module }}]: the subinterface parent is not safe to provision.
+          Requires nd_test_ethernet_parent (got '{{ nd_test_ethernet_parent | default('<unset>') }}') and
+          nd_test_switch_ip (got '{{ nd_test_switch_ip | default('<unset>') }}'), and the parent MUST NOT be a
+          fabric underlay uplink. Ethernet1/1-1/3 on vxlan_leaf_1 carry the spine<->leaf p2p/OSPF underlay;
+          turning one into a routedHost strips it and forces the fabric into migration mode. Pass a free routed
+          port via ND_SUBIF_ETHERNET_PARENT (default Ethernet1/35) and mirror that value into the live Jenkins
+          inline job.
+        success_msg: "SUBIF_PARENT_GUARD_OK [{{ test_module }}]: {{ nd_test_ethernet_parent }} on {{ nd_test_switch_ip }} is not a fabric underlay uplink."
+      when:
+        - test_module in ['nd_interface_subinterface_managed', 'nd_interface_subinterface_unmanaged']
+        - not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SUBIF SETUP - provision routed parent {{ nd_test_ethernet_parent | default('') }} (routedHost) before subinterfaces"
+      cisco.nd.nd_interface_ethernet_routed:
+        fabric_name: "{{ nd_test_fabric_name }}"
+        config:
+          - switch_ip: "{{ nd_test_switch_ip }}"
+            interface_name: "{{ nd_test_ethernet_parent }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: routedHost
+                  admin_state: true
+        config_actions:
+          deploy: true
+        state: merged
+      register: _subif_parent_routed
+      when:
+        - test_module in ['nd_interface_subinterface_managed', 'nd_interface_subinterface_unmanaged']
+        - not (nd_prerequisite_only | default(false) | bool)
+        - not (_subif_parent_is_underlay | bool)
 
     # -------------------------------------------------------------------------
     # SETUP: run the target's own setup/prepare file FIRST, but only when the

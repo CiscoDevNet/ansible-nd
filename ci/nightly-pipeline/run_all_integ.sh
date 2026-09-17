@@ -66,7 +66,7 @@
 #   ND_RESET_FABRIC         run reset_fabric.yaml after suite   (default false)
 #   ND_VPC_PAIR_ENABLE      add standalone nd_vpc_pair to the default set (default false)
 #   VPC_PAIR_SWITCH1_SERIAL / VPC_PAIR_SWITCH2_SERIAL / VPC_PAIR_FABRIC_TYPE
-#                           vPC pair members + type (default SERIAL00001/SERIAL00002/vxlanIbgp)
+#                           vPC pair members + type (default 9PICV0LTD7C/9VISBXAWYYB/vxlanIbgp)
 #
 # ND auth defaults to the collection inventory.yaml. No secret is stored here.
 # =============================================================================
@@ -127,6 +127,29 @@ if [ "${ND_LINKS_ENABLE}" = "true" ]; then
   DEFAULT_MODULES+=(nd_manage_links)
 fi
 
+# nd_interface_* (ND 4.2) role targets. Opt-in via ND_INTERFACE_ENABLE (mirrors the
+# nightly's ND_INTERFACE_ENABLE param, ON in Jenkins). Each needs only per-switch
+# substrate (free ports, NO cabling) on ND_INTERFACE_TEST_SWITCH_IP (default
+# 10.122.84.195 = vxlan_leaf_1); that switch must be in normal (not migration/read-only)
+# mode for deploys to land. The two nd_interface_vpc_* targets stay OFF (need a vPC-pair
+# substrate the lab lacks). Enable: ND_INTERFACE_ENABLE=true ./run_all_integ.sh
+# (or run any explicitly, e.g. ./run_all_integ.sh nd_interface_loopback).
+ND_INTERFACE_ENABLE="${ND_INTERFACE_ENABLE:-false}"
+ND_INTERFACE_TEST_SWITCH_IP="${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195}"
+if [ "${ND_INTERFACE_ENABLE}" = "true" ]; then
+  DEFAULT_MODULES+=(
+    nd_interface_loopback
+    nd_interface_svi
+    nd_interface_ethernet_access
+    nd_interface_ethernet_trunk_host
+    nd_interface_ethernet_routed
+    nd_interface_port_channel_access
+    nd_interface_port_channel_trunk_host
+    nd_interface_subinterface_managed
+    nd_interface_subinterface_unmanaged
+  )
+fi
+
 # nd_vpc_pair is a STANDALONE playbook target (hosts: nd), not a role, so it runs its
 # own tests/integration/targets/nd_vpc_pair/tasks/main.yaml directly (NOT via
 # run_integration_module.yaml). It needs a physical vPC peer-link substrate
@@ -138,8 +161,8 @@ ND_VPC_PAIR_ENABLE="${ND_VPC_PAIR_ENABLE:-false}"
 if [ "${ND_VPC_PAIR_ENABLE}" = "true" ]; then
   DEFAULT_MODULES+=(nd_vpc_pair)
 fi
-VPC_PAIR_SWITCH1_SERIAL="${VPC_PAIR_SWITCH1_SERIAL:-SERIAL00001}"   # vxlan_leaf_1
-VPC_PAIR_SWITCH2_SERIAL="${VPC_PAIR_SWITCH2_SERIAL:-SERIAL00002}"   # vxlan_leaf_2
+VPC_PAIR_SWITCH1_SERIAL="${VPC_PAIR_SWITCH1_SERIAL:-9PICV0LTD7C}"   # vxlan_leaf_1
+VPC_PAIR_SWITCH2_SERIAL="${VPC_PAIR_SWITCH2_SERIAL:-9VISBXAWYYB}"   # vxlan_leaf_2
 VPC_PAIR_FABRIC_TYPE="${VPC_PAIR_FABRIC_TYPE:-vxlanIbgp}"
 
 # Parse args: leading nd_* tokens select modules; everything else is passed
@@ -208,11 +231,18 @@ module_extra_vars() {
     nd_manage_networks)
       printf '%s' "-e ansible_it_fabric=${NETWORK_FABRIC_NAME} -e nd_network_standalone_fabric=${NETWORK_FABRIC_NAME}" ;;
     nd_manage_switches)
-      printf '%s' "-e ansible_switch1=192.0.2.195 -e ansible_switch2=192.0.2.194 -e ansible_switch3=192.0.2.88" ;;
+      printf '%s' "-e ansible_switch1=10.122.84.195 -e ansible_switch2=10.122.84.194 -e ansible_switch3=10.122.84.88" ;;
     nd_manage_l3out)
-      # switch1 = vxlan_leaf_1 (SERIAL00001 / .195): only VXLAN-side switch physically cabled
-      # to external_edge_1 (leaf_1 Eth1/1 <-> edge_1 Eth1/1) for the ext_l3_dci_link. switch2 = edge_1 (.89).
-      printf '%s' "-e nd_test_switch1_id=SERIAL00001 -e nd_test_switch1_mgmt_ip=192.0.2.195 -e nd_test_switch2_id=SERIAL00005 -e nd_test_switch2_mgmt_ip=192.0.2.89" ;;
+      # switch1 = vxlan_border_1 (9FTTP2QGS0H / .88): the VXLAN-side L3Out
+      # endpoint physically cabled to external_edge_1 (9V1IZP23KBG / .89).
+      printf '%s' "-e nd_test_switch1_id=9FTTP2QGS0H -e nd_test_switch1_mgmt_ip=10.122.84.88 -e nd_test_switch2_id=9V1IZP23KBG -e nd_test_switch2_mgmt_ip=10.122.84.89" ;;
+    nd_interface_subinterface_managed|nd_interface_subinterface_unmanaged)
+      # Parents must PRE-EXIST: Eth1/3 routed + Port-channel10 (setup never creates them).
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195} -e nd_test_ethernet_parent=Ethernet1/3 -e nd_test_port_channel_parent=Port-channel10" ;;
+    nd_interface_port_channel_access|nd_interface_port_channel_trunk_host)
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13" ;;
+    nd_interface_*)
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195}" ;;
     *) printf '%s' "" ;;
   esac
 }

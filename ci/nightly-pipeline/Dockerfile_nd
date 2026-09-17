@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_ROOT_USER_ACTION=ignore
 
 # Metadata
-LABEL maintainer="nightly@example.com"
+LABEL maintainer="sivakasi@cisco.com"
 LABEL description="Cisco Nexus Dashboard (cisco.nd) Ansible nightly test runner"
 
 ENV HOME=/root \

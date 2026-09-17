@@ -10,8 +10,8 @@
     nd_prerequisite:
       profile: smoke.nd_manage_l3out
       fabric_types: [vxlanIbgp, externalConnectivity]
-      switch_count: 2
-      switch_roles: [border, edge_router]
+      switch_count: 3
+      switch_roles: [preserve, edge_router, edge_router]
     nd_fabric_name: VXLAN_EVPN_Fabric
   pre_tasks:
     - name: Prepare and confirm ND topology prerequisites
@@ -85,11 +85,11 @@
                 - mtu: 9216
                   ipv4_mask_length: 30
                   switch1_details:
-                    switch_id: SERIAL00001
+                    switch_id: 9PICV0LTD7C
                     interface_name: Ethernet1/1
                     interface_ipv4_address: 10.0.0.1
                   switch2_details:
-                    switch_id: SERIAL00005
+                    switch_id: 9V1IZP23KBG
                     interface_name: Ethernet1/1
                     interface_ipv4_address: 10.0.0.2
             routing_details:

@@ -12,7 +12,7 @@
       switch_count: 2
       switch_roles: [leaf, leaf]
     nd_fabric_name: VXLAN_EVPN_Fabric
-    pg_switch_ids: [SERIAL00001, SERIAL00002]   # <-- set to enable create/delete
+    pg_switch_ids: [9PICV0LTD7C, 9VISBXAWYYB]   # <-- set to enable create/delete
   pre_tasks:
     - name: Prepare and confirm ND topology prerequisites
       ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
