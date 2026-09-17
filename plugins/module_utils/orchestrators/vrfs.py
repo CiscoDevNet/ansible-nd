@@ -102,6 +102,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     # Strategy is injected at construction time by nd_manage_vrfs.py / VrfFabricResolver.
     strategy: BaseVrfStrategy | None = None
     trace_hook: Callable[..., None] | None = None
+    enrich_mcfg_parent_from_children: bool = False
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
@@ -738,7 +739,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     def _enrich_mcfg_parent_vrfs_from_children(self, items: list[Any]) -> list[Any]:
         if not self._is_mcfg_parent() or not items:
             return items
-        if self.rest_send.params.get("state") != "gathered":
+        if not getattr(self, "enrich_mcfg_parent_from_children", False):
             return items
 
         child_records = self._child_vrf_records_for_mcfg_parent()

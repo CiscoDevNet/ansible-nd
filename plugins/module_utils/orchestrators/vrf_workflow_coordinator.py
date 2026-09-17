@@ -607,11 +607,13 @@ class VrfWorkflowCoordinator:
 
             rest_send_params = dict(self.module.params)
             rest_send = self._new_rest_send(rest_send_params)
+            enrich_mcfg_parent_from_children = state == "gathered"
 
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=active_strategy,
                 trace_hook=self._trace,
+                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
@@ -741,11 +743,14 @@ class VrfWorkflowCoordinator:
             rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
+            state = module_args.get("state", "merged")
+            enrich_mcfg_parent_from_children = state == "gathered"
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=strategy,
                 results=results,
                 trace_hook=self._trace,
+                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             return orchestrator, results
         finally:

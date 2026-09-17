@@ -1047,6 +1047,7 @@ def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs()
             }
         ),
     )
+    object.__setattr__(orchestrator, "enrich_mcfg_parent_from_children", True)
     requested_paths = []
 
     def request(**kwargs):
@@ -1085,6 +1086,59 @@ def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs()
         "advertiseDefaultRoute": False,
         "configureStaticDefaultRoute": False,
     }
+
+
+def test_vrfs_00089a_mcfg_parent_does_not_enrich_child_fields_unless_requested():
+    """
+    MCFG child-read enrichment is a gathered-output concern. Write-state query
+    normalization must not pull child-only fields into parent diff input.
+    """
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(
+        orchestrator,
+        "strategy",
+        _McfgTopDownStrategy(
+            {
+                "members": [
+                    {
+                        "fabricName": "nac-msd-fabric1",
+                        "fabricState": "member",
+                        "clusterName": "ND42-REL",
+                    }
+                ]
+            }
+        ),
+    )
+    object.__setattr__(orchestrator, "enrich_mcfg_parent_from_children", False)
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {
+            "vrfs": [
+                {
+                    "vrfName": "ansible-nd-vrf-mcfg-a",
+                    "fabricData": {
+                        "advertiseHostRoute": True,
+                    },
+                }
+            ]
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    item = {
+        "fabricName": "MCFG_FAB",
+        "vrfName": "ansible-nd-vrf-mcfg-a",
+        "fabricData": {
+            "l3VniWithoutVlan": False,
+        },
+    }
+
+    enriched = orchestrator._enrich_mcfg_parent_vrfs_from_children([item])
+
+    assert requested_paths == []
+    assert enriched == [item]
 
 
 def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():
