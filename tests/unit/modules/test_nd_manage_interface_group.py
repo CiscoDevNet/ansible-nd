@@ -6,15 +6,25 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import (
     HttpVerbEnum,
     OperationType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.config_models import (
+    InterfaceGroupConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -477,3 +487,540 @@ def test_nd_manage_interface_group_00030() -> None:
             "diff": [],
         }
     ]
+
+
+class _BoundaryModuleFailed(BaseException):
+    """Stop a module-boundary test after ``fail_json`` captures its output."""
+
+
+def _boundary_group(
+    name: str,
+    *,
+    networks: list[str] | None = None,
+    members: list[str] | None = None,
+) -> InterfaceGroupConfigModel:
+    """Build one small port-channel Interface Group for boundary tests."""
+    return InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": name,
+            "type": "portChannel",
+            "networks": networks or [],
+            "switch_interfaces": (
+                [
+                    {
+                        "switch_id": "SN1",
+                        "interface_names": members,
+                    }
+                ]
+                if members
+                else []
+            ),
+        }
+    )
+
+
+def _boundary_collection(*groups: InterfaceGroupConfigModel) -> NDConfigCollection:
+    """Return an Interface Group collection for before/after assertions."""
+    return NDConfigCollection(
+        model_class=InterfaceGroupConfigModel,
+        items=list(groups),
+    )
+
+
+class _FailingBoundaryOutput(NDOutput):
+    """Raise from formatting while recording each attempted invocation."""
+
+    def __init__(
+        self,
+        output_level: str,
+        *,
+        state: str,
+        error: Exception,
+        call_log: list[str],
+    ) -> None:
+        super().__init__(output_level, state=state)
+        self._error = error
+        self._call_log = call_log
+
+    def format_with_verbosity(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        self._call_log.append("format_with_verbosity")
+        raise self._error
+
+
+class _BoundaryOrchestrator:
+    """Record normal and failure-path deployment calls made by ``main``."""
+
+    warnings: list[str] = []
+
+    def __init__(
+        self,
+        *,
+        confirmed: NDConfigCollection,
+        deploy_enabled: bool,
+        deploy_result: dict[str, list[Any]] | None = None,
+        finalizer_error: Exception | None = None,
+        normal_deploy_error: Exception | None = None,
+        has_unresolved_accepted_changes: bool = False,
+    ) -> None:
+        self._confirmed = list(confirmed)
+        self._deploy_enabled = deploy_enabled
+        self._deploy_result = deploy_result or {"interfaces": [], "switches": []}
+        self._finalizer_error = finalizer_error
+        self._normal_deploy_error = normal_deploy_error
+        self._has_unresolved_accepted_changes = has_unresolved_accepted_changes
+        self.deploy_attempted = False
+        self.finalizer_calls = 0
+        self.deployment_requests = 0
+
+    @property
+    def has_unresolved_accepted_changes(self) -> bool:
+        """Return whether accepted NDFC changes cannot be attributed safely."""
+        return self._has_unresolved_accepted_changes
+
+    def confirmed_groups(self) -> list[InterfaceGroupConfigModel]:
+        """Return the NDFC-confirmed state used for failure output."""
+        return list(self._confirmed)
+
+    def deploy_pending(self) -> None:
+        """Simulate the normal deployment stage."""
+        if self._normal_deploy_error is None:
+            return
+        self.deploy_attempted = True
+        self.deployment_requests += 1
+        raise self._normal_deploy_error
+
+    def deploy_accepted_mutations(self) -> dict[str, list[Any]]:
+        """Simulate the Interface Group failure-path finalizer."""
+        self.finalizer_calls += 1
+        if not self._deploy_enabled or self.deploy_attempted:
+            return {"interfaces": [], "switches": []}
+        if self._finalizer_error is not None:
+            self.deployment_requests += 1
+            raise self._finalizer_error
+        if self._deploy_result.get("interfaces") or self._deploy_result.get("switches"):
+            self.deployment_requests += 1
+        return self._deploy_result
+
+
+class _BoundaryStateMachine:
+    """State-machine stand-in with distinct predicted and confirmed states."""
+
+    def __init__(
+        self,
+        *,
+        module: Any,
+        before: NDConfigCollection,
+        predicted: NDConfigCollection,
+        confirmed: NDConfigCollection,
+        failure: Exception | None,
+        deploy_enabled: bool,
+        deploy_result: dict[str, list[Any]] | None = None,
+        finalizer_error: Exception | None = None,
+        normal_deploy_error: Exception | None = None,
+        has_unresolved_accepted_changes: bool = False,
+        formatter_error: Exception | None = None,
+        formatter_call_log: list[str] | None = None,
+    ) -> None:
+        self.model_class = InterfaceGroupConfigModel
+        self.before = before
+        if formatter_error is None:
+            self.output = NDOutput(module.params["output_level"], state=module.params["state"])
+        else:
+            self.output = _FailingBoundaryOutput(
+                module.params["output_level"],
+                state=module.params["state"],
+                error=formatter_error,
+                call_log=formatter_call_log if formatter_call_log is not None else [],
+            )
+        self.output.assign(before=before, after=predicted)
+        self.results = Results()
+        self.results.action = OperationType.UPDATE.value
+        self.results.operation_type = OperationType.UPDATE
+        self.results.path_current = "/api/v1/manage/fabrics/fabric-1/interfaceGroups/target"
+        self.results.verb_current = HttpVerbEnum.PUT
+        self.results.payload_current = {"interfaceGroupName": "target"}
+        self.results.response_current = {"RETURN_CODE": 500, "MESSAGE": "rejected"}
+        # Deliberately report an API-level change. Failure formatting must still
+        # derive the final changed value from before versus confirmed state.
+        self.results.result_current = {"success": False, "changed": True}
+        self.results.diff_current = {"predicted": True}
+        self.results.verbosity_level_current = 2
+        self.results.register_api_call()
+        self.model_orchestrator = _BoundaryOrchestrator(
+            confirmed=confirmed,
+            deploy_enabled=deploy_enabled,
+            deploy_result=deploy_result,
+            finalizer_error=finalizer_error,
+            normal_deploy_error=normal_deploy_error,
+            has_unresolved_accepted_changes=has_unresolved_accepted_changes,
+        )
+        self._failure = failure
+
+    def manage_state(self) -> None:
+        """Raise the configured reconciliation failure, if any."""
+        if self._failure is not None:
+            raise self._failure
+
+
+def _run_failure_boundary(  # pylint: disable=too-many-arguments
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    failure: Exception | None,
+    before: NDConfigCollection,
+    predicted: NDConfigCollection,
+    confirmed: NDConfigCollection,
+    deploy_enabled: bool = True,
+    check_mode: bool = False,
+    deploy_result: dict[str, list[Any]] | None = None,
+    finalizer_error: Exception | None = None,
+    normal_deploy_error: Exception | None = None,
+    has_unresolved_accepted_changes: bool = False,
+    formatter_error: Exception | None = None,
+    formatter_call_log: list[str] | None = None,
+) -> tuple[dict[str, Any], _BoundaryOrchestrator]:
+    """Drive ``main`` and return captured failure output and orchestrator calls."""
+
+    class FakeAnsibleModule:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+            self.params = {
+                "fabric_name": "fabric-1",
+                "state": "merged",
+                "config": [],
+                "config_actions": {"deploy": deploy_enabled, "type": "resource"},
+                "output_level": "normal",
+            }
+            self.check_mode = check_mode
+            self._verbosity = 2
+
+        @staticmethod
+        def exit_json(**kwargs: Any) -> None:
+            raise AssertionError(f"exit_json called unexpectedly: {kwargs}")
+
+        @staticmethod
+        def fail_json(**kwargs: Any) -> None:
+            raise _BoundaryModuleFailed(kwargs)
+
+    module = FakeAnsibleModule()
+    state_machine = _BoundaryStateMachine(
+        module=module,
+        before=before,
+        predicted=predicted,
+        confirmed=confirmed,
+        failure=failure,
+        deploy_enabled=deploy_enabled,
+        deploy_result=deploy_result,
+        finalizer_error=finalizer_error,
+        normal_deploy_error=normal_deploy_error,
+        has_unresolved_accepted_changes=has_unresolved_accepted_changes,
+        formatter_error=formatter_error,
+        formatter_call_log=formatter_call_log,
+    )
+
+    monkeypatch.setattr(nd_manage_interface_group, "AnsibleModule", lambda **kwargs: module)
+    monkeypatch.setattr(nd_manage_interface_group, "require_pydantic", lambda module: None)
+    monkeypatch.setattr(nd_manage_interface_group, "setup_logging", lambda module: None)
+    monkeypatch.setattr(nd_manage_interface_group, "_normalize_module_params", lambda module: [])
+    monkeypatch.setattr(nd_manage_interface_group, "NDStateMachine", lambda **kwargs: state_machine)
+
+    with pytest.raises(_BoundaryModuleFailed) as exc_info:
+        nd_manage_interface_group.main()
+    return exc_info.value.args[0], state_machine.model_orchestrator
+
+
+@pytest.mark.parametrize(
+    ("failure", "deploy_result", "message_prefix", "target_text"),
+    [
+        (
+            NDStateMachineError("target update rejected"),
+            {"interfaces": [("SN1", "Port-channel10")], "switches": []},
+            "Module execution failed: target update rejected",
+            "interface(s) [Port-channel10 (switchId SN1)]",
+        ),
+        (
+            RuntimeError("unexpected target failure"),
+            {"interfaces": [], "switches": ["SN1"]},
+            "Module failed: unexpected target failure",
+            "switch(es) [SN1]",
+        ),
+        (
+            ValueError("late validation failure"),
+            {"interfaces": [("SN1", "Port-channel10")], "switches": []},
+            "Module validation failed: late validation failure",
+            "interface(s) [Port-channel10 (switchId SN1)]",
+        ),
+    ],
+)
+def test_nd_manage_interface_group_00040(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    deploy_result: dict[str, list[Any]],
+    message_prefix: str,
+    target_text: str,
+) -> None:
+    """Finalize accepted mutations and report only NDFC-confirmed state."""
+    source_before = _boundary_group("source", networks=["network-a"], members=["Port-channel10"])
+    source_detached = _boundary_group("source")
+    target_before = _boundary_group("target")
+    target_predicted = _boundary_group("target", networks=["network-b"], members=["Port-channel10"])
+    before = _boundary_collection(source_before, target_before)
+    confirmed = _boundary_collection(source_detached, target_before)
+
+    output, orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=failure,
+        before=before,
+        predicted=_boundary_collection(source_detached, target_predicted),
+        confirmed=confirmed,
+        deploy_result=deploy_result,
+    )
+
+    assert output["msg"].startswith(message_prefix)
+    assert target_text in output["msg"]
+    assert output["msg"].endswith("those changes were deployed.")
+    assert output["before"] == before.to_ansible_config()
+    assert output["after"] == confirmed.to_ansible_config()
+    assert output["changed"] is True
+    assert output["diff"] == []
+    assert output["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/interfaceGroups/target"]
+    assert orchestrator.finalizer_calls == 1
+    assert orchestrator.deployment_requests == 1
+
+
+@pytest.mark.parametrize(
+    ("deploy_enabled", "check_mode", "confirmed_changed", "expected_finalizer_calls"),
+    [
+        (False, False, True, 1),
+        (True, True, False, 0),
+    ],
+)
+def test_nd_manage_interface_group_00050(
+    monkeypatch: pytest.MonkeyPatch,
+    deploy_enabled: bool,
+    check_mode: bool,
+    confirmed_changed: bool,
+    expected_finalizer_calls: int,
+) -> None:
+    """Honor deploy false and check mode without losing truthful failure output."""
+    before_group = _boundary_group("source", networks=["network-a"], members=["Port-channel10"])
+    accepted_group = _boundary_group("source")
+    before = _boundary_collection(before_group)
+    confirmed = _boundary_collection(accepted_group) if confirmed_changed else before.copy()
+
+    output, orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=NDStateMachineError("later failure"),
+        before=before,
+        predicted=_boundary_collection(),
+        confirmed=confirmed,
+        deploy_enabled=deploy_enabled,
+        check_mode=check_mode,
+        deploy_result={"interfaces": [("SN1", "Port-channel10")], "switches": []},
+    )
+
+    assert output["msg"] == "Module execution failed: later failure"
+    assert output["after"] == confirmed.to_ansible_config()
+    assert output["changed"] is confirmed_changed
+    assert output["diff"] == []
+    assert orchestrator.finalizer_calls == expected_finalizer_calls
+    assert orchestrator.deployment_requests == 0
+
+
+def test_nd_manage_interface_group_00060(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve the primary error when failure-path deployment also fails."""
+    before_group = _boundary_group("source", networks=["network-a"], members=["Port-channel10"])
+    accepted_group = _boundary_group("source")
+    before = _boundary_collection(before_group)
+    confirmed = _boundary_collection(accepted_group)
+
+    output, orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=NDStateMachineError("target update rejected"),
+        before=before,
+        predicted=_boundary_collection(),
+        confirmed=confirmed,
+        finalizer_error=RuntimeError("failure-path deploy rejected"),
+    )
+
+    assert output["msg"].startswith("Module execution failed: target update rejected")
+    assert "deploying those changes also failed" in output["msg"]
+    assert "failure-path deploy rejected" in output["msg"]
+    assert output["after"] == confirmed.to_ansible_config()
+    assert output["changed"] is True
+    assert orchestrator.finalizer_calls == 1
+    assert orchestrator.deployment_requests == 1
+
+
+def test_nd_manage_interface_group_00070(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not resubmit a normal deployment request that already failed."""
+    before_group = _boundary_group("source", networks=["network-a"], members=["Port-channel10"])
+    accepted_group = _boundary_group("source")
+    before = _boundary_collection(before_group)
+    confirmed = _boundary_collection(accepted_group)
+
+    output, orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=None,
+        before=before,
+        predicted=confirmed,
+        confirmed=confirmed,
+        deploy_result={"interfaces": [("SN1", "Port-channel10")], "switches": []},
+        normal_deploy_error=RuntimeError("normal deploy rejected"),
+    )
+
+    assert output["msg"] == "Module failed: normal deploy rejected"
+    assert output["after"] == confirmed.to_ansible_config()
+    assert output["changed"] is True
+    assert orchestrator.deploy_attempted is True
+    assert orchestrator.finalizer_calls == 1
+    assert orchestrator.deployment_requests == 1
+
+
+def test_nd_manage_interface_group_00080(monkeypatch: pytest.MonkeyPatch) -> None:
+    """At verbosity two, confirmed state overrides predicted API-level change."""
+    before_group = _boundary_group("source", networks=["network-a"], members=["Port-channel10"])
+    before = _boundary_collection(before_group)
+
+    output, orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=NDStateMachineError("request rejected before acceptance"),
+        before=before,
+        predicted=_boundary_collection(),
+        confirmed=before.copy(),
+        deploy_enabled=False,
+    )
+
+    assert output["after"] == before.to_ansible_config()
+    assert output["changed"] is False
+    assert output["diff"] == []
+    assert output["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/interfaceGroups/target"]
+    assert orchestrator.deployment_requests == 0
+
+
+def test_nd_manage_interface_group_00090(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report unresolved accepted changes conservatively after module failure."""
+    before_group = _boundary_group(
+        "source",
+        networks=["network-a"],
+        members=["Port-channel10"],
+    )
+    before = _boundary_collection(before_group)
+
+    output, orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=NDStateMachineError("mixed create response"),
+        before=before,
+        predicted=_boundary_collection(),
+        confirmed=before.copy(),
+        deploy_enabled=False,
+        has_unresolved_accepted_changes=True,
+    )
+
+    assert output["msg"].startswith("Module execution failed: mixed create response")
+    assert "NOTE:" in output["msg"]
+    assert "NDFC accepted" in output["msg"]
+    assert "could not" in output["msg"]
+    assert output["before"] == before.to_ansible_config()
+    assert output["after"] == before.to_ansible_config()
+    assert output["changed"] is True
+    assert output["diff"] == []
+    assert orchestrator.has_unresolved_accepted_changes is True
+
+
+def test_nd_manage_interface_group_00100(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve the primary failure when verbosity formatting also fails."""
+    before_group = _boundary_group(
+        "source",
+        networks=["network-a"],
+        members=["Port-channel10"],
+    )
+    accepted_group = _boundary_group("source")
+    before = _boundary_collection(before_group)
+    confirmed = _boundary_collection(accepted_group)
+    formatter_calls: list[str] = []
+
+    output, _orchestrator = _run_failure_boundary(
+        monkeypatch,
+        failure=NDStateMachineError("primary mutation failure"),
+        before=before,
+        predicted=_boundary_collection(),
+        confirmed=confirmed,
+        deploy_enabled=False,
+        formatter_error=RuntimeError("verbosity formatting failed"),
+        formatter_call_log=formatter_calls,
+    )
+
+    assert formatter_calls == ["format_with_verbosity"]
+    assert output["msg"].startswith("Module execution failed: primary mutation failure")
+    assert "format" in output["msg"].lower()
+    assert "verbosity formatting failed" in output["msg"]
+    assert output["output_level"] == "normal"
+    assert output["before"] == before.to_ansible_config()
+    assert output["after"] == confirmed.to_ansible_config()
+    assert output["changed"] is True
+    assert output["diff"] == []
+    assert "api_paths" not in output
+
+
+def test_nd_manage_interface_group_00110() -> None:
+    """Use confirmed success state unless check mode is predicting a change."""
+    before_group = _boundary_group(
+        "source",
+        networks=["network-a"],
+        members=["Port-channel10"],
+    )
+    predicted_group = _boundary_group(
+        "source",
+        networks=["network-b"],
+        members=["Port-channel10"],
+    )
+    before = _boundary_collection(before_group)
+    predicted = _boundary_collection(predicted_group)
+    confirmed = before.copy()
+
+    output = NDOutput("normal", state="merged")
+    output.assign(before=before, after=predicted)
+    results = Results()
+    results.action = OperationType.UPDATE.value
+    results.operation_type = OperationType.UPDATE
+    results.path_current = "/api/v1/manage/fabrics/fabric-1/interfaceGroups/source"
+    results.verb_current = HttpVerbEnum.PUT
+    results.payload_current = {"interfaceGroupName": "source"}
+    results.response_current = {"RETURN_CODE": 200, "MESSAGE": "OK", "modified": "false"}
+    results.result_current = {"success": True, "changed": True}
+    results.diff_current = {"predicted": True}
+    results.verbosity_level_current = 2
+    results.register_api_call()
+
+    orchestrator = SimpleNamespace(
+        warnings=[],
+        has_accepted_changes=False,
+        confirmed_groups=lambda: list(confirmed),
+    )
+    state_machine = SimpleNamespace(
+        before=before,
+        model_class=InterfaceGroupConfigModel,
+        model_orchestrator=orchestrator,
+        output=output,
+        results=results,
+    )
+    module = SimpleNamespace(
+        params={"output_level": "normal", "state": "merged"},
+        check_mode=False,
+        _verbosity=2,
+    )
+
+    confirmed_output = nd_manage_interface_group._format_success_output(module, state_machine)
+
+    assert confirmed_output["before"] == before.to_ansible_config()
+    assert confirmed_output["after"] == confirmed.to_ansible_config()
+    assert confirmed_output["changed"] is False
+    assert confirmed_output["diff"] == []
+
+    module.check_mode = True
+    predictive_output = nd_manage_interface_group._format_success_output(module, state_machine)
+
+    assert predictive_output["before"] == before.to_ansible_config()
+    assert predictive_output["after"] == predicted.to_ansible_config()
+    assert predictive_output["changed"] is True

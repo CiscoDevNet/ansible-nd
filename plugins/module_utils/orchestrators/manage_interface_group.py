@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from ipaddress import ip_address
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     PrivateAttr,
@@ -42,7 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
 )
@@ -75,8 +76,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import (
+    NdV1Strategy,
+)
 
 _QUERY_PAGE_SIZE = 100
+_RECONCILIATION_ATTEMPTS = 3
+_RESPONSE_STRATEGY = NdV1Strategy()
 _CUSTOM_TEMPLATE_REQUIRED_TAG = "interface_edit_shared_policy"
 _CUSTOM_TEMPLATE_CONTENT_TYPES = frozenset({"python", "pythoncli"})
 _INTERFACE_POLICY_TYPES = frozenset(
@@ -86,6 +92,24 @@ _INTERFACE_POLICY_TYPES = frozenset(
     }
 )
 _ANY_MEMBER_KIND_ORDER = ("ethernet", "port_channel", "vpc")
+
+
+class AcceptedMutationDeployResult(TypedDict):
+    """Targets deployed by the Interface Group failure-path finalizer."""
+
+    interfaces: list[tuple[str, str]]
+    switches: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class MutationRequestOutcome:
+    """Data and transport metadata captured for one NDFC mutation request."""
+
+    response: ResponseType
+    error: Exception | None
+    response_recorded: bool
+    return_code: int | None
+    modified: bool | None = None
 
 
 class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigModel]):
@@ -111,6 +135,10 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     _custom_template_cache: dict[str, dict[str, Any] | None] = PrivateAttr(default_factory=dict)
     _vpc_peer_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
     _warnings: list[str] = PrivateAttr(default_factory=list)
+    _deploy_attempted: bool = PrivateAttr(default=False)
+    _accepted_mutations: int = PrivateAttr(default=0)
+    _unresolved_accepted_mutations: int = PrivateAttr(default=0)
+    _has_unattributed_observed_state: bool = PrivateAttr(default=False)
 
     @property
     def fabric_name(self) -> str:
@@ -269,7 +297,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         return result
 
     def _align_vpc_member_switch_ids(self, model_instances: Sequence[InterfaceGroupConfigModel]) -> None:
-        """Align only vPC members with ND's existing peer representation.
+        """Align only vPC members with NDFC's existing peer representation.
 
         A vPC interface is one logical resource across a switch pair, but the
         Interface Groups list response can echo it under the opposite peer from
@@ -360,6 +388,35 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         parsed = InterfaceGroupsListResponseModel.from_response(response or {})
         return parsed.interface_group_details
 
+    def _fetch_all_groups(self) -> list[InterfaceGroupConfigModel]:
+        """Return one complete paginated NDFC snapshot without changing cached state.
+
+        Reconciliation uses this pure reader after an ambiguous mutation. Keeping
+        cache updates outside the pagination loop makes each snapshot atomic: a
+        failure on a later page cannot leave a partially refreshed cache, and
+        unrelated changes made outside this module are not attributed to the
+        mutation being reconciled.
+        """
+        groups: list[InterfaceGroupConfigModel] = []
+        offset = 0
+        while True:
+            endpoint = self._configure_endpoint(
+                self.query_all_endpoint(),
+                max_records=_QUERY_PAGE_SIZE,
+                offset=offset,
+            )
+            response = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+            page = self._models_from_list_response(response)
+            groups.extend(page)
+            if not self._has_next_page(response, len(page), len(groups)):
+                return groups
+            offset += len(page)
+
     def query_all(self, model_instance: InterfaceGroupConfigModel | None = None, **kwargs) -> ResponseType:
         """Query all Interface Groups using offset/max pagination."""
         try:
@@ -368,26 +425,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                     raise RuntimeError(f"Fabric '{self.fabric_name}' does not exist.")
             else:
                 self.fabric_context.validate_for_mutation()
-            groups: list[InterfaceGroupConfigModel] = []
-            offset = 0
-            while True:
-                endpoint = self._configure_endpoint(
-                    self.query_all_endpoint(),
-                    max_records=_QUERY_PAGE_SIZE,
-                    offset=offset,
-                )
-                response = self._request(
-                    path=endpoint.path,
-                    verb=endpoint.verb,
-                    not_found_ok=True,
-                    operation_type=OperationType.QUERY,
-                )
-                page = self._models_from_list_response(response)
-                groups.extend(page)
-                if not self._has_next_page(response, len(page), len(groups)):
-                    break
-                offset += len(page)
-
+            groups = self._fetch_all_groups()
             self._existing_groups = {item.interface_group_name: deepcopy(item) for item in groups}
             return [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in groups]
         except Exception as exc:
@@ -516,7 +554,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def gather(self, filters: Sequence[InterfaceGroupGatheredFilterModel] | None = None) -> list[dict[str, Any]]:
         """Return replayable Interface Group config using reliable local filters.
 
-        The controller exposes a generic Lucene filter on the list endpoint,
+        NDFC exposes a generic Lucene filter on the list endpoint,
         but nested association lists and normalized Ethernet subtypes are not
         safe server-side predicates. ``query_all`` therefore performs one
         paginated read and this method applies the complete customer-facing
@@ -544,6 +582,330 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             not_found_ok=True,
             operation_type=OperationType.QUERY,
         )
+
+    def _request_with_failure_response(
+        self,
+        *,
+        path: str,
+        verb: HttpVerbEnum,
+        data: dict[str, Any],
+        operation_type: OperationType,
+    ) -> MutationRequestOutcome:
+        """Send one write and capture only a response recorded by that request.
+
+        A sender failure can leave ``response_current`` pointing at an older
+        request. The response count prevents stale data from being used to
+        reconcile the current mutation. The exception is returned so callers
+        can update confirmed state before preserving the original failure.
+        """
+        recorded_responses = len(self.rest_send.responses)
+        try:
+            response = self._request(
+                path=path,
+                verb=verb,
+                data=data,
+                operation_type=operation_type,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            response_recorded = len(self.rest_send.responses) > recorded_responses
+            if not response_recorded:
+                return MutationRequestOutcome(None, exc, False, None)
+            envelope = self.rest_send.response_current
+            response = envelope.get("DATA") if isinstance(envelope, dict) else None
+            return MutationRequestOutcome(
+                response if isinstance(response, (dict, list)) else None,
+                exc,
+                True,
+                self._coerce_int(envelope.get("RETURN_CODE")) if isinstance(envelope, dict) else None,
+                self._modified_header(envelope),
+            )
+
+        response_recorded = len(self.rest_send.responses) > recorded_responses
+        envelope = self.rest_send.response_current if response_recorded else None
+        return MutationRequestOutcome(
+            response,
+            None,
+            response_recorded,
+            self.rest_send.return_code if response_recorded else None,
+            self._modified_header(envelope),
+        )
+
+    @staticmethod
+    def _modified_header(response: Any) -> bool | None:
+        """Return NDFC's explicit mutation signal when it is available."""
+        if not isinstance(response, dict):
+            return None
+        modified = str(response.get("modified") or "").strip().lower()
+        if modified == "true":
+            return True
+        if modified == "false":
+            return False
+        return None
+
+    @staticmethod
+    def _is_definitive_rejection(
+        outcome: MutationRequestOutcome,
+        verb: HttpVerbEnum,
+    ) -> bool:
+        """Return whether a failed request definitively made no NDFC change."""
+        if outcome.error is None or not outcome.response_recorded or outcome.return_code is None or outcome.modified is True:
+            return False
+        return _RESPONSE_STRATEGY.is_terminal_client_error(outcome.return_code, verb)
+
+    def _failed_write_requires_readback(self, response_count_before: int) -> bool:
+        """Return whether a failed individual write can still have been accepted."""
+        if len(self.rest_send.responses) <= response_count_before:
+            return True
+        modified = self._modified_header(self.rest_send.response_current)
+        if modified is not None:
+            return modified
+        return_code = self.rest_send.return_code
+        return not _RESPONSE_STRATEGY.is_terminal_client_error(return_code, HttpVerbEnum.PUT)
+
+    @staticmethod
+    def _create_stage_model(
+        model_instance: InterfaceGroupConfigModel,
+        *,
+        without_members: bool = False,
+    ) -> InterfaceGroupConfigModel:
+        """Return the normalized model represented by the initial POST body."""
+        staged = deepcopy(model_instance)
+        staged.networks = list(staged.networks or [])
+        if without_members:
+            staged.switch_interfaces = []
+        elif staged.switch_interfaces is None:
+            staged.switch_interfaces = []
+        return staged
+
+    def _align_expected_vpc_members_to_readback(
+        self,
+        actual: InterfaceGroupConfigModel,
+        expected: InterfaceGroupConfigModel,
+    ) -> InterfaceGroupConfigModel:
+        """Align expected vPC members with an equivalent peer echoed by NDFC.
+
+        Ethernet and port-channel members remain tied to their exact switch
+        serial. Only a logical vPC member may be represented under either peer
+        of its pair.
+        """
+        actual_pairs = self._interface_pairs(actual)
+        aligned_pairs: set[tuple[str, str]] = set()
+
+        for expected_switch_id, interface_name in sorted(self._interface_pairs(expected)):
+            expected_pair = (expected_switch_id, interface_name)
+            if expected_pair in actual_pairs or InterfaceGroupValidators.interface_kind(interface_name) != "vpc":
+                aligned_pairs.add(expected_pair)
+                continue
+
+            matching_switch_id = next(
+                (
+                    actual_switch_id
+                    for actual_switch_id, actual_interface_name in sorted(actual_pairs)
+                    if actual_interface_name == interface_name and self._vpc_switch_ids_are_equivalent(expected_switch_id, actual_switch_id)
+                ),
+                None,
+            )
+            aligned_pairs.add((matching_switch_id or expected_switch_id, interface_name))
+
+        return self._with_interface_pairs(expected, aligned_pairs)
+
+    def _matches_expected_model(
+        self,
+        actual: InterfaceGroupConfigModel,
+        expected: InterfaceGroupConfigModel,
+    ) -> bool:
+        """Match a readback by identity and normalized customer configuration."""
+        normalized_actual = self._create_stage_model(actual)
+        normalized_expected = self._create_stage_model(expected)
+        normalized_expected = self._align_expected_vpc_members_to_readback(
+            normalized_actual,
+            normalized_expected,
+        )
+        return normalized_actual.interface_group_name == normalized_expected.interface_group_name and normalized_actual.get_diff(
+            normalized_expected,
+            exclude_unset=False,
+        )
+
+    @staticmethod
+    def _snapshot_for_names(
+        groups: Sequence[InterfaceGroupConfigModel],
+        requested_names: set[str],
+    ) -> tuple[dict[str, InterfaceGroupConfigModel], set[str]]:
+        """Index requested names and report duplicate identities in one snapshot."""
+        found: dict[str, InterfaceGroupConfigModel] = {}
+        duplicates: set[str] = set()
+        for group in groups:
+            name = group.interface_group_name
+            if name not in requested_names:
+                continue
+            if name in found:
+                duplicates.add(name)
+                continue
+            found[name] = group
+        return found, duplicates
+
+    def _reconcile_created_groups(
+        self,
+        create_models: Sequence[InterfaceGroupConfigModel],
+        *,
+        expected_confirmed_count: int | None,
+        attempts: int = _RECONCILIATION_ATTEMPTS,
+    ) -> dict[str, InterfaceGroupConfigModel]:
+        """Identify created groups through bounded, atomic paginated snapshots.
+
+        The create response does not identify result items by group name. A
+        group is therefore confirmed only when the requested name and the
+        normalized model sent in the initial POST both match NDFC readback.
+        No inference is made from response order or group type.
+        """
+        expected_by_name = {item.interface_group_name: item for item in create_models}
+        requested_names = set(expected_by_name)
+        confirmed: dict[str, InterfaceGroupConfigModel] = {}
+
+        for _attempt in range(attempts):
+            try:
+                groups = self._fetch_all_groups()
+            except Exception:  # pylint: disable=broad-except
+                continue
+            snapshot, duplicates = self._snapshot_for_names(groups, requested_names)
+            if duplicates:
+                continue
+            try:
+                confirmed = {name: deepcopy(actual) for name, actual in snapshot.items() if self._matches_expected_model(actual, expected_by_name[name])}
+            except Exception:  # pylint: disable=broad-except
+                continue
+
+            if expected_confirmed_count is not None and len(confirmed) == expected_confirmed_count:
+                break
+            if expected_confirmed_count is None and len(confirmed) == len(expected_by_name):
+                break
+        return confirmed
+
+    def _reconcile_deleted_groups(
+        self,
+        interface_group_names: set[str],
+        *,
+        expected_confirmed_count: int | None = None,
+        attempts: int = _RECONCILIATION_ATTEMPTS,
+    ) -> tuple[set[str], bool]:
+        """Return names confirmed absent and whether a valid snapshot was read."""
+        confirmed_deleted: set[str] = set()
+        observed_valid_snapshot = False
+
+        for _attempt in range(attempts):
+            try:
+                groups = self._fetch_all_groups()
+            except Exception:  # pylint: disable=broad-except
+                continue
+            snapshot, duplicates = self._snapshot_for_names(groups, interface_group_names)
+            if duplicates:
+                continue
+            observed_valid_snapshot = True
+            confirmed_deleted = interface_group_names - set(snapshot)
+            if expected_confirmed_count is not None and len(confirmed_deleted) == expected_confirmed_count:
+                break
+            if expected_confirmed_count is None and confirmed_deleted == interface_group_names:
+                break
+        return confirmed_deleted, observed_valid_snapshot
+
+    def _fetch_one_group(self, interface_group_name: str) -> InterfaceGroupConfigModel | None:
+        """Read one Interface Group without changing the orchestrator cache."""
+        endpoint = self._configure_endpoint(self.query_one_endpoint())
+        endpoint.set_identifiers(interface_group_name)
+        response = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if not isinstance(response, dict) or not response:
+            return None
+        return InterfaceGroupConfigModel.from_response(response)
+
+    def _reconcile_updated_group(
+        self,
+        expected: InterfaceGroupConfigModel,
+        *,
+        attempts: int = _RECONCILIATION_ATTEMPTS,
+    ) -> InterfaceGroupConfigModel | None:
+        """Return a PUT target only when bounded readback confirms it exactly."""
+        for _attempt in range(attempts):
+            try:
+                actual = self._fetch_one_group(expected.interface_group_name)
+                if actual is not None and self._matches_expected_model(actual, expected):
+                    return actual
+            except Exception:  # pylint: disable=broad-except
+                continue
+        return None
+
+    @staticmethod
+    def _raw_result_items(response: ResponseType) -> list[dict[str, Any]] | None:
+        """Return an unparsed per-item result list for ambiguity classification."""
+        if not isinstance(response, dict):
+            return None
+        items = response.get("interfaceGroups")
+        if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+            return None
+        return items
+
+    @staticmethod
+    def _known_status(value: Any) -> str | None:
+        """Normalize only the two status values whose meaning is established."""
+        status = str(value or "").strip().lower()
+        return status if status in {"success", "failed"} else None
+
+    def _record_accepted_change(
+        self,
+        before: InterfaceGroupConfigModel | None,
+        after: InterfaceGroupConfigModel | None,
+    ) -> None:
+        """Patch confirmed state and queue deployment after one accepted write."""
+        if before is None and after is None:
+            raise ValueError("An accepted Interface Group change requires a before or after model")
+        group_name = after.interface_group_name if after is not None else before.interface_group_name
+        self._queue_deploy_change(before, after, group_name)
+        self._accepted_mutations += 1
+        if after is None:
+            self._existing_groups.pop(group_name, None)
+        else:
+            self._existing_groups[group_name] = deepcopy(after)
+
+    def _record_confirmed_state_without_deploy(
+        self,
+        group_name: str,
+        model_instance: InterfaceGroupConfigModel | None,
+    ) -> None:
+        """Store observed NDFC state without attributing it to this task."""
+        self._has_unattributed_observed_state = True
+        if model_instance is None:
+            self._existing_groups.pop(group_name, None)
+        else:
+            self._existing_groups[group_name] = deepcopy(model_instance)
+
+    def _record_unresolved_accepted_mutations(self, count: int) -> None:
+        """Record accepted changes whose identities cannot be established safely."""
+        accepted_count = max(count, 0)
+        self._accepted_mutations += accepted_count
+        self._unresolved_accepted_mutations += accepted_count
+
+    @property
+    def has_accepted_changes(self) -> bool:
+        """Return whether NDFC accepted at least one mutation from this task."""
+        return self._accepted_mutations > 0
+
+    @property
+    def has_unresolved_accepted_changes(self) -> bool:
+        """Return whether NDFC proved acceptance without resolvable identities."""
+        return self._unresolved_accepted_mutations > 0
+
+    @property
+    def has_unattributed_observed_state(self) -> bool:
+        """Return whether readback found state not safely attributable to this task."""
+        return self._has_unattributed_observed_state
+
+    def confirmed_groups(self) -> list[InterfaceGroupConfigModel]:
+        """Return deep copies of the current NDFC-confirmed state."""
+        return [deepcopy(self._existing_groups[name]) for name in sorted(self._existing_groups)]
 
     @staticmethod
     def _validate_create_response_contract(response: Any, expected_count: int | None = None) -> None:
@@ -590,9 +952,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def create_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Create Interface Groups and populate ``any`` membership in batches.
 
-        For controller compatibility, create ``any`` groups without members,
+        For NDFC compatibility, create ``any`` groups without members,
         then add newly associated member batches through cumulative PUTs so
-        earlier batches are retained. The controller evaluates each submitted
+        earlier batches are retained. NDFC evaluates each submitted
         batch. Other group types keep the normal one-request bulk-create path.
         """
         endpoint = self._configure_endpoint(self.create_bulk_endpoint())
@@ -600,27 +962,98 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         deferred_any_members: list[InterfaceGroupConfigModel] = []
         for item in model_instances:
             if item.type == InterfaceGroupType.ANY.value and self._interface_pairs(item):
-                create_models.append(self._with_interface_pairs(item, set()))
+                create_models.append(self._create_stage_model(item, without_members=True))
                 deferred_any_members.append(item)
             else:
-                create_models.append(item)
+                create_models.append(self._create_stage_model(item))
 
         payload = InterfaceGroupsCreateRequestModel(interface_groups=create_models).to_payload()
-        response = self._request(
+        outcome = self._request_with_failure_response(
             path=endpoint.path,
             verb=endpoint.verb,
             data=payload,
             operation_type=OperationType.CREATE,
         )
-        self._validate_create_response_contract(response, expected_count=len(create_models))
 
-        for item in deferred_any_members:
-            self._put_any_group_batches(None, item)
+        items = self._raw_result_items(outcome.response)
+        statuses = [self._known_status(item.get("status")) for item in items or []]
+        complete_known_result = len(items or []) == len(create_models) and all(status is not None for status in statuses)
+        all_succeeded = complete_known_result and all(status == "success" for status in statuses)
+        all_failed = complete_known_result and all(status == "failed" for status in statuses)
 
-        for item in model_instances:
-            self._queue_deploy_change(None, item, item.interface_group_name)
-            self._existing_groups[item.interface_group_name] = deepcopy(item)
-        return response
+        if all_succeeded and outcome.error is None and outcome.modified is not False:
+            for item in create_models:
+                self._record_accepted_change(None, item)
+
+            for item in deferred_any_members:
+                self._put_any_group_batches(self._existing_groups[item.interface_group_name], item)
+            return outcome.response
+
+        messages = [str(item.get("message")).strip() for item in items or [] if item.get("message")]
+        requested_names = sorted(item.interface_group_name for item in create_models)
+        if all_failed and outcome.modified is not True:
+            detail = "; ".join(messages) or "NDFC rejected every requested Interface Group"
+            if outcome.error is not None and str(outcome.error) not in detail:
+                detail = f"{detail}; {outcome.error}"
+            detail = f"{detail}; requested groups: {requested_names}"
+            raise RuntimeError(f"Interface Group create failed: {detail}") from outcome.error
+
+        if self._is_definitive_rejection(outcome, endpoint.verb) and "success" not in statuses:
+            detail = "; ".join(messages) or str(outcome.error)
+            raise RuntimeError(
+                f"Interface Group create was rejected without applying changes: {detail}; requested groups: {requested_names}"
+            ) from outcome.error
+
+        reported_success_count = statuses.count("success") if complete_known_result else None
+        expected_confirmed_count = reported_success_count
+        if outcome.modified is True and reported_success_count == 0:
+            expected_confirmed_count = None
+        confirmed = self._reconcile_created_groups(
+            create_models,
+            expected_confirmed_count=expected_confirmed_count,
+        )
+
+        if outcome.modified is False:
+            for actual in confirmed.values():
+                self._record_confirmed_state_without_deploy(actual.interface_group_name, actual)
+        elif expected_confirmed_count is not None and len(confirmed) > expected_confirmed_count:
+            for actual in confirmed.values():
+                self._record_confirmed_state_without_deploy(actual.interface_group_name, actual)
+            self._record_unresolved_accepted_mutations(expected_confirmed_count)
+        else:
+            for actual in confirmed.values():
+                self._record_accepted_change(None, actual)
+            if expected_confirmed_count is not None and len(confirmed) < expected_confirmed_count:
+                self._record_unresolved_accepted_mutations(expected_confirmed_count - len(confirmed))
+            elif outcome.modified is True and not confirmed:
+                self._record_unresolved_accepted_mutations(1)
+
+        if all_succeeded and outcome.error is None and outcome.modified is False and len(confirmed) == len(create_models):
+            for item in deferred_any_members:
+                self._put_any_group_batches(self._existing_groups[item.interface_group_name], item)
+            return outcome.response
+
+        confirmed_names = sorted(confirmed)
+        details: list[str] = []
+        if messages:
+            details.append("; ".join(messages))
+        if outcome.error is not None:
+            details.append(str(outcome.error))
+        if outcome.modified is not False and expected_confirmed_count is not None and len(confirmed) < expected_confirmed_count:
+            details.append(
+                f"NDFC reported {reported_success_count} accepted item(s), but their Interface Group names "
+                "could not all be identified after bounded readback"
+            )
+        elif outcome.modified is not False and expected_confirmed_count is not None and len(confirmed) > expected_confirmed_count:
+            details.append(
+                f"NDFC reported {reported_success_count} accepted item(s), but readback matched {len(confirmed)} requested groups; "
+                "accepted identities and deployment targets could not be attributed safely"
+            )
+        if outcome.modified is False:
+            details.append("NDFC reported modified=false, so matching readback was not attributed to this request")
+        details.append(f"confirmed created groups: {confirmed_names or 'none'}")
+        details.append(f"requested groups: {requested_names}")
+        raise RuntimeError(f"Interface Group create did not complete successfully: {'; '.join(details)}") from outcome.error
 
     def create(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Create one Interface Group through the bulk endpoint."""
@@ -637,7 +1070,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 payload.setdefault("ethernetAttributes", {})
             if model_instance.type == InterfaceGroupType.ETHERNET_CUSTOM.value:
                 payload.setdefault("templateConfig", {})
-        # ND requires both association collections on an update. Emitting
+        # NDFC requires both association collections on an update. Emitting
         # explicit empty lists also preserves authoritative update semantics
         # for groups without networks or member interfaces.
         return InterfaceGroupValidators.to_wire_group(
@@ -654,6 +1087,43 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             data=self._payload_for_update(model_instance),
             operation_type=OperationType.UPDATE,
         )
+
+    def _put_and_record(
+        self,
+        before: InterfaceGroupConfigModel | None,
+        after: InterfaceGroupConfigModel,
+    ) -> ResponseType:
+        """Apply one PUT and record only state confirmed by NDFC.
+
+        A failed request remains a task failure. Bounded readback is used only
+        to keep the confirmed cache and deployment queue truthful when NDFC may
+        have accepted the write before the failure became visible to the
+        client.
+        """
+        response_count_before = len(self.rest_send.responses)
+        try:
+            response = self._put_group(after)
+        except Exception:
+            modified = self._modified_header(self.rest_send.response_current) if len(self.rest_send.responses) > response_count_before else None
+            if self._failed_write_requires_readback(response_count_before):
+                confirmed = self._reconcile_updated_group(after)
+                if confirmed is not None:
+                    self._record_accepted_change(before, confirmed)
+                elif modified is True:
+                    self._record_unresolved_accepted_mutations(1)
+            raise
+        modified = self._modified_header(self.rest_send.response_current) if len(self.rest_send.responses) > response_count_before else None
+        if modified is False:
+            confirmed = self._reconcile_updated_group(after)
+            if confirmed is None:
+                raise RuntimeError(
+                    f"NDFC reported no mutation for Interface Group '{after.interface_group_name}', "
+                    "and bounded readback did not confirm the requested configuration."
+                )
+            self._record_confirmed_state_without_deploy(after.interface_group_name, confirmed)
+            return response
+        self._record_accepted_change(before, after)
+        return response
 
     @staticmethod
     def _with_interface_pairs(
@@ -696,25 +1166,24 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         }
         populated_kinds = [kind for kind in _ANY_MEMBER_KIND_ORDER if additions_by_kind[kind]]
         if not populated_kinds:
-            return self._put_group(after)
+            return self._put_and_record(before, after)
 
         cumulative_pairs = before_pairs & after_pairs
         response: ResponseType = None
+        accepted_before = before
         for kind in populated_kinds:
             cumulative_pairs.update(additions_by_kind[kind])
-            response = self._put_group(self._with_interface_pairs(after, cumulative_pairs))
+            staged = self._with_interface_pairs(after, cumulative_pairs)
+            response = self._put_and_record(accepted_before, staged)
+            accepted_before = self._existing_groups[after.interface_group_name]
         return response
 
     def update(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Update one Interface Group and queue only switch-affecting changes."""
         before = self._existing_groups.get(model_instance.interface_group_name)
         if model_instance.type == InterfaceGroupType.ANY.value:
-            response = self._put_any_group_batches(before, model_instance)
-        else:
-            response = self._put_group(model_instance)
-        self._queue_deploy_change(before, model_instance, model_instance.interface_group_name)
-        self._existing_groups[model_instance.interface_group_name] = deepcopy(model_instance)
-        return response
+            return self._put_any_group_batches(before, model_instance)
+        return self._put_and_record(before, model_instance)
 
     def delete_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Clear associations, then delete Interface Groups in one bulk request."""
@@ -724,22 +1193,170 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 detached = deepcopy(before)
                 detached.networks = []
                 detached.switch_interfaces = []
-                self._put_group(detached)
-                self._queue_deploy_change(before, detached, item.interface_group_name)
-                self._existing_groups[item.interface_group_name] = deepcopy(detached)
+                self._put_and_record(before, detached)
 
         endpoint = self._configure_endpoint(self.delete_bulk_endpoint())
-        payload = InterfaceGroupsRemoveRequestModel(interface_group_names=[item.interface_group_name for item in model_instances]).to_payload()
-        response = self._request(
+        requested_names = [item.interface_group_name for item in model_instances]
+        requested_name_set = set(requested_names)
+        payload = InterfaceGroupsRemoveRequestModel(interface_group_names=requested_names).to_payload()
+        outcome = self._request_with_failure_response(
             path=endpoint.path,
             verb=endpoint.verb,
             data=payload,
             operation_type=OperationType.DELETE,
         )
-        self._validate_delete_response_contract(response, expected_count=len(model_instances))
-        for item in model_instances:
-            self._existing_groups.pop(item.interface_group_name, None)
-        return response
+
+        items = self._raw_result_items(outcome.response)
+        result_statuses = [self._known_status(result.get("status")) for result in items or []]
+        status_by_name: dict[str, str] = {}
+        duplicate_names: set[str] = set()
+        has_anonymous_identity = False
+        has_untrusted_result = False
+        for result in items or []:
+            name = result.get("interfaceGroupName")
+            status = self._known_status(result.get("status"))
+            if status is None:
+                has_untrusted_result = True
+                continue
+            if name is None or (isinstance(name, str) and not name.strip()):
+                has_anonymous_identity = True
+                continue
+            if not isinstance(name, str):
+                has_untrusted_result = True
+                continue
+            name = name.strip()
+            if name not in requested_name_set:
+                has_untrusted_result = True
+                continue
+            if name in status_by_name:
+                duplicate_names.add(name)
+                continue
+            status_by_name[name] = status
+
+        trusted_status_by_name = {name: status for name, status in status_by_name.items() if name not in duplicate_names}
+        status_count_is_complete = items is not None and len(items) == len(requested_names) and all(status is not None for status in result_statuses)
+        accepted_count_is_reliable = status_count_is_complete and not has_untrusted_result and not duplicate_names
+        total_reported_successes = sum(status == "success" for status in result_statuses) if accepted_count_is_reliable else None
+
+        complete_keyed_result = (
+            items is not None
+            and len(items) == len(requested_names)
+            and not has_anonymous_identity
+            and not has_untrusted_result
+            and not duplicate_names
+            and set(trusted_status_by_name) == requested_name_set
+        )
+        complete_accepted_names = {name for name, status in trusted_status_by_name.items() if status == "success"}
+        contradictory_complete_result = complete_keyed_result and (
+            (outcome.modified is True and not complete_accepted_names) or (outcome.modified is False and bool(complete_accepted_names))
+        )
+        if complete_keyed_result and not contradictory_complete_result:
+            accepted_names = complete_accepted_names
+            for name in accepted_names:
+                before = self._existing_groups.get(name)
+                if before is not None:
+                    if outcome.modified is False:
+                        self._record_confirmed_state_without_deploy(name, None)
+                    else:
+                        self._record_accepted_change(before, None)
+
+            failed_names = sorted(requested_name_set - accepted_names)
+            if not failed_names and outcome.error is None:
+                return outcome.response
+
+            messages = [f"{result.get('interfaceGroupName')}: {result.get('message')}" for result in items or [] if result.get("message")]
+            detail = "; ".join(messages) or f"failed groups: {failed_names}"
+            if accepted_names:
+                detail += f"; confirmed deleted groups: {sorted(accepted_names)}"
+            if outcome.error is not None and str(outcome.error) not in detail:
+                detail += f"; {outcome.error}"
+            raise RuntimeError(f"Interface Group delete did not complete successfully: {detail}") from outcome.error
+
+        if self._is_definitive_rejection(outcome, endpoint.verb) and "success" not in result_statuses and outcome.modified is not True:
+            raise RuntimeError(f"Interface Group delete was rejected without removing any requested groups: {outcome.error}") from outcome.error
+
+        if outcome.modified is False:
+            trusted_status_by_name = {name: status for name, status in trusted_status_by_name.items() if status == "failed"}
+        elif outcome.modified is True and complete_keyed_result and not complete_accepted_names:
+            trusted_status_by_name = {}
+
+        keyed_accepted_names = {name for name, status in trusted_status_by_name.items() if status == "success"}
+        for name in keyed_accepted_names:
+            before = self._existing_groups.get(name)
+            if before is None:
+                continue
+            if outcome.modified is False:
+                self._record_confirmed_state_without_deploy(name, None)
+            else:
+                self._record_accepted_change(before, None)
+
+        unresolved_names = requested_name_set - set(trusted_status_by_name)
+        reported_success_count = total_reported_successes
+        if total_reported_successes is None:
+            expected_readback_count = None
+        elif outcome.modified is False:
+            expected_readback_count = total_reported_successes
+        else:
+            expected_readback_count = max(0, total_reported_successes - len(keyed_accepted_names))
+        if outcome.modified is True and total_reported_successes == 0 and unresolved_names:
+            expected_readback_count = None
+        readback_stop_count = len(complete_accepted_names) if outcome.modified is False and complete_keyed_result else expected_readback_count
+
+        if unresolved_names:
+            readback_deleted, observed_valid_snapshot = self._reconcile_deleted_groups(
+                unresolved_names,
+                expected_confirmed_count=readback_stop_count,
+            )
+        else:
+            readback_deleted, observed_valid_snapshot = set(), True
+
+        if outcome.modified is False:
+            for name in readback_deleted:
+                self._record_confirmed_state_without_deploy(name, None)
+        elif expected_readback_count is not None and len(readback_deleted) > expected_readback_count:
+            for name in readback_deleted:
+                self._record_confirmed_state_without_deploy(name, None)
+            if expected_readback_count:
+                self._record_unresolved_accepted_mutations(expected_readback_count)
+        else:
+            for name in readback_deleted:
+                before = self._existing_groups.get(name)
+                if before is not None:
+                    self._record_accepted_change(before, None)
+            if expected_readback_count is not None and len(readback_deleted) < expected_readback_count:
+                self._record_unresolved_accepted_mutations(expected_readback_count - len(readback_deleted))
+            elif outcome.modified is True and not keyed_accepted_names and not readback_deleted:
+                self._record_unresolved_accepted_mutations(1)
+
+        confirmed_deleted = keyed_accepted_names | readback_deleted
+        if (
+            complete_keyed_result
+            and complete_accepted_names == requested_name_set
+            and outcome.error is None
+            and outcome.modified is False
+            and readback_deleted == requested_name_set
+        ):
+            return outcome.response
+
+        details = [f"confirmed deleted groups: {sorted(confirmed_deleted) or 'none'}"]
+        if expected_readback_count is not None and expected_readback_count > len(readback_deleted):
+            details.append(
+                f"NDFC reported {reported_success_count} accepted requested item(s), but their Interface Group names "
+                "could not all be identified after bounded readback"
+            )
+        elif expected_readback_count is not None and len(readback_deleted) > expected_readback_count:
+            details.append(
+                f"NDFC reported {reported_success_count} accepted requested item(s), but readback found "
+                f"{len(confirmed_deleted)} requested groups absent; "
+                "accepted identities and deployment targets could not be attributed safely"
+            )
+        if outcome.modified is False:
+            details.append("NDFC reported modified=false, so matching readback was not attributed to this request")
+        if not observed_valid_snapshot:
+            details.append("NDFC state could not be determined after bounded readback")
+        if outcome.error is not None:
+            details.append(str(outcome.error))
+        raise RuntimeError(f"Interface Group delete returned ambiguous per-item results: {'; '.join(details)}") from outcome.error
 
     def delete(self, model_instance: InterfaceGroupConfigModel, **kwargs) -> ResponseType:
         """Delete one Interface Group through the bulk endpoint."""
@@ -1140,10 +1757,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             if before is None:
                 continue
             if not check_mode:
-                self._put_group(intermediate)
-            self._queue_deploy_change(before, intermediate, source_name)
+                self._put_and_record(before, intermediate)
             existing.replace(deepcopy(intermediate))
-            self._existing_groups[source_name] = deepcopy(intermediate)
 
     def deploy_pending(self) -> ResponseType | None:
         """Deploy queued interface or switch targets once after all mutations."""
@@ -1153,29 +1768,65 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if self.config_actions["type"] == InterfaceGroupConfigActionType.RESOURCE.value:
             if not self._pending_interfaces:
                 return None
-            endpoint = EpManageInterfacesDeploy()
-            endpoint.fabric_name = self.fabric_name
-            payload = {
-                "interfaces": [{"switchId": switch_id, "interfaceName": interface_name} for switch_id, interface_name in sorted(self._pending_interfaces)]
-            }
-            response = self._request(
-                path=endpoint.path,
-                verb=endpoint.verb,
-                data=payload,
-                operation_type=OperationType.UPDATE,
-            )
+            self._deploy_attempted = True
+            response = self._deploy_interfaces(self._pending_interfaces)
             self._pending_interfaces.clear()
             return response
 
         if not self._pending_switches:
             return None
-        endpoint = self._configure_endpoint(EpManageSwitchActionsDeployPost())
-        payload = {"switchIds": sorted(self._pending_switches)}
-        response = self._request(
+        self._deploy_attempted = True
+        response = self._deploy_switches(self._pending_switches)
+        self._pending_switches.clear()
+        return response
+
+    def _deploy_interfaces(self, interfaces: set[tuple[str, str]]) -> ResponseType:
+        """Deploy one confirmed set of Interface Group interface targets."""
+        endpoint = EpManageInterfacesDeploy()
+        endpoint.fabric_name = self.fabric_name
+        payload = {"interfaces": [{"switchId": switch_id, "interfaceName": interface_name} for switch_id, interface_name in sorted(interfaces)]}
+        return self._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=payload,
             operation_type=OperationType.UPDATE,
         )
-        self._pending_switches.clear()
-        return response
+
+    def _deploy_switches(self, switch_ids: set[str]) -> ResponseType:
+        """Deploy one confirmed set of Interface Group switch targets."""
+        endpoint = self._configure_endpoint(EpManageSwitchActionsDeployPost())
+        payload = {"switchIds": sorted(switch_ids)}
+        return self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data=payload,
+            operation_type=OperationType.UPDATE,
+        )
+
+    def deploy_accepted_mutations(self) -> AcceptedMutationDeployResult:
+        """Failure-path deploy for writes NDFC accepted before a later failure.
+
+        Normal deployment marks ``_deploy_attempted`` before sending. This
+        finalizer therefore cannot resubmit a deployment request that already
+        failed. Queues are cleared only after a successful finalizer request.
+        """
+        deployed: AcceptedMutationDeployResult = {"interfaces": [], "switches": []}
+        if not self.config_actions["deploy"] or self._deploy_attempted:
+            return deployed
+
+        if self.config_actions["type"] == InterfaceGroupConfigActionType.RESOURCE.value:
+            accepted_interfaces = set(self._pending_interfaces)
+            if not accepted_interfaces:
+                return deployed
+            self._deploy_interfaces(accepted_interfaces)
+            self._pending_interfaces.difference_update(accepted_interfaces)
+            deployed["interfaces"] = sorted(accepted_interfaces)
+            return deployed
+
+        accepted_switches = set(self._pending_switches)
+        if not accepted_switches:
+            return deployed
+        self._deploy_switches(accepted_switches)
+        self._pending_switches.difference_update(accepted_switches)
+        deployed["switches"] = sorted(accepted_switches)
+        return deployed

@@ -10,9 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
-    NDStateMachineError,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_interface_groups import (
     EpManageFabricsInterfaceGroupsActionsRemovePost,
     EpManageFabricsInterfaceGroupsGet,
@@ -21,30 +19,24 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsInterfaceGroupsInterfaceGroupNamePut,
     EpManageFabricsInterfaceGroupsPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.config_models import (
     InterfaceGroupConfigModel,
     InterfaceGroupGatheredFilterModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-    NDConfigCollection,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
-    NDStateMachine,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_interface_group import (
     ManageInterfaceGroupOrchestrator,
+    MutationRequestOutcome,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
-    ResponseHandler,
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import (
+    NdV1Strategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
-    MockAnsibleModule,
-)
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
-    ResponseGenerator,
-)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
@@ -601,6 +593,7 @@ def test_manage_interface_group_00040() -> None:
     orchestrator.prepare_mutations(existing, proposed, check_mode=True)
 
     assert existing.get("source").switch_interfaces == []
+    assert orchestrator._existing_groups["source"] == source
 
 
 def test_manage_interface_group_00050(monkeypatch) -> None:
@@ -2159,3 +2152,2093 @@ def test_manage_interface_group_00320(monkeypatch) -> None:
         "Port-channel20",
     ]
     assert orchestrator._existing_groups["group-a"] == existing
+
+
+def test_manage_interface_group_00330(monkeypatch) -> None:
+    """Reconcile one nameless mixed-create success with one scoped snapshot."""
+    accepted = _group(
+        "group-a",
+        group_type="ethernetWithoutPolicy",
+        networks=["network-a"],
+        members=[("SN1", ["Ethernet1/10"])],
+    )
+    rejected = _group(
+        "group-b",
+        networks=["network-b"],
+        members=[("SN2", ["Port-channel20"])],
+    )
+    unrelated = _group("unrelated")
+    readback_calls = 0
+
+    def fake_write(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {
+                "interfaceGroups": [
+                    {
+                        "type": "ethernet",
+                        "status": "success",
+                        "message": "created",
+                    },
+                    {
+                        "type": "portChannel",
+                        "status": "failed",
+                        "message": "member conflict",
+                    },
+                ]
+            },
+            RuntimeError("mixed create response"),
+            True,
+            207,
+        )
+
+    def fake_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return [deepcopy(unrelated), deepcopy(accepted)]
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        fake_write,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        fake_readback,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+        config=[
+            {"interface_group_name": "group-a"},
+            {"interface_group_name": "group-b"},
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match=r"confirmed created groups: \['group-a'\]"):
+        orchestrator.create_bulk([accepted, rejected])
+
+    assert readback_calls == 1
+    assert set(orchestrator._existing_groups) == {"group-a"}
+    assert orchestrator._existing_groups["group-a"] == accepted
+    assert orchestrator._pending_interfaces == {("SN1", "Ethernet1/10")}
+
+
+def test_manage_interface_group_00340(monkeypatch) -> None:
+    """Do not read back a complete create result when every item failed."""
+
+    def fake_write(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {
+                "interfaceGroups": [
+                    {
+                        "type": "ethernet",
+                        "status": "failed",
+                        "message": "group-a: invalid member",
+                    },
+                    {
+                        "type": "portChannel",
+                        "status": "failed",
+                        "message": "group-b: invalid member",
+                    },
+                ]
+            },
+            RuntimeError("NDFC rejected the request"),
+            True,
+            207,
+        )
+
+    def unexpected_readback(self):
+        del self
+        pytest.fail("an all-failed create result must not trigger readback")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        fake_write,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        unexpected_readback,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "switch"},
+    )
+
+    with pytest.raises(RuntimeError, match=r"group-a.*group-b"):
+        orchestrator.create_bulk(
+            [
+                _group("group-a", group_type="ethernetWithoutPolicy"),
+                _group("group-b"),
+            ]
+        )
+
+    assert orchestrator._existing_groups == {}
+    assert orchestrator._pending_switches == set()
+
+
+def test_manage_interface_group_00350(monkeypatch) -> None:
+    """Never combine create confirmations from different atomic snapshots."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    snapshots = iter(
+        [
+            [deepcopy(group_a)],
+            [deepcopy(group_b)],
+            [deepcopy(group_a)],
+        ]
+    )
+    readback_calls = 0
+
+    def fake_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return next(snapshots)
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        fake_readback,
+    )
+    orchestrator = _orchestrator()
+
+    confirmed = orchestrator._reconcile_created_groups(
+        [group_a, group_b],
+        expected_confirmed_count=None,
+    )
+
+    assert readback_calls == 3
+    assert len(confirmed) == 1
+    assert set(confirmed).issubset({"group-a", "group-b"})
+
+
+def test_manage_interface_group_00360(monkeypatch) -> None:
+    """Never combine delete confirmations from different atomic snapshots."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    snapshots = iter(
+        [
+            [deepcopy(group_b)],
+            [deepcopy(group_a)],
+            [deepcopy(group_b)],
+        ]
+    )
+    readback_calls = 0
+
+    def fake_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return next(snapshots)
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        fake_readback,
+    )
+    orchestrator = _orchestrator()
+
+    confirmed, observed_valid_snapshot = orchestrator._reconcile_deleted_groups(
+        {"group-a", "group-b"},
+    )
+
+    assert readback_calls == 3
+    assert observed_valid_snapshot is True
+    assert len(confirmed) == 1
+    assert confirmed.issubset({"group-a", "group-b"})
+
+
+def test_manage_interface_group_00370(monkeypatch) -> None:
+    """Ignore a response retained from an earlier request after transport failure."""
+    orchestrator = _orchestrator()
+    stale_response = {
+        "RETURN_CODE": 207,
+        "DATA": {
+            "interfaceGroups": [
+                {
+                    "type": "portChannel",
+                    "status": "success",
+                    "message": "stale success",
+                }
+            ]
+        },
+    }
+    orchestrator.rest_send.add_response(stale_response)
+    orchestrator.rest_send.response_current = stale_response
+
+    def failed_request(self, **kwargs):
+        del self, kwargs
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request",
+        failed_request,
+    )
+
+    outcome = orchestrator._request_with_failure_response(
+        path="/api/v1/manage/fabrics/fab1/interfaceGroups",
+        verb=HttpVerbEnum.POST,
+        data={"interfaceGroups": []},
+        operation_type=OperationType.CREATE,
+    )
+
+    assert outcome.response is None
+    assert isinstance(outcome.error, RuntimeError)
+    assert str(outcome.error) == "connection reset"
+    assert outcome.response_recorded is False
+    assert outcome.return_code is None
+
+
+def test_manage_interface_group_00380(monkeypatch) -> None:
+    """Retain only accepted batches when a new any-group member PUT fails."""
+    put_models: list[InterfaceGroupConfigModel] = []
+
+    def fake_create(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {
+                "interfaceGroups": [
+                    {
+                        "type": "any",
+                        "status": "success",
+                        "message": "created",
+                    }
+                ]
+            },
+            None,
+            True,
+            207,
+        )
+
+    def fake_put(self, model_instance):
+        del self
+        put_models.append(deepcopy(model_instance))
+        if len(put_models) == 2:
+            raise RuntimeError("second member batch failed")
+        return {}
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        fake_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        lambda self, expected: None,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    desired = _group(
+        "mixed",
+        group_type="any",
+        networks=["network-a"],
+        members=[("SN1", ["Ethernet1/1", "Port-channel10"])],
+    )
+
+    with pytest.raises(RuntimeError, match="second member batch failed"):
+        orchestrator.create_bulk([desired])
+
+    assert len(put_models) == 2
+    assert ManageInterfaceGroupOrchestrator._interface_pairs(orchestrator._existing_groups["mixed"]) == {("SN1", "Ethernet1/1")}
+    assert orchestrator._pending_interfaces == {("SN1", "Ethernet1/1")}
+
+
+def test_manage_interface_group_00390(monkeypatch) -> None:
+    """Retain an accepted first batch when an existing any-group update fails."""
+    put_models: list[InterfaceGroupConfigModel] = []
+
+    def fake_put(self, model_instance):
+        del self
+        put_models.append(deepcopy(model_instance))
+        if len(put_models) == 2:
+            raise RuntimeError("port-channel batch failed")
+        return {}
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        fake_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        lambda self, expected: None,
+    )
+    before = _group(
+        "mixed",
+        group_type="any",
+        networks=["network-a"],
+        members=[("SN1", ["Ethernet1/1"])],
+    )
+    desired = _group(
+        "mixed",
+        group_type="any",
+        networks=["network-a"],
+        members=[
+            (
+                "SN1",
+                ["Ethernet1/1", "Ethernet1/2", "Port-channel10"],
+            )
+        ],
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"mixed": deepcopy(before)}
+
+    with pytest.raises(RuntimeError, match="port-channel batch failed"):
+        orchestrator.update(desired)
+
+    assert len(put_models) == 2
+    assert ManageInterfaceGroupOrchestrator._interface_pairs(orchestrator._existing_groups["mixed"]) == {
+        ("SN1", "Ethernet1/1"),
+        ("SN1", "Ethernet1/2"),
+    }
+    assert orchestrator._pending_interfaces == {("SN1", "Ethernet1/2")}
+
+
+def test_manage_interface_group_00400(monkeypatch) -> None:
+    """Apply a complete keyed mixed delete result without list readback."""
+
+    def fake_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                        "message": "deleted",
+                    },
+                    {
+                        "interfaceGroupName": "group-b",
+                        "status": "failed",
+                        "message": "still associated",
+                    },
+                ]
+            },
+            RuntimeError("mixed delete response"),
+            True,
+            207,
+        )
+
+    def unexpected_readback(self):
+        del self
+        pytest.fail("a complete keyed delete result must not trigger readback")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        fake_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        unexpected_readback,
+    )
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError, match=r"confirmed deleted groups: \['group-a'\]"):
+        orchestrator.delete_bulk([group_a, group_b])
+
+    assert set(orchestrator._existing_groups) == {"group-b"}
+
+
+def test_manage_interface_group_00410(monkeypatch) -> None:
+    """Use scoped readback when delete results do not identify their targets."""
+    readback_calls = 0
+
+    def fake_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {
+                "interfaceGroups": [
+                    {
+                        "status": "success",
+                        "message": "deleted",
+                    }
+                ]
+            },
+            RuntimeError("malformed delete response"),
+            True,
+            207,
+        )
+
+    def fake_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return [deepcopy(group_b)]
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        fake_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        fake_readback,
+    )
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError, match=r"confirmed deleted groups: \['group-a'\]"):
+        orchestrator.delete_bulk([group_a, group_b])
+
+    assert 1 <= readback_calls <= 3
+    assert set(orchestrator._existing_groups) == {"group-b"}
+
+
+@pytest.mark.parametrize("action_type", ["resource", "switch"])
+def test_manage_interface_group_00420(monkeypatch, action_type: str) -> None:
+    """Deploy and clear only targets queued by already accepted mutations."""
+    calls: list[set[Any]] = []
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": action_type},
+    )
+
+    if action_type == "resource":
+        orchestrator._pending_interfaces = {
+            ("SN2", "Port-channel20"),
+            ("SN1", "Ethernet1/10"),
+        }
+
+        def deploy_interfaces(self, interfaces):
+            del self
+            calls.append(set(interfaces))
+            return {}
+
+        monkeypatch.setattr(
+            ManageInterfaceGroupOrchestrator,
+            "_deploy_interfaces",
+            deploy_interfaces,
+        )
+    else:
+        orchestrator._pending_switches = {"SN2", "SN1"}
+
+        def deploy_switches(self, switch_ids):
+            del self
+            calls.append(set(switch_ids))
+            return {}
+
+        monkeypatch.setattr(
+            ManageInterfaceGroupOrchestrator,
+            "_deploy_switches",
+            deploy_switches,
+        )
+
+    deployed = orchestrator.deploy_accepted_mutations()
+
+    if action_type == "resource":
+        assert deployed == {
+            "interfaces": [
+                ("SN1", "Ethernet1/10"),
+                ("SN2", "Port-channel20"),
+            ],
+            "switches": [],
+        }
+        assert orchestrator._pending_interfaces == set()
+    else:
+        assert deployed == {
+            "interfaces": [],
+            "switches": ["SN1", "SN2"],
+        }
+        assert orchestrator._pending_switches == set()
+    assert len(calls) == 1
+
+
+def test_manage_interface_group_00430(monkeypatch) -> None:
+    """Retain accepted targets when failure-path deployment fails."""
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    accepted_targets = {("SN1", "Ethernet1/10")}
+    orchestrator._pending_interfaces = set(accepted_targets)
+
+    def failed_deploy(self, interfaces):
+        del self, interfaces
+        raise RuntimeError("resource deployment failed")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_deploy_interfaces",
+        failed_deploy,
+    )
+
+    with pytest.raises(RuntimeError, match="resource deployment failed"):
+        orchestrator.deploy_accepted_mutations()
+
+    assert orchestrator._pending_interfaces == accepted_targets
+
+
+def test_manage_interface_group_00440(monkeypatch) -> None:
+    """Do not resubmit a deployment already attempted by the normal path."""
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    accepted_targets = {("SN1", "Ethernet1/10")}
+    orchestrator._pending_interfaces = set(accepted_targets)
+    deploy_calls = 0
+
+    def failed_deploy(self, interfaces):
+        nonlocal deploy_calls
+        del self
+        assert interfaces == accepted_targets
+        deploy_calls += 1
+        raise RuntimeError("normal deployment failed")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_deploy_interfaces",
+        failed_deploy,
+    )
+
+    with pytest.raises(RuntimeError, match="normal deployment failed"):
+        orchestrator.deploy_pending()
+
+    assert orchestrator.deploy_accepted_mutations() == {
+        "interfaces": [],
+        "switches": [],
+    }
+    assert deploy_calls == 1
+    assert orchestrator._pending_interfaces == accepted_targets
+
+
+def test_manage_interface_group_00450(monkeypatch) -> None:
+    """Do not read back a create rejected by a terminal client error."""
+
+    def rejected_create(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {"message": "invalid create payload"},
+            RuntimeError("HTTP 400: invalid create payload"),
+            True,
+            400,
+        )
+
+    def unexpected_readback(self):
+        del self
+        pytest.fail("a terminal create rejection must not trigger readback")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        rejected_create,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        unexpected_readback,
+    )
+    orchestrator = _orchestrator()
+
+    with pytest.raises(RuntimeError, match="rejected without applying changes"):
+        orchestrator.create_bulk([_group("group-a")])
+
+    assert orchestrator._existing_groups == {}
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator._pending_switches == set()
+
+
+def test_manage_interface_group_00460(monkeypatch) -> None:
+    """Do not read back a delete rejected by a terminal client error."""
+
+    def rejected_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {"message": "invalid delete payload"},
+            RuntimeError("HTTP 422: invalid delete payload"),
+            True,
+            422,
+        )
+
+    def unexpected_readback(self):
+        del self
+        pytest.fail("a terminal delete rejection must not trigger readback")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        rejected_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        unexpected_readback,
+    )
+    existing = _group("group-a")
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {"group-a": deepcopy(existing)}
+
+    with pytest.raises(RuntimeError, match="rejected without removing"):
+        orchestrator.delete_bulk([existing])
+
+    assert orchestrator._existing_groups == {"group-a": existing}
+
+
+def test_manage_interface_group_00470(monkeypatch) -> None:
+    """Do not read back an individual PUT rejected by a terminal client error."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+
+    def rejected_put(self, model_instance):
+        del model_instance
+        response = {
+            "RETURN_CODE": 400,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "Bad Request",
+            "DATA": {"message": "invalid member"},
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        raise RuntimeError("HTTP 400: invalid member")
+
+    def unexpected_readback(self, expected):
+        del self, expected
+        pytest.fail("a terminal PUT rejection must not trigger readback")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        rejected_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        unexpected_readback,
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        orchestrator.update(after)
+
+    assert orchestrator._existing_groups == {"group-a": before}
+    assert orchestrator._pending_interfaces == set()
+
+
+def test_manage_interface_group_00480(monkeypatch) -> None:
+    """Read back an individual PUT after an ambiguous server failure."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+    readback_calls = 0
+
+    def ambiguous_put(self, model_instance):
+        del model_instance
+        response = {
+            "RETURN_CODE": 500,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "Internal Server Error",
+            "DATA": {"message": "outcome unknown"},
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        raise RuntimeError("HTTP 500: outcome unknown")
+
+    def confirmed_readback(self, expected):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return deepcopy(expected)
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        ambiguous_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        confirmed_readback,
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        orchestrator.update(after)
+
+    assert readback_calls == 1
+    assert orchestrator._existing_groups == {"group-a": after}
+    assert orchestrator._pending_interfaces == {("SN1", "Port-channel10")}
+
+
+def test_manage_interface_group_00490(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not attribute deploy targets when create counts contradict readback."""
+    group_a = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    group_b = _group(
+        "group-b",
+        networks=["network-b"],
+        members=[("SN2", ["Port-channel20"])],
+    )
+    readback_calls = 0
+
+    def mixed_create(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            {
+                "interfaceGroups": [
+                    {
+                        "type": "portChannel",
+                        "status": "success",
+                        "message": "created",
+                    },
+                    {
+                        "type": "portChannel",
+                        "status": "failed",
+                        "message": "rejected",
+                    },
+                ]
+            },
+            RuntimeError("mixed create response"),
+            True,
+            207,
+        )
+
+    def matching_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return [deepcopy(group_a), deepcopy(group_b)]
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        mixed_create,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        matching_readback,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.create_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert "NDFC reported 1 accepted item(s)" in message
+    assert "readback matched 2 requested groups" in message
+    assert "could not be attributed safely" in message
+    assert readback_calls >= 1
+    assert orchestrator._existing_groups == {
+        "group-a": group_a,
+        "group-b": group_b,
+    }
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator._pending_switches == set()
+    assert orchestrator.has_unresolved_accepted_changes is True
+
+
+def test_manage_interface_group_00500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the shared transient classifier and read back a failed HTTP 421 PUT."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+    classification_calls: list[tuple[int, HttpVerbEnum]] = []
+    readback_calls = 0
+    original_classifier = NdV1Strategy.is_terminal_client_error
+
+    def observed_classifier(self, return_code: int, verb: HttpVerbEnum) -> bool:
+        classification_calls.append((return_code, verb))
+        return original_classifier(self, return_code, verb)
+
+    def ambiguous_put(self, model_instance):
+        del model_instance
+        response = {
+            "RETURN_CODE": 421,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "Misdirected Request",
+            "DATA": {"message": "outcome unknown"},
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        raise RuntimeError("HTTP 421: outcome unknown")
+
+    def confirmed_readback(self, expected):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return deepcopy(expected)
+
+    monkeypatch.setattr(
+        NdV1Strategy,
+        "is_terminal_client_error",
+        observed_classifier,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        ambiguous_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        confirmed_readback,
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 421"):
+        orchestrator.update(after)
+
+    assert classification_calls == [(421, HttpVerbEnum.PUT)]
+    assert readback_calls == 1
+    assert orchestrator._existing_groups == {"group-a": after}
+    assert orchestrator._pending_interfaces == {("SN1", "Port-channel10")}
+
+
+def test_manage_interface_group_00510(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept a matching vPC member read back under the opposite peer."""
+    expected = _group(
+        "vpc-group",
+        group_type="vpc",
+        members=[("SN1", ["vPC20"])],
+    )
+    actual = _group(
+        "vpc-group",
+        group_type="vpc",
+        members=[("SN2", ["vPC20"])],
+    )
+    peer_calls: list[tuple[str, str]] = []
+
+    def equivalent_peers(self, first_switch_id: str, second_switch_id: str) -> bool:
+        del self
+        peer_calls.append((first_switch_id, second_switch_id))
+        return {first_switch_id, second_switch_id} == {"SN1", "SN2"}
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_vpc_switch_ids_are_equivalent",
+        equivalent_peers,
+    )
+    orchestrator = _orchestrator()
+
+    assert orchestrator._matches_expected_model(actual, expected) is True
+    assert peer_calls == [("SN1", "SN2")]
+
+
+@pytest.mark.parametrize(
+    ("group_type", "interface_name"),
+    [
+        ("ethernetWithoutPolicy", "Ethernet1/10"),
+        ("portChannel", "Port-channel10"),
+    ],
+)
+def test_manage_interface_group_00520(
+    monkeypatch: pytest.MonkeyPatch,
+    group_type: str,
+    interface_name: str,
+) -> None:
+    """Keep Ethernet and port-channel readback matching switch-exact."""
+    expected = _group(
+        "group-a",
+        group_type=group_type,
+        members=[("SN1", [interface_name])],
+    )
+    opposite_switch = _group(
+        "group-a",
+        group_type=group_type,
+        members=[("SN2", [interface_name])],
+    )
+    exact_switch = _group(
+        "group-a",
+        group_type=group_type,
+        members=[("SN1", [interface_name])],
+    )
+
+    def unexpected_peer_lookup(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("non-vPC reconciliation must not query vPC peer state")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_vpc_switch_ids_are_equivalent",
+        unexpected_peer_lookup,
+    )
+    orchestrator = _orchestrator()
+
+    assert orchestrator._matches_expected_model(opposite_switch, expected) is False
+    assert orchestrator._matches_expected_model(exact_switch, expected) is True
+
+
+def test_manage_interface_group_00530(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve a valid keyed delete success when unresolved readback fails."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    readback_calls = 0
+
+    def malformed_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                        "message": "deleted",
+                    },
+                    {
+                        "status": "success",
+                        "message": "deleted without identity",
+                    },
+                ]
+            },
+            error=RuntimeError("malformed delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def failed_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        raise RuntimeError("readback unavailable")
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        malformed_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        failed_readback,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    assert "confirmed deleted groups: ['group-a']" in str(exc_info.value)
+    assert "state could not be determined" in str(exc_info.value)
+    assert readback_calls == 3
+    assert orchestrator._existing_groups == {"group-b": group_b}
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is True
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00540(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exclude a valid keyed failure from delete readback attribution."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    reconciled_names: list[set[str]] = []
+
+    def malformed_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "failed",
+                        "message": "still associated",
+                    },
+                    {
+                        "status": "success",
+                        "message": "deleted without identity",
+                    },
+                ]
+            },
+            error=RuntimeError("mixed delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def reconcile_only_unidentified(
+        self,
+        names: set[str],
+        *,
+        expected_confirmed_count: int | None = None,
+    ):
+        del self
+        assert expected_confirmed_count == 1
+        reconciled_names.append(set(names))
+        return {"group-b"}, True
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        malformed_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_deleted_groups",
+        reconcile_only_unidentified,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError, match=r"confirmed deleted groups: \['group-b'\]"):
+        orchestrator.delete_bulk([group_a, group_b])
+
+    assert reconciled_names == [{"group-b"}]
+    assert orchestrator._existing_groups == {"group-a": group_a}
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00550(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not attribute delete identities when readback exceeds a reliable count."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    queue_calls: list[tuple[Any, Any, str]] = []
+
+    def malformed_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {"status": "success", "message": "deleted"},
+                    {"status": "failed", "message": "not deleted"},
+                ]
+            },
+            error=RuntimeError("ambiguous delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def all_absent(self):
+        del self
+        return []
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((before, after, group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        malformed_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        all_absent,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert "NDFC reported 1 accepted requested item(s)" in message
+    assert "readback found 2 requested groups absent" in message
+    assert "could not be attributed safely" in message
+    assert orchestrator._existing_groups == {}
+    assert queue_calls == []
+    assert orchestrator.deploy_accepted_mutations() == {
+        "interfaces": [],
+        "switches": [],
+    }
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is True
+    assert orchestrator.has_unattributed_observed_state is True
+
+
+@pytest.mark.parametrize(
+    ("response_items", "readback_names", "remaining_names"),
+    [
+        (
+            [
+                {
+                    "interfaceGroupName": "group-a",
+                    "status": "failed",
+                    "message": "still associated",
+                }
+            ],
+            {"group-b"},
+            {"group-a"},
+        ),
+        (
+            [
+                {
+                    "interfaceGroupName": "group-a",
+                    "status": "pending",
+                    "message": "unknown outcome",
+                },
+                {
+                    "interfaceGroupName": "group-b",
+                    "status": "pending",
+                    "message": "unknown outcome",
+                },
+            ],
+            {"group-a", "group-b"},
+            set(),
+        ),
+    ],
+)
+def test_manage_interface_group_00560(
+    monkeypatch: pytest.MonkeyPatch,
+    response_items: list[dict[str, str]],
+    readback_names: set[str],
+    remaining_names: set[str],
+) -> None:
+    """Use readback for incomplete or unknown statuses instead of assuming zero."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    reconciled_names: list[set[str]] = []
+
+    def ambiguous_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={"interfaceGroups": response_items},
+            error=RuntimeError("ambiguous delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def confirmed_readback(
+        self,
+        names: set[str],
+        *,
+        expected_confirmed_count: int | None = None,
+    ):
+        del self
+        assert expected_confirmed_count is None
+        reconciled_names.append(set(names))
+        assert set(names) == readback_names
+        return set(readback_names), True
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        ambiguous_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_deleted_groups",
+        confirmed_readback,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    assert "reported 0 accepted" not in str(exc_info.value)
+    assert reconciled_names == [readback_names]
+    assert set(orchestrator._existing_groups) == remaining_names
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00570(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Treat modified=false create readback as observed, not task-accepted."""
+    group = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    queue_calls: list[tuple[Any, Any, str]] = []
+
+    def unmodified_create(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "type": "portChannel",
+                        "status": "success",
+                        "message": "already present",
+                    }
+                ]
+            },
+            error=None,
+            response_recorded=True,
+            return_code=207,
+            modified=False,
+        )
+
+    def matching_readback(self):
+        del self
+        return [deepcopy(group)]
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((before, after, group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        unmodified_create,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        matching_readback,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+
+    orchestrator.create_bulk([group])
+
+    assert orchestrator._existing_groups == {"group-a": group}
+    assert queue_calls == []
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator.has_accepted_changes is False
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is True
+
+
+def test_manage_interface_group_00580(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Treat modified=false delete success as observed, not task-accepted."""
+    group = _group("group-a")
+    queue_calls: list[tuple[Any, Any, str]] = []
+
+    def unmodified_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                        "message": "already absent",
+                    }
+                ]
+            },
+            error=None,
+            response_recorded=True,
+            return_code=207,
+            modified=False,
+        )
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((before, after, group_name))
+
+    def absent_readback(self):
+        del self
+        return []
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        unmodified_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        absent_readback,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(group)}
+
+    orchestrator.delete_bulk([group])
+
+    assert orchestrator._existing_groups == {}
+    assert queue_calls == []
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator.has_accepted_changes is False
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is True
+
+
+def test_manage_interface_group_00590(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not journal or deploy a failed PUT marked modified=false."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    queue_calls: list[tuple[Any, Any, str]] = []
+
+    def rejected_put(self, model_instance):
+        del model_instance
+        response = {
+            "RETURN_CODE": 400,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "Bad Request",
+            "DATA": {"message": "request rejected"},
+            "modified": "false",
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        raise RuntimeError("HTTP 400: request rejected")
+
+    def unexpected_readback(self, expected):
+        del self, expected
+        pytest.fail("modified=false must not trigger mutation readback")
+
+    def record_queue(self, old, new, group_name):
+        del self
+        queue_calls.append((old, new, group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        rejected_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        unexpected_readback,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        orchestrator.update(after)
+
+    assert orchestrator._existing_groups == {"group-a": before}
+    assert queue_calls == []
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator.has_accepted_changes is False
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00600(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Honor modified=true on terminal PUT failure and mark unresolved change."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    readback_calls = 0
+
+    def modified_put(self, model_instance):
+        del model_instance
+        response = {
+            "RETURN_CODE": 400,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "Bad Request",
+            "DATA": {"message": "response conflicts with mutation signal"},
+            "modified": "true",
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        raise RuntimeError("HTTP 400: response conflicts with mutation signal")
+
+    def unconfirmed_readback(self, expected):
+        nonlocal readback_calls
+        del self, expected
+        readback_calls += 1
+        return None
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        modified_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        unconfirmed_readback,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        orchestrator.update(after)
+
+    assert readback_calls == 1
+    assert orchestrator._existing_groups == {"group-a": before}
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is True
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00610(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Store matching modified=false PUT readback without journaling it."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    queue_calls: list[tuple[Any, Any, str]] = []
+    readback_calls = 0
+
+    def unmodified_put(self, model_instance):
+        assert model_instance == after
+        response = {
+            "RETURN_CODE": 200,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "OK",
+            "DATA": {"message": "already converged"},
+            "modified": "false",
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        return response["DATA"]
+
+    def matching_readback(self, expected):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        assert expected == after
+        return deepcopy(after)
+
+    def record_queue(self, old, new, group_name):
+        del self
+        queue_calls.append((old, new, group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        unmodified_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        matching_readback,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+
+    response = orchestrator.update(after)
+
+    assert response == {"message": "already converged"}
+    assert readback_calls == 1
+    assert orchestrator._existing_groups == {"group-a": after}
+    assert queue_calls == []
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator.has_accepted_changes is False
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is True
+
+
+def test_manage_interface_group_00620(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject nonconverged modified=false PUT readback and preserve cache."""
+    before = _group(
+        "group-a",
+        networks=["network-a"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    after = _group(
+        "group-a",
+        networks=["network-b"],
+        members=[("SN1", ["Port-channel10"])],
+    )
+    readback_calls = 0
+
+    def unmodified_put(self, model_instance):
+        assert model_instance == after
+        response = {
+            "RETURN_CODE": 200,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/interfaceGroups/group-a",
+            "MESSAGE": "OK",
+            "DATA": {"message": "no mutation"},
+            "modified": "false",
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        return response["DATA"]
+
+    def nonmatching_readback(self, expected):
+        nonlocal readback_calls
+        del self, expected
+        readback_calls += 1
+        return None
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_put_group",
+        unmodified_put,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_updated_group",
+        nonmatching_readback,
+    )
+    orchestrator = _orchestrator(
+        config_actions={"deploy": True, "type": "resource"},
+    )
+    orchestrator._existing_groups = {"group-a": deepcopy(before)}
+
+    with pytest.raises(RuntimeError, match="bounded readback did not confirm"):
+        orchestrator.update(after)
+
+    assert readback_calls == 1
+    assert orchestrator._existing_groups == {"group-a": before}
+    assert orchestrator._pending_interfaces == set()
+    assert orchestrator.has_accepted_changes is False
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00630(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not attribute an unrequested keyed success to a requested deletion."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    reconciliation_calls: list[tuple[set[str], int | None]] = []
+
+    def malformed_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "not-requested",
+                        "status": "success",
+                        "message": "deleted",
+                    },
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "failed",
+                        "message": "still associated",
+                    },
+                ]
+            },
+            error=RuntimeError("malformed delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def absent_unresolved(
+        self,
+        names: set[str],
+        *,
+        expected_confirmed_count: int | None = None,
+        attempts: int = 3,
+    ):
+        del self, attempts
+        reconciliation_calls.append((set(names), expected_confirmed_count))
+        return {"group-b"}, True
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        malformed_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_deleted_groups",
+        absent_unresolved,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert "confirmed deleted groups: ['group-b']" in message
+    assert "accepted requested item(s)" not in message
+    assert reconciliation_calls == [({"group-b"}, None)]
+    assert orchestrator._existing_groups == {"group-a": group_a}
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00640(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read back complete all-failed deletes contradicted by modified=true."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    reconciliation_calls: list[tuple[set[str], int | None]] = []
+
+    def contradictory_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "failed",
+                        "message": "reported failed",
+                    },
+                    {
+                        "interfaceGroupName": "group-b",
+                        "status": "failed",
+                        "message": "reported failed",
+                    },
+                ]
+            },
+            error=RuntimeError("contradictory delete response"),
+            response_recorded=True,
+            return_code=207,
+            modified=True,
+        )
+
+    def confirmed_readback(
+        self,
+        names: set[str],
+        *,
+        expected_confirmed_count: int | None = None,
+        attempts: int = 3,
+    ):
+        del self, attempts
+        reconciliation_calls.append((set(names), expected_confirmed_count))
+        return {"group-a"}, True
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        contradictory_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_deleted_groups",
+        confirmed_readback,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError, match=r"confirmed deleted groups: \['group-a'\]"):
+        orchestrator.delete_bulk([group_a, group_b])
+
+    assert reconciliation_calls == [({"group-a", "group-b"}, None)]
+    assert orchestrator._existing_groups == {"group-b": group_b}
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00650(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not infer zero requested successes from an unrequested success."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    snapshots = iter(
+        [
+            [deepcopy(group_b)],
+            [],
+        ]
+    )
+    readback_calls = 0
+    queue_calls: list[tuple[InterfaceGroupConfigModel | None, InterfaceGroupConfigModel | None, str]] = []
+
+    def malformed_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "failed",
+                        "message": "still associated",
+                    },
+                    {
+                        "interfaceGroupName": "not-requested",
+                        "status": "success",
+                        "message": "deleted",
+                    },
+                ]
+            },
+            error=RuntimeError("malformed delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def changing_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return next(snapshots)
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((deepcopy(before), deepcopy(after), group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        malformed_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        changing_readback,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert readback_calls == 2
+    assert "confirmed deleted groups: ['group-b']" in message
+    assert "accepted requested item(s)" not in message
+    assert orchestrator._existing_groups == {"group-a": group_a}
+    assert queue_calls == [(group_b, None, "group-b")]
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00660(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not infer zero requested successes from duplicate result identities."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    snapshots = iter(
+        [
+            [deepcopy(group_a), deepcopy(group_b)],
+            [deepcopy(group_a)],
+            [deepcopy(group_a)],
+        ]
+    )
+    readback_calls = 0
+    queue_calls: list[tuple[InterfaceGroupConfigModel | None, InterfaceGroupConfigModel | None, str]] = []
+
+    def duplicate_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "failed",
+                        "message": "still associated",
+                    },
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                        "message": "conflicting duplicate",
+                    },
+                ]
+            },
+            error=RuntimeError("duplicate delete response"),
+            response_recorded=True,
+            return_code=207,
+        )
+
+    def changing_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return next(snapshots)
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((deepcopy(before), deepcopy(after), group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        duplicate_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        changing_readback,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert readback_calls == 3
+    assert "confirmed deleted groups: ['group-b']" in message
+    assert "accepted requested item(s)" not in message
+    assert orchestrator._existing_groups == {"group-a": group_a}
+    assert queue_calls == [(group_b, None, "group-b")]
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is False
+
+
+def test_manage_interface_group_00670(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not attribute an external absence beyond modified=true success count."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    reconciliation_calls: list[tuple[set[str], int | None]] = []
+    queue_calls: list[tuple[InterfaceGroupConfigModel | None, InterfaceGroupConfigModel | None, str]] = []
+
+    def partially_identified_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                        "message": "deleted",
+                    },
+                    {
+                        "status": "failed",
+                        "message": "anonymous failure",
+                    },
+                ]
+            },
+            error=RuntimeError("partially identified delete response"),
+            response_recorded=True,
+            return_code=207,
+            modified=True,
+        )
+
+    def externally_absent_b(
+        self,
+        names: set[str],
+        *,
+        expected_confirmed_count: int | None = None,
+        attempts: int = 3,
+    ):
+        del self, attempts
+        reconciliation_calls.append((set(names), expected_confirmed_count))
+        return {"group-b"}, True
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((deepcopy(before), deepcopy(after), group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        partially_identified_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_reconcile_deleted_groups",
+        externally_absent_b,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert reconciliation_calls == [({"group-b"}, 0)]
+    assert "readback found 2 requested groups absent" in message
+    assert orchestrator._existing_groups == {}
+    assert queue_calls == [(group_a, None, "group-a")]
+    assert orchestrator.has_accepted_changes is True
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is True
+
+
+def test_manage_interface_group_00680(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Continue modified=false readback past stale state and observe absence."""
+    group_a = _group("group-a")
+    group_b = _group("group-b")
+    snapshots = iter(
+        [
+            [deepcopy(group_a), deepcopy(group_b)],
+            [deepcopy(group_b)],
+        ]
+    )
+    readback_calls = 0
+    queue_calls: list[tuple[InterfaceGroupConfigModel | None, InterfaceGroupConfigModel | None, str]] = []
+
+    def unmodified_delete(self, **kwargs):
+        del self, kwargs
+        return MutationRequestOutcome(
+            response={
+                "interfaceGroups": [
+                    {
+                        "interfaceGroupName": "group-a",
+                        "status": "success",
+                        "message": "reported deleted",
+                    },
+                    {
+                        "status": "failed",
+                        "message": "anonymous failure",
+                    },
+                ]
+            },
+            error=RuntimeError("contradictory unmodified delete response"),
+            response_recorded=True,
+            return_code=207,
+            modified=False,
+        )
+
+    def changing_readback(self):
+        nonlocal readback_calls
+        del self
+        readback_calls += 1
+        return next(snapshots)
+
+    def record_queue(self, before, after, group_name):
+        del self
+        queue_calls.append((deepcopy(before), deepcopy(after), group_name))
+
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request_with_failure_response",
+        unmodified_delete,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_fetch_all_groups",
+        changing_readback,
+    )
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_queue_deploy_change",
+        record_queue,
+    )
+    orchestrator = _orchestrator()
+    orchestrator._existing_groups = {
+        "group-a": deepcopy(group_a),
+        "group-b": deepcopy(group_b),
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        orchestrator.delete_bulk([group_a, group_b])
+
+    message = str(exc_info.value)
+    assert readback_calls == 2
+    assert "confirmed deleted groups: ['group-a']" in message
+    assert orchestrator._existing_groups == {"group-b": group_b}
+    assert queue_calls == []
+    assert orchestrator.has_accepted_changes is False
+    assert orchestrator.has_unresolved_accepted_changes is False
+    assert orchestrator.has_unattributed_observed_state is True

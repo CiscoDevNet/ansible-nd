@@ -491,6 +491,7 @@ msg:
 
 import logging
 import traceback
+from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -507,6 +508,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_g
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import (
     nd_argument_spec,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
@@ -557,6 +561,182 @@ def _format_output(
     )
 
 
+def _format_success_output(
+    module: AnsibleModule,
+    nd_state_machine: NDStateMachine,
+) -> dict[str, Any]:
+    """Format successful execution from NDFC-confirmed state when available."""
+    output = _format_output(module, nd_state_machine)
+    if module.check_mode:
+        return output
+
+    try:
+        orchestrator = nd_state_machine.model_orchestrator
+        confirmed_groups = getattr(orchestrator, "confirmed_groups", None)
+        accepted = getattr(orchestrator, "has_accepted_changes", None)
+        if not callable(confirmed_groups) or not isinstance(accepted, bool):
+            return output
+        confirmed = NDConfigCollection(
+            model_class=nd_state_machine.model_class,
+            items=list(confirmed_groups()),
+        )
+        confirmed_config = confirmed.to_ansible_config()
+    except Exception:  # pylint: disable=broad-except
+        return output
+
+    output["after"] = confirmed_config
+    output["changed"] = accepted
+    if not accepted:
+        output["diff"] = []
+    return output
+
+
+def _finalize_accepted_intent(
+    nd_state_machine: NDStateMachine | None,
+    check_mode: bool,
+    module_log: logging.Logger,
+) -> str:
+    """Deploy NDFC-accepted Interface Group changes before returning a failure."""
+    if nd_state_machine is None or check_mode:
+        return ""
+
+    deploy_accepted_mutations = getattr(nd_state_machine.model_orchestrator, "deploy_accepted_mutations", None)
+    if not callable(deploy_accepted_mutations):
+        return ""
+
+    try:
+        deployed = deploy_accepted_mutations()
+    except Exception as deploy_error:  # pylint: disable=broad-except
+        module_log.exception("Failure-path deployment of NDFC-accepted Interface Group changes failed")
+        return (
+            " NOTE: NDFC accepted some Interface Group changes before the failure, "
+            "but deploying those changes also failed and the deployment outcome could not be confirmed; "
+            f"the targets may remain staged: {deploy_error}"
+        )
+
+    if not deployed:
+        return ""
+
+    interfaces = deployed.get("interfaces", [])
+    switches = deployed.get("switches", [])
+    deployed_targets: list[str] = []
+    if interfaces:
+        interface_names = ", ".join(sorted(f"{interface_name} (switchId {switch_id})" for switch_id, interface_name in interfaces))
+        deployed_targets.append(f"interface(s) [{interface_names}]")
+    if switches:
+        deployed_targets.append(f"switch(es) [{', '.join(sorted(switches))}]")
+    if not deployed_targets:
+        return ""
+
+    return " NOTE: Before the failure, NDFC had already accepted Interface Group changes for " f"{'; '.join(deployed_targets)}; those changes were deployed."
+
+
+def _format_failure_output(
+    module: AnsibleModule,
+    nd_state_machine: NDStateMachine | None,
+    module_log: logging.Logger,
+) -> tuple[dict[str, Any], str]:
+    """Build failure output from confirmed NDFC state, never predicted state."""
+    if nd_state_machine is None:
+        return _format_output(module, None, changed=False), ""
+
+    orchestrator = getattr(nd_state_machine, "model_orchestrator", None)
+    confirmed: NDConfigCollection | None = None
+    reconciliation_note = ""
+    try:
+        unresolved = bool(getattr(orchestrator, "has_unresolved_accepted_changes", False))
+    except Exception:  # pylint: disable=broad-except
+        unresolved = False
+    try:
+        accepted_value = getattr(orchestrator, "has_accepted_changes", None)
+        accepted = accepted_value if isinstance(accepted_value, bool) else None
+    except Exception:  # pylint: disable=broad-except
+        accepted = None
+    try:
+        unattributed = bool(getattr(orchestrator, "has_unattributed_observed_state", False))
+    except Exception:  # pylint: disable=broad-except
+        unattributed = False
+
+    if unresolved:
+        reconciliation_note += (
+            " NOTE: NDFC accepted at least one Interface Group change whose exact final state or identity "
+            "could not be determined; the after state contains only NDFC state that could be confirmed."
+        )
+    if unattributed:
+        reconciliation_note += " NOTE: The after state includes NDFC state observed during reconciliation that could not be attributed safely to this task."
+
+    try:
+        confirmed_groups = getattr(orchestrator, "confirmed_groups", None)
+        if not callable(confirmed_groups):
+            raise RuntimeError("confirmed NDFC state is unavailable")
+        confirmed = NDConfigCollection(
+            model_class=nd_state_machine.model_class,
+            items=list(confirmed_groups()),
+        )
+        changed = accepted if accepted is not None else nd_state_machine.before.get_diff_collection(confirmed) or unresolved
+        nd_state_machine.output.assign(after=confirmed)
+        output = _format_output(module, nd_state_machine)
+        # Results aggregates API-level changes at -vv and above. The confirmed
+        # collection is authoritative for module-level failure reporting.
+        output["after"] = confirmed.to_ansible_config()
+        output["changed"] = changed
+        output["diff"] = []
+        return output, reconciliation_note
+    except Exception as reconciliation_error:  # pylint: disable=broad-except
+        module_log.exception("Failed to reconcile Interface Group output with confirmed NDFC state")
+        try:
+            before = getattr(nd_state_machine, "before", None)
+            safe_before = before if isinstance(before, NDConfigCollection) else None
+        except Exception:  # pylint: disable=broad-except
+            safe_before = None
+        safe_after_collection = confirmed if isinstance(confirmed, NDConfigCollection) else safe_before
+        try:
+            safe_before_config = safe_before.to_ansible_config() if safe_before is not None else []
+        except Exception:  # pylint: disable=broad-except
+            safe_before_config = []
+        try:
+            safe_after_config = safe_after_collection.to_ansible_config() if safe_after_collection is not None else []
+        except Exception:  # pylint: disable=broad-except
+            safe_after_config = []
+        if accepted is not None:
+            changed = accepted
+        else:
+            try:
+                changed = (
+                    bool(safe_before is not None and safe_after_collection is not None and safe_before.get_diff_collection(safe_after_collection))
+                    or unresolved
+                )
+            except Exception:  # pylint: disable=broad-except
+                changed = unresolved
+        try:
+            safe_output = NDOutput(
+                module.params.get("output_level", "normal") or "normal",
+                state=module.params.get("state", ""),
+            )
+            if safe_before is not None:
+                safe_output.assign(before=safe_before)
+            if safe_after_collection is not None:
+                safe_output.assign(after=safe_after_collection)
+            output = safe_output.format_with_verbosity(_module_verbosity(module), None)
+        except Exception:  # pylint: disable=broad-except
+            output = {
+                "output_level": module.params.get("output_level", "normal") or "normal",
+                "before": safe_before_config,
+                "after": safe_after_config,
+                "changed": changed,
+                "diff": [],
+            }
+        output["before"] = safe_before_config
+        output["after"] = safe_after_config
+        output["changed"] = changed
+        output["diff"] = []
+        return (
+            output,
+            reconciliation_note + " NOTE: The module could not fully reconcile or format the confirmed NDFC state after the failure; "
+            f"a safe reduced result is shown: {reconciliation_error}",
+        )
+
+
 def main():
     """Entry point for the nd_manage_interface_group module."""
     argument_spec = nd_argument_spec()
@@ -596,28 +776,35 @@ def main():
         nd_state_machine.manage_state()
         if not module.check_mode:
             nd_state_machine.model_orchestrator.deploy_pending()
-        module.exit_json(**_format_output(module, nd_state_machine))
+        module.exit_json(**_format_success_output(module, nd_state_machine))
 
     except (ValidationError, ValueError) as exc:
         module_log.exception("Interface Group input validation failed")
-        output = _format_output(module, nd_state_machine, changed=False)
+        error_msg = f"Module validation failed: {exc}"
+        error_msg += _finalize_accepted_intent(nd_state_machine, module.check_mode, module_log)
+        output, reconciliation_note = _format_failure_output(module, nd_state_machine, module_log)
+        error_msg += reconciliation_note
         module.fail_json(
-            msg=f"Module validation failed: {exc}",
+            msg=error_msg,
             **output,
         )
 
     except NDStateMachineError as exc:
         module_log.exception("NDStateMachineError during Interface Group execution")
-        output = _format_output(module, nd_state_machine)
         error_msg = f"Module execution failed: {exc}"
+        error_msg += _finalize_accepted_intent(nd_state_machine, module.check_mode, module_log)
+        output, reconciliation_note = _format_failure_output(module, nd_state_machine, module_log)
+        error_msg += reconciliation_note
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
 
     except Exception as exc:  # pylint: disable=broad-except
         module_log.exception("Unhandled exception during Interface Group execution")
-        output = _format_output(module, nd_state_machine)
         error_msg = f"Module failed: {exc}"
+        error_msg += _finalize_accepted_intent(nd_state_machine, module.check_mode, module_log)
+        output, reconciliation_note = _format_failure_output(module, nd_state_machine, module_log)
+        error_msg += reconciliation_note
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)

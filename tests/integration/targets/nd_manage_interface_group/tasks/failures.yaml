@@ -249,11 +249,25 @@
   ansible.builtin.assert:
     that:
       - >-
-        interface_group_atomic_preflight.check_mode_result.before
-        == interface_group_atomic_preflight.check_mode_result.after
+        (
+          interface_group_atomic_preflight.check_mode_result.before
+          | sort(attribute='interface_group_name')
+        )
+        ==
+        (
+          interface_group_atomic_preflight.check_mode_result.after
+          | sort(attribute='interface_group_name')
+        )
       - >-
-        interface_group_atomic_preflight.first_run_result.before
-        == interface_group_atomic_preflight.first_run_result.after
+        (
+          interface_group_atomic_preflight.first_run_result.before
+          | sort(attribute='interface_group_name')
+        )
+        ==
+        (
+          interface_group_atomic_preflight.first_run_result.after
+          | sort(attribute='interface_group_name')
+        )
       - interface_group_atomic_preflight.first_run_result.changed == false
   when: not ansible_check_mode
 
@@ -301,8 +315,15 @@
   ansible.builtin.assert:
     that:
       - >-
-        interface_group_missing_network_update.first_run_result.before
-        == interface_group_missing_network_update.first_run_result.after
+        (
+          interface_group_missing_network_update.first_run_result.before
+          | sort(attribute='interface_group_name')
+        )
+        ==
+        (
+          interface_group_missing_network_update.first_run_result.after
+          | sort(attribute='interface_group_name')
+        )
   when: not ansible_check_mode
 
 - name: Fetch the existing group after missing-network rejection

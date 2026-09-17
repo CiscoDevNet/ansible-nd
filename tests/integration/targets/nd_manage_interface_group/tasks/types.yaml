@@ -44,8 +44,15 @@
         interface_group_types_result.first_run_result.before
         != interface_group_types_result.first_run_result.after
       - >-
-        interface_group_types_result.second_run_result.before
-        == interface_group_types_result.second_run_result.after
+        (
+          interface_group_types_result.second_run_result.before
+          | sort(attribute='interface_group_name')
+        )
+        ==
+        (
+          interface_group_types_result.second_run_result.after
+          | sort(attribute='interface_group_name')
+        )
   when: not ansible_check_mode
   tags:
     - interface_groups_types
