@@ -59,6 +59,9 @@
     - name: Run nd_interface_ethernet_trunk_host deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
 
+    - name: Run nd_interface_ethernet_trunk_host defaults-only idempotency tests
+      ansible.builtin.include_tasks: defaults_only.yaml
+
     - name: Run IOS-XE tests (requires nd_test_xe_switch_ip)
       ansible.builtin.include_tasks: xe.yaml
       when: nd_test_xe_switch_ip is defined and nd_test_xe_switch_ip | length > 0

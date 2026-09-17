@@ -953,3 +953,159 @@ def test_ethernet_trunk_host_orchestrator_00920() -> None:
     paths = [response.get("REQUEST_PATH", "") for response in orchestrator.rest_send.responses]
     assert len(paths) == 4
     assert sum(1 for path in paths if path.endswith("/switches")) == 1
+
+
+# =============================================================================
+# Test: query_all retains a named default-signature interface (PR #558 review)
+# =============================================================================
+
+
+def test_ethernet_trunk_host_orchestrator_00450() -> None:
+    """
+    # Summary
+
+    Verify `query_all` under `state: merged` retains an NX-OS `trunkHost` interface that matches the unconfigured default signature
+    when the task names it, so a deliberately defaults-only desired config reads back as existing and converges with no change
+    instead of being re-created on every run (PR #558 review). An unnamed default interface is still hidden.
+
+    ## Test
+
+    - Config names `eth1/2` on 192.168.1.1 (abbreviated, exercising name normalization)
+    - Switch returns configured Ethernet1/1, default-signature Ethernet1/2, default-signature Ethernet1/4
+    - Result contains Ethernet1/1 and Ethernet1/2; Ethernet1/4 is hidden
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.query_all()
+    - EthernetBaseOrchestrator._named_interfaces()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_named_default_retained_00450a")
+        yield responses_trunk_host("test_named_default_retained_00450b")
+        yield responses_trunk_host("test_named_default_retained_00450c")
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            ResponseGenerator(responses()),
+            params={"state": "merged", "config": [{"switch_ip": "192.168.1.1", "interface_name": "eth1/2"}]},
+        )
+        result = orchestrator.query_all()
+
+    assert [iface["interfaceName"] for iface in result] == ["Ethernet1/1", "Ethernet1/2"]
+
+
+def test_ethernet_trunk_host_orchestrator_00460() -> None:
+    """
+    # Summary
+
+    Verify `query_all` under `state: replaced` retains a named IOS-XE `iosXeTrunkHost` interface that reads as the
+    `ios_xe_int_trunk_host` default echo, and still hides an unnamed one.
+
+    ## Test
+
+    - Config names GigabitEthernet1/0/1 on 192.168.2.1
+    - Switch returns default-echo GigabitEthernet1/0/1 and GigabitEthernet1/0/2
+    - Result contains only GigabitEthernet1/0/1
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.query_all()
+    - EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_xe_default()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_named_default_retained_00460a")
+        yield responses_trunk_host("test_named_default_retained_00460b")
+        yield responses_trunk_host("test_named_default_retained_00460c")
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            ResponseGenerator(responses()),
+            params={"state": "replaced", "config": [{"switch_ip": "192.168.2.1", "interface_name": "GigabitEthernet1/0/1"}]},
+        )
+        result = orchestrator.query_all()
+
+    assert [iface["interfaceName"] for iface in result] == ["GigabitEthernet1/0/1"]
+
+
+def test_ethernet_trunk_host_orchestrator_00470() -> None:
+    """
+    # Summary
+
+    Verify `query_all` under `state: overridden` retains the named default-signature interfaces of both OS families (so a named
+    defaults-only interface is idempotent) while still hiding the unnamed ones: an unnamed NX-OS default is already at the reset
+    target and must not produce delete intent, and an unnamed IOS-XE interface is merge-only.
+
+    ## Test
+
+    - Config names Ethernet1/2 on 192.168.1.1 and GigabitEthernet1/0/1 on 192.168.2.1
+    - NX-OS switch returns default-signature Ethernet1/2 and Ethernet1/4; Catalyst returns default-echo GigabitEthernet1/0/1 and 1/0/2
+    - Result contains exactly Ethernet1/2 and GigabitEthernet1/0/1
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.query_all()
+    - EthernetBaseOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_named_default_retained_00470a")
+        yield responses_trunk_host("test_named_default_retained_00470b")
+        yield responses_trunk_host("test_named_default_retained_00470c")
+        yield responses_trunk_host("test_named_default_retained_00470d")
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            ResponseGenerator(responses()),
+            params={
+                "state": "overridden",
+                "config": [
+                    {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/2"},
+                    {"switch_ip": "192.168.2.1", "interface_name": "GigabitEthernet1/0/1"},
+                ],
+            },
+        )
+        result = orchestrator.query_all()
+
+    assert sorted(iface["interfaceName"] for iface in result) == ["Ethernet1/2", "GigabitEthernet1/0/1"]
+
+
+def test_ethernet_trunk_host_orchestrator_00480() -> None:
+    """
+    # Summary
+
+    Verify `query_all` under `state: deleted` still hides a named interface that already matches the default signature, for both
+    OS families: the deletion is already satisfied, so nothing is queued for normalize or XE reset and the run reports no change.
+
+    ## Test
+
+    - Config names Ethernet1/2 on 192.168.1.1 and GigabitEthernet1/0/1 on 192.168.2.1
+    - Both read as their family's default signature
+    - Result is empty
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_trunk_host("test_named_default_retained_00480a")
+        yield responses_trunk_host("test_named_default_retained_00480b")
+        yield responses_trunk_host("test_named_default_retained_00480c")
+        yield responses_trunk_host("test_named_default_retained_00480d")
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            ResponseGenerator(responses()),
+            params={
+                "state": "deleted",
+                "config": [
+                    {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/2"},
+                    {"switch_ip": "192.168.2.1", "interface_name": "GigabitEthernet1/0/1"},
+                ],
+            },
+        )
+        result = orchestrator.query_all()
+
+    assert result == []

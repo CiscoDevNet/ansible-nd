@@ -46,6 +46,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     idempotent re-runs of `state: overridden` do not see already-normalized interfaces as items to
     re-normalize. The same holds for IOS-XE: the XE reset PUT lands a Catalyst port on a defaults-only
     `iosXeTrunkHost` (`XeEthernetTrunkHostPolicyModel.reverse_diff_defaults`), which is filtered here by the same rule.
+    Interfaces the task names are exempt from that filter outside `state: deleted`, so a defaults-only desired config is idempotent.
 
     ## Raises
 
@@ -145,6 +146,12 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         that match the unconfigured `int_trunk_host` default signature. This keeps default-configured
         interfaces out of `before`, so `state: overridden` idempotency holds across re-runs.
 
+        An interface the task names explicitly is retained even when it matches the default signature, for every state except
+        `deleted` (PR #558 review). A deliberately defaults-only desired config must read back as existing so the state machine
+        classifies it as converged; hiding it would classify the same intent as a create on every run, re-post it, and report a
+        change. Under `state: deleted` a named default interface stays hidden: it is already at the reset target, so the deletion is
+        satisfied and nothing is queued for normalize or the XE reset PUT.
+
         ## Raises
 
         ### RuntimeError
@@ -154,4 +161,5 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         result = super().query_all(model_instance=model_instance, **kwargs)
         if not isinstance(result, list):
             return result
-        return [iface for iface in result if not self._is_unconfigured_default(iface)]
+        named = self._named_interfaces() if self.rest_send.params.get("state") != "deleted" else set()
+        return [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
