@@ -11,6 +11,8 @@ __metaclass__ = type
 import re
 from typing import List, Dict, Optional, ClassVar, Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import IPv4CIDR, IPv6CIDR, NdFabricName
@@ -499,15 +501,7 @@ class FabricGroupVxlanModel(NDBaseModel):
                 "elements": "dict",
                 "options": config_options,
             },
-            config_actions={
-                "type": "dict",
-                "required": False,
-                "options": {
-                    "save": {"type": "bool", "default": False},
-                    "deploy": {"type": "bool", "default": False},
-                    "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
-                },
-            },
+            **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )
 
 

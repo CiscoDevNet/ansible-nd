@@ -27,6 +27,8 @@ import types
 import typing
 from typing import Any, ClassVar, Literal, get_args, get_origin
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -364,13 +366,5 @@ class FabricBaseModel(NDBaseModel):
                 "elements": "dict",
                 "options": config_options,
             },
-            config_actions={
-                "type": "dict",
-                "required": False,
-                "options": {
-                    "save": {"type": "bool", "default": False},
-                    "deploy": {"type": "bool", "default": False},
-                    "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
-                },
-            },
+            **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )
