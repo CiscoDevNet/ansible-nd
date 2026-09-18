@@ -57,6 +57,35 @@ class _Module:
         raise AssertionError(kwargs)
 
 
+def test_network_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
+    """
+    # Summary
+
+    Verify generated child tasks use merged semantics for parent mutating
+    states because child_fabric_config carries partial per-child overrides, not
+    full child Network definitions.
+    """
+    strategy = MulticlusterParentNetworkStrategy(
+        fabric_name="MCFG_R",
+        fabric_data={"members": [{"fabricName": "AK-VXLAN", "clusterName": "ND42-REL"}]},
+    )
+
+    for state in ("merged", "replaced", "overridden"):
+        args = strategy.build_child_task_args(
+            child_fabric_name="AK-VXLAN",
+            network_configs=[{"network_name": "BLUE_NET", "multicast_group_address": "239.1.1.10"}],
+            state=state,
+        )
+        assert args["state"] == "merged"
+
+    args = strategy.build_child_task_args(
+        child_fabric_name="AK-VXLAN",
+        network_configs=[{"network_name": "BLUE_NET"}],
+        state="gathered",
+    )
+    assert args["state"] == "gathered"
+
+
 class _ParentStrategy:
     config_model_cls = NetworkParentConfigModel
     fabric_data = {"members": [{"fabricName": "child1"}]}
@@ -3635,6 +3664,66 @@ def test_network_netflow_monitors_require_netflow_enable():
                 "vlan_netflow_monitor": "L2_MON",
             }
         )
+
+
+def test_network_igmp_version_requires_trm_enable():
+    with pytest.raises(ValueError, match="igmp_version requires trm_enable=true"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "BLUE_NET",
+                "layer": "layer3",
+                "vrf_name": "BLUE_VRF",
+                "igmp_version": 3,
+            }
+        )
+
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "layer": "layer3",
+            "vrf_name": "BLUE_VRF",
+            "igmp_version": 3,
+            "trm_enable": True,
+        }
+    )
+
+    assert model.igmp_version == 3
+    assert model.trm_enable is True
+
+
+def test_child_network_igmp_version_requires_trm_enable():
+    with pytest.raises(ValueError, match="igmp_version requires trm_enable=true"):
+        NetworkParentConfigModel.from_config(
+            {
+                "network_name": "BLUE_NET",
+                "layer": "layer3",
+                "vrf_name": "BLUE_VRF",
+                "child_fabric_config": [
+                    {
+                        "fabric_name": "child1",
+                        "igmp_version": 3,
+                    }
+                ],
+            }
+        )
+
+    model = NetworkParentConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "layer": "layer3",
+            "vrf_name": "BLUE_VRF",
+            "child_fabric_config": [
+                {
+                    "fabric_name": "child1",
+                    "igmp_version": 3,
+                    "trm_enable": True,
+                }
+            ],
+        }
+    )
+
+    assert model.child_fabric_config[0].igmp_version == 3
+    assert model.child_fabric_config[0].trm_enable is True
 
 
 def test_network_interface_netflow_monitor_rejects_layer2_only():

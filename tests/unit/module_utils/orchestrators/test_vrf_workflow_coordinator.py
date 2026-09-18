@@ -116,6 +116,35 @@ def test_vrf_workflow_coordinator_resolves_strategy_with_gen3_restsend():
     assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
 
 
+def test_vrf_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
+    """
+    # Summary
+
+    Verify generated child tasks use merged semantics for parent mutating
+    states because child_fabric_config carries partial per-child overrides, not
+    full child VRF definitions.
+    """
+    strategy = MulticlusterParentVrfStrategy(
+        fabric_name="MCFG_R",
+        fabric_data={"members": [{"fabricName": "AK-VXLAN", "clusterName": "ND42-REL"}]},
+    )
+
+    for state in ("merged", "replaced", "overridden"):
+        args = strategy.build_child_task_args(
+            child_fabric_name="AK-VXLAN",
+            vrf_configs=[{"vrf_name": "BLUE", "adv_host_routes": True}],
+            state=state,
+        )
+        assert args["state"] == "merged"
+
+    args = strategy.build_child_task_args(
+        child_fabric_name="AK-VXLAN",
+        vrf_configs=[{"vrf_name": "BLUE"}],
+        state="gathered",
+    )
+    assert args["state"] == "gathered"
+
+
 class _ParentStrategy:
     config_model_cls = VrfParentConfigModel
     fabric_data = {"members": [{"fabricName": "AK-VXLAN"}]}

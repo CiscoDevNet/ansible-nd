@@ -284,7 +284,9 @@ options:
         description: Loopback ID.
         type: int
       igmp_version:
-        description: IGMP version.
+        description:
+          - IGMP version.
+          - Requires O(config[].trm_enable=true).
         type: int
         choices: [ 1, 2, 3 ]
       trm_enable:
@@ -351,7 +353,9 @@ options:
             description: Loopback ID.
             type: int
           igmp_version:
-            description: IGMP version.
+            description:
+              - IGMP version.
+              - Requires O(config[].child_fabric_config[].trm_enable=true).
             type: int
             choices: [ 1, 2, 3 ]
           trm_enable:

@@ -218,13 +218,22 @@ class NetworkChildConfigModel(NDNestedModel):
         return v
 
     @model_validator(mode="after")
-    def _check_child_netflow_rules(self):
+    def _check_child_cross_field_rules(self):
+        self._validate_igmp_trm_binding(
+            igmp_version=self.igmp_version,
+            trm_enable=self.trm_enable,
+        )
         self._validate_netflow_monitor_bindings(
             netflow_enable=self.netflow_enable,
             vlan_netflow_monitor=self.vlan_netflow_monitor,
             interface_netflow_monitor=self.interface_netflow_monitor,
         )
         return self
+
+    @staticmethod
+    def _validate_igmp_trm_binding(*, igmp_version: int | None, trm_enable: bool | None) -> None:
+        if igmp_version is not None and trm_enable is not True:
+            raise ValueError("igmp_version requires trm_enable=true")
 
     @staticmethod
     def _validate_netflow_monitor_bindings(
@@ -412,10 +421,17 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         if self.layer == "layer3" and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
+        self._check_trm_rules()
         self._check_netflow_rules()
         self._check_vlan_network_type_rules()
         self._check_attachment_interface_modes()
         return self
+
+    def _check_trm_rules(self) -> None:
+        NetworkChildConfigModel._validate_igmp_trm_binding(
+            igmp_version=self.igmp_version,
+            trm_enable=self.trm_enable,
+        )
 
     def _check_netflow_rules(self) -> None:
         NetworkChildConfigModel._validate_netflow_monitor_bindings(
