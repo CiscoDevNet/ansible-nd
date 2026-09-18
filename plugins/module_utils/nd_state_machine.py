@@ -103,6 +103,11 @@ class NDStateMachine:
             self.existing = self.before.copy()
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
+            # Configuration objects removed from ND this run. Kept separate from
+            # ``sent`` (created/updated) because a delete stages pending config that
+            # some modules must still save/deploy, while others must not treat a
+            # deleted object as a save/deploy target.
+            self.removed = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user. Coalesce None to
             # an empty list so read-only states (e.g. gathered) with no config work.
             # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
@@ -301,11 +306,6 @@ class NDStateMachine:
             if (existing_item := self.existing.get(identifier)) is not None and not getattr(existing_item, "is_unsupported_policy", False)
         ]
         self._delete_items(items_to_delete)
-        # Record removals as sent so save/deploy gates that fire on len(sent)
-        # trigger when an overridden run only removes items (a disassociate
-        # stages config that must be pushed), mirroring _manage_delete_state.
-        if items_to_delete:
-            self.sent.add_many(items_to_delete)
 
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
@@ -329,11 +329,6 @@ class NDStateMachine:
         except Exception as e:
             raise NDStateMachineError(f"Preflight failed: {e}") from e
         self._delete_items(items_to_delete)
-        # Record removals as sent so save/deploy gates that fire on len(sent)
-        # trigger for deletes too (a disassociate stages config that must be
-        # pushed). Scoped to the deleted state; override deletions are unchanged.
-        if items_to_delete:
-            self.sent.add_many(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""
@@ -346,6 +341,9 @@ class NDStateMachine:
         else:
             for item in items:
                 self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+
+        # Mark as removed only after successful API operations, mirroring ``sent``.
+        self.removed.add_many(items)
 
         # Batch remove from collection (single index rebuild)
         keys_to_delete = [item.get_identifier_value() for item in items]

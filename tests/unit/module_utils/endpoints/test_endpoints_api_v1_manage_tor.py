@@ -296,3 +296,46 @@ def test_endpoints_api_v1_manage_tor_00250():
         instance.endpoint_params.include_candidates = True
         result = instance.path
     assert result == "/api/v1/manage/fabrics/my-fabric/accessAssociations?aggregationOrLeafSwitchId=SN-LEAF&includeCandidates=true"
+
+
+def test_endpoints_api_v1_manage_tor_00260():
+    """
+    # Summary
+
+    Verify EpManageTorAssociationsGet scopes a query to a vPC leaf pair
+
+    ## Test
+
+    - Setting aggregation_or_leaf_peer_switch_id renders aggregationOrLeafPeerSwitchId.
+    - Both leaf IDs are required for ND to report the resources of an association
+      that sits on a vPC leaf pair.
+    """
+    with does_not_raise():
+        instance = EpManageTorAssociationsGet()
+        instance.fabric_name = "my-fabric"
+        instance.endpoint_params.aggregation_or_leaf_switch_id = "SN-LEAF"
+        instance.endpoint_params.aggregation_or_leaf_peer_switch_id = "SN-LEAF-PEER"
+        instance.endpoint_params.include_candidates = True
+        result = instance.path
+    assert result == (
+        "/api/v1/manage/fabrics/my-fabric/accessAssociations"
+        "?aggregationOrLeafSwitchId=SN-LEAF&aggregationOrLeafPeerSwitchId=SN-LEAF-PEER&includeCandidates=true"
+    )
+
+
+def test_endpoints_api_v1_manage_tor_00270():
+    """
+    # Summary
+
+    Verify the aggregation/leaf peer parameter is omitted when unset
+
+    ## Test
+
+    - A standalone-leaf scope renders no aggregationOrLeafPeerSwitchId key.
+    """
+    with does_not_raise():
+        instance = EpManageTorAssociationsGet()
+        instance.fabric_name = "my-fabric"
+        instance.endpoint_params.aggregation_or_leaf_switch_id = "SN-LEAF"
+        result = instance.path
+    assert "aggregationOrLeafPeerSwitchId" not in result

@@ -13,12 +13,14 @@ Covers the ToR-specific behaviour that overrides ``NDBaseOrchestrator``:
   no leaf filter) that returns every existing association across all leaves,
   with vPC pairings already collapsed to one entry by the API, and injects
   ``fabricName`` into each association.
-- ``config_actions`` support via ``ConfigActionsMixin``
-  (``validate_config_actions``, ``_filter_switches_needing_deploy``, and the
-  ``execute_config_actions`` save + switch-deploy sequence).
+- ``config_actions`` support via ``ConfigActionsMixin``: the orchestrator adopts
+  the shared ``FABRIC_CONFIG_ACTIONS`` policy and drives save + switch-scoped
+  deploy through ``run_config_actions``.
 
 The shared REST infrastructure (``_request``, verbosity tagging) is covered by
-``test_base_orchestrator.py`` and is not re-exercised here.
+``test_base_orchestrator.py`` and is not re-exercised here. The generic config
+action mechanics (policy validation, ``only_switch_ids`` scoping, check-mode
+planning) are covered by ``test_config_actions.py``.
 """
 
 # pylint: disable=protected-access,redefined-outer-name
@@ -28,6 +30,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_tor import (
     ManageTorOrchestrator,
@@ -127,6 +131,9 @@ def test_manage_tor_orchestrator_query_all_returns_fabric_wide():
                 ]
             }
         ),
+        # Resource enrichment, one call per distinct aggregation scope.
+        _resp({"associations": [{"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1", "resources": {}}]}),
+        _resp({"associations": []}),
     ]
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
     rest_send = _build_rest_send(responses, params)
@@ -141,6 +148,198 @@ def test_manage_tor_orchestrator_query_all_returns_fabric_wide():
     vpc = [a for a in result if a["accessOrTorSwitchId"] == "T3"][0]
     assert vpc["accessOrTorPeerSwitchId"] == "T4"
     assert vpc["aggregationOrLeafPeerSwitchId"] == "L4"
+
+
+# =============================================================================
+# query_all resource enrichment
+# =============================================================================
+
+
+def _record_requests(orchestrator, responses):
+    """Replace _request with a recorder yielding ``responses`` in order.
+
+    Returns the list that accumulates each request's path.
+    """
+    paths = []
+    queue = list(responses)
+
+    def fake_request(path, verb, **kwargs):
+        paths.append(path)
+        return queue.pop(0) if queue else {}
+
+    orchestrator._request = fake_request
+    return paths
+
+
+def test_manage_tor_orchestrator_query_all_merges_resources():
+    """Resources are merged onto the matching association.
+
+    ND omits resources from the fabric-wide list, so they are backfilled from an
+    includeCandidates=true query scoped to the association's aggregation side.
+    """
+    params = {"check_mode": False, "fabric_name": "fab1", "config": [], "state": "merged"}
+    orchestrator = ManageTorOrchestrator(rest_send=_build_rest_send([], params), results=_make_results())
+    paths = _record_requests(
+        orchestrator,
+        [
+            {"associations": [{"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"}]},
+            {
+                "associations": [
+                    {
+                        "accessOrTorSwitchId": "T1",
+                        "aggregationOrLeafSwitchId": "L1",
+                        "resources": {"accessOrTorPortChannelId": 511, "aggregationOrLeafPortChannelId": 512},
+                    }
+                ]
+            },
+        ],
+    )
+
+    result = orchestrator.query_all()
+
+    assert result[0]["resources"] == {"accessOrTorPortChannelId": 511, "aggregationOrLeafPortChannelId": 512}
+    assert "includeCandidates=false" in paths[0]
+    assert "aggregationOrLeafSwitchId=L1" in paths[1]
+    assert "includeCandidates=true" in paths[1]
+
+
+def test_manage_tor_orchestrator_query_all_scopes_vpc_pair_with_peer():
+    """A vPC leaf pair is queried with both leaf IDs.
+
+    ND returns an empty resources object when only one half of the pair is sent.
+    """
+    params = {"check_mode": False, "fabric_name": "fab1", "config": [], "state": "merged"}
+    orchestrator = ManageTorOrchestrator(rest_send=_build_rest_send([], params), results=_make_results())
+    vpc = {
+        "accessOrTorSwitchId": "T3",
+        "accessOrTorPeerSwitchId": "T4",
+        "aggregationOrLeafSwitchId": "L3",
+        "aggregationOrLeafPeerSwitchId": "L4",
+    }
+    paths = _record_requests(
+        orchestrator,
+        [
+            {"associations": [dict(vpc)]},
+            {"associations": [dict(vpc, resources={"accessOrTorVpcId": 10, "aggregationOrLeafVpcId": 20})]},
+        ],
+    )
+
+    result = orchestrator.query_all()
+
+    assert result[0]["resources"] == {"accessOrTorVpcId": 10, "aggregationOrLeafVpcId": 20}
+    assert "aggregationOrLeafSwitchId=L3" in paths[1]
+    assert "aggregationOrLeafPeerSwitchId=L4" in paths[1]
+
+
+def test_manage_tor_orchestrator_query_all_one_call_per_scope():
+    """Associations sharing an aggregation scope cost a single enrichment call."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": [], "state": "merged"}
+    orchestrator = ManageTorOrchestrator(rest_send=_build_rest_send([], params), results=_make_results())
+    paths = _record_requests(
+        orchestrator,
+        [
+            {
+                "associations": [
+                    {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1", "aggregationOrLeafPeerSwitchId": "L2"},
+                    {"accessOrTorSwitchId": "T2", "aggregationOrLeafSwitchId": "L1", "aggregationOrLeafPeerSwitchId": "L2"},
+                ]
+            },
+            {"associations": []},
+        ],
+    )
+
+    orchestrator.query_all()
+
+    # Two associations, one shared scope: one membership call plus one enrichment call.
+    assert len(paths) == 2
+
+
+def test_manage_tor_orchestrator_query_all_discards_candidate_rows():
+    """Candidate rows for ToRs paired elsewhere never contaminate the result.
+
+    A scoped query also returns switches associated to a different leaf, carrying
+    proposed (not configured) allocations. They are dropped by identity matching
+    against the authoritative membership list rather than by parsing ``remarks``.
+    """
+    params = {"check_mode": False, "fabric_name": "fab1", "config": [], "state": "merged"}
+    orchestrator = ManageTorOrchestrator(rest_send=_build_rest_send([], params), results=_make_results())
+    _record_requests(
+        orchestrator,
+        [
+            {"associations": [{"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"}]},
+            {
+                "associations": [
+                    {"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1", "resources": {"accessOrTorPortChannelId": 511}},
+                    # Paired with a different leaf; its 501 is a proposed allocation.
+                    {"accessOrTorSwitchId": "T9", "aggregationOrLeafSwitchId": "L1", "resources": {"accessOrTorPortChannelId": 501}},
+                ]
+            },
+        ],
+    )
+
+    result = orchestrator.query_all()
+
+    assert len(result) == 1
+    assert result[0]["accessOrTorSwitchId"] == "T1"
+    assert result[0]["resources"] == {"accessOrTorPortChannelId": 511}
+
+
+def test_manage_tor_orchestrator_query_all_skips_enrichment_for_deleted():
+    """`deleted` matches on identity alone, so it must not pay for enrichment."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": [], "state": "deleted"}
+    orchestrator = ManageTorOrchestrator(rest_send=_build_rest_send([], params), results=_make_results())
+    paths = _record_requests(
+        orchestrator,
+        [{"associations": [{"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"}]}],
+    )
+
+    result = orchestrator.query_all()
+
+    assert len(paths) == 1
+    assert "resources" not in result[0]
+
+
+def test_manage_tor_orchestrator_query_all_ignores_unknown_resource_keys():
+    """Only the six known resource IDs are merged; response extras are dropped."""
+    params = {"check_mode": False, "fabric_name": "fab1", "config": [], "state": "merged"}
+    orchestrator = ManageTorOrchestrator(rest_send=_build_rest_send([], params), results=_make_results())
+    _record_requests(
+        orchestrator,
+        [
+            {"associations": [{"accessOrTorSwitchId": "T1", "aggregationOrLeafSwitchId": "L1"}]},
+            {
+                "associations": [
+                    {
+                        "accessOrTorSwitchId": "T1",
+                        "aggregationOrLeafSwitchId": "L1",
+                        "resources": {"accessOrTorPortChannelId": 511, "someFutureKey": "x"},
+                    }
+                ]
+            },
+        ],
+    )
+
+    result = orchestrator.query_all()
+
+    assert result[0]["resources"] == {"accessOrTorPortChannelId": 511}
+
+
+def test_manage_tor_orchestrator_association_key_is_order_independent():
+    """vPC members sort, so ND reporting a different primary/peer still matches."""
+    submitted = {
+        "accessOrTorSwitchId": "T3",
+        "accessOrTorPeerSwitchId": "T4",
+        "aggregationOrLeafSwitchId": "L3",
+        "aggregationOrLeafPeerSwitchId": "L4",
+    }
+    swapped = {
+        "accessOrTorSwitchId": "T4",
+        "accessOrTorPeerSwitchId": "T3",
+        "aggregationOrLeafSwitchId": "L4",
+        "aggregationOrLeafPeerSwitchId": "L3",
+    }
+    assert ManageTorOrchestrator._association_key(submitted) == ManageTorOrchestrator._association_key(swapped)
+
 
 
 def test_manage_tor_orchestrator_query_all_empty_fabric():
@@ -207,15 +406,10 @@ def test_manage_tor_orchestrator_delete_bulk_sends_array_body():
 # =============================================================================
 
 
-def test_manage_tor_orchestrator_validate_config_actions():
-    """validate_config_actions rejects deploy-without-save and invalid type."""
-    with does_not_raise():
-        ManageTorOrchestrator.validate_config_actions(save=True, deploy=True, deploy_type="switch")
-        ManageTorOrchestrator.validate_config_actions(save=False, deploy=False, deploy_type="global")
-    with pytest.raises(ValueError, match="deploy=True requires save=True"):
-        ManageTorOrchestrator.validate_config_actions(save=False, deploy=True, deploy_type="switch")
-    with pytest.raises(ValueError, match="invalid type"):
-        ManageTorOrchestrator.validate_config_actions(save=True, deploy=True, deploy_type="bogus")
+def test_manage_tor_orchestrator_uses_shared_fabric_policy():
+    """ToR config actions are governed by the shared fabric policy, so the module
+    argspec, validation and deploy scopes cannot drift from the fabric modules."""
+    assert ManageTorOrchestrator.config_actions_policy is FABRIC_CONFIG_ACTIONS
 
 
 def test_manage_tor_orchestrator_filter_switches_needing_deploy():
@@ -228,30 +422,60 @@ def test_manage_tor_orchestrator_filter_switches_needing_deploy():
     assert ManageTorOrchestrator._filter_switches_needing_deploy(switches) == ["S1", "S3"]
 
 
-def test_manage_tor_orchestrator_execute_config_actions_save_and_switch_deploy():
-    """execute_config_actions runs configSave then a switch-level deploy scoped
-    to the out-of-sync switches."""
+def test_manage_tor_orchestrator_run_config_actions_save_and_scoped_switch_deploy():
+    """run_config_actions runs configSave then a switch-level deploy scoped to the
+    switches of the associations changed this run, not every out-of-sync switch.
+
+    S3 is out of sync but untouched by this run, so it must not be deployed.
+    """
     switches = {
         "switches": [
             {"serialNumber": "S1", "additionalData": {"configSyncStatus": "outOfSync"}},
             {"serialNumber": "S2", "additionalData": {"configSyncStatus": "inSync"}},
+            {"serialNumber": "S3", "additionalData": {"configSyncStatus": "outOfSync"}},
         ]
     }
     responses = [
-        _resp(switches, method="GET"),  # _get_fabric_switches
+        _resp(switches, method="GET"),  # context build: fabric membership
         _resp({"status": "Config save is completed"}, method="POST"),  # config_save
+        _resp(switches, method="GET"),  # post-save deploy target resolution
         _resp({"status": "success"}, return_code=207, method="POST"),  # switchActions/deploy
     ]
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
     rest_send = _build_rest_send(responses, params)
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+    actions = parse_config_actions(
+        params={"config_actions": {"save": True, "deploy": True, "type": "switch"}},
+        raw_args={"config_actions": {"save": True, "deploy": True, "type": "switch"}},
+        policy=FABRIC_CONFIG_ACTIONS,
+    )
 
     with does_not_raise():
-        orchestrator.execute_config_actions(fabric_names=["fab1"], save=True, deploy=True, deploy_type="switch")
+        orchestrator.run_config_actions(
+            actions=actions,
+            fabric_names=["fab1"],
+            state="merged",
+            only_switch_ids={"S1", "S2"},
+        )
 
-    # Last request should be the switch-level deploy carrying only the
-    # out-of-sync switch S1.
+    assert rest_send.path.endswith("/switchActions/deploy")
     assert rest_send.committed_payload == {"switchIds": ["S1"]}
+
+
+def test_manage_tor_orchestrator_run_config_actions_noop_issues_no_requests():
+    """With save and deploy both disabled the orchestrator must not call ND at all.
+
+    The sender is primed with no responses, so any request would raise.
+    """
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send([], params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+    actions = parse_config_actions(params={}, raw_args={}, policy=FABRIC_CONFIG_ACTIONS)
+
+    with does_not_raise():
+        result = orchestrator.run_config_actions(actions=actions, fabric_names=["fab1"], state="merged")
+
+    assert result is None
 
 
 # =============================================================================

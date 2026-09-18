@@ -107,7 +107,8 @@ options:
       staged. Associate and disassociate only stage pending intent; a save and deploy are
       required to realize (or remove) the configuration on the switches.
     - Applied for O(state=merged), O(state=overridden) and O(state=deleted), only when a real change is made.
-    - Not used when O(state=gathered).
+    - Skipped automatically when no changes are made. Enabling O(config_actions.save) or
+      O(config_actions.deploy) with O(state=gathered) is rejected.
     type: dict
     suboptions:
       save:
@@ -117,13 +118,16 @@ options:
         default: false
       deploy:
         description:
-        - Deploy the fabric configuration to the switches after saving. Requires O(config_actions.save=true).
+        - Deploy the fabric configuration to the switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
         type: bool
         default: false
       type:
         description:
-        - The deploy scope. V(switch) deploys only the out-of-sync switches in the fabric
-          via the switch-level deploy endpoint. V(global) deploys the entire fabric.
+        - The deploy scope.
+        - V(switch) deploys only the switches referenced by the associations changed in this
+          run that are still out of sync after the save.
+        - V(global) deploys the entire fabric.
         type: str
         default: switch
         choices: [ switch, global ]
@@ -133,6 +137,11 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - The associate and disassociate API operations are bulk operations that return per-item status.
+- The port channel and VPC identifier options are optional. When they are omitted, Cisco Nexus Dashboard
+  allocates them and they are excluded from drift detection, so an association is considered idempotent
+  based on its access or ToR and aggregation or leaf switches alone.
+- When a port channel or VPC identifier is provided, it becomes authoritative and is enforced on every run.
+  A value that differs from the one on Cisco Nexus Dashboard is reported as changed and re-applied.
 """
 
 EXAMPLES = r"""
@@ -297,6 +306,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import ManageTorModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_tor import ManageTorOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -413,6 +425,19 @@ def main():
     state = module.params["state"]
     fabric_name = module.params["fabric_name"]
 
+    # Parse and validate config_actions BEFORE any API call so invalid input fails
+    # deterministically on every run, including idempotent no-drift runs and the
+    # read-only gathered state, and never mutates ND before failing.
+    try:
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
+    except ValueError as e:
+        module.fail_json(msg=str(e))
+
     # Resolve serial-or-IP switch inputs to serials and remap the user-facing
     # *_switch keys onto the *_switch_id model fields. This runs before the
     # state machine builds the proposed collection so the composite identity is
@@ -441,19 +466,6 @@ def main():
             module.fail_json(msg="Module execution failed: {0}".format(str(e)))
         return
 
-    # Parse and validate config_actions BEFORE any state mutation so invalid
-    # input fails deterministically on every run, including idempotent no-drift
-    # runs, and never mutates ND before failing.
-    config_actions = module.params.get("config_actions") or {}
-    save = config_actions.get("save", False)
-    deploy = config_actions.get("deploy", False)
-    deploy_type = config_actions.get("type", "switch")
-
-    try:
-        ManageTorOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
-    except ValueError as e:
-        module.fail_json(msg=str(e))
-
     nd_state_machine = None
     try:
         nd_state_machine = NDStateMachine(
@@ -463,25 +475,21 @@ def main():
         nd_state_machine.manage_state()
 
         # Execute config save/deploy only on real changes. Unlike the fabric
-        # modules, ToR gates on len(sent) for merged, overridden AND deleted: an
-        # associate stages pending config that a disassociate (including an
-        # overridden removal) must also push (save+deploy) to realize on the
-        # switches.
-        if len(nd_state_machine.sent) > 0:
+        # modules, ToR acts on removals too: a disassociate stages pending config
+        # that must be pushed for the switches to drop the association.
+        changed_pairs = list(nd_state_machine.sent) + list(nd_state_machine.removed)
+        if changed_pairs:
             # Scope a switch-level deploy to only the switches referenced by the
-            # ToR pairs changed this run. `sent` already holds created/updated
-            # pairs (merged/overridden) and removed pairs (deleted, plus the
-            # overridden removals of pairs present in ND but absent from config),
-            # so both members of every affected vPC pair are covered. A global
-            # deploy ignores this and stays fabric-wide.
+            # ToR pairs changed this run, so both members of every affected vPC
+            # pair are covered. A global deploy ignores this and stays fabric-wide.
             only_switch_ids: set = set()
-            for pair in nd_state_machine.sent:
+            for pair in changed_pairs:
                 only_switch_ids |= pair.affected_switch_ids()
-            nd_state_machine.model_orchestrator.execute_config_actions(
+            nd_state_machine.model_orchestrator.run_config_actions(
+                actions=config_actions,
                 fabric_names=[fabric_name],
-                save=save,
-                deploy=deploy,
-                deploy_type=deploy_type,
+                state=state,
+                check_mode=module.check_mode,
                 only_switch_ids=only_switch_ids or None,
             )
 

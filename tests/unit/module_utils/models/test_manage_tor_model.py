@@ -127,3 +127,67 @@ def test_identity_distinguishes_different_pairs():
     a = ManageTorModel.from_config(_cfg(aggregation_or_leaf_switch_id="L1"), context={"state": "deleted"})
     b = ManageTorModel.from_config(_cfg(aggregation_or_leaf_switch_id="L2"), context={"state": "deleted"})
     assert a.get_identifier_value() != b.get_identifier_value()
+
+
+# =============================================================================
+# Resource ID drift detection
+#
+# ND allocates the port-channel / VPC IDs when the user omits them, so a config
+# that lets ND choose must stay idempotent. A config that states them must be
+# enforced. ``get_diff`` returns True when the models agree.
+# =============================================================================
+
+
+def _device_with_resources():
+    return ManageTorModel.from_response(
+        {
+            "fabricName": "fab1",
+            "accessOrTorSwitchId": "T1",
+            "aggregationOrLeafSwitchId": "L1",
+            "resources": {"accessOrTorPortChannelId": 511, "aggregationOrLeafPortChannelId": 512},
+        }
+    )
+
+
+def test_omitted_resources_are_not_drift_for_merged():
+    """Letting ND allocate the IDs keeps a merged run idempotent."""
+    proposed = ManageTorModel.from_config(_cfg(), context={"state": "merged"})
+    assert _device_with_resources().get_diff(proposed, exclude_unset=True) is True
+
+
+def test_omitted_resources_are_not_removals_for_overridden():
+    """Regression guard for the reverse (removal) diff pass.
+
+    ``overridden`` compares full payloads, so ND-allocated IDs present on the device
+    but absent from config would otherwise be read as removals and report changed on
+    every run. ``reverse_diff_exclude`` suppresses that.
+    """
+    proposed = ManageTorModel.from_config(_cfg(), context={"state": "overridden"})
+    assert _device_with_resources().get_diff(proposed, exclude_unset=False) is True
+
+
+def test_matching_supplied_resources_are_not_drift():
+    """A supplied ID equal to the device value is idempotent."""
+    proposed = ManageTorModel.from_config(
+        _cfg(access_or_tor_port_channel_id=511, aggregation_or_leaf_port_channel_id=512),
+        context={"state": "merged"},
+    )
+    assert _device_with_resources().get_diff(proposed, exclude_unset=True) is True
+
+
+def test_differing_supplied_resources_are_drift():
+    """Forward detection survives reverse_diff_exclude: a stated ID is enforced."""
+    proposed = ManageTorModel.from_config(
+        _cfg(access_or_tor_port_channel_id=521, aggregation_or_leaf_port_channel_id=512),
+        context={"state": "merged"},
+    )
+    assert _device_with_resources().get_diff(proposed, exclude_unset=True) is False
+
+
+def test_differing_supplied_resources_are_drift_for_overridden():
+    """The same holds on the overridden path."""
+    proposed = ManageTorModel.from_config(
+        _cfg(access_or_tor_port_channel_id=521, aggregation_or_leaf_port_channel_id=512),
+        context={"state": "overridden"},
+    )
+    assert _device_with_resources().get_diff(proposed, exclude_unset=False) is False

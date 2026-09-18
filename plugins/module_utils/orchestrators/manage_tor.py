@@ -6,7 +6,7 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Dict, Optional, Tuple, Type, ClassVar, List
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import ManageTorModel
@@ -46,6 +46,19 @@ _RESOURCE_FIELDS = (
 # Controllers below this (major, minor) require the caller to reserve the
 # port-channel / VPC IDs before associate; ND 4.3+ allocates them implicitly.
 _RESOURCE_RESERVATION_MAX_VERSION = (4, 3)
+
+# API spellings of the resource IDs, used to scope what is merged back out of an
+# ``includeCandidates=true`` response.
+_RESOURCE_ALIASES = frozenset(
+    {
+        "accessOrTorPortChannelId",
+        "aggregationOrLeafPortChannelId",
+        "accessOrTorPeerPortChannelId",
+        "aggregationOrLeafPeerPortChannelId",
+        "accessOrTorVpcId",
+        "aggregationOrLeafVpcId",
+    }
+)
 
 
 class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorModel]):
@@ -219,18 +232,21 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """
-        List every configured access/ToR association in the fabric in one call.
+        List every configured access/ToR association in the fabric, with resources.
 
-        A single fabric-wide GET with ``includeCandidates=false`` and no
-        ``aggregationOrLeafSwitchId`` returns all existing associations across
-        every leaf. ``includeCandidates`` must be sent explicitly -- the ND API
-        returns HTTP 400 when the query string is omitted entirely.
+        Phase 1 is a single fabric-wide GET (``includeCandidates=false``, no leaf
+        filter) returning every existing association across every leaf. This is the
+        authoritative membership list: each vPC pairing arrives once as a
+        self-contained entry carrying both member switch IDs inline, so no per-leaf
+        sweep or client-side de-duplication is needed. ``includeCandidates`` must be
+        sent explicitly -- the ND API returns HTTP 400 when the query string is
+        omitted entirely.
 
-        Each vPC pairing is returned once as a self-contained entry carrying
-        both member switch IDs inline (``accessOrTorPeerSwitchId`` /
-        ``aggregationOrLeafPeerSwitchId``), so no per-leaf sweep or client-side
-        de-duplication is needed. ``fabricName`` is injected into each
-        association so the model can be constructed from the response.
+        Phase 2 backfills the port-channel / VPC IDs, which phase 1 never returns.
+        It is skipped for ``deleted``, which matches on identity alone.
+
+        ``fabricName`` is injected into each association so the model can be
+        constructed from the response.
         """
         try:
             fabric_name = self.rest_send.params.get("fabric_name", "")
@@ -238,12 +254,71 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
             api_endpoint = self.query_all_endpoint()
             api_endpoint.fabric_name = fabric_name
             api_endpoint.endpoint_params.aggregation_or_leaf_switch_id = None
+            api_endpoint.endpoint_params.aggregation_or_leaf_peer_switch_id = None
             api_endpoint.endpoint_params.include_candidates = False
 
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             associations: List[dict] = (result or {}).get("associations", []) or []
+
+            if self.rest_send.params.get("state") != "deleted":
+                self._enrich_with_resources(fabric_name, associations)
+
             for assoc in associations:
                 assoc["fabricName"] = fabric_name
             return associations
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    @staticmethod
+    def _association_key(association: dict) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+        """
+        Order-independent identity for an association, mirroring
+        ``ManageTorModel.get_identifier_value()``.
+
+        ND treats each vPC pair as unordered and may report a different
+        primary/peer than was submitted, so both sides are sorted.
+        """
+        access = tuple(sorted(v for v in (association.get("accessOrTorSwitchId"), association.get("accessOrTorPeerSwitchId")) if v))
+        aggregation = tuple(
+            sorted(v for v in (association.get("aggregationOrLeafSwitchId"), association.get("aggregationOrLeafPeerSwitchId")) if v)
+        )
+        return (access, aggregation)
+
+    def _enrich_with_resources(self, fabric_name: str, associations: List[dict]) -> None:
+        """
+        Merge the port-channel / VPC IDs into each association, in place.
+
+        ND returns ``resources`` only from an ``includeCandidates=true`` query scoped
+        to the association's full aggregation side (both leaf IDs for a vPC pair), so
+        associations are grouped by that scope and one call is issued per distinct
+        scope rather than one per association.
+        """
+        by_scope: Dict[Tuple[Optional[str], Optional[str]], List[dict]] = {}
+        for association in associations:
+            scope = (association.get("aggregationOrLeafSwitchId"), association.get("aggregationOrLeafPeerSwitchId"))
+            by_scope.setdefault(scope, []).append(association)
+
+        for (leaf_id, peer_id), scoped in by_scope.items():
+            if not leaf_id:
+                continue
+            targets = {self._association_key(item): item for item in scoped}
+            for row in self._query_scope_resources(fabric_name, leaf_id, peer_id):
+                # A scoped query also returns candidate rows for ToRs paired elsewhere,
+                # carrying proposed (not configured) allocations. Matching against the
+                # phase-1 membership list drops them without parsing ``remarks``.
+                target = targets.get(self._association_key(row))
+                if target is None:
+                    continue
+                resources = row.get("resources") or {}
+                target["resources"] = {key: value for key, value in resources.items() if key in _RESOURCE_ALIASES}
+
+    def _query_scope_resources(self, fabric_name: str, leaf_id: str, peer_id: Optional[str]) -> List[dict]:
+        """Return the associations ND reports for one aggregation scope, with resources."""
+        api_endpoint = self.query_all_endpoint()
+        api_endpoint.fabric_name = fabric_name
+        api_endpoint.endpoint_params.aggregation_or_leaf_switch_id = leaf_id
+        api_endpoint.endpoint_params.aggregation_or_leaf_peer_switch_id = peer_id
+        api_endpoint.endpoint_params.include_candidates = True
+
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        return (result or {}).get("associations", []) or []

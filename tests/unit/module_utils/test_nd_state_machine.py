@@ -225,16 +225,15 @@ def test_nd_state_machine_00125() -> None:
     """
     # Summary
 
-    Verify a real `deleted` operation records the removed items into `sent`, so
-    downstream save/deploy gates that fire on `len(sent) > 0` (e.g. nd_manage_tor)
-    trigger on removals -- not just create/update. Regression guard: `sent` was
-    previously populated only on the merged path, so deletes silently skipped the
-    config save.
+    Verify a real `deleted` operation records the removed items into `removed`, so
+    downstream save/deploy gates (e.g. nd_manage_tor) trigger on removals -- not
+    just create/update. `sent` must stay create/update-only: fabric and policy
+    group modules treat it as "objects that still exist and can be saved/deployed".
 
     ## Test
 
     - `state: deleted`, one proposed item that matches a seeded existing item
-    - `delete_bulk` is recorded and `sent` contains the deleted item
+    - `delete_bulk` is recorded, `removed` contains the deleted item, `sent` is empty
 
     ## Classes and Methods
 
@@ -250,7 +249,8 @@ def test_nd_state_machine_00125() -> None:
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "delete_bulk" in names
-    assert len(instance.sent) == 1
+    assert len(instance.removed) == 1
+    assert len(instance.sent) == 0
 
 
 def test_nd_state_machine_00130() -> None:
@@ -290,13 +290,14 @@ def test_nd_state_machine_00135() -> None:
     # Summary
 
     Verify an `overridden` run that only removes items records those removals
-    into `sent`, so save/deploy gates that fire on `len(sent) > 0` (e.g.
-    nd_manage_tor) trigger on override deletions -- not just create/update.
+    into `removed`, so save/deploy gates (e.g. nd_manage_tor) trigger on override
+    deletions. `sent` must stay empty so fabric modules, which build their
+    save/deploy target list from `sent`, never target a just-deleted fabric.
 
     ## Test
 
     - Seed an existing association absent from the (empty) proposed config
-    - `_manage_override_deletions` deletes it and records it in `sent`
+    - `_manage_override_deletions` deletes it and records it in `removed`
 
     ## Classes and Methods
 
@@ -313,7 +314,8 @@ def test_nd_state_machine_00135() -> None:
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "delete_bulk" in names
-    assert len(instance.sent) == 1
+    assert len(instance.removed) == 1
+    assert len(instance.sent) == 0
 
 
 class _ExistingLoopbackSpy(_SpyLoopbackOrchestrator):

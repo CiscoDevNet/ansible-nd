@@ -18,6 +18,9 @@ import types
 import pytest
 import yaml
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_tor
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import ManageTorModel
 
 
@@ -129,3 +132,52 @@ def test_state_choices_match_and_include_overridden():
     spec_choices = ManageTorModel.get_argument_spec()["state"]["choices"]
     assert doc_choices == spec_choices
     assert "overridden" in spec_choices
+
+
+def test_config_actions_uses_shared_fabric_fragment():
+    """ToR builds config_actions from the shared policy fragment, like the fabric models.
+
+    An inline copy can silently drift from what parse_config_actions enforces.
+    """
+    expected = config_actions_spec(FABRIC_CONFIG_ACTIONS)["config_actions"]
+    assert ManageTorModel.get_argument_spec()["config_actions"] == expected
+
+
+def test_documentation_config_actions_match_argument_spec():
+    """validate-modules parity for the config_actions suboptions."""
+    doc = yaml.safe_load(nd_manage_tor.DOCUMENTATION)
+    doc_subs = set(doc["options"]["config_actions"]["suboptions"].keys())
+    spec_subs = set(ManageTorModel.get_argument_spec()["config_actions"]["options"].keys())
+    assert doc_subs == spec_subs, {"doc_only": sorted(doc_subs - spec_subs), "spec_only": sorted(spec_subs - doc_subs)}
+
+
+def test_gathered_state_rejects_explicit_config_actions():
+    """The read-only gathered state rejects an explicit save/deploy rather than
+    silently ignoring it, so a playbook expecting a deploy is never misled."""
+    requested = {"save": True, "deploy": True, "type": "switch"}
+    with pytest.raises(ValueError, match="not allowed for state='gathered'"):
+        parse_config_actions(
+            params={"config_actions": requested},
+            raw_args={"config_actions": requested},
+            policy=FABRIC_CONFIG_ACTIONS,
+            state="gathered",
+        )
+
+
+def test_gathered_state_defaults_to_no_config_actions():
+    """With config_actions omitted, gathered resolves to a no-op."""
+    actions = parse_config_actions(params={}, raw_args={}, policy=FABRIC_CONFIG_ACTIONS, state="gathered")
+    assert actions.save is False
+    assert actions.deploy is False
+
+
+def test_deploy_without_save_is_rejected():
+    """The shared policy enforces deploy=true requires save=true for ToR."""
+    requested = {"save": False, "deploy": True, "type": "switch"}
+    with pytest.raises(ValueError, match="requires config_actions.save=true"):
+        parse_config_actions(
+            params={"config_actions": requested},
+            raw_args={"config_actions": requested},
+            policy=FABRIC_CONFIG_ACTIONS,
+            state="merged",
+        )

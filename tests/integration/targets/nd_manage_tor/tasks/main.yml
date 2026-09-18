@@ -13,10 +13,19 @@
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
     test_fabric_name: '{{ test_tor_fabric_name | default("ansible_tor_test_fabric") }}'
+    # Standalone (non-vPC) ToR and leaf, used for the single-association tests.
     test_tor_switch_id: '{{ test_tor_switch_serial | default("FDO123TOR01") }}'
     test_leaf_switch_id: '{{ test_leaf_switch_serial | default("FDO456LEAF01") }}'
-    test_tor_peer_switch_id: '{{ test_tor_peer_serial | default("FDO789TOR02") }}'
-    test_leaf_peer_switch_id: '{{ test_leaf_peer_serial | default("FDO111LEAF02") }}'
+    # A vPC ToR pair and a vPC leaf pair, used for the back-to-back vPC tests.
+    # These must be distinct from the standalone pair above: ND rejects a
+    # single-switch association for a ToR that is vPC-paired ("Peer Tor Should
+    # be paired"), so one switch cannot serve both cases.
+    test_vpc_tor_switch_id: '{{ test_vpc_tor_switch_serial | default("FDO789TOR02") }}'
+    test_vpc_tor_peer_switch_id: '{{ test_vpc_tor_peer_serial | default("FDO789TOR03") }}'
+    test_vpc_leaf_switch_id: '{{ test_vpc_leaf_switch_serial | default("FDO111LEAF02") }}'
+    test_vpc_leaf_peer_switch_id: '{{ test_vpc_leaf_peer_serial | default("FDO111LEAF03") }}'
+    # A second standalone ToR, associated to the vPC leaf pair.
+    test_tor2_switch_id: '{{ test_tor2_switch_serial | default("FDO222TOR04") }}'
 
 # =============================================================================
 # CLEANUP — Remove any existing test associations
@@ -29,8 +38,13 @@
     config:
       - access_or_tor_switch: "{{ test_tor_switch_id }}"
         aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
-      - access_or_tor_switch: "{{ test_tor_peer_switch_id }}"
-        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_vpc_tor_switch_id }}"
+        access_or_tor_peer_switch: "{{ test_vpc_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_vpc_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_vpc_leaf_peer_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor2_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_vpc_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_vpc_leaf_peer_switch_id }}"
     state: deleted
   ignore_errors: true
 
@@ -101,10 +115,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch: "{{ test_tor_peer_switch_id }}"
-        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
-        access_or_tor_peer_switch: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_peer_switch: "{{ test_leaf_peer_switch_id }}"
+      - access_or_tor_switch: "{{ test_vpc_tor_switch_id }}"
+        access_or_tor_peer_switch: "{{ test_vpc_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_vpc_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_vpc_leaf_peer_switch_id }}"
         access_or_tor_port_channel_id: 601
         aggregation_or_leaf_port_channel_id: 602
         access_or_tor_peer_port_channel_id: 603
@@ -144,9 +158,9 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch: "{{ test_tor_switch_id }}"
-        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
-        aggregation_or_leaf_peer_switch: "{{ test_leaf_peer_switch_id }}"
+      - access_or_tor_switch: "{{ test_tor2_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_vpc_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_vpc_leaf_peer_switch_id }}"
     state: merged
   check_mode: true
   register: nm_vpc_no_resources
@@ -182,7 +196,7 @@
   ansible.builtin.assert:
     that:
       - nm_config_actions_bad is failed
-      - "'deploy=True requires save=True' in (nm_config_actions_bad.msg | default(''))"
+      - "'config_actions.deploy=true requires config_actions.save=true' in (nm_config_actions_bad.msg | default(''))"
 
 # =============================================================================
 # GATHERED STATE TESTS: After associations created
@@ -241,6 +255,75 @@
       - nm_merged_update_tor_again is not changed
 
 # =============================================================================
+# RESOURCE ID DRIFT DETECTION
+#
+# ND does not return the port channel and VPC identifiers from the plain
+# association list, so they are backfilled from a scoped query. Without that,
+# any configuration stating them reports changed on every run.
+# =============================================================================
+
+- name: Re-apply the same port channels (merged state - idempotency with resources)
+  cisco.nd.nd_manage_tor:
+    <<: *update_tor_association_merged
+  register: nm_resources_idempotent
+
+- name: Asserts supplied resource IDs are idempotent when unchanged
+  ansible.builtin.assert:
+    that:
+      - nm_resources_idempotent is not changed
+
+- name: Omit the port channels entirely (merged state - ND keeps its allocation)
+  cisco.nd.nd_manage_tor: &omit_resources_merged
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+    state: merged
+  register: nm_omit_resources
+
+- name: Asserts omitted resource IDs are not drift
+  ansible.builtin.assert:
+    that:
+      - nm_omit_resources is not changed
+
+- name: Omit the port channels with overridden state (regression - reverse diff)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_vpc_tor_switch_id }}"
+        access_or_tor_peer_switch: "{{ test_vpc_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_vpc_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_vpc_leaf_peer_switch_id }}"
+    state: overridden
+  register: nm_omit_resources_overridden
+
+- name: Asserts ND-allocated resource IDs are not read as removals
+  ansible.builtin.assert:
+    that:
+      - nm_omit_resources_overridden is not changed
+
+- name: Change a port channel to a new value (merged state - drift is enforced)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+        access_or_tor_port_channel_id: 521
+        aggregation_or_leaf_port_channel_id: 522
+    state: merged
+  register: nm_resources_changed
+
+- name: Asserts a differing supplied resource ID is detected
+  ansible.builtin.assert:
+    that:
+      - nm_resources_changed is changed
+
+# =============================================================================
 # DELETED STATE TESTS
 # =============================================================================
 
@@ -280,8 +363,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
     config:
-      - access_or_tor_switch: "{{ test_tor_peer_switch_id }}"
-        aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch: "{{ test_vpc_tor_switch_id }}"
+        access_or_tor_peer_switch: "{{ test_vpc_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch: "{{ test_vpc_leaf_switch_id }}"
+        aggregation_or_leaf_peer_switch: "{{ test_vpc_leaf_peer_switch_id }}"
     state: deleted
   register: nm_deleted_vpc_tor
 

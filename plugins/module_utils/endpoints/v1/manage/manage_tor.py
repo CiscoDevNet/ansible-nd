@@ -43,6 +43,12 @@ class TorAssociationsGetEndpointParams(EndpointQueryParams):
       this is optional -- omitting it returns every existing association in the
       fabric in a single call. It is only required when ``include_candidates``
       is ``True``.
+    - aggregation_or_leaf_peer_switch_id: The vPC peer of
+      ``aggregation_or_leaf_switch_id`` (rendered as
+      ``aggregationOrLeafPeerSwitchId``). Both must be supplied to scope a query
+      to a vPC leaf pair; supplying only one scopes the query to a standalone
+      leaf, and an association on a vPC pair is then reported as a candidate
+      with an empty ``resources`` object.
     - include_candidates: When ``False`` (default) the API returns only the
       already-configured associations with their minimal identity fields. When
       ``True`` the API also returns candidate switches, recommendations,
@@ -54,6 +60,11 @@ class TorAssociationsGetEndpointParams(EndpointQueryParams):
         default=None,
         min_length=1,
         description="Filter associations by aggregation/leaf switch serial number",
+    )
+    aggregation_or_leaf_peer_switch_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="vPC peer of the aggregation/leaf switch, required alongside aggregation_or_leaf_switch_id to scope a query to a vPC leaf pair",
     )
     include_candidates: bool = Field(
         default=False,

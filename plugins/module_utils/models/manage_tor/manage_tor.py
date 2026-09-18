@@ -10,6 +10,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     model_validator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 
@@ -45,6 +47,20 @@ class ManageTorModel(NDBaseModel):
     exclude_from_diff: ClassVar[Set[str]] = {
         "access_or_tor_switch_name",
         "access_or_tor_peer_switch_name",
+    }
+
+    # ND allocates the port-channel / VPC IDs when the user omits them and echoes
+    # them back on read. A config that lets ND choose cannot express them, so their
+    # presence on the device must not register as a removal for the full-payload
+    # (replaced/overridden) diff. Forward detection is unaffected: an explicitly
+    # supplied ID that differs from the device still reports changed.
+    reverse_diff_exclude: ClassVar[Set[str]] = {
+        "accessOrTorPortChannelId",
+        "aggregationOrLeafPortChannelId",
+        "accessOrTorPeerPortChannelId",
+        "aggregationOrLeafPeerPortChannelId",
+        "accessOrTorVpcId",
+        "aggregationOrLeafVpcId",
     }
 
     # In payload mode, nest these fields under "resources"
@@ -157,12 +173,5 @@ class ManageTorModel(NDBaseModel):
                 default="merged",
                 choices=["merged", "overridden", "deleted", "gathered"],
             ),
-            config_actions=dict(
-                type="dict",
-                options=dict(
-                    save=dict(type="bool", default=False),
-                    deploy=dict(type="bool", default=False),
-                    type=dict(type="str", default="switch", choices=["switch", "global"]),
-                ),
-            ),
+            **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )
