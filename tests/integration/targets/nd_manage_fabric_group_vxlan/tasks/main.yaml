@@ -22,8 +22,18 @@
     <<: *nd_info
     state: deleted
     config:
+      # Must list every group the suite can create. A run that aborts mid-way leaves
+      # the rest behind, and a partial list makes the next run fail on stale state.
       - fabric_name: "{{ fg_vxlan_test_merged }}"
       - fabric_name: "{{ fg_vxlan_test_replaced }}"
+      - fabric_name: "{{ fg_vxlan_test_deleted }}"
+      - fabric_name: "fg_vxlan_override_keep"
+      - fabric_name: "fg_vxlan_override_prune"
+      - fabric_name: "fg_vxlan_secret_check"
+      - fabric_name: "fg_vxlan_downstream_check"
+      - fabric_name: "fg_vxlan_invalid"
+      - fabric_name: "multi_fg_1"
+      - fabric_name: "multi_fg_2"
   tags: always
   ignore_errors: true
 
@@ -480,7 +490,8 @@
           multisite_inter_connect_bgp_authentication: true
           multisite_inter_connect_bgp_key: "0123456789abcdef"
           auto_configure_cloud_sec: true
-          cloud_sec_key: "abcdef0123"
+          # AES_128_CMAC (the default algorithm) requires exactly 66 hex characters.
+          cloud_sec_key: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210fe"
   check_mode: true
   register: fg_secret_result
   tags: [test_fg_security]
@@ -490,7 +501,7 @@
     that:
       - fg_secret_result is not failed
       - "'0123456789abcdef' not in (fg_secret_result | to_json)"
-      - "'abcdef0123' not in (fg_secret_result | to_json)"
+      - "'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210fe' not in (fg_secret_result | to_json)"
       - "'VALUE_SPECIFIED_IN_NO_LOG_PARAMETER' in (fg_secret_result | to_json)"
     fail_msg: "Secret key values leaked into module output"
     success_msg: "Secret key values are masked in module output"
