@@ -102,10 +102,12 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
 
     # For each IOS-XE port-channel policy type: the member policy type ND requires BEFORE the create, the member type ND provisions once
-    # joined, and the cisco.nd module that converts a member (lab-verified 2026-09-15 on 4.2.1.10 and 4.3.1.175).
+    # joined, and the cisco.nd module that converts a member (lab-verified 2026-09-15 on 4.2.1.10 and 4.3.1.175; the routed row
+    # 2026-09-18 on both, where the joined member reads `iosXeL3PoMember`, not the spec's `iosXeInternalPoMember`).
     XE_MEMBER_HOST_POLICY: ClassVar[dict[str, tuple[str, str, str]]] = {
         "iosXeAccessPoHost": ("iosXeAccess", "iosXeAccessPoMember", "nd_interface_ethernet_access"),
         "iosXeTrunkPoHost": ("iosXeTrunkHost", "iosXeTrunkPoMember", "nd_interface_ethernet_trunk_host"),
+        "iosXeL3PortChannel": ("iosXeRoutedHost", "iosXeL3PoMember", "nd_interface_ethernet_routed"),
     }
 
     def _managed_policy_types(self) -> set[str]:
@@ -403,7 +405,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Fail fast when an IOS-XE port-channel names a member whose current intent policy does not match the port-channel mode. Unlike
         NX-OS, where the port-channel policy re-homes its members, ND requires an `iosXeAccessPoHost` member to already be `iosXeAccess`
-        and an `iosXeTrunkPoHost` member to be `iosXeTrunkHost` (the fabric default), and rejects the create otherwise: ND 4.2.1 with a flat
+        an `iosXeTrunkPoHost` member to be `iosXeTrunkHost` (the fabric default) and an `iosXeL3PortChannel` member to be `iosXeRoutedHost`
+        (`XE_MEMBER_HOST_POLICY`), and rejects the create otherwise: ND 4.2.1 with a flat
         HTTP 500 that masquerades as a transient error, 4.3.1 with a 207 failed item. A member ND already lists as this port-channel's own
         member type (`portChannelId` naming this port-channel) passes so an idempotent re-apply is accepted. A member absent from the
         switch inventory is refused too (ND would otherwise create a phantom record). NX-OS models are skipped. Reads the same cached
