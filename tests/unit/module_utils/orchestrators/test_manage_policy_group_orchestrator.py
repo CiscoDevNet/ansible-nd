@@ -1962,7 +1962,7 @@ def test_manage_policy_group_orchestrator_00810() -> None:
                 body,
                 return_code=207,
                 method="POST",
-                path="/appcenter/cisco/ndfc/api/v1/manage/fabrics/fab1/switchActions/deploy",
+                path="/api/v1/manage/fabrics/fab1/switchActions/deploy",
                 message="Multi-Status",
             )
         ]
