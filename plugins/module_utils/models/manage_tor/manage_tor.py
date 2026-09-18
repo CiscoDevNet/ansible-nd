@@ -49,6 +49,11 @@ class ManageTorModel(NDBaseModel):
         "access_or_tor_peer_switch_name",
     }
 
+    # Every switch suboption is a free-form string, so a templated value that resolves
+    # to "" (for example ``{{ peer | default('') }}``) would otherwise become part of
+    # the composite identifier and never match the association ND stores.
+    empty_string_means_unset: ClassVar[bool] = True
+
     # ND allocates the port-channel / VPC IDs when the user omits them and echoes
     # them back on read. A config that lets ND choose cannot express them, so their
     # presence on the device must not register as a removal for the full-payload
@@ -131,7 +136,12 @@ class ManageTorModel(NDBaseModel):
         return (self.fabric_name, access_pair, aggregation_pair)
 
     def affected_switch_ids(self) -> Set[str]:
-        """Serials this association references, for scoping a switch-level deploy."""
+        """Switch identifiers this association references, for scoping a switch-level deploy.
+
+        These are ``switchId`` values, which the config actions mixin also uses to
+        build its deploy candidates. For ACI nodes ``switchId`` is a node ID rather
+        than a serial number, so the two must not be used interchangeably.
+        """
         return {
             switch_id
             for switch_id in (

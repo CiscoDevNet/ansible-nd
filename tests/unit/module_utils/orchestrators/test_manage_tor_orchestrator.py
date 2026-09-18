@@ -421,6 +421,46 @@ def test_manage_tor_orchestrator_filter_switches_needing_deploy():
     assert ManageTorOrchestrator._filter_switches_needing_deploy(switches) == ["S1", "S3"]
 
 
+def test_manage_tor_orchestrator_scoped_deploy_matches_on_switch_id_not_serial():
+    """The deploy allowlist is keyed by ``switchId``, which may differ from the serial.
+
+    ``affected_switch_ids()`` returns the model's ``*_switch_id`` values, and the
+    mixin builds its candidates with ``_switch_identifier`` (switchId preferred).
+    Where the two differ -- ACI nodes report a node ID as ``switchId`` -- matching on
+    serials would empty the intersection and turn the deploy into a silent no-op.
+    """
+    switches = {
+        "switches": [
+            {"switchId": "NODE-101", "serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "outOfSync"}},
+            {"switchId": "NODE-102", "serialNumber": "FOC222BBB", "additionalData": {"configSyncStatus": "outOfSync"}},
+        ]
+    }
+    responses = [
+        _resp(switches, method="GET"),  # context build: fabric membership
+        _resp({"status": "Config save is completed"}, method="POST"),  # config_save
+        _resp(switches, method="GET"),  # post-save deploy target resolution
+        _resp({"status": "success"}, return_code=207, method="POST"),  # switchActions/deploy
+    ]
+    params = {"check_mode": False, "fabric_name": "fab1", "config": []}
+    rest_send = _build_rest_send(responses, params)
+    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
+    actions = parse_config_actions(
+        params={"config_actions": {"save": True, "deploy": True, "type": "switch"}},
+        raw_args={"config_actions": {"save": True, "deploy": True, "type": "switch"}},
+        policy=FABRIC_CONFIG_ACTIONS,
+    )
+
+    with does_not_raise():
+        orchestrator.run_config_actions(
+            actions=actions,
+            fabric_names=["fab1"],
+            state="merged",
+            only_switch_ids={"NODE-101"},
+        )
+
+    assert rest_send.committed_payload == {"switchIds": ["NODE-101"]}
+
+
 def test_manage_tor_orchestrator_run_config_actions_save_and_scoped_switch_deploy():
     """run_config_actions runs configSave then a switch-level deploy scoped to the
     switches of the associations changed this run, not every out-of-sync switch.

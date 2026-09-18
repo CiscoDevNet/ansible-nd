@@ -40,6 +40,26 @@ def test_single_pairing_no_resources_ok_merged():
         ManageTorModel.from_config(_cfg(), context={"state": "merged"})
 
 
+def test_empty_string_peer_is_treated_as_unset():
+    """An empty-string peer must not enter the identity.
+
+    ``NDBaseModel.empty_string_means_unset`` is opt-in. Without it a templated
+    ``{{ peer | default('') }}`` yields ``('', 'T1')`` for the access pair, which
+    never matches the association ND stores: merged re-creates, deleted matches
+    nothing, both silently.
+    """
+    model = ManageTorModel.from_config(_cfg(access_or_tor_peer_switch_id=""), context={"state": "merged"})
+    assert model.access_or_tor_peer_switch_id is None
+    assert model.get_identifier_value() == ("fab1", ("T1",), ("L1",))
+
+
+def test_empty_string_leaf_peer_is_treated_as_unset():
+    """The same holds for the aggregation side."""
+    model = ManageTorModel.from_config(_cfg(aggregation_or_leaf_peer_switch_id=""), context={"state": "merged"})
+    assert model.aggregation_or_leaf_peer_switch_id is None
+    assert model.get_identifier_value() == ("fab1", ("T1",), ("L1",))
+
+
 def test_vpc_leaf_peer_no_resources_ok_merged():
     """A leaf vPC pairing without resources is valid; ND defaults the VPC/PO IDs
     and returns a benign 207 ("Id [0] ... not within the range") the orchestrator
