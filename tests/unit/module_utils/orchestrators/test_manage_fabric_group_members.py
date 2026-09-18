@@ -130,6 +130,22 @@ def test_manage_fabric_group_members_probe_not_found_selects_manage() -> None:
     assert instance.is_multicluster is False
 
 
+def test_manage_fabric_group_members_probe_single_cluster_selects_manage() -> None:
+    """A single-cluster controller 400s the whole OneManage surface, so 400 means 'not MCFG'.
+
+    Regression test: mapping only the 404 made every single-cluster run fail, because the
+    controller rejects the OneManage path before it ever resolves the fabric name.
+    """
+
+    def responses():
+        yield responses_members("probe_single_cluster")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.is_multicluster is False
+
+
 def test_manage_fabric_group_members_probe_error_is_not_treated_as_manage() -> None:
     """A probe failure must propagate rather than silently selecting the Manage surface.
 
@@ -178,10 +194,16 @@ def test_manage_fabric_group_members_query_one_missing() -> None:
 
 
 def test_manage_fabric_group_members_create_bulk() -> None:
-    """create_bulk POSTs addMembers with a model-built {'members': [{'name': ...}]} payload."""
+    """Manage addMembers fans out to one request per member, each with a one-element members[].
+
+    Regression test: ND 4.2.1 rejects a two-member body with "Only one member fabric can be
+    added at a time", so batching every member into a single request fails against a real
+    controller even though the Manage schema types ``members`` as an array.
+    """
 
     def responses():
         yield responses_members("probe_fabric_group")
+        yield responses_members("add_members_success")
         yield responses_members("add_members_success")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
@@ -189,12 +211,13 @@ def test_manage_fabric_group_members_create_bulk() -> None:
     models = [FabricGroupMemberModel(member_name="member-fabric-1"), FabricGroupMemberModel(member_name="member-fabric-2")]
 
     with does_not_raise():
-        instance.create_bulk(models)
+        result = instance.create_bulk(models)
 
     assert rest_send.verb == HttpVerbEnum.POST.value
     assert rest_send.path.endswith("/fabrics/GROUP1/actions/addMembers")
-    body = rest_send.committed_payload
-    assert body == {"members": [{"name": "member-fabric-1"}, {"name": "member-fabric-2"}]}
+    assert len(result) == 2
+    # The last body carries only the second member; a batched body would carry both.
+    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-2"}]}
 
 
 def test_manage_fabric_group_members_delete_bulk() -> None:

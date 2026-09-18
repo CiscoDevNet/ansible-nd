@@ -77,6 +77,17 @@
             "probe, so the orchestrator falls back to the Manage surface"
         ]
     },
+    "probe_single_cluster": {
+        "DATA": {"code": 400, "description": "", "message": "Multi-cluster environment must be configured before using this feature"},
+        "MESSAGE": "Bad Request",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
+        "RETURN_CODE": 400,
+        "TEST_NOTES": [
+            "Captured from ND 4.2.1. A single-cluster controller rejects every OneManage path with",
+            "this 400 before it resolves the fabric name, so the probe never reaches a 404"
+        ]
+    },
     "probe_server_error": {
         "DATA": {},
         "MESSAGE": "Internal Server Error",

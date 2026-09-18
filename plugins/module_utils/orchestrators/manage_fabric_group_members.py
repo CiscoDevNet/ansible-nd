@@ -61,6 +61,9 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     onemanage_add_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsMembersAddPost
     onemanage_remove_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsMembersRemovePost
 
+    # Probe replies that mean "this fabric is not a multi-cluster fabric group" rather than an error.
+    ONEMANAGE_UNAVAILABLE_CODES: ClassVar[frozenset] = frozenset({400, 404})
+
     # Cached result of the multi-cluster probe (None until first resolved).
     _multicluster: Optional[bool] = None
 
@@ -74,9 +77,8 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         """
         Return True when the parent fabric_name is a OneManage multi-cluster fabric group.
 
-        Detection mirrors the VRF/Network resolver: a plain fabric group is unknown to OneManage
-        (the probe GET 404s), whereas a multi-cluster fabric group is reported by OneManage with
-        category 'multiClusterFabricGroup'. Probed once and cached for the orchestrator's lifetime.
+        A multi-cluster fabric group is reported by OneManage with category
+        'multiClusterFabricGroup'. Probed once and cached for the orchestrator's lifetime.
         """
         if self._multicluster is None:
             self._multicluster = self._detect_multicluster()
@@ -85,13 +87,20 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     def _detect_multicluster(self) -> bool:
         """Probe the OneManage fabric GET endpoint; a 'multiClusterFabricGroup' category means MCFG.
 
-        ``not_found_ok`` maps the documented 404 -- the fabric is unknown to OneManage -- to the
-        Manage surface. Every other failure (authentication, authorization, transport, 5xx,
-        malformed body) propagates instead of being reclassified as "not multi-cluster", which
-        would silently redirect the run's writes to the wrong API surface.
+        Two controller replies mean "not multi-cluster" rather than "broken":
+        400, which a single-cluster controller returns for every OneManage path because it
+        rejects the surface before resolving the fabric name, and 404, which a multi-cluster
+        controller returns when this particular fabric is not an MCFG. Any other failure
+        (authentication, transport, 5xx) propagates instead of being reclassified, which would
+        silently redirect the run's writes to the wrong API surface.
         """
         api_endpoint = self.onemanage_fabric_get_endpoint(fabric_name=self.fabric_name)
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        try:
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        except Exception:
+            if self.rest_send.return_code in self.ONEMANAGE_UNAVAILABLE_CODES:
+                return False
+            raise
         return isinstance(result, dict) and result.get("category") == "multiClusterFabricGroup"
 
     def _query_endpoint(self) -> NDEndpointBaseModel:
@@ -191,22 +200,24 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
             raise Exception(f"Query all members failed: {e}") from e
 
     def _send_members(self, api_endpoint: NDEndpointBaseModel, model_instances: List[FabricGroupMemberModel]) -> ResponseType:
-        """Send a membership change using the shape the resolved surface accepts.
+        """Send a membership change as one request per member, in the shape the surface accepts.
 
-        Manage batches every member into one ``fabricGroupMemberUpdateRequest``
-        (``{"members": [...]}``). OneManage accepts a single flat
-        ``multiClusterFabricGroupMemberUpdate`` (``{"clusterName": ..., "name": ...}``) per
-        request, so a multi-cluster group fans out to one request per member and returns the
-        per-member responses.
+        Both surfaces reject multi-member bodies -- ND 4.2.1 answers a two-member Manage request
+        with "Only one member fabric can be added at a time" -- so membership always fans out even
+        though the Manage schema types ``members`` as an array. Only the envelope differs: Manage
+        wants a one-element ``fabricGroupMemberUpdateRequest`` (``{"members": [{...}]}``) and
+        OneManage wants a flat ``multiClusterFabricGroupMemberUpdate``
+        (``{"clusterName": ..., "name": ...}``).
 
         The fan-out is not atomic: a failure on the Nth member leaves the preceding members
         applied and raises, matching the rest of the collection's fail-fast behaviour. The
         accepted work stays visible because each request is registered with Results as it runs.
         """
-        if not self.is_multicluster:
-            payload = {"members": [instance.to_payload() for instance in model_instances]}
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-        return [self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=instance.to_payload()) for instance in model_instances]
+        responses: List[ResponseType] = []
+        for instance in model_instances:
+            payload = instance.to_payload() if self.is_multicluster else {"members": [instance.to_payload()]}
+            responses.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+        return responses
 
     def create_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
         """Add members to the fabric group using the resolved surface's request shape."""

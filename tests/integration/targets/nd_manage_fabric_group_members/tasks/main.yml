@@ -13,10 +13,72 @@
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
-    test_fabric_group: "ansible_test_fabric_group"
-    test_member_1: "ansible_member_fabric_1"
-    test_member_2: "ansible_member_fabric_2"
-    test_member_3: "ansible_member_fabric_3"
+
+#############################################################################
+# PREREQUISITES - Build the fabric group and its candidate member fabrics
+#
+# The member module can only be exercised against fabrics that already exist, so
+# this target creates them rather than assuming a prepared controller. Without
+# this block an empty controller yields empty member lists and the gathered and
+# idempotency assertions pass without testing anything.
+#############################################################################
+- name: "PREREQ: Detach leftover members from a previous run"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
+      - member_name: "{{ test_member_3 }}"
+    state: deleted
+  ignore_errors: true
+
+- name: "PREREQ: Remove leftover fabric group from a previous run"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ test_fabric_group }}"
+  ignore_errors: true
+
+- name: "PREREQ: Remove leftover member fabrics from a previous run"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ test_member_1 }}"
+      - fabric_name: "{{ test_member_2 }}"
+      - fabric_name: "{{ test_member_3 }}"
+  ignore_errors: true
+
+- name: "PREREQ: Create the member fabrics"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ item.name }}"
+        management:
+          bgp_asn: "{{ item.bgp_asn }}"
+          anycast_gateway_mac: "{{ test_anycast_gateway_mac }}"
+  loop: "{{ test_member_fabrics }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: prereq_member_fabrics
+
+- name: "PREREQ: Create the fabric group"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': test_fabric_group} | combine(fabric_config_group) }}"
+  register: prereq_fabric_group
+
+- name: "PREREQ: Verify the fabric group and member fabrics exist"
+  ansible.builtin.assert:
+    that:
+      - prereq_member_fabrics is not failed
+      - prereq_fabric_group is not failed
+    fail_msg: "Prerequisite fabrics could not be created; member tests would not be meaningful"
 
 #############################################################################
 # CLEANUP - Ensure clean state before tests
@@ -148,7 +210,29 @@
 
 #############################################################################
 # CLEANUP
+#
+# Order matters: a fabric that is still a group member cannot be deleted, and a
+# group with members cannot be removed, so unwind membership first.
 #############################################################################
 - name: Final cleanup - remove all test members
   cisco.nd.nd_manage_fabric_group_members:
     <<: *clean_all_members
+  ignore_errors: true
+
+- name: "TEARDOWN: Delete the fabric group"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ test_fabric_group }}"
+  ignore_errors: true
+
+- name: "TEARDOWN: Delete the member fabrics"
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ test_member_1 }}"
+      - fabric_name: "{{ test_member_2 }}"
+      - fabric_name: "{{ test_member_3 }}"
+  ignore_errors: true
