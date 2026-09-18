@@ -71,6 +71,8 @@ options:
                 description:
                 - The policy configuration for the SVI.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -86,7 +88,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   description:
@@ -131,6 +133,7 @@ options:
                   ip_redirects:
                     description:
                     - Disable both IPv4/IPv6 redirects on the interface.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: bool
                   vrf_interface:
@@ -147,21 +150,21 @@ options:
                   pim_sparse:
                     description:
                     - Enable PIM sparse-mode on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(svi).
                     type: bool
                   pim_dr_priority:
                     description:
                     - Priority for PIM DR election on the interface.
                     - Valid range is 1-4294967295.
-                    - The controller applies a default of C(1) when unset.
+                    - The ND default is V(1).
                     - Applies when policy_type is C(svi).
                     type: int
                   hsrp:
                     description:
                     - Enable HSRP on the interface.
                     - When V(true), the other C(hsrp_*) and C(preempt)/C(mac) fields take effect.
-                    - No HSRP sub-options are strictly required; the controller applies defaults for any
-                      left unset (e.g. C(hsrp_group) and C(hsrp_version) default to C(1)).
+                    - No HSRP sub-options are strictly required; each one that has an ND default names it.
                     - Applies when policy_type is C(svi).
                     type: bool
                   hsrp_vip:
@@ -178,7 +181,7 @@ options:
                     description:
                     - HSRP group number.
                     - Valid range is 0-4095.
-                    - The controller applies a default of C(1) when unset.
+                    - The ND default is V(1).
                     - Applies when policy_type is C(svi).
                     type: int
                   hsrp_groupv6:
@@ -191,7 +194,7 @@ options:
                   hsrp_version:
                     description:
                     - HSRP protocol version.
-                    - The controller applies a default of C(1) when unset.
+                    - The ND default is V(1).
                     - Applies when policy_type is C(svi).
                     type: int
                     choices: [1, 2]
@@ -204,6 +207,7 @@ options:
                   preempt:
                     description:
                     - Enable HSRP preemption (overthrow lower-priority active routers).
+                    - The ND default is V(false).
                     - Applies when policy_type is C(svi).
                     type: bool
                   mac:
@@ -247,11 +251,13 @@ options:
                   advertise_subnet_in_underlay:
                     description:
                     - Advertise the SVI subnet into the underlay routing protocol.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(svi).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(svi).
                     type: bool
                   netflow_monitor:

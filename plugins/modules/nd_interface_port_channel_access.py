@@ -80,6 +80,8 @@ options:
                 description:
                 - The policy configuration for the port-channel.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -93,6 +95,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the port-channel.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   access_vlan:
@@ -110,23 +113,27 @@ options:
                   bpdu_filter:
                     description:
                     - BPDU filter setting for the port-channel.
+                    - The ND default is V(default).
                     - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the port-channel.
+                    - The ND default is V(enable) for C(accessPoHost) and V(default) for C(iosXeAccessPoHost).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the port-channel.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   copy_description:
                     description:
                     - Whether to propagate the port-channel description to all member interfaces.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   description:
@@ -138,6 +145,7 @@ options:
                   duplex_mode:
                     description:
                     - The duplex mode of the port-channel.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ auto, full, half ]
@@ -155,48 +163,56 @@ options:
                   lacp_port_priority:
                     description:
                     - LACP port priority.
-                    - Valid range is 1-65535. Default 32768.
+                    - Valid range is 1-65535.
+                    - The ND default is V(32768).
                     - Applies when policy_type is C(accessPoHost).
                     type: int
                   lacp_rate:
                     description:
                     - LACP rate (PDU transmit interval).
                     - V(normal) = 30 seconds, V(fast) = 1 second.
+                    - The ND default is V(normal).
                     - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ normal, fast ]
                   lacp_suspend:
                     description:
                     - Whether to suspend the port if LACP PDUs are not received.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   link_type:
                     description:
                     - Spanning-tree link type for the port-channel.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether the port-channel is configured as a SPAN/ERSPAN monitor source.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   mtu:
                     description:
                     - The MTU setting for the port-channel.
-                    - For C(accessPoHost), one of C(default) or C(jumbo). It defaults to C(jumbo) when unset during creation.
+                    - For C(accessPoHost), one of C(default) or C(jumbo).
                     - For C(iosXeAccessPoHost), an integer in the range 1500-9198 (for example C(8000)).
                     - A value outside the selected policy_type's form is rejected by the module.
+                    - The ND default is V(jumbo) for C(accessPoHost); C(iosXeAccessPoHost) has none.
                     - Applies to all policy_type values.
                     type: str
                   negotiate_auto:
                     description:
                     - Whether link auto-negotiation is enabled.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the port-channel.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   netflow_monitor:
@@ -214,25 +230,29 @@ options:
                     description:
                     - Configure the port-channel as a vPC orphan port.
                     - When V(true), the port is suspended by the secondary peer on vPC failure.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   pfc:
                     description:
                     - Whether Priority Flow Control is enabled on the port-channel.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   port_channel_mode:
                     description:
                     - The port-channel (channel-group) mode.
-                    - For C(accessPoHost), one of C(on), C(active) or C(passive). It defaults to C(active) when unset during creation.
+                    - For C(accessPoHost), one of C(on), C(active) or C(passive).
                     - For C(iosXeAccessPoHost), additionally C(auto) or C(desirable) (PAgP).
                     - A value outside the selected policy_type's subset is rejected by the module.
+                    - The ND default is V(active).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ 'on', active, passive, auto, desirable ]
                   port_type_edge_trunk:
                     description:
                     - Configure the port-channel as an edge trunk port (PortFast on trunk).
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   ports:
@@ -248,6 +268,7 @@ options:
                   qos:
                     description:
                     - Whether a QoS policy is applied to the port-channel.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   qos_policy:
@@ -263,17 +284,20 @@ options:
                   speed:
                     description:
                     - The speed setting for the port-channel.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the port-channel.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessPoHost).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - The ND default is V(default).
                     - Applies when policy_type is C(accessPoHost).
                     type: str
                     choices: [ shutdown, trap, default ]

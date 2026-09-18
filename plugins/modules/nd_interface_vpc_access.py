@@ -66,11 +66,14 @@ options:
               policy:
                 description:
                 - The policy configuration for the accessVpcHost vPC interface.
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   admin_state:
                     description:
                     - The administrative state of the vPC interface.
+                    - The ND default is V(true).
                     type: bool
                   bandwidth:
                     description:
@@ -80,24 +83,29 @@ options:
                   bpdu_filter:
                     description:
                     - BPDU filter setting for the vPC interface.
+                    - The ND default is V(default).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the vPC interface.
+                    - The ND default is V(enable).
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the vPC interface.
+                    - The ND default is V(true).
                     type: bool
                   copy_description:
                     description:
                     - Whether to propagate the per-peer port-channel description to all member interfaces.
+                    - The ND default is V(false).
                     type: bool
                   duplex_mode:
                     description:
                     - The duplex mode of the vPC interface.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, full, half ]
                   inherit_bandwidth:
@@ -108,44 +116,53 @@ options:
                   lacp_port_priority:
                     description:
                     - LACP port priority.
-                    - Valid range is 1-65535. Default 32768.
+                    - Valid range is 1-65535.
+                    - The ND default is V(32768).
                     type: int
                   lacp_rate:
                     description:
                     - LACP rate (PDU transmit interval).
                     - V(normal) = 30 seconds, V(fast) = 1 second.
+                    - The ND default is V(normal).
                     type: str
                     choices: [ normal, fast ]
                   lacp_suspend:
                     description:
                     - If disabled, LACP puts the port in individual state instead of suspending when LACP BPDUs are
                       not received.
+                    - The ND default is V(false).
                     type: bool
                   lacp_vpc_convergence:
                     description:
                     - Enable LACP convergence for vPC port-channels.
+                    - The ND default is V(false).
                     type: bool
                   link_type:
                     description:
                     - Spanning-tree link type.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   mirror_config:
                     description:
                     - Copy Peer-1 configuration to Peer-2.
+                    - The ND default is V(false).
                     type: bool
                   mtu:
                     description:
                     - Interface MTU.
+                    - The ND default is V(jumbo).
                     type: str
                     choices: [ default, jumbo ]
                   negotiate_auto:
                     description:
                     - Enable link auto-negotiation.
+                    - The ND default is V(true).
                     type: bool
                   netflow:
                     description:
                     - Enable Netflow on the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   netflow_monitor:
                     description:
@@ -204,19 +221,23 @@ options:
                   pfc:
                     description:
                     - Enable priority flow control.
+                    - The ND default is V(false).
                     type: bool
                   port_channel_mode:
                     description:
                     - Port-channel mode.
+                    - The ND default is V(active).
                     type: str
                     choices: [ 'on', active, passive ]
                   port_type_edge_trunk:
                     description:
                     - Enable spanning-tree edge port (PortFast) behavior.
+                    - The ND default is V(true).
                     type: bool
                   qos:
                     description:
                     - Enable QoS configuration for the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   qos_policy:
                     description:
@@ -229,15 +250,18 @@ options:
                   speed:
                     description:
                     - Interface speed.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Enable traffic storm control on the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - The ND default is V(default).
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
