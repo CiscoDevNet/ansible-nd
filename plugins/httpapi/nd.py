@@ -99,21 +99,14 @@ class HttpApi(HttpApiBase):
         except Exception:
             return []
 
-    # Required for cisco.dcnm modules
-    # The cisco.nd HTTPAPI provider only supports NDFC 12+
-    # TODO Add support for more platforms.
+    # Required for cisco.dcnm modules, which query the NDFC platform version.
+    # The cisco.nd HTTPAPI provider only supports NDFC 12+.
     def get_version(self, platform="ndfc"):
         if platform == "ndfc":
             if self.version is None:
                 self.version = 12
             return self.version
-        elif platform == "nd":
-            if self.version is None:
-                response_json = self._send_nd_request("GET", "/version.json", self.headers)
-                self.version = ".".join(str(response_json.get("body")[key]) for key in ["major", "minor", "maintenance"])
-            return self.version
-        else:
-            raise ValueError("Unknown platform type: {0}".format(platform))
+        raise ValueError("Unknown platform type: {0}".format(platform))
 
     # Required for cisco.dcnm modules
     def get_token(self):
