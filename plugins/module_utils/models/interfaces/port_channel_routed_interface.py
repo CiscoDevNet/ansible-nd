@@ -91,6 +91,13 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         "speed": "auto",
     }
 
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects an l3Po create body that omits `mtu` ("Policy [l3Po] - Validation failed for following fields: [mtu]", as a 207
+    # failed item; lab 2026-09-18 on 4.3.1.175) where 4.2.1 defaulted it to 9216 (neither spec marks it required). Always emit the
+    # template default on the wire; 4.2.1 stores 9216 either way, so idempotency is unchanged on both releases. Payload-only: see
+    # `NDBaseModel.payload_defaults`. The IOS-XE iosXeL3PortChannel create succeeds without `mtu` on both releases, so it has no entry.
+    payload_defaults: ClassVar[dict[str, Any]] = {"mtu": 9216}
+
     policy_type: Literal["l3Po"] = Field(
         alias="policyType", description="Routed port-channel policy template discriminator; injected as `l3Po` when omitted (see `default_policy_type`)"
     )
