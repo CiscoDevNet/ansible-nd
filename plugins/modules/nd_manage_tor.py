@@ -145,7 +145,7 @@ notes:
 """
 
 EXAMPLES = r"""
-- name: Associate a ToR switch with a leaf switch
+- name: Associate a ToR switch with a leaf switch (single ToR)
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
@@ -155,22 +155,22 @@ EXAMPLES = r"""
         aggregation_or_leaf_port_channel_id: 502
     state: merged
 
-- name: Associate a ToR switch with a leaf switch using management IP addresses
+# Nexus Dashboard handles port-channel and VPC allocations automatically when not specified.
+- name: Associate a ToR with a leaf vPC pair (single-sided vPC)
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch: "192.0.2.10"
-        aggregation_or_leaf_switch: "192.0.2.20"
-        access_or_tor_port_channel_id: 501
-        aggregation_or_leaf_port_channel_id: 502
+      - access_or_tor_switch: 10.15.33.23
+        aggregation_or_leaf_switch: 10.15.33.13
+        aggregation_or_leaf_peer_switch: 10.15.33.14
     state: merged
 
-- name: Associate a ToR switch and save and deploy the fabric configuration
+- name: Associate a ToR switch and save and deploy the fabric configuration (single ToR)
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch: "98AFDSD8V0"
-        aggregation_or_leaf_switch: "98AM4FFFFV0"
+      - access_or_tor_switch: 98AFDSD8V0
+        aggregation_or_leaf_switch: 98AM4FFFFV0
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
     state: merged
@@ -179,14 +179,25 @@ EXAMPLES = r"""
       deploy: true
       type: switch
 
-- name: Associate a ToR VPC pair with a leaf VPC pair (back-to-back VPC)
+# Nexus Dashboard handles port-channel and VPC allocations automatically when not specified.
+- name: Associate a ToR vPC pair with a leaf vPC pair (double-sided vPC)
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch: "98AFDSD8V0"
-        aggregation_or_leaf_switch: "98AM4FFFFV0"
-        access_or_tor_peer_switch: "98AWSETG8V0"
-        aggregation_or_leaf_peer_switch: "98AMDDDD8V0"
+      - access_or_tor_switch: 98AFDSD8V0
+        aggregation_or_leaf_switch: 98AM4FFFFV0
+        access_or_tor_peer_switch: 98AWSETG8V0
+        aggregation_or_leaf_peer_switch: 98AMDDDD8V0
+    state: merged
+
+- name: Associate a ToR vPC pair with a leaf vPC pair (double-sided vPC)
+  cisco.nd.nd_manage_tor:
+    fabric_name: my-fabric
+    config:
+      - access_or_tor_switch: 98AFDSD8V0
+        aggregation_or_leaf_switch: 98AM4FFFFV0
+        access_or_tor_peer_switch: 98AWSETG8V0
+        aggregation_or_leaf_peer_switch: 98AMDDDD8V0
         access_or_tor_port_channel_id: 501
         aggregation_or_leaf_port_channel_id: 502
         access_or_tor_peer_port_channel_id: 503
@@ -199,16 +210,16 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch: "98AFDSD8V0"
-        aggregation_or_leaf_switch: "98AM4FFFFV0"
+      - access_or_tor_switch: 98AFDSD8V0
+        aggregation_or_leaf_switch: 98AM4FFFFV0
     state: deleted
 
 - name: Override the fabric to a single ToR association and stage the removal of the rest
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     config:
-      - access_or_tor_switch: "98AFDSD8V0"
-        aggregation_or_leaf_switch: "98AM4FFFFV0"
+      - access_or_tor_switch: 98AFDSD8V0
+        aggregation_or_leaf_switch: 98AM4FFFFV0
     state: overridden
     config_actions:
       save: true
