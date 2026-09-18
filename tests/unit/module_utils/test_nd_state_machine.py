@@ -221,6 +221,38 @@ def test_nd_state_machine_00120() -> None:
     assert "preflight_create" not in names
 
 
+def test_nd_state_machine_00125() -> None:
+    """
+    # Summary
+
+    Verify a real `deleted` operation records the removed items into `removed`, so
+    downstream save/deploy gates (e.g. nd_manage_tor) trigger on removals -- not
+    just create/update. `sent` must stay create/update-only: fabric and policy
+    group modules treat it as "objects that still exist and can be saved/deployed".
+
+    ## Test
+
+    - `state: deleted`, one proposed item that matches a seeded existing item
+    - `delete_bulk` is recorded, `removed` contains the deleted item, `sent` is empty
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_delete_state()
+    """
+    instance = _build_state_machine(state="deleted", check_mode=False, config=_CONFIG)
+    # Seed existing so the proposed item resolves to a real deletion.
+    instance.existing = instance.proposed.copy()
+    instance.before = instance.existing.copy()
+
+    with does_not_raise():
+        instance._manage_delete_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "delete_bulk" in names
+    assert len(instance.removed) == 1
+    assert len(instance.sent) == 0
+
+
 def test_nd_state_machine_00130() -> None:
     """
     # Summary
@@ -251,6 +283,39 @@ def test_nd_state_machine_00130() -> None:
     assert names[0] == "preflight_create"
     assert names[1] == "preflight"
     assert len(calls[1][1]) == 1
+
+
+def test_nd_state_machine_00135() -> None:
+    """
+    # Summary
+
+    Verify an `overridden` run that only removes items records those removals
+    into `removed`, so save/deploy gates (e.g. nd_manage_tor) trigger on override
+    deletions. `sent` must stay empty so fabric modules, which build their
+    save/deploy target list from `sent`, never target a just-deleted fabric.
+
+    ## Test
+
+    - Seed an existing association absent from the (empty) proposed config
+    - `_manage_override_deletions` deletes it and records it in `removed`
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_override_deletions()
+    """
+    donor = _build_state_machine(state="deleted", check_mode=False, config=_CONFIG)
+    instance = _build_state_machine(state="overridden", check_mode=False, config=[])
+    # before/existing hold an association that is not in the (empty) proposed.
+    instance.existing = donor.proposed.copy()
+    instance.before = donor.proposed.copy()
+
+    with does_not_raise():
+        instance._manage_override_deletions()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "delete_bulk" in names
+    assert len(instance.removed) == 1
+    assert len(instance.sent) == 0
 
 
 class _ExistingLoopbackSpy(_SpyLoopbackOrchestrator):
