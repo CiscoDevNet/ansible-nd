@@ -198,6 +198,23 @@ ethernet_48_dual_seed_payload:
         stormControlBroadcastLevel: 50.0
         stormControlBroadcastLevelPps: 12345
 
+# --- Defaults-only desired config (PR #558 review) ---
+# Every value below is the int_trunk_host template default, so the desired policy equals the
+# unconfigured-default signature query_all normally hides. Naming the interface must keep it visible
+# so the two-run scenario in defaults_only.yaml converges with changed: false instead of re-posting.
+
+ethernet_41_defaults_only:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: none
+        mtu: jumbo
+        speed: auto
+
 # --- Cleanup helper: all test interfaces ---
 
 cleanup_interface_names:
@@ -209,3 +226,78 @@ cleanup_interface_names:
   - Ethernet1/46
   - Ethernet1/47
   - Ethernet1/48
+
+# --- IOS-XE coverage (issue #535) ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and
+# nd_test_xe_interface_name) in inventory/extra-vars to enable; xe.yaml is
+# skipped when nd_test_xe_switch_ip is unset. The XE interface must exist on a
+# Catalyst (IOS-XE) switch in the fabric, must not be a port-channel member, and
+# must not be an endpoint of any ND fabric link.
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_interface_name: "{{ nd_test_xe_interface_name | default('GigabitEthernet1/0/1') }}"
+
+xe_trunk_host:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_names:
+    - "{{ test_xe_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type
+        # (iosXeTrunkHost); xe.yaml asserts the echo carries it.
+        admin_state: true
+        allowed_vlans: "100-200"
+        description: "Ansible integration test XE trunk"
+
+xe_trunk_host_updated:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_names:
+    - "{{ test_xe_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeTrunkHost
+        admin_state: true
+        allowed_vlans: "150-250"
+        mtu: 8000  # Cat9kv (CML beta) caps system and port MTU at 8978; a real 9300 allows 9198. Keep below both.
+        description: "Updated XE trunk description"
+
+# Defaults-only IOS-XE desired config (PR #558 review): every value is the ios_xe_int_trunk_host
+# template default, i.e. the exact shape the XE reset PUT leaves behind, so xe.yaml can prove a named
+# defaults-only interface converges with changed: false after state: deleted.
+xe_trunk_host_defaults_only:
+  switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+  interface_names:
+    - "{{ test_xe_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        allowed_vlans: none
+        mtu: 1500
+        speed: auto
+
+# --- IOS-XE fabric-link ownership guard (PR #558) ---
+# Set nd_test_xe_fabric_link_switch_ip and nd_test_xe_fabric_link_interface_name
+# in inventory/extra-vars to enable xe_fabric_link_guard.yaml (skipped when
+# either is unset). The interface must be an IOS-XE port that is the src or dst
+# endpoint of an ND fabric link carrying a link policy (e.g. the leaf side of a
+# Catalyst leaf-spine link). Every module call in that file is expected to be
+# refused in preflight, so no deploy or reset ever reaches the port.
+test_xe_fabric_link_switch_ip: "{{ nd_test_xe_fabric_link_switch_ip | default('') }}"
+test_xe_fabric_link_interface_name: "{{ nd_test_xe_fabric_link_interface_name | default('') }}"
+
+xe_trunk_host_fabric_link:
+  switch_ip: "{{ test_xe_fabric_link_switch_ip }}"
+  interface_names:
+    - "{{ test_xe_fabric_link_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        allowed_vlans: "100-200"
+        description: "Ansible integration test XE fabric-link guard"

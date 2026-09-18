@@ -1282,7 +1282,7 @@ def test_ethernet_routed_orchestrator_00920() -> None:
 
     - EthernetBaseOrchestrator.create_bulk()
     - EthernetBaseOrchestrator._check_fabric_ownership()
-    - EthernetRoutedInterfaceOrchestrator._check_fabric_ownership()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
     """
 
     def responses():
@@ -1344,8 +1344,8 @@ def test_ethernet_routed_orchestrator_00940() -> None:
 
     ## Classes and Methods
 
-    - EthernetRoutedInterfaceOrchestrator._check_fabric_ownership()
-    - EthernetRoutedInterfaceOrchestrator._fabric_link_endpoints()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    - EthernetBaseOrchestrator._fabric_link_endpoints()
     """
 
     def responses():
@@ -1382,8 +1382,8 @@ def test_ethernet_routed_orchestrator_00950() -> None:
 
     ## Classes and Methods
 
-    - EthernetRoutedInterfaceOrchestrator._check_fabric_ownership()
-    - EthernetRoutedInterfaceOrchestrator._fabric_link_endpoints()
+    - EthernetBaseOrchestrator._check_fabric_ownership()
+    - EthernetBaseOrchestrator._fabric_link_endpoints()
     """
 
     def responses():
@@ -1417,7 +1417,7 @@ def test_ethernet_routed_orchestrator_00960() -> None:
 
     ## Classes and Methods
 
-    - EthernetRoutedInterfaceOrchestrator._fabric_link_endpoints()
+    - EthernetBaseOrchestrator._fabric_link_endpoints()
     """
 
     def responses():
@@ -1457,8 +1457,8 @@ def test_ethernet_routed_orchestrator_00970() -> None:
 
     ## Classes and Methods
 
-    - EthernetRoutedInterfaceOrchestrator.preflight_delete()
-    - EthernetRoutedInterfaceOrchestrator._check_xe_fabric_link()
+    - EthernetBaseOrchestrator.preflight_delete()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
     """
 
     def responses():
@@ -1492,7 +1492,7 @@ def test_ethernet_routed_orchestrator_00980() -> None:
     ## Classes and Methods
 
     - EthernetRoutedInterfaceOrchestrator.delete_bulk()
-    - EthernetRoutedInterfaceOrchestrator._check_xe_fabric_link()
+    - EthernetBaseOrchestrator._check_xe_fabric_link()
     """
 
     def responses():
