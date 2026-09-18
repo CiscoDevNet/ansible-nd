@@ -77,6 +77,8 @@ options:
                 description:
                 - The policy configuration for the subinterface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -92,7 +94,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the subinterface.
-                    - Defaults to V(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   description:
@@ -110,6 +112,7 @@ options:
                     description:
                     - Subinterface MTU.
                     - Valid range is 576-9216.
+                    - The ND default is V(9216).
                     - Applies when policy_type is C(subinterface).
                     type: int
                   vlan_id:
@@ -157,22 +160,26 @@ options:
                   ip_redirects:
                     description:
                     - Disable both IPv4/IPv6 redirects on the subinterface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(subinterface).
                     type: bool
                   pim_sparse:
                     description:
                     - Enable PIM sparse-mode on the subinterface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(subinterface).
                     type: bool
                   pim_dr_priority:
                     description:
                     - Priority for PIM DR election on the subinterface.
                     - Valid range is 1-4294967295.
+                    - The ND default is V(1).
                     - Applies when policy_type is C(subinterface).
                     type: int
                   netflow:
                     description:
                     - Whether netflow is enabled on the subinterface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(subinterface).
                     type: bool
                   netflow_monitor:
