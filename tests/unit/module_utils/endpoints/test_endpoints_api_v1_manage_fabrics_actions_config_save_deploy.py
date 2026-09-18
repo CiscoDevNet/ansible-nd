@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
     EpFabricDeployPost,
+    FabricDeployQueryParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
@@ -149,3 +150,45 @@ def test_endpoints_api_v1_manage_fabrics_actions_deploy_00120():
         instance.fabric_name = "my/fabric name#1"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/my%2Ffabric%20name%231/actions/deploy"
+
+
+def test_endpoints_api_v1_manage_fabrics_actions_deploy_00130():
+    """
+    # Summary
+
+    Verify EpFabricDeployPost omits the inclAllFabricGroupsSwitches query string
+    by default (single-fabric deploy).
+
+    ## Classes and Methods
+
+    - EpFabricDeployPost.path
+    - FabricDeployQueryParams.to_query_string
+    """
+    with does_not_raise():
+        instance = EpFabricDeployPost()
+        instance.fabric_name = "MyFabric"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/MyFabric/actions/deploy"
+    assert "inclAllFabricGroupsSwitches" not in result
+
+
+def test_endpoints_api_v1_manage_fabrics_actions_deploy_00140():
+    """
+    # Summary
+
+    Verify EpFabricDeployPost appends inclAllFabricGroupsSwitches=true when the
+    fabric-group global deploy flag is set (fabric-group deploy includes member
+    fabric switches).
+
+    ## Classes and Methods
+
+    - EpFabricDeployPost.path
+    - FabricDeployQueryParams.to_query_string
+    """
+    with does_not_raise():
+        instance = EpFabricDeployPost(
+            fabric_name="MyFabricGroup",
+            endpoint_params=FabricDeployQueryParams(incl_all_fabric_groups_switches=True),
+        )
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/MyFabricGroup/actions/deploy?inclAllFabricGroupsSwitches=true"

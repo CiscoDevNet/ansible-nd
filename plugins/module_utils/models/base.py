@@ -7,7 +7,7 @@ from __future__ import absolute_import, division, print_function
 from abc import ABC
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER, has_removals, issubset
 
 
@@ -71,6 +71,12 @@ class NDBaseModel(BaseModel, ABC):
     # Fields to explicitly exclude per mode
     payload_exclude_fields: ClassVar[Set[str]] = set()
     config_exclude_fields: ClassVar[Set[str]] = set()
+
+    # Opt-in for `_treat_empty_string_as_unset`. Off by default: for most models "" is a
+    # legitimate value that clears a field, so coercing it to unset would silently drop the
+    # user's intent. Fabric families enable it because ND 4.3.1 rejects "" on schema-
+    # constrained fields with HTTP 400 (see the validator docstring).
+    empty_string_means_unset: ClassVar[bool] = False
 
     # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
     # ND echoes the schema-declared template default for every field the user never set, so an existing-side
@@ -214,6 +220,51 @@ class NDBaseModel(BaseModel, ABC):
         return self.to_config(**kwargs)
 
     # --- Core Deserialization ---
+
+    @model_validator(mode="before")
+    @classmethod
+    def _treat_empty_string_as_unset(cls, data: Any, info: Any) -> Any:
+        """Drop empty-string config input for fields declared ``Optional[...] = None``.
+
+        A field defaulting to ``None`` is declaring "when unset, omit me from the
+        payload". Ansible playbooks and vars files routinely spell "unset" as ``""``,
+        so both spellings must mean the same thing. This matters because ND 4.3.1
+        enforces request-body schema validation: fields carrying ``minLength``,
+        ``pattern`` or ``format`` (for example ``dhcpStartAddress``) reject ``""``
+        with HTTP 400, whereas omitting them lets ND apply its own default.
+
+        Only applied to config input on models that opt in via ``empty_string_means_unset``.
+        Fields that legitimately accept "" declare a ``str = ""`` default instead and are
+        therefore untouched.
+        """
+        if not cls.empty_string_means_unset:
+            return data
+        if not isinstance(data, dict):
+            return data
+        context = getattr(info, "context", None) or {}
+        if context.get("mode") != "config":
+            return data
+        nullable_keys = cls._nullable_default_keys()
+        if not nullable_keys:
+            return data
+        return {key: value for key, value in data.items() if not (value == "" and key in nullable_keys)}
+
+    @classmethod
+    def _nullable_default_keys(cls) -> set[str]:
+        """Field names and aliases whose declared default is None."""
+        keys: set[str] = set()
+        for field_name, field_info in getattr(cls, "model_fields", {}).items():
+            # Fields with no declared default carry PydanticUndefined here, so an
+            # identity check against None selects only explicit ``= None`` defaults.
+            if field_info.default is not None:
+                continue
+            if getattr(field_info, "default_factory", None) is not None:
+                continue
+            keys.add(field_name)
+            alias = getattr(field_info, "alias", None)
+            if alias:
+                keys.add(alias)
+        return keys
 
     @classmethod
     def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
