@@ -1,0 +1,120 @@
+---
+# Subinterface on a routed port-channel parent (issue #549 acceptance item)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# ND creates a subinterface only on a parent whose DISCOVERED mode is routed, so the parent port-channel is created AND deployed
+# with this module, the scenario waits until ND has discovered it, and only then creates the subinterface with
+# nd_interface_subinterface_managed. Teardown removes the subinterface first, then the parent.
+
+- name: "SUBIF SETUP: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: subif_switches
+
+- name: "SUBIF SETUP: Resolve the switch id from its management IP"
+  vars:
+    matches: "{{ subif_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip) | map(attribute='switchId') | list }}"
+  ansible.builtin.set_fact:
+    subif_switch_id: "{{ (matches + ['']) | first }}"
+
+- name: "SUBIF SETUP: Verify the switch is in the fabric"
+  ansible.builtin.assert:
+    that:
+      - subif_switch_id | length > 0
+    fail_msg: "No switch with fabricManagementIp {{ test_switch_ip }} in fabric {{ test_fabric_name }}"
+
+- name: "SUBIF PARENT: Create and deploy the routed port-channel523"
+  cisco.nd.nd_interface_port_channel_routed: &subif_parent
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_523_parent }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_subif_parent
+
+- name: "SUBIF PARENT: Verify the parent was created"
+  ansible.builtin.assert:
+    that:
+      - nm_subif_parent is changed
+
+- name: "SUBIF PARENT: Wait until ND reports port-channel523 as a discovered routed interface"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ subif_switch_id }}/interfaces/port-channel523"
+    method: get
+  register: subif_parent_discovery
+  until: (subif_parent_discovery.jsondata.operData | default({})).mode | default('') == 'routed'
+  retries: 18
+  delay: 10
+
+- name: "SUBIF CREATE: Create a managed subinterface on the routed port-channel (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &subif_create
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_523_subif }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_subif_create
+
+- name: "SUBIF CREATE: Create a managed subinterface on the routed port-channel (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *subif_create
+  register: nm_subif_create
+
+- name: "SUBIF CREATE: Verify the subinterface exists on the routed port-channel parent"
+  ansible.builtin.assert:
+    that:
+      - cm_subif_create is changed
+      - nm_subif_create is changed
+      - nm_subif_create.after | selectattr('interface_name', 'search', '(?i)^port-channel523\\.5$') | list | length == 1
+
+- name: "SUBIF CREATE IDEMPOTENT: Re-apply the subinterface"
+  cisco.nd.nd_interface_subinterface_managed: *subif_create
+  register: nm_subif_create_idem
+
+- name: "SUBIF PARENT IDEMPOTENT: Re-apply the parent while it carries a subinterface"
+  cisco.nd.nd_interface_port_channel_routed: *subif_parent
+  register: nm_subif_parent_idem
+
+- name: "SUBIF IDEMPOTENT: Verify neither module reports a change"
+  ansible.builtin.assert:
+    that:
+      - nm_subif_create_idem is not changed
+      - nm_subif_parent_idem is not changed
+
+- name: "SUBIF TEARDOWN: Remove the subinterface"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Port-channel523.5
+    config_actions:
+      deploy: true
+    state: deleted
+  register: nm_subif_delete
+
+- name: "SUBIF TEARDOWN: Remove the routed port-channel parent"
+  cisco.nd.nd_interface_port_channel_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel523
+    config_actions:
+      deploy: true
+    state: deleted
+  register: nm_subif_parent_delete
+
+- name: "SUBIF TEARDOWN: Verify both were removed"
+  ansible.builtin.assert:
+    that:
+      - nm_subif_delete is changed
+      - nm_subif_parent_delete is changed
+      - nm_subif_parent_delete.after | selectattr('interface_name', 'equalto', 'port-channel523') | list | length == 0
