@@ -33,6 +33,8 @@ class FabricTypeEnum(str, Enum):
     - `VXLAN_EBGP` - VXLAN fabric with eBGP overlay
     - `AIML_VXLAN_IBGP` - AI/ML VXLAN fabric with iBGP overlay
     - `AIML_VXLAN_EBGP` - AI/ML VXLAN fabric with eBGP overlay
+    - `ROUTED` - Routed fabric
+    - `AIML_ROUTED` - AI/ML Routed fabric
     """
 
     VXLAN_IBGP = "vxlanIbgp"
@@ -40,6 +42,8 @@ class FabricTypeEnum(str, Enum):
     EXTERNAL_CONNECTIVITY = "externalConnectivity"
     AIML_VXLAN_IBGP = "aimlVxlanIbgp"
     AIML_VXLAN_EBGP = "aimlVxlanEbgp"
+    ROUTED = "routed"
+    AIML_ROUTED = "aimlRouted"
 
 
 class AlertSuspendEnum(str, Enum):
