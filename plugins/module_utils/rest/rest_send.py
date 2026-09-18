@@ -592,6 +592,22 @@ class RestSend:  # pylint: disable=too-many-public-methods
         """
         return copy.deepcopy(self._response)
 
+    @property
+    def response_count(self) -> int:
+        """
+        # Summary
+
+        The number of responses accumulated so far, read without copying them. The list only ever grows (it is never cleared or
+        replaced after `__init__`), so the count is a freshness token: snapshot it before a request and, if it has not grown afterwards,
+        the sender raised before the controller answered and `response_current` still holds the previous request's response (issue #554).
+        Use this instead of `len(responses)`, which deep-copies the whole history on every read.
+
+        ## Raises
+
+        None
+        """
+        return len(self._response)
+
     def add_response(self, value: dict) -> None:
         """
         # Summary

@@ -593,14 +593,14 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not self._pending_removes:
             return None
         submitted = list(self._pending_removes)
-        recorded = len(self.rest_send.responses)
+        recorded = self.rest_send.response_count
         try:
             result = self._remove_interfaces()
             self._pending_removes = []
             return result
         except Exception as e:
             accepted: list[tuple[str, str]] = []
-            if len(self.rest_send.responses) > recorded:
+            if self.rest_send.response_count > recorded:
                 accepted_pairs = self._accepted_multistatus_pairs()
                 accepted = [pair for pair in submitted if (pair[0].lower(), pair[1]) in accepted_pairs]
                 self._pending_removes = [pair for pair in self._pending_removes if pair not in accepted]
