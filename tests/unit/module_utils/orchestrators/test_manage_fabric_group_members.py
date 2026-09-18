@@ -1,0 +1,479 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Unit tests for `ManageFabricGroupMembersOrchestrator`.
+
+Verifies the orchestrator drives RestSend correctly: fabric_name resolution from
+params, query_all unwrapping the 'fabrics' array, query_one name matching, and
+bulk add/remove building the {"members": [{"name": ...}]} payload from the model.
+
+Scope: methods defined in manage_fabric_group_members.py only.
+"""
+
+# pylint: disable=disallowed-name,protected-access,redefined-outer-name
+
+from __future__ import absolute_import, annotations, division, print_function
+
+__metaclass__ = type  # pylint: disable=invalid-name
+
+import pytest
+
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_members import ManageFabricGroupMembersOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+
+
+def responses_members(key: str):
+    """Load fixture data for test_manage_fabric_group_members tests."""
+    return load_fixture("test_manage_fabric_group_members")[key]
+
+
+def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = None) -> RestSend:
+    """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    response_handler = ResponseHandler()
+    response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+    response_handler.verb = HttpVerbEnum.GET
+    response_handler.commit()
+
+    params = {"check_mode": False, "fabric_name": "GROUP1", "config": config or []}
+    rest_send = RestSend(params)
+    rest_send.sender = sender
+    rest_send.response_handler = response_handler
+    rest_send.unit_test = True
+    rest_send.timeout = 1
+    return rest_send
+
+
+def test_manage_fabric_group_members_init() -> None:
+    """Orchestrator instantiates and exposes expected ClassVars and rest_send."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+
+    with does_not_raise():
+        instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.model_class is FabricGroupMemberModel
+    assert instance.supports_bulk_create is True
+    assert instance.supports_bulk_delete is True
+    assert instance.rest_send is rest_send
+
+
+def test_manage_fabric_group_members_fabric_name() -> None:
+    """fabric_name resolves from rest_send.params (regression: base does not define it)."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    assert instance.fabric_name == "GROUP1"
+
+
+def test_manage_fabric_group_members_query_all() -> None:
+    """query_all GETs the members endpoint and unwraps the 'fabrics' array."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("members_ok")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert rest_send.path.endswith("/fabrics/GROUP1/members")
+    assert [m["name"] for m in result] == ["member-fabric-1", "member-fabric-2"]
+
+
+def test_manage_fabric_group_members_query_all_empty() -> None:
+    """query_all returns an empty list when the group has no members."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("members_empty")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.query_all() == []
+
+
+def test_manage_fabric_group_members_probe_not_found_selects_manage() -> None:
+    """A 404 from OneManage is the documented 'not multi-cluster' answer."""
+
+    def responses():
+        yield responses_members("probe_not_found")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.is_multicluster is False
+
+
+def test_manage_fabric_group_members_probe_single_cluster_selects_manage() -> None:
+    """A single-cluster controller 400s the whole OneManage surface, so 400 means 'not MCFG'.
+
+    Regression test: mapping only the 404 made every single-cluster run fail, because the
+    controller rejects the OneManage path before it ever resolves the fabric name.
+    """
+
+    def responses():
+        yield responses_members("probe_single_cluster")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.is_multicluster is False
+
+
+def test_manage_fabric_group_members_probe_error_is_not_treated_as_manage() -> None:
+    """A probe failure must propagate rather than silently selecting the Manage surface.
+
+    Classifying a 5xx (or auth/transport failure) as "not multi-cluster" would route the run's
+    writes to Manage with the wrong payload shape and discard the diagnostic that mattered.
+    """
+
+    def responses():
+        yield responses_members("probe_server_error")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(Exception, match="Request failed"):
+        instance.is_multicluster
+
+
+def test_manage_fabric_group_members_query_one_found() -> None:
+    """query_one returns the matching member dict by name."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("members_ok")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    model = FabricGroupMemberModel(member_name="member-fabric-2")
+
+    result = instance.query_one(model)
+    assert result is not None
+    assert result["name"] == "member-fabric-2"
+
+
+def test_manage_fabric_group_members_query_one_missing() -> None:
+    """query_one returns None when the member is absent."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("members_ok")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    model = FabricGroupMemberModel(member_name="not-a-member")
+
+    assert instance.query_one(model) is None
+
+
+def test_manage_fabric_group_members_create_bulk() -> None:
+    """Manage addMembers fans out to one request per member, each with a one-element members[].
+
+    Regression test: ND 4.2.1 rejects a two-member body with "Only one member fabric can be
+    added at a time", so batching every member into a single request fails against a real
+    controller even though the Manage schema types ``members`` as an array.
+    """
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("add_members_success")
+        yield responses_members("add_members_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    models = [FabricGroupMemberModel(member_name="member-fabric-1"), FabricGroupMemberModel(member_name="member-fabric-2")]
+
+    with does_not_raise():
+        result = instance.create_bulk(models)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/fabrics/GROUP1/actions/addMembers")
+    assert len(result) == 2
+    # The last body carries only the second member; a batched body would carry both.
+    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-2"}]}
+
+
+def test_manage_fabric_group_members_delete_bulk() -> None:
+    """delete_bulk POSTs removeMembers with a model-built {'members': [{'name': ...}]} payload."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("remove_members_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    models = [FabricGroupMemberModel(member_name="member-fabric-1")]
+
+    with does_not_raise():
+        instance.delete_bulk(models)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/fabrics/GROUP1/actions/removeMembers")
+    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
+
+
+def test_manage_fabric_group_members_create_delegates_to_bulk() -> None:
+    """create() routes a single member through the bulk add endpoint."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("add_members_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.create(FabricGroupMemberModel(member_name="member-fabric-1"))
+
+    assert rest_send.path.endswith("/fabrics/GROUP1/actions/addMembers")
+    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
+
+
+def test_manage_fabric_group_members_delete_delegates_to_bulk() -> None:
+    """delete() routes a single member through the bulk remove endpoint."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("remove_members_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.delete(FabricGroupMemberModel(member_name="member-fabric-1"))
+
+    assert rest_send.path.endswith("/fabrics/GROUP1/actions/removeMembers")
+    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
+
+
+def test_manage_fabric_group_members_multicluster_detection() -> None:
+    """A OneManage 'multiClusterFabricGroup' probe flags the orchestrator as multi-cluster (cached)."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.is_multicluster is True
+    # Cached: a second access must not consume another response.
+    assert instance.is_multicluster is True
+
+
+def test_manage_fabric_group_members_multicluster_query_all() -> None:
+    """query_all routes to the OneManage members endpoint when the parent is multi-cluster."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("onemanage_members_ok")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/members")
+    assert [m["name"] for m in result] == ["member-fabric-1", "member-fabric-2"]
+
+
+def test_manage_fabric_group_members_multicluster_create_bulk() -> None:
+    """OneManage addMembers takes one flat member object per request, not a members[] wrapper.
+
+    The operation consumes ``multiClusterFabricGroupMemberUpdate`` (clusterName + name at the
+    root); sending the Manage ``{"members": [...]}`` wrapper would drop both fields.
+    """
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("onemanage_add_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    models = [FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a")]
+
+    with does_not_raise():
+        instance.create_bulk(models)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/addMembers")
+    assert rest_send.committed_payload == {"name": "member-fabric-1", "clusterName": "cluster-a"}
+
+
+def test_manage_fabric_group_members_multicluster_create_bulk_fans_out() -> None:
+    """Multiple MCFG members become one request each, since the API takes a single object."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("onemanage_add_success")
+        yield responses_members("onemanage_add_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    models = [
+        FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a"),
+        FabricGroupMemberModel(member_name="member-fabric-2", cluster_name="cluster-b"),
+    ]
+
+    with does_not_raise():
+        result = instance.create_bulk(models)
+
+    assert len(result) == 2
+    assert rest_send.committed_payload == {"name": "member-fabric-2", "clusterName": "cluster-b"}
+
+
+def test_manage_fabric_group_members_multicluster_delete_bulk() -> None:
+    """OneManage removeMembers takes the same flat single-member object."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("onemanage_remove_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    models = [FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a")]
+
+    with does_not_raise():
+        instance.delete_bulk(models)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/removeMembers")
+    assert rest_send.committed_payload == {"name": "member-fabric-1", "clusterName": "cluster-a"}
+
+
+def test_manage_fabric_group_members_config_save_manage() -> None:
+    """config_save routes to the Manage configSave endpoint for a plain fabric group."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("config_save_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.config_save("GROUP1")
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/manage/fabrics/GROUP1/actions/configSave")
+
+
+def test_manage_fabric_group_members_config_save_multicluster() -> None:
+    """config_save routes to the OneManage configSave endpoint for a multi-cluster fabric group."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("config_save_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.config_save("GROUP1")
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/configSave")
+
+
+def test_manage_fabric_group_members_deploy_global_multicluster() -> None:
+    """deploy_global routes to the OneManage deploy endpoint for a multi-cluster fabric group."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("deploy_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.deploy_global("GROUP1")
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/deploy")
+
+
+def test_manage_fabric_group_members_deploy_global_manage_includes_member_switches() -> None:
+    """A Manage global deploy must request the fabric group's member-fabric switches.
+
+    The Manage deploy API defaults ``inclAllFabricGroupsSwitches`` to ``false``, which would
+    leave member fabrics undeployed despite the module documenting group-wide deployment.
+    """
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("deploy_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.deploy_global("GROUP1")
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert "inclAllFabricGroupsSwitches=true" in rest_send.path
+
+
+def test_manage_fabric_group_members_deploy_switch_manage() -> None:
+    """A switch-scoped deploy queries Manage switches and deploys only out-of-sync serials."""
+
+    def responses():
+        yield responses_members("probe_fabric_group")
+        yield responses_members("switches_out_of_sync")
+        yield responses_members("switch_deploy_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.deploy_switch_ids("GROUP1", instance.resolve_switch_deploy_targets("GROUP1"))
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/manage/fabrics/GROUP1/switchActions/deploy")
+    assert rest_send.committed_payload == {"switchIds": ["SN-DRIFT"]}
+
+
+def test_manage_fabric_group_members_deploy_switch_multicluster() -> None:
+    """A switch-scoped deploy routes to the OneManage switches + switchActions endpoints for MCFG."""
+
+    def responses():
+        yield responses_members("probe_multicluster")
+        yield responses_members("switches_out_of_sync")
+        yield responses_members("switch_deploy_success")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.deploy_switch_ids("GROUP1", instance.resolve_switch_deploy_targets("GROUP1"))
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/switchActions/deploy")
+    assert rest_send.committed_payload == {"switchIds": ["SN-DRIFT"]}
