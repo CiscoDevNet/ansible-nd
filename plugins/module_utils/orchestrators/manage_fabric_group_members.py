@@ -6,15 +6,15 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Type, ClassVar, List, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabric_group_members import (
-    EpManageFabricGroupMembersGet,
-    EpManageFabricGroupMembersAddPost,
-    EpManageFabricGroupMembersRemovePost,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsMembersGet,
+    EpManageFabricsMembersAddPost,
+    EpManageFabricsMembersRemovePost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics import (
     EpOneManageFabricsFabricNameGet,
@@ -31,6 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
     EpFabricDeployPost,
+    FabricDeployQueryParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesGet,
@@ -45,13 +46,13 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersAddPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersAddPost
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersRemovePost
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersGet
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricGroupMembersAddPost
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricGroupMembersRemovePost
+    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersAddPost
+    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersAddPost
+    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersRemovePost
+    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersGet
+    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersGet
+    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricsMembersAddPost
+    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricsMembersRemovePost
 
     # OneManage (multi-cluster fabric group) endpoint variants, selected at runtime when the parent
     # fabric_name is detected to be a multi-cluster fabric group.
@@ -82,14 +83,16 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         return self._multicluster
 
     def _detect_multicluster(self) -> bool:
-        """Probe the OneManage fabric GET endpoint; a 'multiClusterFabricGroup' category means MCFG."""
-        try:
-            api_endpoint = self.onemanage_fabric_get_endpoint(fabric_name=self.fabric_name)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            return isinstance(result, dict) and result.get("category") == "multiClusterFabricGroup"
-        except Exception:
-            # A probe failure must not mask the Manage path; default to the fabric-group surface.
-            return False
+        """Probe the OneManage fabric GET endpoint; a 'multiClusterFabricGroup' category means MCFG.
+
+        ``not_found_ok`` maps the documented 404 -- the fabric is unknown to OneManage -- to the
+        Manage surface. Every other failure (authentication, authorization, transport, 5xx,
+        malformed body) propagates instead of being reclassified as "not multi-cluster", which
+        would silently redirect the run's writes to the wrong API surface.
+        """
+        api_endpoint = self.onemanage_fabric_get_endpoint(fabric_name=self.fabric_name)
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        return isinstance(result, dict) and result.get("category") == "multiClusterFabricGroup"
 
     def _query_endpoint(self) -> NDEndpointBaseModel:
         """Return the members GET endpoint for the resolved surface, with fabric_name set."""
@@ -116,19 +119,25 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     # Route save/deploy to the OneManage surface for a multi-cluster fabric group; otherwise the
     # mixin's Manage defaults apply. The OneManage endpoints mirror Manage 1:1 (same bodies), so
     # the mixin's save/switch-filter/deploy logic is reused unchanged.
-    def _config_save_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
+    def config_save_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
         endpoint_cls = EpOneManageFabricsConfigSavePost if self.is_multicluster else EpFabricConfigSavePost
         return endpoint_cls(fabric_name=fabric_name)
 
-    def _deploy_global_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
-        endpoint_cls = EpOneManageFabricsDeployPost if self.is_multicluster else EpFabricDeployPost
-        return endpoint_cls(fabric_name=fabric_name)
+    def deploy_global_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
+        """Deploy the whole group, including member-fabric switches.
 
-    def _switches_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
+        The Manage deploy API defaults ``inclAllFabricGroupsSwitches`` to ``false``, which leaves a
+        fabric group's member fabrics undeployed, so a ``global`` deploy must set it explicitly.
+        """
+        if self.is_multicluster:
+            return EpOneManageFabricsDeployPost(fabric_name=fabric_name)
+        return EpFabricDeployPost(fabric_name=fabric_name, endpoint_params=FabricDeployQueryParams(incl_all_fabric_groups_switches=True))
+
+    def switches_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
         endpoint_cls = EpOneManageFabricsSwitchesGet if self.is_multicluster else EpManageFabricsSwitchesGet
         return endpoint_cls(fabric_name=fabric_name)
 
-    def _switch_deploy_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
+    def switch_deploy_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
         endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if self.is_multicluster else EpManageFabricsSwitchActionsDeployPost
         return endpoint_cls(fabric_name=fabric_name)
 
@@ -181,32 +190,36 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         except Exception as e:
             raise Exception(f"Query all members failed: {e}") from e
 
-    def create_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
-        """
-        Add members to the fabric group in a single API call.
+    def _send_members(self, api_endpoint: NDEndpointBaseModel, model_instances: List[FabricGroupMemberModel]) -> ResponseType:
+        """Send a membership change using the shape the resolved surface accepts.
 
-        Builds the payload from each model. For a multi-cluster fabric group the per-member
-        clusterName is included when supplied; for a plain fabric group only name is sent.
+        Manage batches every member into one ``fabricGroupMemberUpdateRequest``
+        (``{"members": [...]}``). OneManage accepts a single flat
+        ``multiClusterFabricGroupMemberUpdate`` (``{"clusterName": ..., "name": ...}``) per
+        request, so a multi-cluster group fans out to one request per member and returns the
+        per-member responses.
+
+        The fan-out is not atomic: a failure on the Nth member leaves the preceding members
+        applied and raises, matching the rest of the collection's fail-fast behaviour. The
+        accepted work stays visible because each request is registered with Results as it runs.
         """
-        try:
-            api_endpoint = self._add_endpoint()
+        if not self.is_multicluster:
             payload = {"members": [instance.to_payload() for instance in model_instances]}
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        return [self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=instance.to_payload()) for instance in model_instances]
+
+    def create_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
+        """Add members to the fabric group using the resolved surface's request shape."""
+        try:
+            return self._send_members(self._add_endpoint(), model_instances)
         except Exception as e:
             names = [instance.member_name for instance in model_instances]
             raise Exception(f"Add members failed for {names}: {e}") from e
 
     def delete_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
-        """
-        Remove members from the fabric group in a single API call.
-
-        Builds the payload from each model. For a multi-cluster fabric group the per-member
-        clusterName is included when supplied; for a plain fabric group only name is sent.
-        """
+        """Remove members from the fabric group using the resolved surface's request shape."""
         try:
-            api_endpoint = self._remove_endpoint()
-            payload = {"members": [instance.to_payload() for instance in model_instances]}
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            return self._send_members(self._remove_endpoint(), model_instances)
         except Exception as e:
             names = [instance.member_name for instance in model_instances]
             raise Exception(f"Remove members failed for {names}: {e}") from e

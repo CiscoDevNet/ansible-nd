@@ -198,7 +198,11 @@ msg:
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_members import ManageFabricGroupMembersOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -234,20 +238,23 @@ def main():
     )
     require_pydantic(module)
 
-    # Validate config_actions before any state mutation so invalid input fails
-    # deterministically, including on idempotent no-drift runs, without mutating ND.
-    config_actions = module.params.get("config_actions") or {}
-    save = config_actions.get("save", False)
-    deploy = config_actions.get("deploy", False)
-    deploy_type = config_actions.get("type", "switch")
-
+    # Parse and validate config_actions BEFORE any API call so invalid input fails
+    # deterministically on every run, including idempotent no-drift runs and the
+    # read-only gathered state, and never mutates ND before failing.
+    state = module.params["state"]
     try:
-        ManageFabricGroupMembersOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
     except ValueError as e:
         module.fail_json(msg=str(e))
 
+    nd_state_machine = None
     try:
-        if module.params["state"] == "gathered":
+        if state == "gathered":
             module.exit_json(changed=False, gathered=_run_gathered(module))
         else:
             nd_state_machine = NDStateMachine(
@@ -258,18 +265,25 @@ def main():
             nd_state_machine.manage_state()
 
             # Save/deploy the parent fabric group only when membership actually changed.
-            if module.params["state"] != "deleted" and len(nd_state_machine.sent) > 0:
-                nd_state_machine.model_orchestrator.execute_config_actions(
+            if state != "deleted" and len(nd_state_machine.sent) > 0:
+                nd_state_machine.model_orchestrator.run_config_actions(
+                    actions=config_actions,
                     fabric_names=[module.params["fabric_name"]],
-                    save=save,
-                    deploy=deploy,
-                    deploy_type=deploy_type,
+                    state=state,
+                    check_mode=module.check_mode,
                 )
 
-            module.exit_json(**nd_state_machine.output.format())
+            verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+            module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
+    except NDStateMachineError as e:
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":

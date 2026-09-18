@@ -9,6 +9,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     ConfigDict,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 
@@ -41,6 +43,10 @@ class FabricGroupMemberModel(NDBaseModel):
     # so it must not make an already-present member look "changed" during the merged diff.
     exclude_from_diff: ClassVar[Set[str]] = {"fabric_type"}
     payload_exclude_fields: ClassVar[Set[str]] = {"fabric_type"}
+
+    # ``cluster_name`` feeds the composite MCFG identity, so a templated value resolving to
+    # "" would otherwise key the member as ``("", name)`` and never match what ND stores.
+    empty_string_means_unset: ClassVar[bool] = True
 
     # --- Fields ---
 
@@ -82,13 +88,5 @@ class FabricGroupMemberModel(NDBaseModel):
                 default="merged",
                 choices=["merged", "deleted", "gathered"],
             ),
-            config_actions=dict(
-                type="dict",
-                required=False,
-                options=dict(
-                    save=dict(type="bool", default=False),
-                    deploy=dict(type="bool", default=False),
-                    type=dict(type="str", default="switch", choices=["switch", "global"]),
-                ),
-            ),
+            **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )

@@ -66,6 +66,28 @@
             "to the OneManage surface"
         ]
     },
+    "probe_not_found": {
+        "DATA": {},
+        "MESSAGE": "Not Found",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
+        "RETURN_CODE": 404,
+        "TEST_NOTES": [
+            "OneManage does not know this fabric. This is the documented negative answer for the",
+            "probe, so the orchestrator falls back to the Manage surface"
+        ]
+    },
+    "probe_server_error": {
+        "DATA": {},
+        "MESSAGE": "Internal Server Error",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
+        "RETURN_CODE": 500,
+        "TEST_NOTES": [
+            "A transient OneManage failure. It must not be read as 'not multi-cluster', which",
+            "would send the run's writes to the Manage surface with the wrong payload shape"
+        ]
+    },
     "onemanage_members_ok": {
         "DATA": {
             "fabrics": [
