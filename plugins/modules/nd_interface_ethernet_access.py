@@ -72,6 +72,8 @@ options:
                 description:
                 - The policy configuration for the access interface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -87,7 +89,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   access_vlan:
@@ -105,28 +107,28 @@ options:
                   bpdu_filter:
                     description:
                     - Spanning-tree BPDU filter setting for the interface.
-                    - It defaults to C(default) when unset during creation.
+                    - The ND default is V(default).
                     - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the interface.
-                    - It defaults to C(enable) for C(accessHost) and C(default) for C(iosXeAccess) when unset during creation.
+                    - The ND default is V(enable) for C(accessHost) and V(default) for C(iosXeAccess).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   debounce_timer:
                     description:
                     - Link debounce timer (in milliseconds).
                     - Valid range is 0-20000.
-                    - It defaults to C(100) when unset during creation.
+                    - The ND default is V(100).
                     - Applies when policy_type is C(accessHost).
                     type: int
                   debounce_linkup_timer:
@@ -144,14 +146,14 @@ options:
                   duplex_mode:
                     description:
                     - The duplex mode of the interface.
-                    - It defaults to C(auto) when unset during creation.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ auto, full, half ]
                   error_detection_acl:
                     description:
                     - Whether error detection for access-list installation failures is enabled.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   extra_config:
@@ -162,7 +164,7 @@ options:
                   fec:
                     description:
                     - The forward error correction (FEC) mode for the interface.
-                    - It defaults to C(auto) when unset during creation.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ "auto", "fcFec", "off", "rsCons16", "rsFec", "rsIEEE" ]
@@ -175,14 +177,14 @@ options:
                   link_type:
                     description:
                     - Spanning-tree link type.
-                    - It defaults to C(auto) when unset during creation.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether switchport monitor for SPAN / ERSPAN is enabled.
-                    - It defaults to C(false) when unset during creation.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   mtu:
@@ -190,23 +192,22 @@ options:
                     - The MTU setting for the interface.
                     - For C(accessHost), one of C(default) or C(jumbo). C(default) renders the NX-OS system default MTU (1500)
                       on the switch; C(jumbo) renders C(mtu 9216). Lab-verified on ND 4.2.1; the rendered value is fixed and is
-                      not affected by the fabric settings C(fabricMtu) or C(l2HostInterfaceMtu) options. It defaults to C(jumbo)
-                      when unset during creation.
-                    - For C(iosXeAccess), an integer in the range 1500-9216 (for example C(9000)). It defaults to C(1500) when
-                      unset during creation.
+                      not affected by the fabric settings C(fabricMtu) or C(l2HostInterfaceMtu) options.
+                    - For C(iosXeAccess), an integer in the range 1500-9216 (for example C(9000)).
                     - A value outside the selected policy_type's form is rejected by the module.
+                    - The ND default is V(jumbo) for C(accessHost) and V(1500) for C(iosXeAccess).
                     - Applies to all policy_type values.
                     type: str
                   negotiate_auto:
                     description:
                     - Whether link auto-negotiation is enabled.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
-                    - It defaults to C(false) when unset during creation.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   netflow_monitor:
@@ -223,25 +224,25 @@ options:
                   orphan_port:
                     description:
                     - Whether VPC orphan port suspension is enabled.
-                    - It defaults to C(false) when unset during creation.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   pfc:
                     description:
                     - Whether Priority Flow Control is enabled on the interface.
-                    - It defaults to C(false) when unset during creation.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   port_type_edge_trunk:
                     description:
                     - Whether spanning-tree edge port (PortFast) is enabled.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   qos:
                     description:
                     - Whether a QoS policy is applied to the interface.
-                    - It defaults to C(false) when unset during creation.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   qos_policy:
@@ -259,26 +260,26 @@ options:
                   speed:
                     description:
                     - The speed setting for the interface.
-                    - It defaults to C(auto) when unset during creation.
                     - For C(accessHost), one of C(auto), C(10Mb), C(100Mb), C(1Gb), C(2.5Gb), C(5Gb), C(10Gb), C(25Gb), C(40Gb),
                       C(50Gb), C(100Gb), C(200Gb), C(400Gb), C(800Gb).
                     - For C(iosXeAccess), one of C(auto), C(10Mb), C(100Mb), C(1Gb), C(2.5Gb), C(5Gb), C(10Gb), C(25Gb),
                       C(40Gb), C(100Gb), C(noNegotiate).
                     - The choices below are the union of both sets; a value outside the selected policy_type's subset is rejected
                       by the module.
+                    - The ND default is V(auto).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb, noNegotiate ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the interface.
-                    - It defaults to C(false) when unset during creation.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(accessHost).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
-                    - It defaults to C(default) when unset during creation.
+                    - The ND default is V(default).
                     - Applies when policy_type is C(accessHost).
                     type: str
                     choices: [ shutdown, trap, default ]
