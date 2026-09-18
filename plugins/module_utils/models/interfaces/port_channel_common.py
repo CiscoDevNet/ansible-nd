@@ -27,6 +27,55 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 # create-side canonical spelling `Port-channel101` in payload-mode dumps only.
 _XE_CREATE_NAME_RE = re.compile(r"^port-channel(\d+)$")
 
+# ND's lowercase port-channel name prefix, and the ID range the controller accepts (the same bounds the vPC models use for
+# `peer1_port_channel_id` / `peer2_port_channel_id`).
+_PORT_CHANNEL_PREFIX = "port-channel"
+_PORT_CHANNEL_ID_MIN = 1
+_PORT_CHANNEL_ID_MAX = 4096
+
+
+def normalize_port_channel_interface_name(value):
+    """
+    # Summary
+
+    Normalize a port-channel interface name to the ND API convention (lowercase `port-channel` prefix, e.g. `Port-Channel501` ->
+    `port-channel501`). Bare integers are accepted and prefixed (e.g. `501` -> `port-channel501`). Shared by every port-channel model
+    through `PortChannelInterfaceBaseModel` (issue #378; the helper issue #353 consolidates).
+
+    When a numeric port-channel ID can be extracted from the input, it is range-checked against 1-4096 so an out-of-range ID fails
+    early with a clear error instead of being rejected by ND. A platform may support fewer (a Catalyst 9000 accepts 1-128); that limit
+    is left to the controller because the name is validated before the network OS is known. An input with no extractable ID (an
+    abbreviation such as `po501`, a name with a space or a suffix) is only lowercased, as before; abbreviations are not expanded, for
+    parity with the SVI normalizer. Non-string, non-integer input, and `bool` (an `int` subclass), is returned untouched so Pydantic
+    reports the type error.
+
+    ## Raises
+
+    ### ValueError
+
+    - If the extracted port-channel ID is outside the range 1-4096.
+    """
+    normalized = value
+    port_channel_id: int | None = None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        port_channel_id = value
+        normalized = f"{_PORT_CHANNEL_PREFIX}{value}"
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            port_channel_id = int(stripped)
+            normalized = f"{_PORT_CHANNEL_PREFIX}{stripped}"
+        else:
+            normalized = value.lower()
+            remainder = normalized[len(_PORT_CHANNEL_PREFIX) :] if normalized.startswith(_PORT_CHANNEL_PREFIX) else ""
+            if remainder.isdigit():
+                port_channel_id = int(remainder)
+    if port_channel_id is not None and not _PORT_CHANNEL_ID_MIN <= port_channel_id <= _PORT_CHANNEL_ID_MAX:
+        raise ValueError(f"Port-channel ID must be in the range {_PORT_CHANNEL_ID_MIN}-{_PORT_CHANNEL_ID_MAX}, got {port_channel_id}.")
+    return normalized
+
 
 class PortChannelInterfaceBaseModel(NDBaseModel):
     """
@@ -79,16 +128,17 @@ class PortChannelInterfaceBaseModel(NDBaseModel):
         """
         # Summary
 
-        Normalize the port-channel interface name to lowercase to match ND API convention (e.g. `Port-Channel501` ->
-        `port-channel501`).
+        Normalize the port-channel interface name through `normalize_port_channel_interface_name`: lowercase to match ND API
+        convention (e.g. `Port-Channel501` -> `port-channel501`), a bare ID prefixed (`501` -> `port-channel501`), and an extractable
+        ID range-checked against 1-4096 (issue #378).
 
         ## Raises
 
-        None
+        ### ValueError
+
+        - If the extracted port-channel ID is outside the range 1-4096.
         """
-        if isinstance(value, str):
-            return value.lower()
-        return value
+        return normalize_port_channel_interface_name(value)
 
     @model_serializer(mode="wrap")
     def _canonical_xe_create_name(self, handler, info: SerializationInfo):
