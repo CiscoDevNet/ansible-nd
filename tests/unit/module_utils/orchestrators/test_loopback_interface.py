@@ -28,12 +28,14 @@ import inspect
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    IpfmLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
     NexusLoopbackPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -104,6 +106,20 @@ def _build_mpls_loopback_model(switch_ip: str = "192.168.12.151", interface_name
             network_os=NexusLoopbackNetworkOSModel(
                 network_os_type="nx-os",
                 policy=MplsLoopbackPolicyModel(policy_type="mplsLoopback", admin_state=True, ip="10.3.3.1/32"),
+            ),
+        ),
+    )
+
+
+def _build_ipfm_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback201") -> LoopbackInterfaceModel:
+    """Build a minimal `LoopbackInterfaceModel` instance with an `ipfmLoopback` policy, for policy-type-grouping tests."""
+    return LoopbackInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=LoopbackConfigDataModel(
+            network_os=NexusLoopbackNetworkOSModel(
+                network_os_type="nx-os",
+                policy=IpfmLoopbackPolicyModel(policy_type="ipfmLoopback", admin_state=True, ip="10.2.2.1/32"),
             ),
         ),
     )
@@ -1302,3 +1318,52 @@ def test_loopback_interface_00800() -> None:
         instance.create(model)
 
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: bulk_create_groups (hoisted to NDBaseInterfaceOrchestrator, issue #409)
+# =============================================================================
+
+
+def test_loopback_interface_01500() -> None:
+    """
+    # Summary
+
+    Verify `bulk_create_groups` (hoisted to `NDBaseInterfaceOrchestrator`, issue #409) groups by `(switch_id, policy_type)` using the
+    shared `BulkCreateGroupKey` / `BulkCreateItem` types and keeps first-seen group order.
+
+    ## Test
+
+    - Two `loopback` models and one `ipfmLoopback` model on the same switch
+    - `bulk_create_groups` returns two groups keyed by `BulkCreateGroupKey`
+    - Items carry the interface name and a payload with `switchId` injected
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    - NDBaseInterfaceOrchestrator._desired_policy_type()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback200"),
+        _build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback201"),
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback202"),
+    ]
+
+    groups = instance.bulk_create_groups(models)
+
+    keys = list(groups)
+    assert keys == [
+        BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback"),
+        BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="ipfmLoopback"),
+    ]
+    assert [item.interface_name for item in groups[keys[0]]] == ["loopback200", "loopback202"]
+    assert groups[keys[1]][0].payload["switchId"] == "FDO12345ABC"
+    assert isinstance(groups[keys[1]][0], BulkCreateItem)

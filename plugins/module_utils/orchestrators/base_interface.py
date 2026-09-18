@@ -17,7 +17,9 @@ with interface-type-specific payload construction and query filtering.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -28,6 +30,39 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import Fab
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+
+@dataclass(frozen=True, slots=True)
+class BulkCreateGroupKey:
+    """
+    # Summary
+
+    Grouping key for bulk create: one POST is sent per `(switch_id, policy_type)` group. `policy_type` is `None` for identifier-only
+    items with no policy configured.
+
+    ## Raises
+
+    None
+    """
+
+    switch_id: str
+    policy_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BulkCreateItem:
+    """
+    # Summary
+
+    A single interface within a bulk-create group: the interface name (for deploy queueing) and its ready-to-send payload.
+
+    ## Raises
+
+    None
+    """
+
+    interface_name: str
+    payload: dict
 
 
 class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
@@ -190,6 +225,67 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         config_items = self.rest_send.params.get("config") or []
         config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
         return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
+
+    @staticmethod
+    def _desired_policy_type(model_instance: ModelType) -> str | None:
+        """
+        # Summary
+
+        Return the wire `policyType` a proposed model carries at `config_data.network_os.policy.policy_type`, as a plain string, or
+        `None` when any level is absent (an identifier-only item). Tolerates an `Enum`-typed field by reading its `.value`.
+
+        ## Raises
+
+        None
+        """
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+        policy = getattr(network_os, "policy", None) if network_os is not None else None
+        policy_type = getattr(policy, "policy_type", None) if policy is not None else None
+        if not policy_type:
+            return None
+        return str(getattr(policy_type, "value", policy_type))
+
+    def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook run by `bulk_create_groups` for each model after its switch is resolved and before its payload is built. The base
+        implementation does nothing; an orchestrator with per-item write guards (fabric ownership, member restrictions) overrides it.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def bulk_create_groups(self, model_instances: Sequence[ModelType], **kwargs) -> dict[BulkCreateGroupKey, list[BulkCreateItem]]:
+        """
+        # Summary
+
+        Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, run `_prepare_bulk_item`, inject the `switchId`
+        into the payload, and group the resulting items by `(switch_id, policy_type)`. Group insertion order follows the first model of
+        each group. Shared by every orchestrator that posts `interfaces[]` bodies (issue #409).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Propagated from a subclass `_prepare_bulk_item`.
+        """
+        # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
+        # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is created), even though
+        # the create schema allows mixed arrays. One POST per (switch, policyType).
+        groups: dict[BulkCreateGroupKey, list[BulkCreateItem]] = defaultdict(list)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._prepare_bulk_item(model_instance, switch_id, **kwargs)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type=self._desired_policy_type(model_instance))
+            groups[group_key].append(BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
+        return dict(groups)
 
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:

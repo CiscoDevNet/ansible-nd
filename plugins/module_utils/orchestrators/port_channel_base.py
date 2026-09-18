@@ -11,16 +11,22 @@
 Base orchestrator for port-channel interface modules on Nexus Dashboard.
 
 This module provides `PortChannelBaseOrchestrator`, which implements shared CRUD operations
-for all port-channel interface types (accessPoHost, trunkPoHost, etc.) via the ND Manage
-Interfaces API. Type-specific orchestrators inherit from this base and provide their own
-`model_class` and `_managed_policy_types()`.
+for all port-channel interface types (accessPoHost/iosXeAccessPoHost, trunkPoHost/iosXeTrunkPoHost,
+etc.) via the ND Manage Interfaces API. Type-specific orchestrators inherit from this base and
+provide their own `model_class` and `_managed_policy_types()`, which name both the NX-OS and the
+IOS-XE policy type for their interface flavor (issues #536/#537).
 
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch
 resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific functionality:
-- Standard remove-based deletion (port-channels are virtual interfaces and are deletable)
+- Standard remove-based deletion (port-channels are virtual interfaces and are deletable); IOS-XE port-channels are queued under
+  their switch-canonical `Port-channel<N>` spelling so ND generates the switch-side deletion (`_delete_side_name`)
 - Fabric-wide `query_all()` filtered by `interfaceType: "portChannel"` and per-type policy filtering
 - A member-already-in-use `preflight()` that rejects, before any write, a port-channel whose member ethernet is
   already owned by a different port-channel (issue #369)
+- `create_bulk()` groups port-channels by `(switch_id, policy_type)` via `bulk_create_groups` and sends one POST
+  per group, so an NX-OS and an IOS-XE port-channel on the same switch never share a batch (issue #409)
+- An IOS-XE member-mode `preflight()` that rejects, before any write, an `iosXeAccessPoHost`/`iosXeTrunkPoHost`
+  member whose current intent policy does not already match the port-channel mode (issues #536/#537)
 
 Member ethernet interfaces are not managed by this orchestrator — the port-channel policy is the
 single source of truth for member configuration via the `ports` list. Member field restrictions
@@ -29,7 +35,7 @@ on standalone ethernet modules are enforced separately by the ethernet orchestra
 
 from __future__ import annotations
 
-from collections import defaultdict
+import re
 from collections.abc import Sequence
 from typing import ClassVar
 
@@ -46,6 +52,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = NDBaseModel
+
+# The lowercase port-channel identifier the models keep (ND echoes `port-channel<N>`); the delete side rewrites it to the
+# switch-canonical `Port-channel<N>` for IOS-XE (`_delete_side_name`).
+_XE_PORT_CHANNEL_NAME_RE = re.compile(r"^port-channel(\d+)$")
 
 
 class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
@@ -71,6 +81,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `preflight` if a proposed member ethernet is already owned by a different port-channel.
+    - Via `preflight` if a proposed IOS-XE member's current policy mode does not match the port-channel mode.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
@@ -89,6 +100,13 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    # For each IOS-XE port-channel policy type: the member policy type ND requires BEFORE the create, the member type ND provisions once
+    # joined, and the cisco.nd module that converts a member (lab-verified 2026-09-15 on 4.2.1.10 and 4.3.1.175).
+    XE_MEMBER_HOST_POLICY: ClassVar[dict[str, tuple[str, str, str]]] = {
+        "iosXeAccessPoHost": ("iosXeAccess", "iosXeAccessPoMember", "nd_interface_ethernet_access"),
+        "iosXeTrunkPoHost": ("iosXeTrunkHost", "iosXeTrunkPoMember", "nd_interface_ethernet_trunk_host"),
+    }
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -172,40 +190,37 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Via `_resolve_switch_id` if no switch matches `model_instance.switch_ip` in the fabric.
         """
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
-        self._queue_remove(model_instance.interface_name, switch_id)
-        self._queue_deploy(model_instance.interface_name, switch_id)
+        name = self._delete_side_name(model_instance)
+        self._queue_remove(name, switch_id)
+        self._queue_deploy(name, switch_id)
 
     def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         """
         # Summary
 
-        Create multiple port-channel interfaces in bulk. Groups port-channels by switch and sends one POST per switch
-        with all port-channels in the `interfaces` array, reducing API calls from N to one-per-switch. Queues deploys
-        for all created port-channels for later bulk execution via `deploy_pending`.
+        Create multiple port-channel interfaces in bulk. Groups by `(switch_id, policy_type)` (`bulk_create_groups`, issue #409) and
+        sends one POST per group with the group's port-channels in the `interfaces` array. Deploys are queued per item after each
+        accepted POST, so an earlier accepted group's deploys survive a later group's failure (the module's failure-path finalizer ships
+        them); a group that raises queues nothing.
 
         ## Raises
 
         ### RuntimeError
 
-        - If any create API request fails.
+        - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item (detected by
+          `NdV1Strategy.is_success` via `_request`).
         """
         try:
-            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-            for model_instance in model_instances:
-                switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                payload = model_instance.to_payload()
-                payload["switchId"] = switch_id
-                groups[switch_id].append((model_instance.interface_name, payload))
-
+            groups = self.bulk_create_groups(model_instances)
             results = []
-            for switch_id, items in groups.items():
+            for group_key, items in groups.items():
                 # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [payload for interface_name, payload in items]}
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
+                request_body = {"interfaces": [item.payload for item in items]}
                 result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
                 results.append(result)
-                for interface_name, payload in items:
-                    self._queue_deploy(interface_name, switch_id)
+                for item in items:
+                    self._queue_deploy(item.interface_name, group_key.switch_id)
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
@@ -224,16 +239,45 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._queue_remove(model_instance.interface_name, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
+            name = self._delete_side_name(model_instance)
+            self._queue_remove(name, switch_id)
+            self._queue_deploy(name, switch_id)
+
+    @staticmethod
+    def _delete_side_name(model_instance: ModelType) -> str:
+        """
+        # Summary
+
+        Return the interface name to queue on the delete side (`interfaceActions/remove` + `interfaceActions/deploy`): the model's
+        lowercase `interface_name` for NX-OS, and the switch-canonical `Port-channel<N>` for an `ios-xe` port-channel. Both queues get
+        the same spelling so the pair identity the failure-path finalizer relies on (`_unsent_delete_pairs`) is preserved.
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) xe-port-channel-remove-leaves-switch-interface
+        # ND keys the IOS-XE intent record by the lowercase name it echoes but the discovered switch object by `Port-channel<N>`.
+        # A remove naming the lowercase record drops the intent and detaches the members only; the configured `interface Port-channel<N>`
+        # stays on the Catalyst and ND's diff never lists it. A remove naming the canonical spelling flips the record to `userDefined`
+        # and queues `no interface Port-channel<N>` for the next deploy (lab-verified 2026-09-16 on 4.2.1.10; the GUI delete does the
+        # same through the per-interface DELETE). NX-OS deletes correctly with either spelling. The deletion is generated only once ND has
+        # discovered the deployed interface (25-45 s after the create deploy), which is a separate ND-side race this rewrite cannot close.
+        network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
+        name = model_instance.interface_name
+        if getattr(network_os, "network_os_type", None) != "ios-xe":
+            return name
+        match = _XE_PORT_CHANNEL_NAME_RE.match(name)
+        return f"Port-channel{match.group(1)}" if match else name
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
 
         Run the inherited capability preflight, then reject any proposed port-channel whose member ethernet is already
-        owned by a different port-channel (issue #369). Invoked by `NDStateMachine.manage_state` for merged/replaced/
-        overridden before any mutation, including in `--check` mode.
+        owned by a different port-channel (issue #369), then reject any IOS-XE port-channel whose member's current
+        intent policy does not match the port-channel mode (issues #536/#537). Invoked by `NDStateMachine.manage_state`
+        for merged/replaced/overridden before any mutation, including in `--check` mode.
 
         ## Raises
 
@@ -241,9 +285,11 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - Propagated from `NDBaseInterfaceOrchestrator.preflight` (capability preflight).
         - Via `_validate_members_available` if any proposed member is owned by another port-channel.
+        - Via `_validate_xe_member_modes` if any proposed IOS-XE member's current policy mode does not match.
         """
         super().preflight(model_instances)
         self._validate_members_available(model_instances)
+        self._validate_xe_member_modes(model_instances)
 
     @staticmethod
     def _policy_of(iface: dict) -> dict:
@@ -350,6 +396,92 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"Cannot configure port-channel member(s) already in use in fabric '{self.fabric_name}': {', '.join(conflicts)}. "
                 "Remove each member from its current port-channel first."
             )
+
+    def _validate_xe_member_modes(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Fail fast when an IOS-XE port-channel names a member whose current intent policy does not match the port-channel mode. Unlike
+        NX-OS, where the port-channel policy re-homes its members, ND requires an `iosXeAccessPoHost` member to already be `iosXeAccess`
+        and an `iosXeTrunkPoHost` member to be `iosXeTrunkHost` (the fabric default), and rejects the create otherwise: ND 4.2.1 with a flat
+        HTTP 500 that masquerades as a transient error, 4.3.1 with a 207 failed item. A member ND already lists as this port-channel's own
+        member type (`portChannelId` naming this port-channel) passes so an idempotent re-apply is accepted. A member absent from the
+        switch inventory is refused too (ND would otherwise create a phantom record). NX-OS models are skipped. Reads the same cached
+        per-switch inventory as `_member_owners`, so no additional requests are issued, and runs in `--check` mode.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any IOS-XE member's current policy type does not match, naming the member, its current policy, the required policy and the
+          ethernet module that converts it.
+        - Via `_resolve_switch_id` / `_switch_interfaces`.
+        """
+        # TODO(4.2.1) xe-port-channel-member-mode-mismatch
+        # ND validates IOS-XE members against their CURRENT intent policy and refuses a mode mismatch (4.2.1: flat 500 {code,message};
+        # 4.3.1: 207 failed item). Predicting it here keeps the failure before any write and out of the retry path.
+        mismatches: list[str] = []
+        for model_instance in model_instances:
+            mismatches.extend(self._xe_member_mode_mismatches(model_instance))
+        if mismatches:
+            raise RuntimeError(
+                f"Cannot configure IOS-XE port-channel member(s) whose policy mode does not match in fabric '{self.fabric_name}': {', '.join(mismatches)}."
+            )
+
+    def _xe_member_mode_mismatches(self, model_instance: ModelType) -> list[str]:
+        """
+        # Summary
+
+        Return one formatted mismatch string per proposed member of `model_instance` whose current intent policy does not match the
+        IOS-XE host policy required by `model_instance`'s desired policy type. Returns `[]` when the model is not an IOS-XE host
+        port-channel type in `XE_MEMBER_HOST_POLICY` (including every NX-OS model), when it claims no members, or when every claimed
+        member already matches. Helper for `_validate_xe_member_modes`, split out (with `_xe_member_mismatch`) to keep every method
+        under the local-variable limit.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if a `switch_ip` does not match any switch in the fabric.
+        - Via `_switch_interfaces` if the interface-list API request fails.
+        """
+        requirement = self.XE_MEMBER_HOST_POLICY.get(self._desired_policy_type(model_instance) or "")
+        if requirement is None:
+            return []
+        ports = self._proposed_members(model_instance)
+        if not ports:
+            return []
+        inventory = self._switch_interfaces(self._resolve_switch_id(model_instance.switch_ip))
+        po_name = model_instance.interface_name.lower()
+        mismatches = (self._xe_member_mismatch(model_instance, requirement, inventory, po_name, member) for member in ports)
+        return [mismatch for mismatch in mismatches if mismatch is not None]
+
+    @staticmethod
+    def _xe_member_mismatch(model_instance: ModelType, requirement: tuple[str, str, str], inventory: dict[str, dict], po_name: str, member: str) -> str | None:
+        """
+        # Summary
+
+        Compare one proposed member's current intent policy (from the cached `inventory`) against the `(host_type, member_type,
+        module_name)` `requirement` for `model_instance`'s desired IOS-XE host policy type, returning a formatted mismatch string when
+        it does not match, or `None` when the member is already the required host-side type, or is already this port-channel's own
+        member type (`portChannelId` naming `po_name`). Helper for `_xe_member_mode_mismatches`.
+
+        ## Raises
+
+        None
+        """
+        host_type, member_type, module_name = requirement
+        record = inventory.get(member.lower())
+        policy = PortChannelBaseOrchestrator._policy_of(record) if record else {}
+        current = policy.get("policyType")
+        owner = str(policy.get("portChannelId") or "").lower()
+        if current == host_type or (current == member_type and owner == po_name):
+            return None
+        current_description = "absent from the switch inventory" if record is None else (current or "no policy")
+        return (
+            f"(switch_ip={model_instance.switch_ip}, port-channel={model_instance.interface_name}, member={member}, "
+            f"current policy={current_description}, required={host_type}; convert it with {module_name} first)"
+        )
 
     @staticmethod
     def _proposed_members(model_instance: ModelType) -> list[str]:

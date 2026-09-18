@@ -121,6 +121,24 @@ def _build_pc_model(
     return PortChannelAccessInterfaceModel(**kwargs)
 
 
+def _build_xe_pc_model(
+    interface_name: str = "port-channel101", ports: list[str] | None = None, switch_ip: str = "192.168.1.1"
+) -> PortChannelAccessInterfaceModel:
+    """Build an IOS-XE `iosXeAccessPoHost` model (members default to `["GigabitEthernet1/0/2"]`)."""
+    return PortChannelAccessInterfaceModel.from_config(
+        {
+            "switch_ip": switch_ip,
+            "interface_name": interface_name,
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "ios-xe",
+                    "policy": {"access_vlan": 100, "ports": ports if ports is not None else ["GigabitEthernet1/0/2"]},
+                }
+            },
+        }
+    )
+
+
 # =============================================================================
 # Test: ClassVar / model_class
 # =============================================================================
@@ -171,11 +189,12 @@ def test_port_channel_access_orchestrator_00100() -> None:
     """
     # Summary
 
-    Verify `_managed_policy_types` returns the single `"accessPoHost"` API value.
+    Verify `_managed_policy_types` covers both the NX-OS `accessPoHost` and the IOS-XE `iosXeAccessPoHost` API values
+    (issue #536).
 
     ## Test
 
-    - Returned set contains exactly "accessPoHost"
+    - Returned set contains exactly "accessPoHost" and "iosXeAccessPoHost"
 
     ## Classes and Methods
 
@@ -187,18 +206,20 @@ def test_port_channel_access_orchestrator_00100() -> None:
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses)
-    assert orchestrator._managed_policy_types() == {"accessPoHost"}
+    assert orchestrator._managed_policy_types() == {"accessPoHost", "iosXeAccessPoHost"}
 
 
 def test_port_channel_access_orchestrator_00110() -> None:
     """
     # Summary
 
-    Verify `_managed_policy_types` returns a set (supports set membership for `in` checks).
+    Verify `_managed_policy_types` returns a set (supports set membership for `in` checks) containing both the
+    NX-OS `accessPoHost` and the IOS-XE `iosXeAccessPoHost` API values.
 
     ## Test
 
     - Return type is set
+    - Both "accessPoHost" and "iosXeAccessPoHost" are members
 
     ## Classes and Methods
 
@@ -213,6 +234,7 @@ def test_port_channel_access_orchestrator_00110() -> None:
     result = orchestrator._managed_policy_types()
     assert isinstance(result, set)
     assert "accessPoHost" in result
+    assert "iosXeAccessPoHost" in result
 
 
 # =============================================================================
@@ -690,6 +712,42 @@ def test_port_channel_access_orchestrator_00330() -> None:
     assert instance._pending_deploys == []
 
 
+def test_port_channel_access_orchestrator_00340() -> None:
+    """
+    # Summary
+
+    Verify `delete` of an IOS-XE port-channel queues the switch-canonical spelling `Port-channel<N>` for both the remove and the
+    deploy, so the controller generates `no interface Port-channel<N>` (workaround: xe-port-channel-remove-leaves-switch-interface).
+
+    ## Test
+
+    - Model is an `ios-xe` `iosXeAccessPoHost` named `port-channel101` (the lowercase identifier ND echoes)
+    - `_pending_removes` contains `(Port-channel101, FDO11111AAA)`
+    - `_pending_deploys` contains `(Port-channel101, FDO11111AAA)` (same pair identity as the remove queue, for the finalizer)
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.delete()
+    - PortChannelBaseOrchestrator._delete_side_name()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_xe_pc_model(interface_name="port-channel101")
+
+    with does_not_raise():
+        result = instance.delete(model)
+
+    assert result is None
+    assert instance._pending_removes == [("Port-channel101", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Port-channel101", "FDO11111AAA")]
+
+
 # =============================================================================
 # Test: create_bulk
 # =============================================================================
@@ -856,6 +914,45 @@ def test_port_channel_access_orchestrator_00600() -> None:
 
     assert result is None
     expected = [("port-channel501", "FDO11111AAA"), ("port-channel601", "FDO22222BBB")]
+    assert sorted(instance._pending_removes) == sorted(expected)
+    assert sorted(instance._pending_deploys) == sorted(expected)
+
+
+def test_port_channel_access_orchestrator_00610() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` canonicalizes only the IOS-XE port-channels: an NX-OS port-channel keeps its lowercase name while an
+    `ios-xe` one is queued as `Port-channel<N>` (workaround: xe-port-channel-remove-leaves-switch-interface).
+
+    ## Test
+
+    - NX-OS `port-channel501` on switch A and IOS-XE `port-channel101` on switch B
+    - `_pending_removes` and `_pending_deploys` each contain `(port-channel501, FDO11111AAA)` and `(Port-channel101, FDO22222BBB)`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.delete_bulk()
+    - PortChannelBaseOrchestrator._delete_side_name()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_pc_model(switch_ip="192.168.1.1", interface_name="port-channel501", include_config=False),
+        _build_xe_pc_model(switch_ip="192.168.1.2", interface_name="port-channel101"),
+    ]
+
+    with does_not_raise():
+        result = instance.delete_bulk(models)
+
+    assert result is None
+    expected = [("port-channel501", "FDO11111AAA"), ("Port-channel101", "FDO22222BBB")]
     assert sorted(instance._pending_removes) == sorted(expected)
     assert sorted(instance._pending_deploys) == sorted(expected)
 
@@ -1223,3 +1320,194 @@ def test_port_channel_access_orchestrator_00970() -> None:
 
     with pytest.raises(RuntimeError, match=r"Ethernet1/36.*accessPoMember"):
         instance.preflight([model])
+
+
+# =============================================================================
+# Test: create_bulk -- grouped by (switch, policyType) (issue #409); IOS-XE managed types (issue #536)
+# =============================================================================
+
+
+def test_port_channel_access_orchestrator_01000() -> None:
+    """
+    # Summary
+
+    Verify `_managed_policy_types` now covers both the NX-OS and the IOS-XE access port-channel types.
+
+    ## Test
+
+    - Returns exactly `{"accessPoHost", "iosXeAccessPoHost"}`
+
+    ## Classes and Methods
+
+    - PortChannelAccessInterfaceOrchestrator._managed_policy_types()
+    """
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
+    assert orchestrator._managed_policy_types() == {"accessPoHost", "iosXeAccessPoHost"}
+
+
+def test_port_channel_access_orchestrator_01010() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` groups by `(switch, policyType)` (issue #409): an NX-OS and an IOS-XE port-channel on the same switch produce two
+    POSTs, the IOS-XE body carries `Port-channel101`, and both interfaces are deploy-queued under their lowercase names.
+
+    ## Test
+
+    - Responses: switches list, POST (NX group), POST (XE group)
+    - `len(rest_send.responses) == 3`
+    - Last committed body is the XE group with `interfaceName == "Port-channel101"` and `policyType == "iosXeAccessPoHost"`
+    - `_pending_deploys == [("port-channel501", sw), ("port-channel101", sw)]`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access(f"{method_name}c")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    with does_not_raise():
+        instance.create_bulk([_build_pc_model(), _build_xe_pc_model()])
+    assert len(rest_send.responses) == 3
+    body = rest_send.committed_payload
+    assert [item["interfaceName"] for item in body["interfaces"]] == ["Port-channel101"]
+    assert body["interfaces"][0]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeAccessPoHost"
+    assert instance._pending_deploys == [("port-channel501", "FDO11111AAA"), ("port-channel101", "FDO11111AAA")]
+
+
+def test_port_channel_access_orchestrator_01020() -> None:
+    """
+    # Summary
+
+    Verify a failing second group leaves the first group's deploys queued (partial-success bookkeeping) and raises `Bulk create failed`.
+
+    ## Test
+
+    - Responses: switches list, POST 207 success (NX group), POST 500 (XE group)
+    - `RuntimeError` matches `Bulk create failed`
+    - `_pending_deploys == [("port-channel501", sw)]` only
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access(f"{method_name}c")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    with pytest.raises(RuntimeError, match=r"Bulk create failed"):
+        instance.create_bulk([_build_pc_model(), _build_xe_pc_model()])
+    assert instance._pending_deploys == [("port-channel501", "FDO11111AAA")]
+
+
+# =============================================================================
+# Test: preflight -- IOS-XE member-mode mismatch (issues #536/#537)
+#
+# Shared inventory for switch FDO11111AAA (see the 01100b fixture TEST_NOTES): GigabitEthernet1/0/2 is an
+# iosXeTrunkHost, GigabitEthernet1/0/3 is a free iosXeAccess, GigabitEthernet1/0/4 is an iosXeAccessPoMember
+# already owned by port-channel101, GigabitEthernet1/0/5 is an iosXeAccessPoMember owned by port-channel102,
+# and Ethernet1/1 is an unrelated NX-OS trunkHost. GigabitEthernet1/0/9 does not exist on the switch.
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "ports, match",
+    [
+        (["GigabitEthernet1/0/2"], r"member=GigabitEthernet1/0/2, current policy=iosXeTrunkHost, required=iosXeAccess.*nd_interface_ethernet_access"),
+        (["GigabitEthernet1/0/9"], r"member=GigabitEthernet1/0/9, current policy=absent from the switch inventory"),
+    ],
+)
+def test_port_channel_access_orchestrator_01100(ports, match) -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE member-mode preflight refuses an `iosXeAccessPoHost` whose member is a trunk host or absent from the inventory,
+    before any write and in check mode.
+
+    # workaround: xe-port-channel-member-mode-mismatch
+
+    ## Test
+
+    - Responses: switches list, interfaces list for the switch
+    - `preflight` raises `RuntimeError` matching `match`; no POST was sent (`len(rest_send.responses) == 2`)
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_xe_member_modes()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight([_build_xe_pc_model(ports=ports)])
+    assert len(rest_send.responses) == 2
+
+
+def test_port_channel_access_orchestrator_01110() -> None:
+    """
+    # Summary
+
+    Verify the preflight accepts a fresh `iosXeAccess` member and an `iosXeAccessPoMember` already owned by the same port-channel
+    (idempotent re-apply), and skips NX-OS models entirely.
+
+    ## Test
+
+    - `port-channel101` with members Gi1/0/3 (iosXeAccess) and Gi1/0/4 (member of Port-channel101) passes
+    - An NX-OS model naming Ethernet1/1 passes without consulting member policy types
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_xe_member_modes()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    with does_not_raise():
+        instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3", "GigabitEthernet1/0/4"]), _build_pc_model(ports=["Ethernet1/1"])])
+
+
+def test_port_channel_access_orchestrator_01120() -> None:
+    """
+    # Summary
+
+    Verify a member owned by ANOTHER port-channel is reported by the existing member-availability preflight first (its message names the
+    current owner), so the mode preflight never masks the ownership conflict.
+
+    ## Test
+
+    - `port-channel101` naming Gi1/0/5 (member of port-channel102) raises `already in use ... current owner=port-channel102`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel102"):
+        instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/5"])])
