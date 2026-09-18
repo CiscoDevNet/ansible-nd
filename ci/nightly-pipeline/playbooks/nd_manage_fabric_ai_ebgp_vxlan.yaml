@@ -1,0 +1,68 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_fabric_ai_ebgp_vxlan.
+# Self-contained: pre-clean, create, then delete an AI/ML eBGP VXLAN fabric.
+# Ranges/ASN are distinct from the sibling fabric playbooks.
+- name: cisco.nd nightly - nd_manage_fabric_ai_ebgp_vxlan
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_fabric_ai_ebgp_vxlan
+      fabric_types: [aimlVxlanEbgp]
+      switch_count: 0
+      switch_roles: []
+    nd_ai_ebgp_fabric_name: ANSIBLE_NIGHTLY_AI_EBGP
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Guard the disposable AI/ML eBGP fabric name before pre-clean
+      ansible.builtin.assert:
+        that:
+          - nd_ai_ebgp_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - nd_ai_ebgp_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+        fail_msg: "Refusing to delete a fabric whose name is not disposable."
+
+    - name: Pre-clean the AI/ML eBGP VXLAN fabric (ignore if absent)
+      cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+        state: deleted
+        config:
+          - fabric_name: "{{ nd_ai_ebgp_fabric_name }}"
+      ignore_errors: true
+
+    - name: Create an AI/ML eBGP VXLAN fabric (static ASN)
+      cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+        state: merged
+        config:
+          - fabric_name: "{{ nd_ai_ebgp_fabric_name }}"
+            management:
+              bgp_asn: "65003"
+              bgp_asn_auto_allocation: false
+              site_id: "65003"
+              bgp_as_mode: multiAS
+              target_subnet_mask: 30
+              anycast_gateway_mac: "2020.0000.00cc"
+              replication_mode: multicast
+              multicast_group_subnet: "239.3.1.0/25"
+              bgp_loopback_ip_range: "10.10.0.0/22"
+              nve_loopback_ip_range: "10.11.0.0/22"
+              anycast_rendezvous_point_ip_range: "10.252.254.0/24"
+              intra_fabric_subnet_range: "10.12.0.0/16"
+              l2_vni_range: "80000-89000"
+              l3_vni_range: "90000-99000"
+              network_vlan_range: "2300-2999"
+              vrf_vlan_range: "2000-2299"
+
+    - name: Guard the disposable AI/ML eBGP fabric name before delete
+      ansible.builtin.assert:
+        that:
+          - nd_ai_ebgp_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - nd_ai_ebgp_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+        fail_msg: "Refusing to delete a fabric whose name is not disposable."
+
+    - name: Delete the AI/ML eBGP VXLAN fabric
+      cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+        state: deleted
+        config:
+          - fabric_name: "{{ nd_ai_ebgp_fabric_name }}"

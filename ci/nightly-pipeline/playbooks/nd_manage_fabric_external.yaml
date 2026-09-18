@@ -1,0 +1,54 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_fabric_external.
+# Self-contained: pre-clean, create, then delete the External Connectivity
+# fabric named by nd_ext_fabric_name (nothing is left behind).
+- name: cisco.nd nightly - nd_manage_fabric_external
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_fabric_external
+      fabric_types: [externalConnectivity]
+      switch_count: 0
+      switch_roles: []
+    nd_ext_fabric_name: ANSIBLE_NIGHTLY_EXTERNAL
+    nd_ext_bgp_asn: "65099"
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Guard the disposable external fabric name before pre-clean
+      ansible.builtin.assert:
+        that:
+          - nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - nd_ext_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+        fail_msg: "Refusing to delete a fabric whose name is not disposable."
+
+    - name: Pre-clean the External Connectivity fabric (ignore if absent)
+      cisco.nd.nd_manage_fabric_external:
+        state: deleted
+        config:
+          - fabric_name: "{{ nd_ext_fabric_name }}"
+      ignore_errors: true
+
+    - name: Create an External Connectivity fabric
+      cisco.nd.nd_manage_fabric_external:
+        state: merged
+        config:
+          - fabric_name: "{{ nd_ext_fabric_name }}"
+            management:
+              bgp_asn: "{{ nd_ext_bgp_asn }}"
+
+    - name: Guard the disposable external fabric name before delete
+      ansible.builtin.assert:
+        that:
+          - nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')
+          - nd_ext_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+        fail_msg: "Refusing to delete a fabric whose name is not disposable."
+
+    - name: Delete the External Connectivity fabric
+      cisco.nd.nd_manage_fabric_external:
+        state: deleted
+        config:
+          - fabric_name: "{{ nd_ext_fabric_name }}"
