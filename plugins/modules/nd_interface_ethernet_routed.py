@@ -69,6 +69,8 @@ options:
                 description:
                 - The policy configuration for the routed ethernet interface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -84,7 +86,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   description:
@@ -112,7 +114,8 @@ options:
                   mtu:
                     description:
                     - The interface MTU.
-                    - Range is 576-9216 (default 9216) for C(routedHost), 1500-9216 (default 1500) for C(iosXeRoutedHost).
+                    - Range is 576-9216 for C(routedHost), 1500-9216 for C(iosXeRoutedHost).
+                    - The ND default is V(9216) for C(routedHost) and V(1500) for C(iosXeRoutedHost).
                     - Applies to all policy_type values.
                     type: int
                   speed:
@@ -124,6 +127,7 @@ options:
                       C(40Gb), C(100Gb), C(noNegotiate).
                     - The choices below are the union of both sets; a value outside the selected policy_type's subset is rejected
                       by the module.
+                    - The ND default is V(auto).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb, noNegotiate ]
@@ -136,17 +140,20 @@ options:
                   fec:
                     description:
                     - The forward error correction (FEC) mode.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(routedHost).
                     type: str
                     choices: [ auto, fcFec, 'off', rsCons16, rsFec, rsIEEE ]
                   ip_redirects:
                     description:
                     - Whether to disable IPv4 and IPv6 redirects on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(routedHost).
                     type: bool
                   netflow:
                     description:
                     - Whether to enable netflow on the interface. Netflow must be enabled on the fabric.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(routedHost).
                     type: bool
                   netflow_monitor:
@@ -162,21 +169,25 @@ options:
                   pfc:
                     description:
                     - Whether to enable priority flow control.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(routedHost).
                     type: bool
                   pim_dr_priority:
                     description:
                     - The PIM DR election priority (1-4294967295).
+                    - The ND default is V(1).
                     - Applies when policy_type is C(routedHost).
                     type: int
                   pim_sparse:
                     description:
                     - Whether to enable PIM sparse mode on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(routedHost).
                     type: bool
                   qos:
                     description:
                     - Whether to apply a QoS policy to the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(routedHost).
                     type: bool
                   qos_policy:

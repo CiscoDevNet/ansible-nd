@@ -72,6 +72,8 @@ options:
                 description:
                 - The policy configuration for the trunk host interface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -87,7 +89,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   allowed_vlans:
@@ -95,6 +97,7 @@ options:
                     - The allowed VLANs on the trunk.
                     - Accepts V(none), V(all), or a comma-separated list of VLAN ids and ranges
                       (e.g., V(1-200,500-2000,3000)).
+                    - The ND default is V(none).
                     - Applies to all policy_type values.
                     type: str
                   bandwidth:
@@ -106,24 +109,28 @@ options:
                   bpdu_filter:
                     description:
                     - Spanning-tree BPDU filter setting for the interface.
+                    - The ND default is V(default).
                     - Applies when policy_type is C(trunkHost).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - Spanning-tree BPDU guard setting for the interface.
+                    - The ND default is V(default).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the interface.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   debounce_timer:
                     description:
                     - Link debounce timer (in milliseconds).
                     - Valid range is 0-20000.
+                    - The ND default is V(100).
                     - Applies when policy_type is C(trunkHost).
                     type: int
                   debounce_linkup_timer:
@@ -141,12 +148,14 @@ options:
                   duplex_mode:
                     description:
                     - The duplex mode of the interface.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(trunkHost).
                     type: str
                     choices: [ auto, full, half ]
                   error_detection_acl:
                     description:
                     - Whether error detection for access-list installation failures is enabled.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   extra_config:
@@ -157,6 +166,7 @@ options:
                   fec:
                     description:
                     - The forward error correction (FEC) mode for the interface.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(trunkHost).
                     type: str
                     choices: [ "auto", "fcFec", "off", "rsCons16", "rsFec", "rsIEEE" ]
@@ -169,21 +179,23 @@ options:
                   link_type:
                     description:
                     - Spanning-tree link type.
+                    - The ND default is V(auto).
                     - Applies when policy_type is C(trunkHost).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether switchport monitor for SPAN / ERSPAN is enabled.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   mtu:
                     description:
                     - The MTU setting for the interface.
-                    - For C(trunkHost), one of C(default) or C(jumbo). It defaults to C(jumbo) when unset during creation.
-                    - For C(iosXeTrunkHost), an integer in the range 1500-9216 (for example C(9000)). It defaults to C(1500) when
-                      unset during creation.
+                    - For C(trunkHost), one of C(default) or C(jumbo).
+                    - For C(iosXeTrunkHost), an integer in the range 1500-9216 (for example C(9000)).
                     - A value outside the selected policy_type's form is rejected by the module.
+                    - The ND default is V(jumbo) for C(trunkHost) and V(1500) for C(iosXeTrunkHost).
                     - Applies to all policy_type values.
                     type: str
                   native_vlan:
@@ -195,11 +207,13 @@ options:
                   negotiate_auto:
                     description:
                     - Whether link auto-negotiation is enabled.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   netflow_monitor:
@@ -216,21 +230,25 @@ options:
                   orphan_port:
                     description:
                     - Whether VPC orphan port suspension is enabled.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   pfc:
                     description:
                     - Whether Priority Flow Control is enabled on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   port_type_edge_trunk:
                     description:
                     - Whether spanning-tree edge port behavior (PortFast) is enabled on the trunk.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   qos:
                     description:
                     - Whether a QoS policy is applied to the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   qos_policy:
@@ -254,17 +272,20 @@ options:
                       C(40Gb), C(100Gb), C(noNegotiate).
                     - The choices below are the union of both sets; a value outside the selected policy_type's subset is rejected
                       by the module.
+                    - The ND default is V(auto).
                     - Applies to all policy_type values.
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb, noNegotiate ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - The ND default is V(default).
                     - Applies when policy_type is C(trunkHost).
                     type: str
                     choices: [ shutdown, trap, default ]
@@ -311,6 +332,7 @@ options:
                     description:
                     - Whether VLAN mapping is enabled on the interface.
                     - When V(true), O(config[].config_data.network_os.policy.vlan_mapping_entries) must be provided.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(trunkHost).
                     type: bool
                   vlan_mapping_entries:
