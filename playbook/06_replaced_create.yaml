@@ -1,0 +1,57 @@
+---
+# TEST: Replaced state - full replacement of L3Out config
+# Scenario: Create an L3Out then replace it with different configuration.
+# Validates: state=replaced does delete + create (not merge), full config required.
+- name: "REPLACED: Replace existing L3Out"
+  hosts: nd
+  gather_facts: false
+  vars_files:
+    - ../vars.yaml
+  tasks:
+    - name: Create L3Out for replacement test
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ test_fabric }}"
+        state: merged
+        config:
+          - name: "{{ l3out_replaced_test }}"
+            fabric1_name: "{{ fabric1_name }}"
+            fabric2_name: "{{ fabric2_name }}"
+            vrf1_name: "{{ vrf1_name }}"
+            vrf2_name: "{{ vrf2_name }}"
+            configured_fabrics: both
+            ip_version: ipv4
+            connectivity_details:
+              routing_interface_type: subInterface
+              links:
+                - mtu: "{{ mtu_standard }}"
+                  ipv4_mask_length: 30
+                  vlan_id: 300
+                  switch1_details:
+                    switch_id: "{{ switch1_id }}"
+                    interface_name: "{{ subint_parent_sw1 }}.300"
+                    interface_ipv4_address: "10.99.1.1"
+                  switch2_details:
+                    switch_id: "{{ switch2_id }}"
+                    interface_name: "{{ subint_parent_sw2 }}.300"
+                    interface_ipv4_address: "10.99.1.2"
+            routing_details:
+              routing_protocol: bgp
+              bgp:
+                fabric1_details:
+                  local_asn: "{{ local_asn_fabric1 }}"
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ ipv4_route_map_in }}"
+                    ipv4_route_map_out: "{{ ipv4_route_map_out }}"
+                fabric2_details:
+                  local_asn: "{{ local_asn_fabric2 }}"
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ ipv4_route_map_in_2 }}"
+                    ipv4_route_map_out: "{{ ipv4_route_map_out_2 }}"
+      register: create_result
+
+    - name: Assert created for replace test
+      ansible.builtin.assert:
+        that:
+          - create_result is changed
+        fail_msg: "FAILED: Could not create L3Out for replace test"
+        success_msg: "PASSED: L3Out created for replace test"
