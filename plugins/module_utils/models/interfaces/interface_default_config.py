@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
@@ -175,9 +176,10 @@ class InterfaceDefaultConfig(NDNestedModel):
         (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`) that the normalize endpoint cannot clear.
 
         PUT to `/api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces/{name}` is a true replace: omitted fields fall
-        back to ND's schema defaults for the declared `policyType`, so a body containing only `adminState: true` and
-        `policyType: "trunkHost"` is sufficient to land the interface in the same logical state as the normalize template
-        — minus the persisted Class C fields, which clear to null. Lab-verified on ND 4.2.1.
+        back to ND's schema defaults for the declared `policyType`, so a body containing only `adminState: true`,
+        `policyType: "trunkHost"` and the template-required `allowedVlans: "none"` is sufficient to land the interface in the
+        same logical state as the normalize template — minus the persisted Class C fields, which clear to null. Lab-verified on
+        ND 4.2.1 and 4.3.1.
 
         ## Raises
 
@@ -188,7 +190,11 @@ class InterfaceDefaultConfig(NDNestedModel):
                 "mode": "trunk",
                 "networkOS": {
                     "networkOSType": "nx-os",
-                    "policy": {"adminState": True, "policyType": "trunkHost"},
+                    # TODO(4.3.1) ethernet-create-required-fields-431
+                    # ND 4.3.1 rejects this PUT without `allowedVlans` ("Validation failed for following fields: [allowedVlans]",
+                    # lab-verified 2026-09-14 on S3_BG1 Ethernet1/48) where 4.2.1 defaulted it. Sourced from the trunkHost policy
+                    # model's `payload_defaults` (issue #564) so the reset body and the create body share one table.
+                    "policy": {"adminState": True, "policyType": "trunkHost", **EthernetTrunkHostPolicyModel.payload_defaults},
                 },
             },
             "interfaceName": interface_name,

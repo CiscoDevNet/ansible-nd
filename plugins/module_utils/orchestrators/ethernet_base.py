@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import EpManageLinksListGet
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import normalize_ethernet_interface_name
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import XeEthernetTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -153,6 +154,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     # module overrides both to `routed` / `iosXeRoutedHost` (lab-verified on C8000V; see its class docstring).
     XE_RESET_MODE: ClassVar[str] = "trunk"
     XE_RESET_POLICY_TYPE: ClassVar[str] = "iosXeTrunkHost"
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects the XE reset PUT unless it carries the policy's template-required fields (`allowedVlans`, `mtu` for
+    # iosXeTrunkHost; `mtu` for iosXeRoutedHost), where 4.2.1 accepted the defaults-only body and injected them on the echo.
+    # Lab-verified 2026-09-14 on the CAMPUS1 Catalyst 9000v (400 without, 204 with). Sourced from the XE policy model's
+    # `payload_defaults` so the reset body and the create body share one table; the values are the template defaults, so the
+    # reset lands on the same unconfigured-default signature on both releases.
+    XE_RESET_POLICY_DEFAULTS: ClassVar[dict[str, Any]] = XeEthernetTrunkHostPolicyModel.payload_defaults
 
     def model_post_init(self, __context) -> None:
         """
@@ -242,9 +250,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Build the per-interface PUT body that resets an IOS-XE interface to its fabric default: a defaults-only
-        `XE_RESET_POLICY_TYPE` policy in `XE_RESET_MODE` with no `mtu` key. ND injects the schema defaults (`mtu: 1500`,
-        `speed: "auto"`, ...) on the echo, landing the interface on the unconfigured-default signature so it leaves the module's
-        managed scope.
+        `XE_RESET_POLICY_TYPE` policy in `XE_RESET_MODE` carrying only `adminState` plus the template-required fields in
+        `XE_RESET_POLICY_DEFAULTS`. ND injects the remaining schema defaults (`speed: "auto"`, ...) on the echo, landing the
+        interface on the unconfigured-default signature so it leaves the module's managed scope.
 
         ## Raises
 
@@ -253,15 +261,19 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # TODO(4.2.1) c8000v-rejects-per-port-mtu
         # interfaceActions/normalize is structurally unusable for IOS-XE: its body requires mtu (schema validation
         # rejects an mtu-less body) and C8000V rejects the per-port mtu it carries. The lab-verified reset recipe is
-        # this per-interface PUT with mtu omitted (HTTP 204; probe 2026-07-27). The same mtu-less body is used for the
-        # host-facing Catalyst reset target pending lab verification on a Cat9k (issues #534 / #535).
+        # this per-interface PUT (HTTP 204; probe 2026-07-27 with mtu omitted). ND 4.3.1 now requires the template-required
+        # fields on this PUT too (`XE_RESET_POLICY_DEFAULTS`, issue #564); the C8000V rejection was observed on the normalize
+        # template only, and create/update PUTs carrying mtu succeeded on it in the same 2026-07-27 session.
         return {
             "interfaceName": interface_name,
             "interfaceType": "ethernet",
             "switchId": switch_id,
             "configData": {
                 "mode": cls.XE_RESET_MODE,
-                "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": cls.XE_RESET_POLICY_TYPE, "adminState": True}},
+                "networkOS": {
+                    "networkOSType": "ios-xe",
+                    "policy": {"policyType": cls.XE_RESET_POLICY_TYPE, "adminState": True, **cls.XE_RESET_POLICY_DEFAULTS},
+                },
             },
         }
 

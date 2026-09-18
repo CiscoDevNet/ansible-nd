@@ -289,6 +289,12 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects a trunkHost create body that omits `allowedVlans` ("Validation failed for following fields: [allowedVlans]")
+    # where 4.2.1 defaulted it to "none" (neither spec marks it required). Always emit the template default on the wire;
+    # 4.2.1 stores "none" either way, so idempotency is unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"allowedVlans": "none"}
+
     policy_type: Literal["trunkHost"] = Field(
         alias="policyType", description="Trunk-host policy template discriminator; injected as `trunkHost` when omitted (see `default_policy_type`)"
     )
@@ -410,6 +416,14 @@ class XeEthernetTrunkHostPolicyModel(InterfacePolicyStrictBase):
         "mtu": 1500,
         "speed": "auto",
     }
+
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects an iosXeTrunkHost create body that omits `mtu` and the per-interface reset PUT that omits `mtu` or
+    # `allowedVlans` ("Validation failed for following fields: [allowedVlans, mtu]", lab-verified 2026-09-14 on the CAMPUS1
+    # Catalyst 9000v) where 4.2.1 defaulted both (neither spec marks them required). Always emit the template defaults on
+    # the wire; 4.2.1 stores the same values either way, so idempotency is unchanged on both releases. Payload-only: see
+    # `NDBaseModel.payload_defaults`. `EthernetBaseOrchestrator.XE_RESET_POLICY_DEFAULTS` reuses this table for the reset body.
+    payload_defaults: ClassVar[dict[str, Any]] = {"allowedVlans": "none", "mtu": 1500}
 
     policy_type: Literal["iosXeTrunkHost"] = Field(
         alias="policyType",

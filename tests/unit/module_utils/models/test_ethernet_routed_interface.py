@@ -12,6 +12,7 @@ Tests the Ethernet Routed Interface Pydantic model classes (issue #447).
 
 from __future__ import annotations
 
+import copy
 from contextlib import contextmanager
 from typing import Any
 
@@ -929,3 +930,76 @@ def test_ethernet_routed_interface_00210() -> None:
     assert len(speed_choices) == len(set(speed_choices))
     with pytest.raises(ValidationError):
         NexusEthernetRoutedPolicyModel(policy_type="routedHost", speed="noNegotiate")
+
+
+# =============================================================================
+# Test: payload_defaults (issue #564)
+# =============================================================================
+
+
+def test_ethernet_routed_interface_00220() -> None:
+    """
+    # Summary
+
+    Verify the NX-OS `routedHost` payload always carries `mtu`: the template default (9216) is emitted when the user set nothing,
+    and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` where 4.2.1 defaulted it (issue #564).
+
+    ## Test
+
+    - `from_config` with no `mtu` -> `to_payload()` policy carries `mtu: 9216`
+    - `from_config` with `mtu: 1500` -> `to_payload()` policy carries `mtu: 1500`
+    - `to_config()` and `to_diff_dict()` of the unset model do not carry `mtu` (payload-only injection; diff and output are unchanged)
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config: dict[str, Any] = {
+        "switch_ip": "192.168.12.151",
+        "interface_name": "Ethernet1/7",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"ip": "10.99.99.1", "prefix": 30}}},
+    }
+    unset = EthernetRoutedInterfaceModel.from_config(config)
+    assert unset.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 9216
+    assert "mtu" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+    assert "mtu" not in unset.to_config()["config_data"]["network_os"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["mtu"] = 1500
+    explicit = EthernetRoutedInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+
+
+def test_ethernet_routed_interface_00230() -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeRoutedHost` payload always carries `mtu`: the template default (1500) is emitted when the user set
+    nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` where 4.2.1 defaulted it
+    (issue #564; lab-verified on the CAMPUS1 Catalyst 9000v, 2026-09-14).
+
+    ## Test
+
+    - `from_config` for `ios-xe` with no `mtu` -> `to_payload()` policy carries `mtu: 1500`
+    - `from_config` with `mtu: 8000` -> `to_payload()` policy carries `mtu: 8000`
+    - `to_diff_dict()` of the unset model does not carry `mtu`
+
+    ## Classes and Methods
+
+    - XeEthernetRoutedPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config: dict[str, Any] = {
+        "switch_ip": "192.168.12.112",
+        "interface_name": "GigabitEthernet3",
+        "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"ip": "10.99.99.9", "prefix": 30}}},
+    }
+    unset = EthernetRoutedInterfaceModel.from_config(config)
+    assert unset.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+    assert "mtu" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["mtu"] = 8000
+    explicit = EthernetRoutedInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000
