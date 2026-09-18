@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -96,6 +96,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
+    empty_string_means_unset: ClassVar[bool] = True
 
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
@@ -367,7 +369,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         description="BGP key encryption type: 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7",
         default=BgpAuthenticationKeyTypeEnum.THREE_DES,
     )
-    bgp_authentication_key: Optional[SecretStr] = Field(
+    bgp_authentication_key: SecretStr | None = Field(
         alias="bgpAuthenticationKey", description="Encrypted BGP authentication key based on type", default=None, json_schema_extra={"secret": True}
     )
 
@@ -376,13 +378,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
     bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD For iBGP", default=False)
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
     bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
-    bfd_authentication_key: Optional[SecretStr] = Field(
+    bfd_authentication_key: SecretStr | None = Field(
         alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default=None, json_schema_extra={"secret": True}
     )
 
     # Protocol Settings — PIM
     pim_hello_authentication: bool = Field(alias="pimHelloAuthentication", description="Valid for IPv4 Underlay only", default=False)
-    pim_hello_authentication_key: Optional[SecretStr] = Field(
+    pim_hello_authentication_key: SecretStr | None = Field(
         alias="pimHelloAuthenticationKey", description="3DES Encrypted", default=None, json_schema_extra={"secret": True}
     )
 
@@ -401,9 +403,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: Optional[str] = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
-    dhcp_end_address: Optional[str] = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
-    management_gateway: Optional[str] = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
+    dhcp_start_address: str | None = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_end_address: str | None = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
+    management_gateway: str | None = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
@@ -415,7 +417,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False
     )
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
-    scheduled_backup_time: Optional[str] = Field(
+    scheduled_backup_time: str | None = Field(
         alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=None
     )
 
@@ -621,7 +623,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     )
     # Omitted when unset so ND applies its own release-specific default; the declared
     # default changed between ND 4.2.1 ("26") and 4.3.1 ("24-31").
-    roce_v2: Optional[str] = Field(
+    roce_v2: str | None = Field(
         alias="roceV2",
         description=(
             "DSCP for RDMA traffic: numeric (0-63) with ranges/comma, named values "
@@ -714,7 +716,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     macsec_cipher_suite: MacsecCipherSuiteEnum = Field(
         alias="macsecCipherSuite", description="Configure Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
-    macsec_key_string: Optional[SecretStr] = Field(
+    macsec_key_string: SecretStr | None = Field(
         alias="macsecKeyString",
         description="MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String",
         default=None,
@@ -723,7 +725,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="macsecAlgorithm", description="MACsec Primary Cryptographic Algorithm.  AES_128_CMAC or AES_256_CMAC", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
-    macsec_fallback_key_string: Optional[SecretStr] = Field(
+    macsec_fallback_key_string: SecretStr | None = Field(
         alias="macsecFallbackKeyString",
         description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String",
         default=None,
@@ -817,7 +819,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         "macsec_key_string",
         "macsec_fallback_key_string",
     )
-    def _serialize_secret_keys(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+    def _serialize_secret_keys(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
         """Real value only for the API payload; masked in config/diff/gathered/error output."""
         return serialize_secret_value(value, info)
 

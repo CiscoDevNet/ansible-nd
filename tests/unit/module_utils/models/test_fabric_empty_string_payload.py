@@ -7,12 +7,20 @@ when the user has not set them, rather than sending a placeholder empty string.
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import FabricAiEbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel, VxlanEbgpManagementModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import (
+    ExternalConnectivityManagementModel,
+    FabricExternalConnectivityModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel, VxlanIbgpManagementModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import (
+    FabricGroupVxlanModel,
+    VxlanFabricGroupManagementModel,
+)
 
 # API field names whose ND schema declares minLength, pattern or format, and therefore
 # reject "" on ND 4.3.1. Sourced from docs/openapi/4.3.1/manage.json and confirmed
@@ -134,3 +142,35 @@ def test_fabric_group_payload_has_no_empty_strings():
     payload = FabricGroupVxlanModel.from_config({"fabric_name": "test_group", "management": {}}).to_payload()["management"]
     assert [key for key, value in payload.items() if value == ""] == []
     assert not CONSTRAINED_KEYS & payload.keys()
+
+
+# =============================================================================
+# Scoping: the coercion is opt-in and must not leak to other model families
+# =============================================================================
+
+
+def test_empty_string_coercion_is_opt_in_by_default():
+    """``NDBaseModel`` must not coerce "" unless a model opts in."""
+    assert NDBaseModel.empty_string_means_unset is False
+
+
+@pytest.mark.parametrize(
+    "model_cls",
+    [VxlanEbgpManagementModel, VxlanIbgpManagementModel, ExternalConnectivityManagementModel, VxlanFabricGroupManagementModel],
+    ids=lambda c: c.__name__,
+)
+def test_fabric_management_models_opt_in(model_cls):
+    assert model_cls.empty_string_means_unset is True
+
+
+def test_non_fabric_model_still_clears_with_empty_string():
+    """Regression guard: "" on a non-fabric model still clears the field on the wire.
+
+    The coercion originally lived unconditionally on ``NDBaseModel``, which silently
+    dropped ``description: ""`` for every interface model in merged state, so the
+    clear was never sent.
+    """
+    policy = EthernetAccessPolicyModel.from_config({"description": ""})
+    assert policy.description == ""
+    assert "description" in policy.model_fields_set
+    assert policy.to_payload()["description"] == ""

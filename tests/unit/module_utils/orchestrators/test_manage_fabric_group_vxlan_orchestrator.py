@@ -14,9 +14,7 @@ fabric deploy request (unlike the base single-fabric deploy).
 
 # pylint: disable=protected-access
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type  # pylint: disable=invalid-name
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_vxlan import (
     ManageFabricGroupVxlanOrchestrator,

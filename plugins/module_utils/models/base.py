@@ -72,6 +72,12 @@ class NDBaseModel(BaseModel, ABC):
     payload_exclude_fields: ClassVar[Set[str]] = set()
     config_exclude_fields: ClassVar[Set[str]] = set()
 
+    # Opt-in for `_treat_empty_string_as_unset`. Off by default: for most models "" is a
+    # legitimate value that clears a field, so coercing it to unset would silently drop the
+    # user's intent. Fabric families enable it because ND 4.3.1 rejects "" on schema-
+    # constrained fields with HTTP 400 (see the validator docstring).
+    empty_string_means_unset: ClassVar[bool] = False
+
     # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
     # ND echoes the schema-declared template default for every field the user never set, so an existing-side
     # value equal to its declared default is normalized to absent during removal detection -- omitting it from
@@ -227,9 +233,12 @@ class NDBaseModel(BaseModel, ABC):
         ``pattern`` or ``format`` (for example ``dhcpStartAddress``) reject ``""``
         with HTTP 400, whereas omitting them lets ND apply its own default.
 
-        Only applied to config input. Fields that legitimately accept "" declare a
-        ``str = ""`` default instead and are therefore untouched.
+        Only applied to config input on models that opt in via ``empty_string_means_unset``.
+        Fields that legitimately accept "" declare a ``str = ""`` default instead and are
+        therefore untouched.
         """
+        if not cls.empty_string_means_unset:
+            return data
         if not isinstance(data, dict):
             return data
         context = getattr(info, "context", None) or {}
@@ -241,9 +250,9 @@ class NDBaseModel(BaseModel, ABC):
         return {key: value for key, value in data.items() if not (value == "" and key in nullable_keys)}
 
     @classmethod
-    def _nullable_default_keys(cls) -> Set[str]:
+    def _nullable_default_keys(cls) -> set[str]:
         """Field names and aliases whose declared default is None."""
-        keys: Set[str] = set()
+        keys: set[str] = set()
         for field_name, field_info in getattr(cls, "model_fields", {}).items():
             # Fields with no declared default carry PydanticUndefined here, so an
             # identity check against None selects only explicit ``= None`` defaults.

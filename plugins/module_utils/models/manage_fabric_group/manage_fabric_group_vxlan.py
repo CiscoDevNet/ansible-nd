@@ -4,12 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
-from typing import List, Dict, Optional, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
@@ -122,6 +120,8 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
+    empty_string_means_unset: ClassVar[bool] = True
+
     # Fabric Group Type (required for discriminated union)
     type: Literal[FabricGroupTypeEnum.VXLAN] = Field(description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN)
 
@@ -206,7 +206,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="Type of Multi-Site Overlay Interconnect",
         default=MultisiteOverlayInterConnectTypeEnum.MANUAL,
     )
-    route_server_collection: Optional[List[RouteServerModel]] = Field(
+    route_server_collection: list[RouteServerModel] | None = Field(
         alias="routeServerCollection",
         description="Multi-Site Route-Servers",
         default=None,
@@ -267,10 +267,16 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="BGP key encryption type: 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7",
         default=BgpAuthenticationKeyTypeEnum.THREE_DES,
     )
-    multisite_inter_connect_bgp_key: Optional[SecretStr] = Field(
+    # The OpenAPI ``bgpAuthenticationKey`` schema advertises maxLength 256, but both ND
+    # 4.2.1 and 4.3.1 reject anything longer than 164 characters with an opaque HTTP 500
+    # ("Error in validating provided name value pair"). 160 is the documented key length,
+    # so it is enforced here to fail fast client-side with a clear message.
+    multisite_inter_connect_bgp_key: SecretStr | None = Field(
         alias="multisiteInterConnectBgpKey",
         description="Encrypted BGP authentication key based on type",
         default=None,
+        min_length=1,
+        max_length=160,
         json_schema_extra={"secret": True},
     )
     multisite_loopback_id: int = Field(
@@ -367,7 +373,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="Auto Config CloudSec on Border Gateways",
         default=False,
     )
-    cloud_sec_key: Optional[SecretStr] = Field(
+    cloud_sec_key: SecretStr | None = Field(
         alias="cloudSecKey",
         description="Cisco Type 7 Encrypted Octet String",
         default=None,
@@ -392,12 +398,12 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     )
 
     # Configuration Backup
-    scheduled_backup: Optional[bool] = Field(
+    scheduled_backup: bool | None = Field(
         alias="scheduledBackup",
         description="Enable backup at the specified time daily",
         default=None,
     )
-    scheduled_backup_time: Optional[str] = Field(
+    scheduled_backup_time: str | None = Field(
         alias="scheduledBackupTime",
         description="Time (UTC) in 24 hour format to take a daily backup (00:00 to 23:59)",
         pattern=r"^([01]\d|2[0-3]):([0-5]\d)$",
@@ -413,7 +419,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
 
     @field_validator("cloud_sec_key")
     @classmethod
-    def validate_cloud_sec_key(cls, value: Optional[SecretStr]) -> Optional[SecretStr]:
+    def validate_cloud_sec_key(cls, value: SecretStr | None) -> SecretStr | None:
         # Generic message only; never echo the secret value.
         if value is None:
             return value
@@ -440,7 +446,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         return self
 
     @field_serializer("multisite_inter_connect_bgp_key", "cloud_sec_key")
-    def serialize_secret_key(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+    def serialize_secret_key(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
         """Real value only for the API payload; masked in config/diff/gathered/error output."""
         return serialize_secret_value(value, info)
 
@@ -459,8 +465,8 @@ class FabricGroupVxlanModel(NDBaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
-    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str] | None] = ["fabric_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     # Basic Fabric Group Properties
     category: Literal["fabricGroup"] = Field(description="Resource category", default="fabricGroup")
@@ -480,7 +486,7 @@ class FabricGroupVxlanModel(NDBaseModel):
         return self
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         """Auto-generate the Ansible argument spec from the pydantic model fields.
 
         Mirrors ``FabricBaseModel.get_argument_spec`` so the module exposes the
