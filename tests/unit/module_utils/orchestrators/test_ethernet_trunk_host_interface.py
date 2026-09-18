@@ -873,7 +873,10 @@ def test_ethernet_trunk_host_orchestrator_00900() -> None:
 
     with pytest.raises(
         RuntimeError,
-        match=r"Switch 192\.168\.2\.1 reports platformType 'nx-os', but the requested network_os_type is 'ios-xe' \(GigabitEthernet1/0/1\)\. No changes were made\.",
+        match=(
+            r"Switch 192\.168\.2\.1 reports platformType 'nx-os', but the requested network_os_type is 'ios-xe' "
+            r"\(GigabitEthernet1/0/1\)\. No changes were made\."
+        ),
     ):
         orchestrator.preflight([model])
     assert len(orchestrator.rest_send.responses) == 1
