@@ -279,9 +279,7 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
         primary/peer than was submitted, so both sides are sorted.
         """
         access = tuple(sorted(v for v in (association.get("accessOrTorSwitchId"), association.get("accessOrTorPeerSwitchId")) if v))
-        aggregation = tuple(
-            sorted(v for v in (association.get("aggregationOrLeafSwitchId"), association.get("aggregationOrLeafPeerSwitchId")) if v)
-        )
+        aggregation = tuple(sorted(v for v in (association.get("aggregationOrLeafSwitchId"), association.get("aggregationOrLeafPeerSwitchId")) if v))
         return (access, aggregation)
 
     def _enrich_with_resources(self, fabric_name: str, associations: List[dict]) -> None:

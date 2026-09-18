@@ -341,7 +341,6 @@ def test_manage_tor_orchestrator_association_key_is_order_independent():
     assert ManageTorOrchestrator._association_key(submitted) == ManageTorOrchestrator._association_key(swapped)
 
 
-
 def test_manage_tor_orchestrator_query_all_empty_fabric():
     """query_all returns an empty list when the fabric has no associations."""
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
