@@ -10,10 +10,8 @@ shared EpManageFabrics* endpoints and that the custom query_all filtering
 (via the shared _request flow) selects only VXLAN fabric group resources.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest

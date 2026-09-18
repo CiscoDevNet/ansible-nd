@@ -303,7 +303,7 @@ class ConfigActionsMixin:
         )
 
     def deploy_switch_ids(self, fabric_name: str, switch_ids: list[str]) -> ResponseType:
-        """Deploy the given switch serial numbers.
+        """Deploy the given switch identifiers.
 
         Returns None when ``switch_ids`` is empty so the controller records a
         skipped step rather than issuing an empty deploy.
@@ -344,8 +344,18 @@ class ConfigActionsMixin:
         return result.get("switches", []) if result else []
 
     @staticmethod
+    def _switch_identifier(switch: dict) -> str:
+        """Return the identifier to deploy `switch` by, preferring ``switchId``.
+
+        ``switchId`` is the schema-required field and is what ``switchActions/deploy``
+        expects; for ACI nodes it is a node ID rather than a serial number. Falls back
+        to ``serialNumber`` for responses that omit it.
+        """
+        return switch.get("switchId") or switch.get("serialNumber") or ""
+
+    @staticmethod
     def _filter_switches_needing_deploy(switches: list[dict]) -> list[str]:
-        """Return serial numbers of switches whose ``configSyncStatus`` is not ``inSync``."""
+        """Return identifiers of switches whose ``configSyncStatus`` is not ``inSync``."""
         switch_ids = []
         for switch in switches:
             additional_data = switch.get("additionalData", {})
@@ -353,17 +363,17 @@ class ConfigActionsMixin:
             # Treat any non-inSync value (including empty/missing) as needing
             # deployment. An unknown status must not silently skip the switch.
             if config_status != "inSync":
-                serial_number = switch.get("serialNumber", "")
-                if serial_number:
-                    switch_ids.append(serial_number)
+                switch_id = ConfigActionsMixin._switch_identifier(switch)
+                if switch_id:
+                    switch_ids.append(switch_id)
         return switch_ids
 
     @staticmethod
     def _extract_switch_ids(switches: list[dict]) -> list[str]:
-        """Return every switch serial number in `switches`."""
+        """Return every switch identifier in `switches`."""
         switch_ids = []
         for switch in switches:
-            serial_number = switch.get("serialNumber", "")
-            if serial_number:
-                switch_ids.append(serial_number)
+            switch_id = ConfigActionsMixin._switch_identifier(switch)
+            if switch_id:
+                switch_ids.append(switch_id)
         return switch_ids

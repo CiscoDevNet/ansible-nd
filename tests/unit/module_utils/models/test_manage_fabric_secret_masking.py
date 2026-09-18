@@ -12,9 +12,7 @@
 - AI eBGP/iBGP models inherit the masking behavior from their base classes.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
     FabricEbgpModel,

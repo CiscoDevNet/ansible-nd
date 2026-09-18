@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -99,6 +99,8 @@ class VxlanIbgpManagementModel(NDNestedModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
+    empty_string_means_unset: ClassVar[bool] = True
 
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_IBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_IBGP)
@@ -298,9 +300,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: Optional[str] = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
-    dhcp_end_address: Optional[str] = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
-    management_gateway: Optional[str] = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
+    dhcp_start_address: str | None = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_end_address: str | None = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
+    management_gateway: str | None = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
     extra_config_nxos_bootstrap: str = Field(
@@ -309,12 +311,12 @@ class VxlanIbgpManagementModel(NDNestedModel):
     unnumbered_bootstrap_loopback_id: int = Field(
         alias="unNumberedBootstrapLoopbackId", description="Bootstrap Seed Switch Loopback Interface ID", default=253
     )
-    unnumbered_dhcp_start_address: Optional[str] = Field(
+    unnumbered_dhcp_start_address: str | None = Field(
         alias="unNumberedDhcpStartAddress",
         description="Switch Loopback DHCP Scope Start Address.  Must be a subset of IGP/BGP Loopback Prefix Pool",
         default=None,
     )
-    unnumbered_dhcp_end_address: Optional[str] = Field(
+    unnumbered_dhcp_end_address: str | None = Field(
         alias="unNumberedDhcpEndAddress", description="Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool", default=None
     )
     inband_management: bool = Field(alias="inbandManagement", description="Manage switches with only Inband connectivity", default=False)
@@ -331,7 +333,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False
     )
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
-    scheduled_backup_time: Optional[str] = Field(
+    scheduled_backup_time: str | None = Field(
         alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=None
     )
 
@@ -495,20 +497,20 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Authentication — BGP Extended
-    bgp_authentication_key: Optional[SecretStr] = Field(
+    bgp_authentication_key: SecretStr | None = Field(
         alias="bgpAuthenticationKey", description="Encrypted BGP authentication key based on type", default=None, json_schema_extra={"secret": True}
     )
 
     # Authentication — PIM
     pim_hello_authentication: bool = Field(alias="pimHelloAuthentication", description="Valid for IPv4 Underlay only", default=False)
-    pim_hello_authentication_key: Optional[SecretStr] = Field(
+    pim_hello_authentication_key: SecretStr | None = Field(
         alias="pimHelloAuthenticationKey", description="3DES Encrypted", default=None, json_schema_extra={"secret": True}
     )
 
     # Authentication — BFD
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
     bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
-    bfd_authentication_key: Optional[SecretStr] = Field(
+    bfd_authentication_key: SecretStr | None = Field(
         alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default=None, json_schema_extra={"secret": True}
     )
     bfd_ospf: bool = Field(alias="bfdOspf", description="Enable BFD For OSPF", default=False)
@@ -518,7 +520,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # Authentication — OSPF
     ospf_authentication: bool = Field(alias="ospfAuthentication", description="Enable OSPF Authentication", default=False)
     ospf_authentication_key_id: int = Field(alias="ospfAuthenticationKeyId", description="(Min:0, Max:255)", default=127)
-    ospf_authentication_key: Optional[SecretStr] = Field(
+    ospf_authentication_key: SecretStr | None = Field(
         alias="ospfAuthenticationKey", description="OSPF Authentication Key.  3DES Encrypted", default=None, json_schema_extra={"secret": True}
     )
 
@@ -538,11 +540,11 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="isisPointToPoint", description="This will enable network point-to-point on fabric interfaces which are numbered", default=True
     )
     isis_authentication: bool = Field(alias="isisAuthentication", description="Enable IS-IS Authentication", default=False)
-    isis_authentication_keychain_name: Optional[str] = Field(
+    isis_authentication_keychain_name: str | None = Field(
         alias="isisAuthenticationKeychainName", description="IS-IS Authentication Keychain Name", default=None
     )
     isis_authentication_keychain_key_id: int = Field(alias="isisAuthenticationKeychainKeyId", description="IS-IS Authentication Key ID", default=127)
-    isis_authentication_key: Optional[SecretStr] = Field(
+    isis_authentication_key: SecretStr | None = Field(
         alias="isisAuthenticationKey", description="IS-IS Authentication Key.  Cisco Type 7 Encrypted", default=None, json_schema_extra={"secret": True}
     )
     isis_overload: bool = Field(
@@ -562,7 +564,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     macsec_cipher_suite: MacsecCipherSuiteEnum = Field(
         alias="macsecCipherSuite", description="Configure Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
-    macsec_key_string: Optional[SecretStr] = Field(
+    macsec_key_string: SecretStr | None = Field(
         alias="macsecKeyString",
         description="MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String",
         default=None,
@@ -571,7 +573,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="macsecAlgorithm", description="MACsec Primary Cryptographic Algorithm.  AES_128_CMAC or AES_256_CMAC", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
-    macsec_fallback_key_string: Optional[SecretStr] = Field(
+    macsec_fallback_key_string: SecretStr | None = Field(
         alias="macsecFallbackKeyString",
         description="MACsec Fallback Key String. Cisco Type 7 Encrypted Octet String",
         default=None,
@@ -596,7 +598,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     vrf_lite_macsec_cipher_suite: MacsecCipherSuiteEnum = Field(
         alias="vrfLiteMacsecCipherSuite", description="DCI MACsec Cipher Suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
-    vrf_lite_macsec_key_string: Optional[SecretStr] = Field(
+    vrf_lite_macsec_key_string: SecretStr | None = Field(
         alias="vrfLiteMacsecKeyString",
         description="DCI MACsec Primary Key String.  Cisco Type 7 Encrypted Octet String",
         default=None,
@@ -605,7 +607,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     vrf_lite_macsec_algorithm: MacsecAlgorithmEnum = Field(
         alias="vrfLiteMacsecAlgorithm", description="DCI MACsec Primary Cryptographic Algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
-    vrf_lite_macsec_fallback_key_string: Optional[SecretStr] = Field(
+    vrf_lite_macsec_fallback_key_string: SecretStr | None = Field(
         alias="vrfLiteMacsecFallbackKeyString",
         description=("DCI MACsec Fallback Key String.  Cisco Type 7 Encrypted Octet String. This parameter is used when DCI link has QKD disabled."),
         default=None,
@@ -623,14 +625,14 @@ class VxlanIbgpManagementModel(NDNestedModel):
         description=("Enable Data Center Interconnect Media Access Control Security with Quantum Key Distribution config"),
         default=False,
     )
-    quantum_key_distribution_profile_name: Optional[str] = Field(
+    quantum_key_distribution_profile_name: str | None = Field(
         alias="quantumKeyDistributionProfileName", description="Name of crypto profile (Max Size 63)", default=None
     )
-    key_management_entity_server_ip: Optional[str] = Field(
+    key_management_entity_server_ip: str | None = Field(
         alias="keyManagementEntityServerIp", description="Key Management Entity server ipv4 address", default=None
     )
     key_management_entity_server_port: int = Field(alias="keyManagementEntityServerPort", description="Key Management Entity server port number", default=0)
-    trustpoint_label: Optional[str] = Field(alias="trustpointLabel", description="Tls authentication type trustpoint label", default=None)
+    trustpoint_label: str | None = Field(alias="trustpointLabel", description="Tls authentication type trustpoint label", default=None)
     skip_certificate_verification: bool = Field(alias="skipCertificateVerification", description="Skip verification of incoming certificate", default=False)
 
     # BGP / Routing Enhancements
@@ -704,7 +706,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     # Omitted when unset so ND applies its own release-specific default; the declared
     # default changed between ND 4.2.1 ("26") and 4.3.1 ("24-31").
-    roce_v2: Optional[str] = Field(
+    roce_v2: str | None = Field(
         alias="roceV2",
         description=(
             "DSCP for RDMA traffic: numeric (0-63) with ranges/comma, named values "
@@ -1078,7 +1080,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         "vrf_lite_macsec_key_string",
         "vrf_lite_macsec_fallback_key_string",
     )
-    def _serialize_secret_keys(self, value: Optional[SecretStr], info: FieldSerializationInfo) -> Optional[str]:
+    def _serialize_secret_keys(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
         """Real value only for the API payload; masked in config/diff/gathered/error output."""
         return serialize_secret_value(value, info)
 

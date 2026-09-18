@@ -103,7 +103,7 @@
 #############################################################################
 - name: "VALIDATION 1: Capture resulting fabric group configuration from module output"
   set_fact:
-    fg_merged_config: "{{ fg_merged_result_3.after[0] }}"
+    fg_merged_config: "{{ fg_merged_result_3.after | selectattr('fabric_name', 'equalto', fg_vxlan_test_merged) | first }}"
   tags: [test_fg_merged, test_fg_merged_validation]
 
 #
@@ -262,7 +262,7 @@
 #############################################################################
 - name: "VALIDATION 2: Capture resulting fabric group configuration from module output"
   set_fact:
-    fg_replaced_config: "{{ fg_replaced_result_3.after[0] }}"
+    fg_replaced_config: "{{ fg_replaced_result_3.after | selectattr('fabric_name', 'equalto', fg_vxlan_test_replaced) | first }}"
   tags: [test_fg_replaced, test_fg_replaced_validation]
 
 #

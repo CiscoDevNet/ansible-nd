@@ -385,6 +385,54 @@ class TestDeploySwitchIds:
 
 
 # =============================================================================
+# Test: switch identifier resolution
+# =============================================================================
+
+
+class TestSwitchIdentifier:
+    """Tests for switch identifier extraction (switchId preferred over serialNumber)."""
+
+    @pytest.mark.parametrize(
+        "switch, expected",
+        [
+            ({"switchId": "NODE-101", "serialNumber": "FOC111AAA"}, "NODE-101"),
+            ({"serialNumber": "FOC111AAA"}, "FOC111AAA"),
+            ({"switchId": "", "serialNumber": "FOC111AAA"}, "FOC111AAA"),
+            ({"switchId": "NODE-101"}, "NODE-101"),
+            ({}, ""),
+        ],
+    )
+    def test_switch_identifier_prefers_switch_id(self, switch, expected):
+        """Verify switchId wins, with serialNumber used only when it is absent or empty.
+
+        ND documents switchId as required and, for ACI nodes, as a node ID rather
+        than a serial number, so the two are not always interchangeable.
+        """
+        assert ConfigActionsMixin._switch_identifier(switch) == expected
+
+    def test_extract_switch_ids_mixed_sources(self):
+        """Verify _extract_switch_ids resolves each switch independently and drops unidentifiable ones."""
+        switches = [
+            {"switchId": "NODE-101", "serialNumber": "FOC111AAA"},
+            {"serialNumber": "FOC222BBB"},
+            {"switchId": "NODE-103"},
+            {"hostname": "leaf9"},
+        ]
+
+        assert ConfigActionsMixin._extract_switch_ids(switches) == ["NODE-101", "FOC222BBB", "NODE-103"]
+
+    def test_filter_switches_needing_deploy_uses_switch_id(self):
+        """Verify out-of-sync switches are reported by switchId when present."""
+        switches = [
+            {"switchId": "NODE-101", "serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "outOfSync"}},
+            {"switchId": "NODE-102", "serialNumber": "FOC222BBB", "additionalData": {"configSyncStatus": "inSync"}},
+            {"serialNumber": "FOC333CCC", "additionalData": {"configSyncStatus": "pending"}},
+        ]
+
+        assert ConfigActionsMixin._filter_switches_needing_deploy(switches) == ["NODE-101", "FOC333CCC"]
+
+
+# =============================================================================
 # Test: FabricConfigActionsBackend
 # =============================================================================
 

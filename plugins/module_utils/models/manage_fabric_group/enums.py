@@ -19,8 +19,6 @@ Enum definitions for VXLAN Fabric Group (MSD) modules.
 
 from __future__ import annotations
 
-__metaclass__ = type
-
 from enum import Enum
 
 

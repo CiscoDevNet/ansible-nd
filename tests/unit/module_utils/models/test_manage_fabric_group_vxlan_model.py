@@ -13,9 +13,7 @@ Focus areas (PR #246 review remediation):
   CloudSec key never leaks its value in validation errors.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
@@ -263,3 +261,51 @@ def test_manage_fabric_group_vxlan_00310():
     with pytest.raises(ValidationError) as exc:
         _model({"cloud_sec_key": secret})
     assert secret not in str(exc.value)
+
+
+@pytest.mark.parametrize("length", [1, 80, 160])
+def test_manage_fabric_group_vxlan_00320(length):
+    """
+    # Summary
+
+    Verify accepted multisite inter-connect BGP key lengths.
+
+    ## Test
+
+    - Keys of 1..160 characters are accepted
+    """
+    model = _model({"multisite_inter_connect_bgp_key": "a" * length})
+    assert len(model.management.multisite_inter_connect_bgp_key.get_secret_value()) == length
+
+
+@pytest.mark.parametrize("length", [161, 164, 256])
+def test_manage_fabric_group_vxlan_00330(length):
+    """
+    # Summary
+
+    Verify over-length multisite inter-connect BGP keys are rejected.
+
+    ## Test
+
+    - Keys longer than 160 characters raise ValidationError. ND itself rejects
+      anything over 164 with an opaque HTTP 500 on both 4.2.1 and 4.3.1, so this
+      is enforced client-side to fail fast with a clear message.
+    """
+    with pytest.raises(ValidationError):
+        _model({"multisite_inter_connect_bgp_key": "a" * length})
+
+
+def test_manage_fabric_group_vxlan_00340():
+    """
+    # Summary
+
+    Verify an empty multisite inter-connect BGP key is treated as unset.
+
+    ## Test
+
+    - An empty string is dropped rather than failing min_length, so the key is
+      omitted from the payload and ND keeps its own behaviour
+    """
+    model = _model({"multisite_inter_connect_bgp_key": ""})
+    assert model.management.multisite_inter_connect_bgp_key is None
+    assert "multisiteInterConnectBgpKey" not in model.to_payload()["management"]
