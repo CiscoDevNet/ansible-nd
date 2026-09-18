@@ -588,5 +588,10 @@ class VpcPairResourceService:
                 "deployment_needed",
                 self.needs_deployment_handler(result, nd_manage_vpc_pair),
             )
+            # A deploy that actually pushed config (e.g. deploying a previously
+            # staged pair) or a save with a declarative diff is a change. A bare
+            # configSave remains idempotent.
+            if deploy_result.get("changed"):
+                result["changed"] = True
 
         return result
