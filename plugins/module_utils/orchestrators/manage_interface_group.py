@@ -32,7 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsInterfaceGroupsPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
-    EpManageFabricsNetworksNetworkNameGet,
+    EpManageFabricsNetworksGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
@@ -81,6 +81,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.
 )
 
 _QUERY_PAGE_SIZE = 100
+_NETWORK_QUERY_PAGE_SIZE = 10000
 _RECONCILIATION_ATTEMPTS = 3
 _RESPONSE_STRATEGY = NdV1Strategy()
 _CUSTOM_TEMPLATE_REQUIRED_TAG = "interface_edit_shared_policy"
@@ -133,6 +134,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     _pending_interfaces: set[tuple[str, str]] = PrivateAttr(default_factory=set)
     _pending_switches: set[str] = PrivateAttr(default_factory=set)
     _custom_template_cache: dict[str, dict[str, Any] | None] = PrivateAttr(default_factory=dict)
+    _fabric_network_names_cache: set[str] | None = PrivateAttr(default=None)
     _vpc_peer_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
     _warnings: list[str] = PrivateAttr(default_factory=list)
     _deploy_attempted: bool = PrivateAttr(default=False)
@@ -368,7 +370,13 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             return None
 
     @classmethod
-    def _has_next_page(cls, response: Any, page_count: int, total_seen: int) -> bool:
+    def _has_next_page(
+        cls,
+        response: Any,
+        page_count: int,
+        total_seen: int,
+        page_size: int = _QUERY_PAGE_SIZE,
+    ) -> bool:
         if not isinstance(response, dict) or page_count == 0:
             return False
         meta = response.get("meta") or response.get("metadata") or {}
@@ -379,7 +387,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         total = cls._coerce_int(counts.get("total"))
         if total is not None:
             return total_seen < total
-        return page_count == _QUERY_PAGE_SIZE
+        return page_count == page_size
 
     @staticmethod
     def _models_from_list_response(response: Any) -> list[InterfaceGroupConfigModel]:
@@ -949,6 +957,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             messages = [f"{item.interface_group_name or '?'}: {item.message or 'unknown error'}" for item in parsed.failures]
             raise RuntimeError(f"Interface Group delete returned a non-success per-item status: {'; '.join(messages)}")
 
+    # TODO(4.2.1) Determine which interface member types can be combined in a single NDFC request.
     def create_bulk(self, model_instances: list[InterfaceGroupConfigModel], **kwargs) -> ResponseType:
         """Create Interface Groups and populate ``any`` membership in batches.
 
@@ -1549,16 +1558,51 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
 
         self._move_plan = {source_name: self._remove_members(self._existing_groups[source_name], members) for source_name, members in moving_from.items()}
 
-    def _network_exists(self, network_name: str) -> bool:
-        endpoint = self._configure_endpoint(EpManageFabricsNetworksNetworkNameGet())
-        endpoint.network_name = network_name
-        response = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
-        return bool(response)
+    @staticmethod
+    def _network_items_from_list_response(response: Any) -> list[dict[str, Any]]:
+        """Return Network rows from supported NDFC list-response shapes."""
+        if isinstance(response, dict):
+            items = response.get("networks") or response.get("items") or []
+        elif isinstance(response, list):
+            items = response
+        else:
+            items = []
+        return [item for item in items if isinstance(item, dict)]
+
+    def _fetch_fabric_network_names(self) -> set[str]:
+        """Return one cached, paginated snapshot of Network names in the fabric."""
+        if self._fabric_network_names_cache is not None:
+            return set(self._fabric_network_names_cache)
+
+        network_names: set[str] = set()
+        offset = 0
+        while True:
+            endpoint = self._configure_endpoint(
+                EpManageFabricsNetworksGet(),
+                max_records=_NETWORK_QUERY_PAGE_SIZE,
+                offset=offset,
+            )
+            response = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+            page = self._network_items_from_list_response(response)
+            for item in page:
+                network_name = item.get("networkName") or item.get("network_name")
+                if isinstance(network_name, str):
+                    network_names.add(network_name)
+            page_end = offset + len(page)
+            if not self._has_next_page(
+                response,
+                len(page),
+                page_end,
+                page_size=_NETWORK_QUERY_PAGE_SIZE,
+            ):
+                self._fabric_network_names_cache = network_names
+                return set(network_names)
+            offset = page_end
 
     @staticmethod
     def _normalize_template_metadata_token(value: Any) -> str:
@@ -1688,7 +1732,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             raise RuntimeError("; ".join(failures))
 
     def _validate_networks_exist(self, networks: set[str]) -> None:
-        missing = sorted(name for name in networks if not self._network_exists(name))
+        if not networks:
+            return
+        missing = sorted(networks - self._fetch_fabric_network_names())
         if missing:
             quoted = ", ".join(f"'{name}'" for name in missing)
             raise RuntimeError(

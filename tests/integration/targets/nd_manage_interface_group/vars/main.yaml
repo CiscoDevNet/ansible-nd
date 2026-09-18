@@ -465,7 +465,6 @@ interface_group_ethernet_with_policy_type:
     auto_negotiate: true
     bpdu_guard: default
     cdp: true
-    description: Ansible shared Ethernet policy
     duplex_mode: auto
     extra_config: ''
     mtu: jumbo

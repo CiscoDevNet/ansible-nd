@@ -34,9 +34,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_g
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
-    AsciiDescription,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import (
     config_actions_spec,
 )
@@ -85,7 +82,6 @@ class InterfaceGroupEthernetAttributesModel(NDNestedModel):
     auto_negotiate: bool | None = Field(default=None, alias="autoNegotiate")
     bpdu_guard: Literal["enable", "disable", "default"] | None = Field(default=None, alias="bpduGuard")
     cdp: bool | None = Field(default=None)
-    description: AsciiDescription = Field(default=None, min_length=1, max_length=254)
     duplex_mode: Literal["auto", "full", "half"] | None = Field(default=None, alias="duplexMode")
     extra_config: str | None = Field(default=None, alias="extraConfig")
     mtu: MtuEnum | None = Field(default=None)
@@ -347,6 +343,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
                 merged[key] = deepcopy(value)
         return merged
 
+    # TODO(4.2.1) Re-evaluate this normalization when NDFC consistently returns empty optional shared-policy fields.
     @staticmethod
     def _normalize_controller_omitted_empty_attributes(
         first: dict[str, Any],
@@ -354,7 +351,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
     ) -> None:
         """Treat controller-omitted empty policy strings as equivalent.
 
-        ND may omit empty optional shared-policy strings from a subsequent GET.
+        NDFC may omit empty optional shared-policy strings from a subsequent GET.
         Remove an empty value only when the corresponding key is absent on the
         other side. A comparison against a non-empty value remains a real diff,
         so an explicit empty string can still clear existing configuration.
@@ -380,7 +377,7 @@ class InterfaceGroupConfigModel(NDBaseModel):
         *,
         second_exclude_unset: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Return comparison dictionaries with ND empty-string echoes aligned."""
+        """Return comparison dictionaries with NDFC empty-string echoes aligned."""
         first_data = first.to_diff_dict()
         second_data = second.to_diff_dict(exclude_unset=second_exclude_unset)
         cls._normalize_controller_omitted_empty_attributes(first_data, second_data)

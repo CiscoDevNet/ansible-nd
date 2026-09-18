@@ -151,6 +151,14 @@
           ethernet_attributes:
             bpdu_guard: enabled
       message: "bpdu_guard"
+    - label: Ethernet shared-policy description is unsupported
+      config:
+        - interface_group_name: >-
+            {{ interface_group_names.ethernet_with_policy }}
+          type: ethernetWithPolicy
+          ethernet_attributes:
+            description: server link
+      message: "description"
     - label: Removed 1.1.332 Ethernet names are rejected
       config:
         - interface_group_name: >-

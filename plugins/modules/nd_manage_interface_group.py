@@ -177,11 +177,6 @@ options:
             description:
             - Whether Cisco Discovery Protocol is enabled.
             type: bool
-          description:
-            description:
-            - Interface description applied to members. The value must contain
-              1 to 254 ASCII characters.
-            type: str
           extra_config:
             description:
             - Additional interface configuration commands.
@@ -279,8 +274,11 @@ options:
     - C(replaced) creates missing groups and authoritatively replaces supplied fields on named groups.
       Omitted network/member collections are preserved; explicit empty collections clear them.
       Other groups are preserved.
-    - C(overridden) applies authoritative replacement to supplied groups and deletes every other
-      Interface Group in the fabric.
+    - C(overridden) treats O(config) as the complete desired set of Interface Groups in the fabric.
+      Supplied groups are created or authoritatively updated, and every other Interface Group is deleted.
+    - For a supplied existing group under O(state=overridden), a supplied network or member collection
+      is the complete desired collection. Omitting the collection preserves it, while an explicit empty
+      list clears it.
     - C(deleted) deletes the named groups. Member and network associations are cleared first.
     - C(gathered) returns playbook-compatible Interface Group configuration
       without making changes. O(config) can be omitted or used as filters.
@@ -347,6 +345,30 @@ EXAMPLES = r"""
       type: switch
     state: replaced
 
+- name: Override the fabric to two Interface Groups and move Port-channel10
+  cisco.nd.nd_manage_interface_group:
+    fabric_name: fabric-1
+    config:
+      - interface_group_name: server-port-channels-a
+        type: portChannel
+        switch_interfaces:
+          - switch_id: FDO12345678
+            interface_names:
+              # Port-channel10 is intentionally omitted from its source group.
+              - Port-channel20
+      - interface_group_name: server-port-channels-b
+        type: portChannel
+        switch_interfaces:
+          - switch_id: FDO12345678
+            interface_names:
+              # Port-channel10 is added to its destination group.
+              - Port-channel10
+              - Port-channel30
+    config_actions:
+      type: resource
+      deploy: true
+    state: overridden
+
 - name: Create a shared-policy Ethernet Interface Group
   cisco.nd.nd_manage_interface_group:
     fabric_name: fabric-1
@@ -359,7 +381,6 @@ EXAMPLES = r"""
           auto_negotiate: true
           bpdu_guard: enable
           cdp: true
-          description: Managed by Ansible
           duplex_mode: auto
           mtu: jumbo
           native_vlan: 100

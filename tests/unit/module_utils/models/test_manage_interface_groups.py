@@ -474,7 +474,6 @@ def test_manage_interface_groups_model_00072() -> None:
         "auto_negotiate": False,
         "bpdu_guard": "disable",
         "cdp": False,
-        "description": "Server-facing Ethernet interface",
         "duplex_mode": "full",
         "extra_config": "logging event port link-status",
         "mtu": "default",
@@ -493,7 +492,6 @@ def test_manage_interface_groups_model_00072() -> None:
         "autoNegotiate": False,
         "bpduGuard": "disable",
         "cdp": False,
-        "description": "Server-facing Ethernet interface",
         "duplexMode": "full",
         "extraConfig": "logging event port link-status",
         "mtu": "default",
@@ -639,28 +637,27 @@ def test_manage_interface_groups_model_00078(removed_field: str) -> None:
 
 
 def test_manage_interface_groups_model_00079() -> None:
-    """Enforce the supported nested Ethernet description bounds."""
-    for description in ("", "x" * 255, "interface description ☃"):
-        with pytest.raises(ValidationError):
-            InterfaceGroupConfigModel.from_config(
-                {
-                    "interface_group_name": "invalid-description",
-                    "type": "ethernetWithPolicy",
-                    "ethernet_attributes": {"description": description},
-                }
-            )
+    """Reject the unsupported built-in Ethernet description option."""
+    with pytest.raises(ValidationError, match="description"):
+        InterfaceGroupConfigModel.from_config(
+            {
+                "interface_group_name": "unsupported-description",
+                "type": "ethernetWithPolicy",
+                "ethernet_attributes": {"description": "server link"},
+            }
+        )
 
 
 def test_manage_interface_groups_model_00080() -> None:
-    """Treat a controller-echoed blank Ethernet description as unset."""
+    """Ignore an unsupported Ethernet description returned by the controller."""
     response = InterfaceGroupConfigModel.from_response(
         {
-            "interfaceGroupName": "controller-default-description",
+            "interfaceGroupName": "controller-description",
             "type": "ethernet",
             "policyDetails": {
                 "policyType": "sharedTrunkHost",
                 "ethernetAttributes": {
-                    "description": "",
+                    "description": "server link",
                     "extraConfig": "",
                     "netflowMonitor": "",
                     "netflowSampler": "",
@@ -669,7 +666,6 @@ def test_manage_interface_groups_model_00080() -> None:
         }
     )
 
-    assert response.ethernet_attributes.description is None
     assert response.ethernet_attributes.extra_config == ""
     assert response.ethernet_attributes.netflow_monitor == ""
     assert response.ethernet_attributes.netflow_sampler == ""

@@ -615,8 +615,8 @@ def test_manage_interface_group_00050(monkeypatch) -> None:
 
     monkeypatch.setattr(
         ManageInterfaceGroupOrchestrator,
-        "_network_exists",
-        lambda self, network_name: True,
+        "_fetch_fabric_network_names",
+        lambda self: {"net-a"},
     )
     monkeypatch.setattr(orchestrator.rest_send, "warn", warnings.append)
 
@@ -651,8 +651,8 @@ def test_manage_interface_group_00060(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         ManageInterfaceGroupOrchestrator,
-        "_network_exists",
-        lambda self, network_name: False,
+        "_fetch_fabric_network_names",
+        lambda self: set(),
     )
 
     with pytest.raises(RuntimeError, match="do not exist"):
@@ -673,8 +673,8 @@ def test_manage_interface_group_00065(monkeypatch) -> None:
 
     monkeypatch.setattr(
         ManageInterfaceGroupOrchestrator,
-        "_network_exists",
-        lambda self, network_name: pytest.fail(f"unexpected network query for {network_name}"),
+        "_fetch_fabric_network_names",
+        lambda self: pytest.fail("unexpected Network list query"),
     )
 
     orchestrator.preflight([proposed])
@@ -1486,22 +1486,64 @@ def test_manage_interface_group_00150(monkeypatch) -> None:
 
 
 def test_manage_interface_group_00160(monkeypatch) -> None:
-    """Network existence validation uses GET-one and reports all missing names."""
+    """Network existence validation uses one cached list request and reports all missing names."""
     calls: list[str] = []
 
     def fake_request(self, path, verb, **kwargs):
         del self, verb, kwargs
         calls.append(path)
-        return {} if "/missing" in path else {"networkName": "network-a"}
+        return {
+            "networks": [
+                {"networkName": "network-a"},
+                {"networkName": "network-b"},
+            ],
+            "meta": {"counts": {"remaining": 0, "total": 2}},
+        }
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     orchestrator = _orchestrator()
 
-    assert orchestrator._network_exists("network-a") is True
-    with pytest.raises(RuntimeError, match="'missing'"):
-        orchestrator._validate_networks_exist({"network-a", "missing"})
+    with pytest.raises(RuntimeError, match="'missing-a', 'missing-b'"):
+        orchestrator._validate_networks_exist({"network-a", "network-b", "missing-a", "missing-b"})
+    orchestrator._validate_networks_exist({"network-a"})
 
+    assert len(calls) == 1
+    assert "/networks?" in calls[0]
+    assert "offset=0" in calls[0]
+    assert "max=10000" in calls[0]
+    assert "/networks/network-" not in calls[0]
     assert all("clusterName=" not in path for path in calls)
+
+
+def test_manage_interface_group_00165(monkeypatch) -> None:
+    """Network list validation follows pagination metadata when a fabric exceeds one page."""
+    responses = iter(
+        [
+            {
+                "networks": [{"networkName": "network-a"}],
+                "meta": {"counts": {"remaining": 1, "total": 2}},
+            },
+            {
+                "networks": [{"networkName": "network-b"}],
+                "meta": {"counts": {"remaining": 0, "total": 2}},
+            },
+        ]
+    )
+    calls: list[str] = []
+
+    def fake_request(self, path, verb, **kwargs):
+        del self, verb, kwargs
+        calls.append(path)
+        return next(responses)
+
+    monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
+    orchestrator = _orchestrator()
+
+    orchestrator._validate_networks_exist({"network-a", "network-b"})
+
+    assert len(calls) == 2
+    assert "offset=0" in calls[0]
+    assert "offset=1" in calls[1]
 
 
 def test_manage_interface_group_00170(monkeypatch) -> None:
@@ -1512,7 +1554,10 @@ def test_manage_interface_group_00170(monkeypatch) -> None:
     def fake_request(self, path, verb, data=None, **kwargs):
         del self, verb, kwargs
         calls.append({"path": path, "data": data})
-        return {"networkName": "network-a"}
+        return {
+            "networks": [{"networkName": "network-a"}],
+            "meta": {"counts": {"remaining": 0, "total": 1}},
+        }
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     config = [
@@ -1533,7 +1578,7 @@ def test_manage_interface_group_00170(monkeypatch) -> None:
     orchestrator.preflight([InterfaceGroupConfigModel.from_config(config[0])])
 
     assert len(calls) == 1
-    assert "/networks/network-a" in calls[0]["path"]
+    assert "/networks?" in calls[0]["path"]
     assert all("networkActions/preview" not in call["path"] for call in calls)
     assert len(warnings) == 1
     assert orchestrator.warnings == warnings

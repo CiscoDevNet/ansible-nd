@@ -304,6 +304,10 @@ def test_nd_manage_interface_group_00010() -> None:
             {"ethernet_attributes": {"native_vlan": 4095}},
             "native_vlan",
         ),
+        (
+            {"ethernet_attributes": {"description": "server link"}},
+            "description",
+        ),
     ],
 )
 def test_nd_manage_interface_group_00020(config_update, error) -> None:

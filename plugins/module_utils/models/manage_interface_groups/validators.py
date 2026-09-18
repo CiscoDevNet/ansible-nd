@@ -26,7 +26,6 @@ _ETHERNET_ATTRIBUTE_KEYS = frozenset(
         "autoNegotiate",
         "bpduGuard",
         "cdp",
-        "description",
         "duplexMode",
         "extraConfig",
         "mtu",
@@ -108,17 +107,12 @@ class InterfaceGroupValidators:
 
     @staticmethod
     def normalize_response_ethernet_attributes(value: dict | None) -> dict | None:
-        """Keep supported shared-policy attributes from an ND response."""
+        """Keep supported shared-policy attributes from an NDFC response."""
         if not isinstance(value, dict):
             return value
         normalized = {}
         for key, item in value.items():
             if key not in _ETHERNET_ATTRIBUTE_KEYS:
-                continue
-            # Existing controller-created policies can echo an empty description.
-            # Treat that response-only default as unset without weakening input
-            # validation or emitting an invalid blank value on later writes.
-            if key == "description" and item == "":
                 continue
             normalized[key] = item
         return normalized
