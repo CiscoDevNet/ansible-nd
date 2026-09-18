@@ -120,7 +120,16 @@ class RMASwitchModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_rma_credentials(self) -> "RMASwitchModel":
-        """Validate RMA credential configuration logic."""
+        """
+        # Summary
+
+        Validate RMA credential configuration.
+
+        ## Raises
+
+        - `ValueError`: Raised when new local credentials are incomplete, or when
+            CyberArk credentials omit the required credential-store key.
+        """
         if self.use_new_credentials:
             if self.remote_credential_store == RemoteCredentialStore.CYBERARK:
                 if not self.remote_credential_store_key:

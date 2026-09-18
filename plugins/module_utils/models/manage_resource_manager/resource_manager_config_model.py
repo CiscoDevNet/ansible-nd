@@ -17,7 +17,7 @@ Fields map directly to the module's config suboptions:
   switch           → switch          (list of switch IPs/serials; required for non-fabric scopes)
 
 State-aware validation is supported when model_validate() is called with
-context={"state": "merged|deleted|query|gathered"}.
+context={"state": "merged|deleted|gathered"}.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.constants import is_pool_supported
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -49,14 +50,15 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     Provides full per-field and cross-field validation for resource allocation
     configuration. Supports state-aware validation when model_validate() is
-    called with context={"state": "merged|deleted|query|gathered"}.
+    called with context={"state": "merged|deleted|gathered"}.
 
     Field requirements by state:
       merged:          entity_name, pool_type, pool_name, scope_type required;
                        switch required for non-fabric scopes.
       deleted:         entity_name, pool_type, pool_name, scope_type required;
                        switch required for non-fabric scopes.
-      query/gathered:  all fields optional (used as filters).
+      gathered:        config may be omitted or empty; each provided filter item
+                       requires at least one supported, non-null property.
 
     Note: The nd_manage_resource_manager module performs its own mandatory field
     checks before calling from_config(). This model adds per-field normalization
@@ -64,6 +66,14 @@ class ResourceManagerConfigModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
+    GATHERED_FILTER_PROPERTIES: ClassVar[tuple[str, ...]] = (
+        "entity_name",
+        "pool_name",
+        "switches",
+        "resource",
+        "scope_type",
+        "pool_type",
+    )
 
     # Fields excluded from diff — operational input flags not present in gathered state.
     # entity_name, pool_type, pool_name, scope_type, resource and vrf_name
@@ -131,6 +141,72 @@ class ResourceManagerConfigModel(NDBaseModel):
     # -------------------------------------------------------------------------
     # Per-field validators
     # -------------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_gathered_properties(cls, data: Any, info: Any) -> Any:
+        """Validate gathered filter keys before extra fields are discarded."""
+        state = (info.context or {}).get("state") if info else None
+        if state != "gathered" or not isinstance(data, dict):
+            return data
+
+        active_properties = {key for key, value in data.items() if value is not None}
+        unsupported = sorted(active_properties - set(cls.GATHERED_FILTER_PROPERTIES))
+        if unsupported:
+            raise ValueError(
+                "unsupported gathered filter properties: {0}. Supported gathered filter properties: {1}".format(
+                    ", ".join("'{0}'".format(key) for key in unsupported),
+                    ", ".join("'{0}'".format(key) for key in cls.GATHERED_FILTER_PROPERTIES),
+                )
+            )
+
+        if not active_properties:
+            raise ValueError(
+                "gathered filter item must contain at least one supported property: {0}".format(
+                    ", ".join("'{0}'".format(key) for key in cls.GATHERED_FILTER_PROPERTIES)
+                )
+            )
+
+        return data
+
+    @classmethod
+    def validate_gathered_config(
+        cls,
+        config: list[dict[str, Any]] | None,
+        fabric_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Validate and normalize all gathered filter items."""
+        if not config:
+            return []
+
+        issues = []
+        validated_items = []
+        for idx, item in enumerate(config):
+            try:
+                validated = cls.model_validate(
+                    item,
+                    context={"state": "gathered", "fabric_type": fabric_type},
+                )
+            except ValidationError as exc:
+                error_detail = exc.errors() if hasattr(exc, "errors") else str(exc)
+                issues.append("config index {0}: {1}".format(idx, error_detail))
+                continue
+            except Exception as exc:
+                issues.append("config index {0}: {1}".format(idx, str(exc)))
+                continue
+
+            supplied_properties = set(item) if isinstance(item, dict) else set()
+            validated_items.append(
+                validated.model_dump(
+                    include=supplied_properties,
+                    exclude_none=True,
+                )
+            )
+
+        if issues:
+            raise ValueError("Gathered filter validation failed: {0}".format("; ".join(issues)))
+
+        return validated_items
 
     @field_validator("entity_name", mode="before")
     @classmethod
@@ -405,8 +481,9 @@ class ResourceManagerConfigModel(NDBaseModel):
         When model_validate(context={"state": "merged"}) or
         model_validate(context={"state": "deleted"}) is passed, the model
         enforces that entity_name, pool_type, pool_name, and scope_type are
-        all provided. For 'query' / 'gathered' state (or no context), all
-        fields remain optional and serve as filters.
+        all provided. For 'gathered' state, individual fields are optional, but
+        each provided filter item must contain at least one supported, non-null
+        property.
         """
         state = (info.context or {}).get("state") if info else None
         if state in ("merged", "deleted"):

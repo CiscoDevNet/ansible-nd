@@ -446,7 +446,7 @@ def test_svi_orchestrator_00820() -> None:
 
     ## Test
 
-    - Queue one interface manually
+    - Enable `deploy` (it defaults to False) and queue one interface manually
     - Call deploy_pending
     - Queue is empty after success
 
@@ -460,6 +460,7 @@ def test_svi_orchestrator_00820() -> None:
 
     gen_responses = ResponseGenerator(responses())
     orchestrator = _build_orchestrator(gen_responses)
+    orchestrator.deploy = True
     orchestrator._queue_deploy("vlan333", "FDO11111AAA")
 
     with does_not_raise():

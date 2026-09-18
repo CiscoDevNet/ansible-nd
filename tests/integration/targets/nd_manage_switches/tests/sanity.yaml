@@ -173,7 +173,7 @@
   ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
   tags: sanity
 
-- name: Sanity TC4 - Overridden - Update a New Switch using GreenField Deployment - Delete and Create - default role
+- name: Sanity TC4 - Overridden - Update a New Switch using GreenField Deployment - Delete and Create - controller default role
   cisco.nd.nd_manage_switches: &conf_over
     fabric: "{{ test_data.test_fabric }}"
     state: overridden

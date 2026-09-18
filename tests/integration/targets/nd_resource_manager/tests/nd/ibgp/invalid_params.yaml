@@ -68,3 +68,67 @@
           - invalid_dynamic_pool_name.msg is defined
           - invalid_dynamic_pool_name.msg is search("Unsupported pool_name")
           - invalid_dynamic_pool_name.msg is search("10.4.99.0/30")
+
+    - name: iBGP gathered filters - Unsupported property
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "ibgp_invalid_gathered"
+            vrf_name: "default"
+      register: invalid_gathered_unsupported_property
+      ignore_errors: true
+
+    - name: iBGP gathered filters - Assert unsupported property failed
+      ansible.builtin.assert:
+        that:
+          - invalid_gathered_unsupported_property is failed
+          - invalid_gathered_unsupported_property.msg is defined
+          - invalid_gathered_unsupported_property.msg is search("unsupported gathered filter properties")
+          - invalid_gathered_unsupported_property.msg is search("vrf_name")
+
+    - name: iBGP gathered filters - Empty filter item
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - {}
+      register: invalid_gathered_empty_item
+      ignore_errors: true
+
+    - name: iBGP gathered filters - Assert empty filter item failed
+      ansible.builtin.assert:
+        that:
+          - invalid_gathered_empty_item is failed
+          - invalid_gathered_empty_item.msg is defined
+          - invalid_gathered_empty_item.msg is search("must contain at least one supported property")
+
+    - name: iBGP gathered filters - Null-only property
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - pool_name: null
+      register: invalid_gathered_null_property
+      ignore_errors: true
+
+    - name: iBGP gathered filters - Assert null-only property failed
+      ansible.builtin.assert:
+        that:
+          - invalid_gathered_null_property is failed
+          - invalid_gathered_null_property.msg is defined
+          - invalid_gathered_null_property.msg is search("must contain at least one supported property")
+
+    - name: iBGP gathered filters - Valid property mixed with null
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "ibgp_invalid_gathered"
+            pool_name: null
+      register: valid_gathered_mixed_null_property
+
+    - name: iBGP gathered filters - Assert mixed null property was ignored
+      ansible.builtin.assert:
+        that:
+          - valid_gathered_mixed_null_property is not failed

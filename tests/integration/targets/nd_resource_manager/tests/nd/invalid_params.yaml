@@ -210,3 +210,67 @@
           - invalid_subnet_scope.msg is search("entity_name")
           - invalid_subnet_scope.msg is search("scope_type")
           - (invalid_subnet_scope.msg | lower) is search("device_interface")
+
+    - name: Gather Resources - Unsupported filter property
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "invalid_gathered"
+            vrf_name: "default"
+      register: invalid_gathered_unsupported_property
+      ignore_errors: true
+
+    - name: Assert unsupported gathered filter property failed
+      ansible.builtin.assert:
+        that:
+          - invalid_gathered_unsupported_property is failed
+          - invalid_gathered_unsupported_property.msg is defined
+          - invalid_gathered_unsupported_property.msg is search("unsupported gathered filter properties")
+          - invalid_gathered_unsupported_property.msg is search("vrf_name")
+
+    - name: Gather Resources - Empty filter item
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - {}
+      register: invalid_gathered_empty_item
+      ignore_errors: true
+
+    - name: Assert empty gathered filter item failed
+      ansible.builtin.assert:
+        that:
+          - invalid_gathered_empty_item is failed
+          - invalid_gathered_empty_item.msg is defined
+          - invalid_gathered_empty_item.msg is search("must contain at least one supported property")
+
+    - name: Gather Resources - Null-only filter property
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - pool_name: null
+      register: invalid_gathered_null_property
+      ignore_errors: true
+
+    - name: Assert null-only gathered filter property failed
+      ansible.builtin.assert:
+        that:
+          - invalid_gathered_null_property is failed
+          - invalid_gathered_null_property.msg is defined
+          - invalid_gathered_null_property.msg is search("must contain at least one supported property")
+
+    - name: Gather Resources - Valid filter mixed with null
+      cisco.nd.nd_manage_resource_manager:
+        state: gathered
+        fabric_name: "{{ ansible_it_fabric }}"
+        config:
+          - entity_name: "invalid_gathered"
+            pool_name: null
+      register: valid_gathered_mixed_null_property
+
+    - name: Assert mixed null gathered filter property was ignored
+      ansible.builtin.assert:
+        that:
+          - valid_gathered_mixed_null_property is not failed

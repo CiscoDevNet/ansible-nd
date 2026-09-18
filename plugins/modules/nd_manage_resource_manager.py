@@ -44,7 +44,10 @@ options:
         Additional required field C(switches) when C(scope_type) is not C(fabric). Optional fields C(is_pre_allocated), C(vrf_name)."
       - "For C(state=gathered): C(config) may be omitted entirely to retrieve all resources, or provided with optional filter fields.
         Each config item can include any combination of C(entity_name), C(pool_name), C(switches), C(resource), C(scope_type), C(pool_type).
-        Filter fields act as match criteria; only those provided are used to select resources."
+        Filter fields act as match criteria; only those provided are used to select resources. Each provided item must contain at least one
+        supported filter property with a non-null value. Null-valued properties are ignored because Ansible represents omitted suboptions as
+        null after argument validation. Active unsupported properties cause the module to fail before resources are queried. An explicit empty
+        list has the same gather-all behavior as omitting C(config)."
     type: list
     elements: dict
     suboptions:
@@ -117,6 +120,7 @@ options:
           - When omitted, the module preserves legacy behavior and sends C(true).
           - When set to C(false), ND auto-allocates the resource value and C(resource) may be omitted.
           - Optional for C(state=merged) and C(state=deleted).
+          - Not supported as a filter for C(state=gathered).
         type: bool
         required: false
       vrf_name:
@@ -124,6 +128,7 @@ options:
           - Virtual Routing and Forwarding (VRF) name for the resource.
           - Applicable when the resource is scoped to a device or link using a specific VRF context.
           - Optional for C(state=merged) and C(state=deleted).
+          - Not supported as a filter for C(state=gathered).
         type: str
         required: false
 extends_documentation_fragment:

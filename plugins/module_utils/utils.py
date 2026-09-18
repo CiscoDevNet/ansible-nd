@@ -19,6 +19,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
+# Ansible's placeholder for masked secret values. Used to keep secret keys visible
+# in module output while hiding their values (instead of dropping the key).
+NO_LOG_PLACEHOLDER = "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
     if keys is None:
@@ -73,6 +77,105 @@ def issubset(subset: Any, superset: Any) -> bool:
             return False
 
     return True
+
+
+def prune_to_spec(data: Any, options_spec: dict) -> Any:
+    """Prune a dict to only the keys defined by an Ansible argument spec.
+
+    Why this exists: read-only ``gathered`` output is meant to be copy-pasted
+    back as ``config``. The model can carry more than the module exposes
+    (response-only fields such as ``link_id``), and Ansible validates suboptions
+    at every nesting level, so any stray key would fail with "Unsupported
+    parameters". Pruning to the argument spec guarantees a clean round-trip.
+
+    Walks ``data`` in lockstep with ``options_spec`` (an argument spec
+    ``options`` mapping) and keeps only keys the spec declares, recursing into
+    nested ``dict`` and ``list`` of ``dict`` suboptions that carry their own
+    ``options``. Suboptions without an ``options`` mapping (scalars, lists of
+    scalars, free-form dicts) are copied verbatim; recursion stops there so
+    free-form content (e.g. ``template_inputs``) is preserved untouched.
+
+    ``no_log`` suboptions are masked to ``NO_LOG_PLACEHOLDER`` (the key stays
+    visible so the reader knows the field is set, but the secret value is never
+    surfaced from an API read).
+    """
+    if not isinstance(data, dict):
+        return data
+
+    pruned = {}
+    for key, value in data.items():
+        if key not in options_spec:
+            continue
+
+        sub_spec = options_spec[key]
+        if isinstance(sub_spec, dict) and sub_spec.get("no_log"):
+            pruned[key] = NO_LOG_PLACEHOLDER
+            continue
+
+        sub_options = sub_spec.get("options") if isinstance(sub_spec, dict) else None
+
+        if sub_options and sub_spec.get("type") == "dict":
+            pruned[key] = prune_to_spec(value, sub_options) if isinstance(value, dict) else value
+        elif sub_options and sub_spec.get("type") == "list" and sub_spec.get("elements") == "dict":
+            pruned[key] = [prune_to_spec(item, sub_options) for item in value] if isinstance(value, list) else value
+        else:
+            pruned[key] = value
+
+    return pruned
+
+
+def _is_effectively_empty(value: Any) -> bool:
+    """
+    # Summary
+
+    Return `True` when `value` carries no user-visible content: `None`, `""`, `[]`, `{}`, or a dict whose values are all themselves effectively empty.
+    ND echoes such empty markers for fields the user never configured, so `has_removals` must not treat them as removable values.
+
+    ## Raises
+
+    None
+    """
+    # Lists are only empty-normalized when literally `[]` -- a list of empty markers ([""], [{}]) is NOT collapsed,
+    # unlike the dict branch below. ND has only been observed echoing literal `[]` for never-configured list fields;
+    # collapsing non-empty lists without lab evidence could mask a real pending removal.
+    if value is None or value == "" or value == [] or value == {}:
+        return True
+    if isinstance(value, dict):
+        return all(_is_effectively_empty(item) for item in value.values())
+    return False
+
+
+def has_removals(existing_data: Any, proposed_data: Any) -> bool:
+    """
+    # Summary
+
+    Return `True` when `existing_data` carries a non-empty key that is absent from `proposed_data` (issue #410: the reverse pass for
+    `replaced`/`overridden` diff classification). Only key *presence* is examined -- value differences between keys present on both
+    sides are the forward `issubset` pass's job. Keys whose existing value is effectively empty (`None`, `""`, `[]`, `{}`, or a dict
+    of only such values) are normalized to absent, so ND-echoed empty markers for never-configured fields do not break idempotency.
+    Recurses into dicts present on both sides; non-dict inputs (including a dict/non-dict type conflict, which the forward pass
+    already classifies as changed) report no removals.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(existing_data, dict) or not isinstance(proposed_data, dict):
+        return False
+
+    for key, value in existing_data.items():
+        if _is_effectively_empty(value):
+            continue
+        if key not in proposed_data:
+            return True
+        # Recurse into dicts only -- lists are deliberately not descended into. A removal inside a list element
+        # (e.g. a nested dict that loses a key) is already caught by the forward `issubset` pass, which matches
+        # list elements bidirectionally, so any element divergence classifies as changed there; a wholly-omitted
+        # list key is caught by the key-presence check above.
+        if isinstance(value, dict) and has_removals(value, proposed_data[key]):
+            return True
+
+    return False
 
 
 def remove_unwanted_keys(data: dict, unwanted_keys: list[str | list[str]]) -> dict:
@@ -130,7 +233,7 @@ def register_action_api_call(
 
 class FabricUtils:
     """
-    Shared helper for fabric-level config save/deploy actions.
+    Shared helper for generic fabric-level metadata and config actions.
     """
 
     def __init__(self, nd_module: Any, fabric_name: str) -> None:

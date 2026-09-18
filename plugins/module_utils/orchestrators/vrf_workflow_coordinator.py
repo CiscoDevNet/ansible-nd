@@ -830,9 +830,10 @@ class VrfWorkflowCoordinator:
         desired: dict[tuple[str, str], dict[str, Any]] | None = None,
         current_vrf_names: list[str] | None = None,
         current: dict[tuple[str, str], dict[str, Any]] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Attach or detach VRFs according to state and phase."""
-        return self.attachments.apply_phase(module_args, strategy, phase, desired, current_vrf_names, current)
+        return self.attachments.apply_phase(module_args, strategy, phase, desired, current_vrf_names, current, attachment_details)
 
     def _attachment_map_after_detach(
         self,

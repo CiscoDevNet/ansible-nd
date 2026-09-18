@@ -149,7 +149,7 @@
   ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
   tags: merged
 
-- name: Merged TC6 - Merge a Switch using GreenField Deployment - Using default role/auth_proto
+- name: Merged TC6 - Merge a Switch using GreenField Deployment - Using controller default role/auth_proto
   cisco.nd.nd_manage_switches: &conf_def
     fabric: "{{ test_data.test_fabric }}"
     state: merged
@@ -162,7 +162,7 @@
   ansible.builtin.set_fact:
     nd_switches_mergev_conf:
       - seed_ip: "{{ test_data.sw1 }}"
-        role: leaf # default role in ND
+        role: leaf # explicit leaf role matching the controller default
   delegate_to: localhost
   tags: merged
 

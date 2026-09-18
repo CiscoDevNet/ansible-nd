@@ -17,6 +17,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDModuleError,
 )
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import HAS_PYDANTIC
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_resources import (
     EpManageFabricResourcesGet,
@@ -473,6 +474,84 @@ def test_resource_manager_config_allows_partial_gathered_filter():
     model = ResourceManagerConfigModel.model_validate({"scope_type": "device"}, context={"state": "gathered"})
     assert model.scope_type == "device"
     assert model.switches is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("entity_name", "loopback0"),
+        ("pool_name", "LOOPBACK_ID"),
+        ("switches", ["SER1"]),
+        ("resource", "10"),
+        ("scope_type", "device"),
+        ("pool_type", "id"),
+    ],
+)
+def test_resource_manager_model_validates_supported_gathered_properties(field, value):
+    """The model validates and normalizes every supported gathered property."""
+    validated = ResourceManagerConfigModel.validate_gathered_config([{field: value}])
+
+    expected = "ID" if field == "pool_type" else value
+    assert validated == [{field: expected}]
+
+
+def test_resource_manager_model_aggregates_unsupported_gathered_properties():
+    """The model reports every invalid gathered item with its config index."""
+    config = [
+        {"pool_name": "LOOPBACK_ID", "vrf_name": "blue"},
+        {"is_pre_allocated": False, "unknown_filter": "value"},
+    ]
+
+    with pytest.raises(ValueError) as exc_info:
+        ResourceManagerConfigModel.validate_gathered_config(config)
+
+    message = str(exc_info.value)
+    assert "config index 0" in message
+    assert "config index 1" in message
+    assert "vrf_name" in message
+    assert "is_pre_allocated" in message
+    assert "unknown_filter" in message
+
+
+@pytest.mark.parametrize("config", [None, []])
+def test_resource_manager_model_empty_gathered_config_gathers_all(config):
+    """Omitted and explicit empty gathered config both represent gather-all."""
+    assert ResourceManagerConfigModel.validate_gathered_config(config) == []
+
+
+@pytest.mark.parametrize("item", [{}, "not-a-dictionary"])
+def test_resource_manager_model_rejects_propertyless_gathered_items(item):
+    """A provided gathered item must contain a usable supported property."""
+    with pytest.raises(ValueError, match="config index 0"):
+        ResourceManagerConfigModel.validate_gathered_config([item])
+
+
+def test_resource_manager_model_rejects_null_only_gathered_filter():
+    """A gathered item containing no active filter property is rejected."""
+    with pytest.raises(ValueError, match="must contain at least one supported property"):
+        ResourceManagerConfigModel.validate_gathered_config([{"pool_name": None}])
+
+
+def test_resource_manager_model_ignores_null_property_mixed_with_valid_filter():
+    """Null placeholders are ignored when an active gathered filter is present."""
+    validated = ResourceManagerConfigModel.validate_gathered_config([{"entity_name": "loopback0", "pool_name": None}])
+
+    assert validated == [{"entity_name": "loopback0"}]
+
+
+def test_resource_manager_model_accepts_ansible_normalized_gathered_filter():
+    """Omitted suboptions populated with None by Ansible are not treated as supplied."""
+    validator = ArgumentSpecValidator(ResourceManagerConfigModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"entity_name": "loopback0"}],
+        }
+    )
+
+    assert result.error_messages == []
+    assert ResourceManagerConfigModel.validate_gathered_config(result.validated_parameters["config"]) == [{"entity_name": "loopback0"}]
 
 
 def test_resource_manager_config_allows_auto_allocation_without_resource():
@@ -2728,6 +2807,27 @@ def test_validate_input_gathered_with_partial_filter():
     assert result == []  # Gathered returns empty list
 
 
+@pytest.mark.parametrize("field,value", [("vrf_name", "blue"), ("is_pre_allocated", False)])
+def test_gathered_rejects_unsupported_properties_before_api_calls(field, value):
+    """Gathered property validation runs before fabric or resource API calls."""
+    nd = _mock_nd_module(state="gathered", config=[{field: value}])
+
+    with pytest.raises(ValueError, match=field):
+        NDResourceManagerModule(nd, Results(), log=LOG)
+
+    nd.request.assert_not_called()
+
+
+def test_gathered_rejects_null_only_filter_before_api_calls():
+    """Gathered empty-filter validation runs before fabric or resource API calls."""
+    nd = _mock_nd_module(state="gathered", config=[{"pool_name": None}])
+
+    with pytest.raises(ValueError, match="must contain at least one supported property"):
+        NDResourceManagerModule(nd, Results(), log=LOG)
+
+    nd.request.assert_not_called()
+
+
 def test_validate_required_fields_compat_missing_entity_name():
     """_validate_required_fields_compat raises for missing entity_name."""
     module = _resource_manager()
@@ -3368,9 +3468,9 @@ def test_manage_deleted_with_no_matching_resource():
     assert module.results is not None
 
 
-def test_manage_gathered_with_empty_filter():
-    """manage_gathered with empty filter returns all resources."""
-    module, unused_nd = _resource_manager_with_nd(state="gathered", config=[{}], all_resources=[_response()])  # Empty filter = match all
+def test_manage_gathered_with_empty_config():
+    """manage_gathered with an empty config list returns all resources."""
+    module, unused_nd = _resource_manager_with_nd(state="gathered", config=[], all_resources=[_response()])
 
     # Run manage_gathered
     module.manage_gathered()  # pylint: disable=protected-access
@@ -3411,7 +3511,7 @@ def test_manage_gathered_with_entity_name_filter():
 
 def test_manage_gathered_empty_all_resources():
     """manage_gathered with empty resource list returns empty."""
-    module, unused_nd = _resource_manager_with_nd(state="gathered", config=[{}], all_resources=[])  # No resources
+    module, unused_nd = _resource_manager_with_nd(state="gathered", config=[], all_resources=[])
 
     # Run manage_gathered
     module.manage_gathered()  # pylint: disable=protected-access

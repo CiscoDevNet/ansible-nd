@@ -277,7 +277,7 @@ class PlaybookPolicyConfig(NDNestedModel):
             fabric_name=dict(type="str", required=True, aliases=["fabric"]),
             config=dict(type="list", elements="dict"),
             use_description_as_key=dict(type="bool", default=False),
-            deploy=dict(type="bool", default=True),
+            deploy=dict(type="bool", default=False),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
             state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),

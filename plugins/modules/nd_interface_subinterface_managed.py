@@ -153,9 +153,13 @@ options:
         - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
           execution via the C(interfaceActions/deploy) API. Only the subinterfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
+          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
+          changes staged but undeployed.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
-        default: true
+        default: false
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -210,6 +214,8 @@ EXAMPLES = r"""
               pim_sparse: true
               pim_dr_priority: 1
               netflow: false
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Create multiple subinterfaces on different parents in one task
@@ -234,6 +240,8 @@ EXAMPLES = r"""
               vlan_id: 20
               ip: 10.10.20.1
               prefix: 24
+    config_actions:
+      deploy: true
     state: merged
 
 - name: Replace the configuration of a specific subinterface
@@ -250,6 +258,8 @@ EXAMPLES = r"""
               ip: 10.20.30.40
               prefix: 24
               description: Reprovisioned subinterface Ethernet1/3.2
+    config_actions:
+      deploy: true
     state: replaced
 
 # state=overridden is fabric-wide: every managed subinterface in the fabric that is managed by this module and is
@@ -268,6 +278,8 @@ EXAMPLES = r"""
               ip: 10.10.10.1
               prefix: 24
               description: Subinterface to keep; all other managed subinterfaces deleted
+    config_actions:
+      deploy: true
     state: overridden
 
 - name: Delete a subinterface
@@ -276,6 +288,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: Ethernet1/3.2
+    config_actions:
+      deploy: true
     state: deleted
 
 - name: Stage changes without deploying
@@ -382,14 +396,13 @@ msg:
 """
 
 import logging
-import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import SubinterfaceManagedInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.subinterface_managed_interface import SubinterfaceManagedInterfaceOrchestrator
@@ -408,14 +421,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(SubinterfaceManagedInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        config_actions={
-            "type": "dict",
-            "options": {
-                "deploy": {"type": "bool", "default": True},
-            },
-        },
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -439,9 +445,7 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", True)
-        nd_state_machine.model_orchestrator.deploy = deploy
+        deploy = nd_state_machine.model_orchestrator.apply_config_actions(module.params)
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
@@ -458,13 +462,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except NDStateMachineError as e:
-        module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module execution failed: {str(e)}"
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
+    except Exception as e:  # pylint: disable=broad-except
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":

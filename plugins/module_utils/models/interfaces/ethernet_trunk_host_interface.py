@@ -28,7 +28,7 @@ wrapping or flattening.
 from __future__ import annotations
 
 import re
-from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
+from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
@@ -220,6 +220,35 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
     - If `allowed_vlans` is not `none`, `all`, or a comma-separated list of VLAN ids / ranges
     - If both the percentage and pps level are set for the same storm-control class in a non-response context (via `StormControlMutexMixin`)
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_trunk_host` template defaults (schema-sourced via nd-openapi `intTrunkHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "allowedVlans": "none",
+        "bpduFilter": "default",
+        "bpduGuard": "default",
+        "cdp": True,
+        "debounceTimer": 100,
+        "duplexMode": "auto",
+        "errorDetectionAcl": True,
+        "fec": "auto",
+        "linkType": "auto",
+        "monitor": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "orphanPort": False,
+        "pfc": False,
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+        "vlanMapping": False,
+    }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     allowed_vlans: AllowedVlans = Field(

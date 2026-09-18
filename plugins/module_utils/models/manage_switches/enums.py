@@ -52,8 +52,15 @@ class SwitchRole(str, Enum):
     @classmethod
     def from_user_input(cls, value: str) -> "SwitchRole":
         """
+        # Summary
+
         Convert user-friendly input to enum value.
         Accepts underscore-separated values like 'border_gateway' -> 'borderGateway'
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied role cannot be mapped to a
+            ``SwitchRole`` value.
         """
         if not value:
             return cls.LEAF
@@ -73,8 +80,15 @@ class SwitchRole(str, Enum):
     @classmethod
     def normalize(cls, value: str | "SwitchRole" | None) -> "SwitchRole":
         """
+        # Summary
+
         Normalize input to enum value (case-insensitive).
         Accepts: LEAF, leaf, border_gateway, borderGateway, etc.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied role cannot be mapped to a
+            ``SwitchRole`` value.
         """
         if value is None:
             return cls.LEAF
@@ -115,44 +129,6 @@ class SystemMode(str, Enum):
         return [e.value for e in cls]
 
 
-class PlatformType(str, Enum):
-    """
-    Switch platform type enumeration.
-
-    Used for POST /fabrics/{fabricName}/switches (AddSwitches).
-    Includes all platform types supported by the add-switches endpoint.
-    Based on: components/schemas
-    """
-
-    NX_OS = "nx-os"
-    OTHER = "other"
-    IOS_XE = "ios-xe"
-    IOS_XR = "ios-xr"
-    SONIC = "sonic"
-    APIC = "apic"
-
-    @classmethod
-    def choices(cls) -> list[str]:
-        return [e.value for e in cls]
-
-    @classmethod
-    def normalize(cls, value: str | "PlatformType" | None) -> "PlatformType":
-        """
-        Normalize input to enum value (case-insensitive).
-        Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
-        """
-        if value is None:
-            return cls.NX_OS
-        if isinstance(value, cls):
-            return value
-        if isinstance(value, str):
-            v_normalized = value.lower().replace("_", "-")
-            for pt in cls:
-                if pt.value == v_normalized:
-                    return pt
-        raise ValueError(f"Invalid PlatformType: {value}. Valid: {cls.choices()}")
-
-
 class ShallowDiscoveryPlatformType(str, Enum):
     """
     Platform type for shallow discovery.
@@ -175,8 +151,15 @@ class ShallowDiscoveryPlatformType(str, Enum):
     @classmethod
     def normalize(cls, value: str | "ShallowDiscoveryPlatformType" | None) -> "ShallowDiscoveryPlatformType":
         """
+        # Summary
+
         Normalize input to enum value (case-insensitive).
         Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied platform type cannot be mapped to
+            a ``ShallowDiscoveryPlatformType`` value.
         """
         if value is None:
             return cls.NX_OS
@@ -224,8 +207,15 @@ class SnmpV3AuthProtocol(str, Enum):
     @classmethod
     def normalize(cls, value: str | "SnmpV3AuthProtocol" | None) -> "SnmpV3AuthProtocol":
         """
+        # Summary
+
         Normalize input to enum value (case-insensitive).
         Accepts: MD5, md5, MD5_DES, md5-des, etc.
+
+        ## Raises
+
+        - `ValueError`: Raised when the supplied protocol cannot be mapped to an
+            ``SnmpV3AuthProtocol`` value.
         """
         if value is None:
             return cls.MD5
@@ -259,6 +249,24 @@ class DiscoveryStatus(str, Enum):
     UNKNOWN_USER_PASSWORD = "unknownUserPassword"
     CONNECTION_ERROR = "connectionError"
     NOT_APPLICABLE = "notApplicable"
+
+    @classmethod
+    def choices(cls) -> list[str]:
+        return [e.value for e in cls]
+
+
+class ShallowDiscoveryStatus(str, Enum):
+    """
+    Switch shallow discovery status.
+
+    Based on: components/schemas/switchShallowDiscoveredData.status
+    """
+
+    NOT_REACHABLE = "notReacheable"
+    NOT_AUTHORIZED = "notAuthorized"
+    NOT_MANAGEABLE = "notManageable"
+    MANAGEABLE = "manageable"
+    ALREADY_MANAGED = "alreadyManaged"
 
     @classmethod
     def choices(cls) -> list[str]:

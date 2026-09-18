@@ -524,9 +524,10 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     """
 
     class_name: Literal["EpManageFabricsSummaryGet"] = Field(
-        default="EpManageFabricsSummaryGet", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSummaryGet",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
-
     _path_suffix: ClassVar[str | None] = "summary"
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")

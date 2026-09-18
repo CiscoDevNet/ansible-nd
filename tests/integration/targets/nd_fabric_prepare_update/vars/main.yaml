@@ -1,0 +1,61 @@
+---
+# Variables for nd_fabric_prepare_update integration tests.
+#
+# These tests PREPARE (stage and validate) real switches. Staging copies an image to switch
+# bootflash and can take 10 or more minutes to complete. The target update groups are created
+# here via cisco.nd.nd_fabric_update_group and removed during cleanup.
+#
+# A single update group must contain switches of only one role: nd_fabric_prepare_update fails
+# the pre-flight check for a mixed-role group, so the tests build one single-role (leaf) group
+# and one mixed-role (leaf + spine) group to exercise both paths.
+#
+# Override the following in your inventory or extra-vars to match a real ND 4.2 testbed:
+#   nd_test_fabric_name           - fabric in which to create the update groups
+#   nd_test_prepare_leaf_switch_1 - IP or serial of a leaf switch
+#   nd_test_prepare_leaf_switch_2 - IP or serial of a second leaf switch
+#   nd_test_prepare_spine_switch  - IP or serial of a spine switch (for the mixed-role test)
+#   nd_test_nos_image_name        - filename of an NXOS image present in the ND software repository
+
+test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+test_leaf_switch_1: "{{ nd_test_prepare_leaf_switch_1 | default('192.168.12.151') }}"
+test_leaf_switch_2: "{{ nd_test_prepare_leaf_switch_2 | default('192.168.12.155') }}"
+test_spine_switch: "{{ nd_test_prepare_spine_switch | default('192.168.12.171') }}"
+test_nos_image_name: "{{ nd_test_nos_image_name | default('nxos64-cs.10.3.8.M.bin') }}"
+
+# Names of the update groups created and prepared by these tests.
+test_leaf_group_name: ansible_prepare_leaf
+test_mixed_group_name: ansible_prepare_mixed
+
+# Update group configs, created via cisco.nd.nd_fabric_update_group in setup.yaml. Each carries
+# an install image so the group is preparable.
+prepare_leaf_group:
+  update_group_name: "{{ test_leaf_group_name }}"
+  execution: parallel
+  contingency: continue
+  analysis: noAnalysis
+  is_maintenance: false
+  is_disruptive_update: false
+  update_group_switches:
+    - "{{ test_leaf_switch_1 }}"
+    - "{{ test_leaf_switch_2 }}"
+  force_created: true
+  install_image_data:
+    nos_image_name: "{{ test_nos_image_name }}"
+  report_selection: basic
+  reports: noReport
+
+prepare_mixed_group:
+  update_group_name: "{{ test_mixed_group_name }}"
+  execution: parallel
+  contingency: continue
+  analysis: noAnalysis
+  is_maintenance: false
+  is_disruptive_update: false
+  update_group_switches:
+    - "{{ test_leaf_switch_1 }}"
+    - "{{ test_spine_switch }}"
+  force_created: true
+  install_image_data:
+    nos_image_name: "{{ test_nos_image_name }}"
+  report_selection: basic
+  reports: noReport

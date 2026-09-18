@@ -106,7 +106,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
 
     # Configuration
     fabric_name: str | None = None
-    deploy: bool = True
+    deploy: bool = False
 
     # Change Control / multi-cluster query parameters.  When set, these are
     # forwarded as ``ticketId`` and ``clusterName`` on every policy-group

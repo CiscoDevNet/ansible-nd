@@ -32,7 +32,7 @@ interfaces inherit trunk-mode settings from the port-channel; users do not pre-c
 from __future__ import annotations
 
 import re
-from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
+from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
@@ -40,6 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     SerializationInfo,
     field_validator,
     model_serializer,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -230,6 +231,48 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     - If the wrapped model serializer receives a non-`dict` from the handler (see `_strip_policy_type_in_config`).
     """
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_port_channel_trunk_host` template defaults (schema-sourced via nd-openapi `intPortChannelTrunkHostTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "allowedVlans": "none",
+        "bpduFilter": "default",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "linkType": "auto",
+        "monitor": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "orphanPort": False,
+        "pfc": False,
+        "portChannelMode": "active",
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+        "vlanMapping": False,
+    }
+
+    # `ptp` is deliberately NOT modeled (deviation: interface-get-undocumented-ptp-field). ND injects a `ptp`
+    # boolean into every port-channel policy GET even though intPortChannelTrunkHostTemplate declares no such
+    # property. Lab probes (2026-08-12, SITE1, ND 4.2.1.10) covered all three fabric-PTP regimes — disabled,
+    # enabled-not-deployed, and fully deployed — and in every regime a client-sent `ptp` is persist-but-inert:
+    # ND stores and echoes it but generates zero pending CLI. ND's own PTP CLI lands only on physical interfaces
+    # (never under port-channels, matching NX-OS's per-physical-port PTP model), and the fabric-PTP deploy
+    # rewrites the stored value fabric-wide regardless of per-interface intent, so exposing the field would fake
+    # per-interface control. The injected echo is dropped at parse time by `extra="ignore"`, same as the sibling
+    # ethernet/vPC models. Do not re-add the field from wire observation alone; it belongs only if a future
+    # template declares it.
+
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     allowed_vlans: AllowedVlans = Field(
         default=None,
@@ -256,7 +299,7 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     native_vlan: int | None = Field(default=None, alias="nativeVlan", ge=1, le=4094, description="Trunk native VLAN id")
     negotiate_auto: bool | None = Field(default=None, alias="negotiateAuto", description="Enable link auto-negotiation")
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
-    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
+    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name (required when `netflow=true`)")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(
         default=None, alias="orphanPort", description="Configure as a vPC orphan port (suspended by secondary peer on vPC failure)"
@@ -268,7 +311,6 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
     ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
-    ptp: bool | None = Field(default=None, alias="ptp", description="Enable Precision Time Protocol on the interface")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
     queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
@@ -325,6 +367,26 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     )
 
     # --- Validators ---
+
+    @model_validator(mode="after")
+    def _validate_netflow_monitor_present(self) -> PortChannelTrunkHostPolicyModel:
+        """
+        # Summary
+
+        Reject enabling `netflow` without supplying a `netflow_monitor`.
+
+        The DOCUMENTATION and field description state that `netflow_monitor` is required when `netflow` is true. Enforcing it at the model layer
+        fails an incomplete policy early with a clear error instead of pushing a netflow config with no monitor and deferring the outcome to ND.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `netflow` is true and `netflow_monitor` is missing or empty.
+        """
+        if self.netflow is True and not self.netflow_monitor:
+            raise ValueError("netflow_monitor must be provided when netflow is true.")
+        return self
 
     @field_validator("ports", mode="before")
     @classmethod
@@ -551,7 +613,6 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
                                             port_channel_mode=dict(type="str", choices=[e.value for e in PortChannelModeEnum]),
                                             port_type_edge_trunk=dict(type="bool"),
                                             ports=dict(type="list", elements="str"),
-                                            ptp=dict(type="bool"),
                                             qos=dict(type="bool"),
                                             qos_policy=dict(type="str"),
                                             queuing_policy=dict(type="str"),

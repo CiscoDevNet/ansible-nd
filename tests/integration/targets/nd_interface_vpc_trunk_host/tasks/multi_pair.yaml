@@ -1,0 +1,154 @@
+---
+# Multi-pair same-vPC-id tests for nd_interface_vpc_trunk_host (issue #356)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- PRECONDITION: second vPC pair must exist (never created here) ---
+#
+# nd_manage_vpc_pair has no `query` state; its read-only mode is `state: gathered`. The module's
+# top-level fabric key is `fabric_name` (not `fabric`), and config.peer1_switch_id / peer2_switch_id
+# are BOTH required (see plugins/modules/nd_manage_vpc_pair.py DOCUMENTATION + vpc_pair_model.py
+# VpcPairPlaybookItemModel) — a peer1-only filter fails Pydantic validation before the request is
+# even sent. Gathered output is `gathered.vpc_pairs` / `gathered.pending_delete_vpc_pairs`
+# (plugins/module_utils/manage_vpc_pair/runner.py), not `response` or `current`.
+
+- name: "MULTI-PAIR PRECONDITION: Gather vPC pair state for pair-2 (peer1/peer2)"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_pair2_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_pair2_peer2 }}"
+    state: gathered
+  register: pair2_query
+  failed_when: false
+
+- name: "MULTI-PAIR PRECONDITION: Assert the second vPC pair exists"
+  ansible.builtin.assert:
+    that:
+      - pair2_query is not failed
+      - pair2_query.gathered is defined
+      - pair2_query.gathered.vpc_pairs | default([]) | length > 0
+    fail_msg: >-
+      The multi-pair scenario requires a second vPC pair ({{ test_switch_ip_pair2_peer1 }}/{{ test_switch_ip_pair2_peer2 }})
+      in fabric {{ test_fabric_name }}. Create it first (nd_manage_vpc_pair) or override nd_test_vpc_pair2_peer*_ip.
+
+# --- MERGED: same name + id on both pairs in ONE task (the #356 CONFIRMED failure) ---
+
+- name: "MULTI-PAIR MERGED: Create {{ vpc_multi_pair_name }} on both pairs (check mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: &multi_pair_merge
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_multi_pair_pair1 }}"
+      - "{{ vpc_multi_pair_pair2 }}"
+    state: merged
+  check_mode: true
+  register: cm_mp_merged
+
+- name: "MULTI-PAIR MERGED: Create {{ vpc_multi_pair_name }} on both pairs (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *multi_pair_merge
+  register: nm_mp_merged
+
+- name: "MULTI-PAIR MERGED: Verify both creations produced a change"
+  ansible.builtin.assert:
+    that:
+      - cm_mp_merged is changed
+      - nm_mp_merged is changed
+
+- name: "MULTI-PAIR IDEMPOTENT: Pause for convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "MULTI-PAIR IDEMPOTENT: Re-apply both (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *multi_pair_merge
+  register: nm_mp_idem
+
+- name: "MULTI-PAIR IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_mp_idem is not changed
+
+# --- GUARD: same name under both peers of ONE pair must fail fast ---
+
+- name: "MULTI-PAIR GUARD: Same name under both peers of pair 1 (must fail)"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_multi_pair_pair1 }}"
+      - "{{ vpc_multi_pair_pair1 | combine({'switch_ip': test_switch_ip_peer2}) }}"
+    state: merged
+  register: mp_guard
+  failed_when: false
+
+- name: "MULTI-PAIR GUARD: Verify the fail-fast error names the pair"
+  ansible.builtin.assert:
+    that:
+      - mp_guard is failed or (mp_guard.msg is defined and 'same vPC pair' in mp_guard.msg | string)
+      - "'same vPC pair' in (mp_guard.msg | default(mp_guard) | string)"
+
+# --- OVERRIDDEN: config holds only pair 1's interface -> pair 2's must be deleted (the #356 override gap) ---
+
+- name: "MULTI-PAIR OVERRIDDEN: Keep only pair 1's {{ vpc_multi_pair_name }} (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_multi_pair_pair1 }}"
+    state: overridden
+  register: nm_mp_overridden
+
+- name: "MULTI-PAIR OVERRIDDEN: Verify pair 2's copy was removed (a change occurred)"
+  ansible.builtin.assert:
+    that:
+      - nm_mp_overridden is changed
+
+- name: "MULTI-PAIR OVERRIDDEN IDEMPOTENT: Pause for convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "MULTI-PAIR OVERRIDDEN IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_multi_pair_pair1 }}"
+    state: overridden
+  register: nm_mp_overridden_idem
+
+- name: "MULTI-PAIR OVERRIDDEN IDEMPOTENT: Verify stable (pair 1 untouched, nothing re-deleted)"
+  ansible.builtin.assert:
+    that:
+      - nm_mp_overridden_idem is not changed
+
+# --- CLEANUP ---
+
+- name: "MULTI-PAIR CLEANUP: Delete pair 1's {{ vpc_multi_pair_name }}"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: "{{ vpc_multi_pair_name }}"
+    state: deleted
+  register: mp_cleanup
+
+- name: "MULTI-PAIR CLEANUP: Verify deletion"
+  ansible.builtin.assert:
+    that:
+      - mp_cleanup is changed
+
+# Pair 2's copy is normally removed by the OVERRIDDEN step above; this best-effort delete (no changed
+# assert, failures ignored) keeps the fabric clean if a prior run aborted between the MERGED create
+# and the OVERRIDDEN step.
+- name: "MULTI-PAIR CLEANUP: Delete pair 2's {{ vpc_multi_pair_name }} (best effort)"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
+        interface_name: "{{ vpc_multi_pair_name }}"
+    state: deleted
+  failed_when: false
