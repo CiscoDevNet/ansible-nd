@@ -402,7 +402,7 @@ def test_port_channel_routed_interface_00250():
     # Summary
 
     Verify the NX-OS payload shape: wire aliases, frozen `mode: routed` / `interfaceType: portChannel`, no `switchIp`, the CIDR `ip`
-    normalized to its bare host form, and the lowercase name left as typed.
+    normalized to its bare host form, the 4.3.1-required `mtu` default, and the lowercase name left as typed.
 
     ## Test
 
@@ -425,6 +425,7 @@ def test_port_channel_routed_interface_00250():
                 "policy": {
                     "policyType": "l3Po",
                     "ip": "10.1.1.1",
+                    "mtu": 9216,
                     "prefix": 30,
                     "ipv6": "2001:db8::1",
                     "ipv6Prefix": 64,
@@ -435,6 +436,36 @@ def test_port_channel_routed_interface_00250():
             },
         },
     }
+
+
+def test_port_channel_routed_interface_00255():
+    """
+    # Summary
+
+    Verify the NX-OS `l3Po` policy always emits `mtu` on the wire: ND 4.3.1 rejects a create body that omits it ("Validation failed for
+    following fields: [mtu]", lab 2026-09-18) where 4.2.1 defaulted it to 9216. The default is payload-only, a user value wins, and the
+    IOS-XE policy needs none (its create without `mtu` succeeds on both releases).
+
+    # workaround: ethernet-create-required-fields-431
+
+    ## Test
+
+    - NX-OS item without `mtu`: `to_payload()` carries `mtu: 9216`; `to_config()` and `to_diff_dict()` do not
+    - NX-OS item with `mtu: 1500`: `to_payload()` carries 1500
+    - IOS-XE item without `mtu`: `to_payload()` carries no `mtu`
+
+    ## Classes and Methods
+
+    - PortChannelRoutedPolicyModel.payload_defaults
+    """
+    nx = PortChannelRoutedInterfaceModel.from_config(nx_config(ip="10.1.1.1", prefix=30))
+    assert nx.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 9216
+    assert "mtu" not in nx.to_config()["config_data"]["network_os"]["policy"]
+    assert "mtu" not in nx.to_diff_dict()["configData"]["networkOS"]["policy"]
+    explicit = PortChannelRoutedInterfaceModel.from_config(nx_config(ip="10.1.1.1", prefix=30, mtu=1500))
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+    xe = PortChannelRoutedInterfaceModel.from_config(xe_config(ip="10.49.0.1", prefix=30))
+    assert "mtu" not in xe.to_payload()["configData"]["networkOS"]["policy"]
 
 
 def test_port_channel_routed_interface_00260():
