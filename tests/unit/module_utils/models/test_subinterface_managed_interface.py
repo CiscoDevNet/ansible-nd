@@ -1403,3 +1403,43 @@ def test_subinterface_managed_interface_02080():
         }
     )
     assert "mtu" not in xe.to_payload()["configData"]["networkOS"]["policy"]
+
+
+@pytest.mark.parametrize(
+    "field, value, extra, should_raise",
+    [
+        ("ip", "10.99.100.1", {"prefix": 24}, False),
+        ("ip", "not-an-ip", {"prefix": 24}, True),
+        ("ip", "10.99.100.1/24", {"prefix": 24}, True),
+        ("ip", "2001:db8::1", {"prefix": 24}, True),
+        ("ipv6", "2001:db8:100::1", {"ipv6_prefix": 64}, False),
+        ("ipv6", "also-not-ipv6", {"ipv6_prefix": 64}, True),
+        ("ipv6", "2001:db8:100::1/64", {"ipv6_prefix": 64}, True),
+        ("ipv6", "10.99.100.1", {"ipv6_prefix": 64}, True),
+    ],
+)
+def test_subinterface_managed_interface_02090(field, value, extra, should_raise):
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeSubinterface` policy validates `ip` as a bare IPv4 address and `ipv6` as a bare IPv6 address before any
+    controller call. The mask length lives in the sibling `prefix` / `ipv6_prefix` fields, so CIDR input is rejected rather than
+    normalized, and the wire value stays the string the user gave.
+
+    ## Test
+
+    - A bare address of the right family is accepted and serialized unchanged
+    - Free text, CIDR notation and the other address family raise `ValidationError`
+
+    ## Classes and Methods
+
+    - XeSubinterfacePolicyModel.ip
+    - XeSubinterfacePolicyModel.ipv6
+    """
+    if should_raise:
+        with pytest.raises(ValidationError):
+            XeSubinterfacePolicyModel(vlan_id=100, **{field: value}, **extra)
+        return
+    model = XeSubinterfacePolicyModel(vlan_id=100, **{field: value}, **extra)
+    assert getattr(model, field) == value
+    assert model.model_dump(by_alias=True, exclude_none=True)[field] == value

@@ -652,5 +652,45 @@
                 }
             ]
         }
+    },
+    "test_subinterface_managed_orchestrator_00930a": {
+        "TEST_NOTES": [
+            "create_bulk mixed 207 inside one IOS-XE group (PR #570 / #571 review): switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00930b": {
+        "TEST_NOTES": [
+            "POST create, one iosXeSubinterface group: ND echoes gigabitethernet1/0/2.100 (different case) as success and rejects GigabitEthernet1/0/2.101"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "gigabitethernet1/0/2.100",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                },
+                {
+                    "name": "GigabitEthernet1/0/2.101",
+                    "status": "failed",
+                    "message": "VLAN 101 is already in use on the parent"
+                }
+            ]
+        }
     }
 }

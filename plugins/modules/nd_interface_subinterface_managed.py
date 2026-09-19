@@ -131,6 +131,7 @@ options:
                     - IPv4 address of the subinterface.
                     - Required by the controller when creating an C(iosXeSubinterface).
                     - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
+                    - For C(iosXeSubinterface), must be a bare IPv4 address without a prefix length.
                     type: str
                   prefix:
                     description:
@@ -142,6 +143,7 @@ options:
                     description:
                     - IPv6 address of the subinterface.
                     - Applies when policy_type is C(subinterface) or C(iosXeSubinterface).
+                    - For C(iosXeSubinterface), must be a bare IPv6 address without a prefix length.
                     type: str
                   ipv6_prefix:
                     description:

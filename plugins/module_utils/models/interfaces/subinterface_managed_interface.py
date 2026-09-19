@@ -66,7 +66,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4HostStrict, IPv6HostStrict
 
 # Alphabetic (hyphen-tolerant) parent prefix + the numeric remainder of a parent interface name (`Port-channel10` -> `Port-channel`, `10`).
 _PARENT_NAME_RE = re.compile(r"^([A-Za-z][A-Za-z-]*)(\d.*)$")
@@ -271,9 +271,11 @@ class XeSubinterfacePolicyModel(InterfacePolicyStrictBase):
     vrf_interface: str | None = Field(
         default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name; use `default` for default VRF"
     )
-    ip: str | None = Field(default=None, alias="ip", description="IPv4 address of the subinterface")
+    ip: IPv4HostStrict = Field(default=None, alias="ip", description="IPv4 address of the subinterface (bare host form; the mask length is set via `prefix`)")
     prefix: int | None = Field(default=None, alias="prefix", ge=8, le=31, description="IPv4 netmask length used with `ip`")
-    ipv6: str | None = Field(default=None, alias="ipv6", description="IPv6 address of the subinterface")
+    ipv6: IPv6HostStrict = Field(
+        default=None, alias="ipv6", description="IPv6 address of the subinterface (bare host form; the prefix length is set via `ipv6_prefix`)"
+    )
     ipv6_prefix: int | None = Field(default=None, alias="ipv6Prefix", ge=64, le=127, description="IPv6 netmask length used with `ipv6`")
 
     @model_validator(mode="after")
