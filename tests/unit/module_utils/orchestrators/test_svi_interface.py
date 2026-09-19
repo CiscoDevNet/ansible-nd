@@ -673,3 +673,46 @@ def test_svi_orchestrator_00920() -> None:
         for item in items:
             assert item.payload["switchId"] == key.switch_id
             assert item.payload["configData"]["networkOS"]["policy"]["policyType"] == key.policy_type
+
+
+@pytest.mark.parametrize(
+    "policy_kwargs",
+    [
+        {"admin_state": True},
+        {"policy_type": "iosXeSviShutNoShut", "admin_state": False},
+    ],
+    ids=["iosXeSvi", "iosXeSviShutNoShut"],
+)
+def test_svi_orchestrator_00930(policy_kwargs: dict) -> None:
+    """
+    # Summary
+
+    Verify a mixed HTTP 207 inside one `(switch, policyType)` group still deploy-queues the SVI the controller accepted (PR #571
+    review), for both IOS-XE policy types: the accepted sibling's intent IS on the controller, so the failure-path finalizer must
+    ship it. The match is case-insensitive and the queued pair keeps the module's identifier.
+
+    ## Test
+
+    - Two IOS-XE SVIs of the same policy type on the Catalyst share one POST
+    - POST returns 207: `Vlan990` `success`, `vlan991` `failed`
+    - `RuntimeError` matches `Bulk create failed` and names the accepted SVI
+    - `_pending_deploys == [("vlan990", sw)]` only
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+
+    def responses():
+        yield responses_svi("test_svi_orchestrator_00930a")
+        yield responses_svi("test_svi_orchestrator_00930b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    models = [_build_model(switch_ip="192.168.12.181", interface_name=name, network_os_type="ios-xe", **policy_kwargs) for name in ("vlan990", "vlan991")]
+
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*accepted \['vlan990'\] from the same request"):
+        orchestrator.create_bulk(models)
+
+    assert len(orchestrator.rest_send.responses) == 2
+    assert orchestrator._pending_deploys == [("vlan990", "CAT9KV1701")]
