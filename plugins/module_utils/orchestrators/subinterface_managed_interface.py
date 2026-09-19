@@ -159,7 +159,8 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         `bulk_create_groups` (issue #409) and sends one POST per group with all of its subinterfaces in the `interfaces` array: ND
         rejects an array that mixes policy types, which a Catalyst carrying both `iosXeSubinterface` and `iosXeSubinterfaceShutNoshut`
         subinterfaces would otherwise produce. Queues deploys for all created subinterfaces for later bulk execution via
-        `deploy_pending`.
+        `deploy_pending`; inside a group that fails with a mixed 207, the subinterfaces the controller accepted are still queued
+        (`_post_bulk_create_group`).
 
         ## Raises
 
@@ -171,13 +172,7 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
             groups = self.bulk_create_groups(model_instances)
             results = []
             for group_key, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [item.payload for item in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
-                for item in items:
-                    self._queue_deploy(item.interface_name, group_key.switch_id)
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e

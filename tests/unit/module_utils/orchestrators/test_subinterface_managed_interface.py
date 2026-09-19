@@ -733,3 +733,41 @@ def test_subinterface_managed_orchestrator_00920() -> None:
         for item in items:
             assert item.payload["switchId"] == key.switch_id
             assert item.payload["configData"]["networkOS"]["policy"]["policyType"] == key.policy_type
+
+
+def test_subinterface_managed_orchestrator_00930() -> None:
+    """
+    # Summary
+
+    Verify a mixed HTTP 207 inside one `(switch, policyType)` group still deploy-queues the subinterface the controller accepted: the
+    accepted sibling's intent IS on the controller, so the failure-path finalizer must ship it. The match is case-insensitive and the
+    queued pair keeps the module's identifier.
+
+    ## Test
+
+    - Two `iosXeSubinterface` subinterfaces on the Catalyst share one POST
+    - POST returns 207: the `.100` subinterface `success` (echoed in a different case), the `.101` subinterface `failed`
+    - `RuntimeError` matches `Bulk create failed` and names the accepted subinterface
+    - `_pending_deploys` holds only the `.100` subinterface
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+
+    def responses():
+        yield responses_subif("test_subinterface_managed_orchestrator_00930a")
+        yield responses_subif("test_subinterface_managed_orchestrator_00930b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    models = [
+        _build_model(switch_ip="192.168.12.181", interface_name=name, network_os_type="ios-xe", vlan_id=vlan, ip=f"10.99.{vlan}.1", prefix=24)
+        for name, vlan in (("GigabitEthernet1/0/2.100", 100), ("GigabitEthernet1/0/2.101", 101))
+    ]
+
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*accepted \['GigabitEthernet1/0/2\.100'\] from the same request"):
+        orchestrator.create_bulk(models)
+
+    assert len(orchestrator.rest_send.responses) == 2
+    assert orchestrator._pending_deploys == [("GigabitEthernet1/0/2.100", "CAT9KV1701")]
