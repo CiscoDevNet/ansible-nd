@@ -120,7 +120,7 @@
   ansible.builtin.assert:
     that:
       - ipv6_acl_wire.name == acl_ipv6_name
-      - ipv6_acl_wire.type == "ipv4"
+      - ipv6_acl_wire.type == "ipv6"
       - ipv6_acl_wire.entries | length == 2
       - (ipv6_acl_wire.entries | selectattr('sequenceNumber', 'equalto', 10) | list | first).dstPortAction == "portRange"
       - (ipv6_acl_wire.entries | selectattr('sequenceNumber', 'equalto', 10) | list | first).dstPortRangeStart | int == 80

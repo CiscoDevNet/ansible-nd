@@ -364,6 +364,8 @@ class ActionModule(ActionBase):
                 if expected_value is None:
                     continue
                 actual_value = _first_value(live, field)
+                if actual_value is None:
+                    continue
                 if not _values_equal(expected_value, actual_value):
                     mismatches.setdefault(name, {})[field] = {
                         "expected": expected_value,
