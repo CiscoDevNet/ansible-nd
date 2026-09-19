@@ -1549,3 +1549,129 @@ def test_port_channel_access_orchestrator_01120() -> None:
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel102"):
         instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/5"])])
+
+
+# =============================================================================
+# Test: query_all -- policy-less rediscovered IOS-XE port-channels (PR #570 review)
+#
+# Shared inventory shape for switch FDO11111AAA (see the 01200c fixture TEST_NOTES): port-channel101 is a managed
+# iosXeAccessPoHost; Port-channel111 and Port-channel113 are rediscovered records with no `policy` key; Port-channel112
+# carries an explicit `policy: null`; port-channel900 carries `configData: null`.
+# =============================================================================
+
+
+def _query_all_policy_less(method_name: str, state: str, config: list[dict]) -> tuple[PortChannelAccessInterfaceOrchestrator, list[dict]]:
+    """Run `query_all` against the three-response policy-less inventory; return the orchestrator and the records it kept."""
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access(f"{method_name}c")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    with does_not_raise():
+        result = instance.query_all()
+    return instance, result
+
+
+def _query_all_names(method_name: str, state: str, config: list[dict]) -> list[str]:
+    """Return the interface names `query_all` kept from the policy-less inventory."""
+    return [iface["interfaceName"] for iface in _query_all_policy_less(method_name, state, config)[1]]
+
+
+def test_port_channel_access_orchestrator_01200() -> None:
+    """
+    # Summary
+
+    Verify an explicit `state: deleted` sees the policy-less IOS-XE port-channels it names, so the rediscovered orphan of an early
+    removal can reach the canonical remove, and that an explicit `policy: null` or `configData: null` no longer raises.
+
+    ## Test
+
+    - `state: deleted` naming port-channel111 (record has no `policy` key) and port-channel112 (record has `policy: null`)
+    - `query_all` returns the managed port-channel101 plus Port-channel111 and Port-channel112
+    - Port-channel113 (policy-less, not named) and port-channel900 (`configData: null`) are left out
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.query_all()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": name} for name in ("port-channel111", "Port-Channel112")]
+    names = _query_all_names(inspect.stack()[0][3], "deleted", config)
+    assert names == ["port-channel101", "Port-channel111", "Port-channel112"]
+
+
+def test_port_channel_access_orchestrator_01210() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` never sees a policy-less record: the module cannot prove it owns an interface with no policy, so a
+    fabric-wide override must not delete it.
+
+    ## Test
+
+    - `state: overridden` with a config naming only port-channel101
+    - `query_all` returns port-channel101 only
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.query_all()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel101"}]
+    assert _query_all_names(inspect.stack()[0][3], "overridden", config) == ["port-channel101"]
+
+
+def test_port_channel_access_orchestrator_01220() -> None:
+    """
+    # Summary
+
+    Verify only `state: deleted` sees a named policy-less record: under `state: merged` it stays filtered, so the create path is
+    unchanged.
+
+    ## Test
+
+    - `state: merged` naming port-channel111
+    - `query_all` returns port-channel101 only
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.query_all()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel111"}]
+    assert _query_all_names(inspect.stack()[0][3], "merged", config) == ["port-channel101"]
+
+
+def test_port_channel_access_orchestrator_01230() -> None:
+    """
+    # Summary
+
+    Verify the policy-less rediscovered IOS-XE record `query_all` keeps for an explicit delete parses into the model, that deleting
+    it queues the switch-canonical name on both delete-side queues, and that the shared inventory cache is left untouched.
+
+    ## Test
+
+    - `state: deleted` naming port-channel111; `query_all` keeps the record for `Port-channel111`
+    - `from_response` succeeds although the wire record carries `mode: unknown`; the identifier is the lowercase `port-channel111`
+    - `delete` queues `("Port-channel111", sw)` for remove and deploy
+    - The cached inventory record still carries `mode: unknown`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.query_all()
+    - PortChannelAccessInterfaceModel.from_response()
+    - PortChannelBaseOrchestrator.delete()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel111"}]
+    instance, result = _query_all_policy_less(inspect.stack()[0][3], "deleted", config)
+    record = next(iface for iface in result if iface["interfaceName"] == "Port-channel111")
+
+    with does_not_raise():
+        model = PortChannelAccessInterfaceModel.from_response(record)
+        instance.delete(model)
+
+    assert model.interface_name == "port-channel111"
+    assert instance._pending_removes == [("Port-channel111", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Port-channel111", "FDO11111AAA")]
+    cached = next(iface for iface in instance._switch_interfaces("FDO11111AAA").values() if iface["interfaceName"] == "Port-channel111")
+    assert cached["configData"]["mode"] == "unknown"
