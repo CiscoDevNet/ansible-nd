@@ -110,6 +110,7 @@ options:
                     description:
                     - The IPv4 address of the SVI.
                     - Applies when policy_type is C(svi) or C(iosXeSvi).
+                    - For C(iosXeSvi), must be a bare IPv4 address without a prefix length.
                     type: str
                   prefix:
                     description:
@@ -121,6 +122,7 @@ options:
                     description:
                     - The IPv6 address of the SVI.
                     - Applies when policy_type is C(svi) or C(iosXeSvi).
+                    - For C(iosXeSvi), must be a bare IPv6 address without a prefix length.
                     type: str
                   prefixv6:
                     description:
@@ -281,13 +283,14 @@ options:
                     suboptions:
                       server_ip_address:
                         description:
-                        - The DHCP relay server IPv4 address.
+                        - The DHCP relay server IPv4 address, as a bare address without a prefix length.
                         type: str
                         required: true
                       server_vrf:
                         description:
                         - The VRF used to reach the server.
                         - Use V(default) or V(global) for the global routing table and V(Mgmt-Vrf) for the management VRF.
+                        - Must be 1 to 32 characters.
                         type: str
                         required: true
   config_actions:

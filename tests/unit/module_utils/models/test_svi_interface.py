@@ -1592,3 +1592,77 @@ def test_svi_interface_02100(os_type, length, should_raise):
             model_cls(description="d" * length)
         return
     assert model_cls(description="d" * length).description == "d" * length
+
+
+@pytest.mark.parametrize(
+    "field, value, extra, should_raise",
+    [
+        ("ip", "10.99.90.1", {"prefix": 24}, False),
+        ("ip", "not-an-ip", {"prefix": 24}, True),
+        ("ip", "10.99.90.1/24", {"prefix": 24}, True),
+        ("ip", "2001:db8::1", {"prefix": 24}, True),
+        ("ipv6", "2001:db8:90::1", {"prefixv6": 64}, False),
+        ("ipv6", "also-not-ipv6", {"prefixv6": 64}, True),
+        ("ipv6", "2001:db8:90::1/64", {"prefixv6": 64}, True),
+        ("ipv6", "10.99.90.1", {"prefixv6": 64}, True),
+    ],
+)
+def test_svi_interface_02110(field, value, extra, should_raise):
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeSvi` policy validates `ip` as a bare IPv4 address and `ipv6` as a bare IPv6 address before any controller
+    call (PR #571 review). The mask length lives in the sibling `prefix` / `prefixv6` fields, so CIDR input is rejected rather than
+    normalized, and the wire value stays the string the user gave.
+
+    ## Test
+
+    - A bare address of the right family is accepted and serialized unchanged
+    - Free text, CIDR notation and the other address family raise `ValidationError`
+
+    ## Classes and Methods
+
+    - XeSviPolicyModel.ip
+    - XeSviPolicyModel.ipv6
+    """
+    if should_raise:
+        with pytest.raises(ValidationError):
+            XeSviPolicyModel(**{field: value}, **extra)
+        return
+    model = XeSviPolicyModel(**{field: value}, **extra)
+    assert getattr(model, field) == value
+    assert model.model_dump(by_alias=True, exclude_none=True)[field] == value
+
+
+@pytest.mark.parametrize(
+    "value, should_raise",
+    [
+        ("10.99.0.10", False),
+        ("bad", True),
+        ("10.99.0.10/32", True),
+        ("2001:db8::10", True),
+    ],
+)
+def test_svi_interface_02120(value, should_raise):
+    """
+    # Summary
+
+    Verify a `dhcp_servers` entry validates `server_ip_address` as a bare IPv4 address (PR #571 review), on the spec key and on the
+    ND 4.2.1 echo key alike.
+
+    ## Test
+
+    - A bare IPv4 address is accepted through `serverIpAddress` and through the echoed `srvrAddr`
+    - Free text, CIDR notation and an IPv6 address raise `ValidationError`
+
+    ## Classes and Methods
+
+    - XeSviDhcpServerModel.server_ip_address
+    - XeSviDhcpServerModel.accept_echo_keys()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError):
+            XeSviDhcpServerModel(serverIpAddress=value, serverVrf="default")
+        return
+    assert XeSviDhcpServerModel(serverIpAddress=value, serverVrf="default").server_ip_address == value
+    assert XeSviDhcpServerModel.model_validate({"srvrAddr": value, "srvrVrf": "default"}).server_ip_address == value

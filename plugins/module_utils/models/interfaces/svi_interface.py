@@ -58,7 +58,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
+    AsciiDescription,
+    IPv4HostStrict,
+    IPv6HostStrict,
+    validate_ipv4_host_strict,
+)
 
 
 def _coerce_numeric_string_to_int(value):
@@ -267,7 +272,7 @@ class XeSviDhcpServerModel(NDNestedModel):
     None
     """
 
-    server_ip_address: str = Field(alias="serverIpAddress", description="DHCP relay server IPv4 address")
+    server_ip_address: str = Field(alias="serverIpAddress", description="DHCP relay server IPv4 address (bare host form)")
     # TODO(4.2.1) xe-svi-dhcpservers-servervrf-required
     # The spec marks nothing in `dhcpServers[]` required and allows an empty `serverVrf`, but ND rejects an item without a non-empty
     # VRF (omitted: HTTP 500 / 207 failed item; empty: HTTP 400) on both 4.2.1.10 and 4.3.1.175. Required with min_length 1 here so the
@@ -305,6 +310,23 @@ class XeSviDhcpServerModel(NDNestedModel):
                 if spec_key not in renamed and field_name not in renamed:
                     renamed[spec_key] = value
         return renamed
+
+    @field_validator("server_ip_address", mode="before")
+    @classmethod
+    def validate_server_ip_address(cls, value: Any) -> Any:
+        """
+        # Summary
+
+        Require `server_ip_address` to be a bare IPv4 address, the format the ND template declares for `serverIpAddress`, so a malformed
+        value fails before any controller call.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `value` is not a valid bare IPv4 address (including any CIDR form).
+        """
+        return validate_ipv4_host_strict(value)
 
 
 class XeSviPolicyModel(InterfacePolicyStrictBase):
@@ -349,9 +371,9 @@ class XeSviPolicyModel(InterfacePolicyStrictBase):
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     dhcp_servers: list[XeSviDhcpServerModel] | None = Field(default=None, alias="dhcpServers", description="DHCP relay servers (address + VRF per entry)")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: str | None = Field(default=None, alias="ip", description="IPv4 address of the SVI")
+    ip: IPv4HostStrict = Field(default=None, alias="ip", description="IPv4 address of the SVI (bare host form; the mask length is set via `prefix`)")
     prefix: int | None = Field(default=None, alias="prefix", ge=1, le=31, description="IPv4 netmask length used with `ip`")
-    ipv6: str | None = Field(default=None, alias="ipv6", description="IPv6 address of the SVI")
+    ipv6: IPv6HostStrict = Field(default=None, alias="ipv6", description="IPv6 address of the SVI (bare host form; the prefix length is set via `prefixv6`)")
     prefixv6: int | None = Field(default=None, alias="ipv6Prefix", ge=1, le=127, description="IPv6 prefix length used with `ipv6` (wire key `ipv6Prefix`)")
     ip_redirects: bool | None = Field(default=None, alias="ipRedirects", description="Disable both IPv4/IPv6 redirects on the interface")
     vlan_name: str | None = Field(default=None, alias="vlanName", max_length=128, description="Name of the VLAN")

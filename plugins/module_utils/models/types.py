@@ -208,6 +208,35 @@ IPv4HostStrict = Annotated[Optional[str], BeforeValidator(validate_ipv4_host_str
 """Bare IPv4 host address (`str | None`); CIDR input is rejected, not normalized.
 Layer with `Field(...)` for alias/description as usual."""
 
+
+def validate_ipv6_host_strict(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is a bare IPv6 host address (no prefix). The IPv6 counterpart of `validate_ipv4_host_strict`: CIDR input is
+    rejected rather than normalized -- use where the prefix length lives in a separate sibling field, so a prefix embedded in the
+    address could silently contradict it.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid bare IPv6 address (including any CIDR form).
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv6Address(value)
+    except (ipaddress.AddressValueError, ValueError) as err:
+        raise ValueError(f"'{value}' is not a valid bare IPv6 address (CIDR notation is not accepted)") from err
+    return value
+
+
+# See AsciiDescription comment above for why Optional[str] is used at runtime instead of `str | None`.
+IPv6HostStrict = Annotated[Optional[str], BeforeValidator(validate_ipv6_host_strict)]
+"""Bare IPv6 host address (`str | None`); CIDR input is rejected, not normalized.
+Layer with `Field(...)` for alias/description as usual."""
+
 # Fabric name rules (verified against ND 4.2.x GUI):
 #   - Allowed chars: a-z, A-Z, 0-9, _, -
 #   - Must start AND end with an alphanumeric (no leading/trailing _ or -)
