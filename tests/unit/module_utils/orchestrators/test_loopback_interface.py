@@ -809,24 +809,27 @@ def test_loopback_interface_00460() -> None:
     """
     # Summary
 
-    Verify the failure-path finalizer with a mixed-result 207 as the failing group (PR #403 review): the first group's POST
-    succeeds, the second group's POST returns HTTP 207 whose `DATA.results[]` mixes a success item and a failed item, and
-    `create_bulk` raises. `deploy_accepted_mutations` then deploys only the accepted first group.
+    Verify the failure-path finalizer with a mixed-result 207 as the failing group: the first group's POST succeeds, the second
+    group's POST returns HTTP 207 whose `DATA.results[]` mixes a success item and a failed item, and `create_bulk` raises.
+    `deploy_accepted_mutations` then deploys the accepted first group AND the item the failing 207 reported as an exact `success`.
 
-    Within-group recovery of the 207's reported-success item is deliberately NOT attempted: whether ND actually creates the
-    reported-success subset of a mixed-result 207 is not lab-characterized, and the per-item `status` field is known to be
-    inconsistent (bug-tracker vault: `multi-status-207-status-field-inconsistent`), so nothing from the failed group is queued.
+    Within-group recovery was originally not attempted here (PR #403 review). It now follows the rule the ethernet orchestrators
+    adopted in the PR #550 review and that `_post_bulk_create_group` shares: an exact `success` item IS on the controller, so stranding
+    it staged would hide it from a retry (PR #570 review). Every other status stays unqueued (bug-tracker vault:
+    `multi-status-207-status-field-inconsistent`).
 
     ## Test
 
     - loopback10 (`policyType: loopback`) POST succeeds
-    - The mplsLoopback group (loopback30, loopback31) POST returns 207 with `results[]` mixing success and failed items
-    - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
-    - `deploy_accepted_mutations` deploys only loopback10; nothing from the failed group is deployed or queued
+    - The mplsLoopback group (loopback30, loopback31) POST returns 207: loopback30 `success`, loopback31 failed
+    - `create_bulk` raises `RuntimeError` matching `Bulk create failed` and names loopback30 as accepted
+    - `_pending_deploys` holds loopback10 and loopback30; loopback31 is never queued
+    - `deploy_accepted_mutations` deploys exactly those two
 
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
     - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
     - NdV1Strategy.is_success()
     """
@@ -847,17 +850,18 @@ def test_loopback_interface_00460() -> None:
         _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback31"),
     ]
 
-    match = r"Bulk create failed"
+    match = r"Bulk create failed.*accepted \['loopback30'\] from the same request"
     with pytest.raises(RuntimeError, match=match):
         instance.create_bulk(models)
 
-    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+    accepted = [("loopback10", "FDO12345ABC"), ("loopback30", "FDO12345ABC")]
+    assert instance._pending_deploys == accepted
 
     with does_not_raise():
         deployed = instance.deploy_accepted_mutations()
 
-    assert deployed == [("loopback10", "FDO12345ABC")]
-    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback10", "switchId": "FDO12345ABC"}]}
+    assert deployed == accepted
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in accepted]}
     assert instance._pending_deploys == []
 
 

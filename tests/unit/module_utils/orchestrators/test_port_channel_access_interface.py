@@ -1412,6 +1412,44 @@ def test_port_channel_access_orchestrator_01020() -> None:
     assert instance._pending_deploys == [("port-channel501", "FDO11111AAA")]
 
 
+def test_port_channel_access_orchestrator_01030() -> None:
+    """
+    # Summary
+
+    Verify a mixed HTTP 207 inside one `(switch, policyType)` group still deploy-queues the item the controller accepted (PR #570
+    review): the accepted sibling's intent IS on the controller, so the failure-path finalizer must ship it. ND echoes the canonical
+    `Port-channel101` against the module's lowercase identifier, and the queued pair keeps the lowercase identifier.
+
+    ## Test
+
+    - Responses: switches list, POST 207 (`Port-channel101` `success`, `Port-channel102` `failed`)
+    - Both items are `iosXeAccessPoHost`, so they share one POST
+    - `RuntimeError` matches `Bulk create failed` and names the accepted item
+    - `_pending_deploys == [("port-channel101", sw)]` only
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_xe_pc_model(interface_name="port-channel101", ports=["GigabitEthernet1/0/2"]),
+        _build_xe_pc_model(interface_name="port-channel102", ports=["GigabitEthernet1/0/3"]),
+    ]
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*accepted \['port-channel101'\] from the same request"):
+        instance.create_bulk(models)
+    assert len(rest_send.responses) == 2
+    assert instance._pending_deploys == [("port-channel101", "FDO11111AAA")]
+
+
 # =============================================================================
 # Test: preflight -- IOS-XE member-mode mismatch (issues #536/#537)
 #

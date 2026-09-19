@@ -175,20 +175,14 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         ### RuntimeError
 
         - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
-          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults); no deploy is queued for that
-          group's items in that case.
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults). The items that response reports as accepted
+          are still queued for deploy (`_post_bulk_create_group`); the rejected ones are not.
         """
         try:
             groups = self.bulk_create_groups(model_instances)
             results = []
             for group_key, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [item.payload for item in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
-                for item in items:
-                    self._queue_deploy(item.interface_name, group_key.switch_id)
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e

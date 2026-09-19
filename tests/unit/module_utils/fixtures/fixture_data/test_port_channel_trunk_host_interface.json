@@ -819,5 +819,45 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}, {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}]}
+    },
+    "test_port_channel_trunk_host_orchestrator_01030a": {
+        "TEST_NOTES": [
+            "create_bulk mixed 207 inside one group (PR #570 review): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01030b": {
+        "TEST_NOTES": [
+            "POST create, one iosXeTrunkPoHost group: ND echoes the canonical Port-channel103 as success and rejects Port-channel104"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Port-channel103",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                },
+                {
+                    "name": "Port-channel104",
+                    "status": "failed",
+                    "message": "Member GigabitEthernet1/0/3 is already in use"
+                }
+            ]
+        }
     }
 }

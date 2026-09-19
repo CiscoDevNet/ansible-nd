@@ -37,7 +37,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    BulkCreateGroupKey,
+    BulkCreateItem,
+    NDBaseInterfaceOrchestrator,
+    finalize_accepted_intent,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -80,6 +85,12 @@ class _StubCapableOrchestrator(_StubInterfaceOrchestrator):
 
     interface_type = "loopback"
     interface_mode = "managed"
+
+
+class _StubBulkCreateOrchestrator(_StubInterfaceOrchestrator):
+    """Stub with a bulk-create endpoint, used to drive `_post_bulk_create_group` through a real `RestSend`."""
+
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
 
 
 def responses_base_interface(key: str):
@@ -1333,6 +1344,199 @@ def test_base_interface_00750() -> None:
     assert "accepted the removal" not in str(exc_info.value)
     assert instance._pending_removes == [("loopback10", "FDO12345ABC"), ("loopback10", "FDO12345ABD")]
     assert len(rest_send.responses) == 1
+
+
+# =============================================================================
+# Test: _post_bulk_create_group
+# =============================================================================
+
+
+def _bulk_items(*names: str) -> list[BulkCreateItem]:
+    """Build one `BulkCreateItem` per interface name with a minimal payload."""
+    return [BulkCreateItem(interface_name=name, payload={"interfaceName": name, "switchId": "FDO12345ABC"}) for name in names]
+
+
+def test_base_interface_00760() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` queues a deploy for the items a mixed HTTP 207 create reports as an exact `success` before the
+    failure propagates, so the failure-path finalizer ships them instead of stranding them staged (PR #570 review). ND echoes the
+    IOS-XE canonical spelling (`Port-channel101`) against the module's lowercase identifier, so the match is case-insensitive and the
+    queued pair keeps the module's identifier.
+
+    ## Test
+
+    - One group of two items: port-channel101 and port-channel102 on switch A
+    - POST returns 207: `Port-channel101` `success`, `Port-channel102` `failed`
+    - `RuntimeError` names the accepted item
+    - `_pending_deploys` holds only port-channel101
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="iosXeAccessPoHost")
+
+    match = r"accepted \['port-channel101'\] from the same request"
+    with pytest.raises(RuntimeError, match=match):
+        instance._post_bulk_create_group(group_key, _bulk_items("port-channel101", "port-channel102"))
+
+    assert instance._pending_deploys == [("port-channel101", "FDO12345ABC")]
+
+
+def test_base_interface_00770() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` queues a deploy for every item of the group, in request order, and returns the response when
+    the create succeeds.
+
+    ## Test
+
+    - One group of two items: loopback10 and loopback20 on switch A
+    - POST returns an all-success 207
+    - No exception; the response data is returned
+    - `_pending_deploys` holds both pairs in request order
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with does_not_raise():
+        result = instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+
+    assert len(result["results"]) == 2
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABC")]
+
+
+def test_base_interface_00780() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` does not reconcile against a stale response: when the sender raises before any response is
+    recorded, `response_current` still holds the previous group's all-success 207, and none of its names may be queued for the new
+    group (issue #554 freshness requirement).
+
+    ## Test
+
+    - First group: loopback10 and loopback20; POST returns an all-success 207; both are queued
+    - The deploy queue is emptied and the sender is set to raise `ValueError` from `commit`
+    - Second group submits the same two names: the exception propagates and claims no accepted item
+    - `_pending_deploys` stays empty; still exactly one response was recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with does_not_raise():
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+    assert rest_send.return_code == 207
+    instance._pending_deploys = []
+
+    rest_send.sender.raise_method = "commit"
+    rest_send.sender.raise_exception = ValueError("simulated transport failure")
+
+    with pytest.raises(Exception) as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+    assert len(rest_send.responses) == 1
+
+
+def test_base_interface_00790() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` trusts only an exact (case/whitespace-tolerant) `success` item status on a failed 207 and
+    ignores everything else: `error`, a missing `status` key, a non-dict item, and a `success` for a name that was never submitted
+    (vault: `multi-status-207-status-field-inconsistent`).
+
+    ## Test
+
+    - One group of three items: loopback10, loopback20, loopback30
+    - POST returns 207: ` Loopback10 ` ` Success `, loopback20 `error`, loopback30 without a status key, an unsubmitted loopback99
+      `success`, and a bare string item
+    - An exception is raised
+    - Only loopback10 is queued for deploy
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(RuntimeError, match=r"accepted \['loopback10'\] from the same request"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20", "loopback30"))
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00795() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` refuses to run on an orchestrator that defines no `create_bulk_endpoint`, before any request.
+
+    ## Test
+
+    - The stub orchestrator has `create_bulk_endpoint = None`
+    - `RuntimeError` names the orchestrator class
+    - No response is recorded and nothing is queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    rest_send = _build_rest_send(ResponseGenerator(iter(())))
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(RuntimeError, match=r"_StubInterfaceOrchestrator.*create_bulk_endpoint"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10"))
+
+    assert len(rest_send.responses) == 0
+    assert instance._pending_deploys == []
 
 
 # =============================================================================

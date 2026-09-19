@@ -287,6 +287,55 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             groups[group_key].append(BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
         return dict(groups)
 
+    def _post_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> ResponseType:
+        """
+        # Summary
+
+        Send one bulk-create POST for a `(switch_id, policy_type)` group and queue a deploy for every item the controller accepted.
+        On success that is the whole group, in request order.
+
+        The endpoint answers HTTP 207 with an independent `results[]` status per interface, so one create can be accepted while a
+        sibling in the same request is rejected. On a failed request, the items the response reports as an exact `success`
+        (`_accepted_multistatus_names`, keyed by `name`) are queued before the error propagates, so the module's failure-path finalizer
+        (`deploy_accepted_mutations`) ships them rather than stranding them staged, where a retry would classify them as unchanged and
+        never deploy them. Names are matched case-insensitively and the queued pair keeps the module's identifier: ND echoes the
+        switch-canonical spelling for some interface families (`Port-channel101` for a submitted `port-channel101`). The response is
+        consulted only when the request recorded a new one: a sender exception leaves the previous response in place (issue #554), which
+        must not be mistaken for this request's result.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the orchestrator defines no `create_bulk_endpoint`.
+        - If the create request fails with a 207 that accepted part of the group. The message names the accepted items.
+
+        ### Exception
+
+        - Propagated unchanged from `_request` for every other failure.
+        """
+        endpoint_class = self.create_bulk_endpoint
+        if endpoint_class is None:
+            raise RuntimeError(f"'{self.__class__.__name__}' cannot bulk create: 'create_bulk_endpoint' is not defined.")
+        api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
+        request_body = {"interfaces": [item.payload for item in items]}
+        recorded = len(self.rest_send.responses)
+        try:
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+        except Exception as e:
+            accepted: list[str] = []
+            if len(self.rest_send.responses) > recorded:
+                accepted_names = self._accepted_multistatus_names()
+                accepted = [item.interface_name for item in items if item.interface_name.strip().lower() in accepted_names]
+            for interface_name in accepted:
+                self._queue_deploy(interface_name, group_key.switch_id)
+            if accepted:
+                raise RuntimeError(f"{e}. The controller accepted {accepted} from the same request; their deploy stays queued.") from e
+            raise
+        for item in items:
+            self._queue_deploy(item.interface_name, group_key.switch_id)
+        return result
+
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:
         """
