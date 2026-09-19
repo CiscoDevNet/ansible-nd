@@ -290,13 +290,14 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Return the `configData.networkOS.policy` dict of an interface record, or `{}` when any level is missing.
+        Return the `configData.networkOS.policy` dict of an interface record, or `{}` when any level is missing or an explicit null.
 
         ## Raises
 
         None
         """
-        return iface.get("configData", {}).get("networkOS", {}).get("policy", {}) or {}
+        network_os = (iface.get("configData") or {}).get("networkOS") or {}
+        return network_os.get("policy") or {}
 
     def _member_owners(self, switch_id: str) -> dict[str, str]:
         """
@@ -495,6 +496,43 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         ports = getattr(policy, "ports", None) if policy is not None else None
         return [port for port in ports or [] if isinstance(port, str) and port]
 
+    def _requested_policy_less_records(self, port_channels: list[dict], switch_ip: str) -> list[dict]:
+        """
+        # Summary
+
+        Return a parseable copy of every policy-less IOS-XE port-channel record on `switch_ip` that the user explicitly named under
+        `state: deleted`; an empty list for every other state. Matching is on the lowercase interface name.
+
+        `query_all` otherwise keeps only records whose `policyType` this orchestrator manages, which hides such a record from the state
+        machine, so an explicit delete of it would be skipped as already absent. It is never offered to `state: overridden`: with no
+        policy the module cannot prove it owns the interface, so only an item the user named is eligible. The copy drops
+        `configData.mode` (the record carries `unknown`, which the model's frozen mode literal rejects) so the model default applies; the
+        shared inventory record is left untouched for `preflight`.
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) xe-port-channel-remove-leaves-switch-interface
+        # A remove issued before ND has discovered a deployed IOS-XE port-channel drops the intent record and pushes nothing; ND then
+        # rediscovers the switch object as a record with `networkOSType: ios-xe` and no policy. This is the recovery path: a second
+        # `state: deleted` naming the port-channel reaches `_delete_side_name`, whose canonical remove is the one ND acts on.
+        if self.rest_send.params.get("state") != "deleted":
+            return []
+        config_items = self.rest_send.params.get("config") or []
+        requested = {str(item.get("interface_name") or "").strip().lower() for item in config_items if item.get("switch_ip") == switch_ip}
+        records = []
+        for iface in port_channels:
+            network_os = (iface.get("configData") or {}).get("networkOS") or {}
+            if network_os.get("networkOSType") != "ios-xe" or self._policy_of(iface):
+                continue
+            if str(iface.get("interfaceName") or "").strip().lower() not in requested:
+                continue
+            record = dict(iface)
+            record["configData"] = {key: value for key, value in iface["configData"].items() if key != "mode"}
+            records.append(record)
+        return records
+
     def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
         # Summary
@@ -549,9 +587,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             for switch_ip, switch_id in self._switches_to_query().items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 port_channels = [iface for iface in interfaces if iface.get("interfaceType") == "portChannel"]
-                managed = [
-                    iface for iface in port_channels if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
-                ]
+                managed = [iface for iface in port_channels if self._policy_of(iface).get("policyType") in managed_types]
+                managed.extend(self._requested_policy_less_records(port_channels, switch_ip))
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_port_channels.extend(managed)

@@ -2181,5 +2181,393 @@
                 }
             ]
         }
+    },
+    "test_port_channel_access_orchestrator_01200a": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state deleted naming port-channel111 and port-channel112): fabric summary"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_access_orchestrator_01200b": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state deleted naming port-channel111 and port-channel112): switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01200c": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state deleted naming port-channel111 and port-channel112). Catalyst inventory: managed port-channel101; policy-less rediscovered Port-channel111 (no policy key), Port-channel112 (policy: null), Port-channel113 (no policy key); port-channel900 with configData: null"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel111",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel112",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": null
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel113",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel900",
+                    "interfaceType": "portChannel",
+                    "configData": null
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01210a": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state overridden): fabric summary"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_access_orchestrator_01210b": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state overridden): switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01210c": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state overridden). Catalyst inventory: managed port-channel101; policy-less rediscovered Port-channel111 (no policy key), Port-channel112 (policy: null), Port-channel113 (no policy key); port-channel900 with configData: null"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel111",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel112",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": null
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel113",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel900",
+                    "interfaceType": "portChannel",
+                    "configData": null
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01220a": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state merged naming port-channel111): fabric summary"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_access_orchestrator_01220b": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state merged naming port-channel111): switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01220c": {
+        "TEST_NOTES": [
+            "query_all policy-less records (state merged naming port-channel111). Catalyst inventory: managed port-channel101; policy-less rediscovered Port-channel111 (no policy key), Port-channel112 (policy: null), Port-channel113 (no policy key); port-channel900 with configData: null"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel111",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel112",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": null
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel113",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel900",
+                    "interfaceType": "portChannel",
+                    "configData": null
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01230a": {
+        "TEST_NOTES": [
+            "query_all policy-less records (delete of the kept policy-less record, state deleted naming port-channel111): fabric summary"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_access_orchestrator_01230b": {
+        "TEST_NOTES": [
+            "query_all policy-less records (delete of the kept policy-less record, state deleted naming port-channel111): switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01230c": {
+        "TEST_NOTES": [
+            "query_all policy-less records (delete of the kept policy-less record, state deleted naming port-channel111). Catalyst inventory: managed port-channel101; policy-less rediscovered Port-channel111 (no policy key), Port-channel112 (policy: null), Port-channel113 (no policy key); port-channel900 with configData: null"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel111",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel112",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": null
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Port-channel113",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "unknown",
+                        "networkOS": {
+                            "networkOSType": "ios-xe"
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel900",
+                    "interfaceType": "portChannel",
+                    "configData": null
+                }
+            ]
+        }
     }
 }
