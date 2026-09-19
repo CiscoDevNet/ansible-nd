@@ -519,5 +519,46 @@
                 }
             ]
         }
+    },
+    "test_svi_orchestrator_00930a": {
+        "TEST_NOTES": [
+            "create_bulk mixed 207 inside one IOS-XE group (PR #571 review): switches list",
+            "Shared by both parametrized policy types: the responses do not depend on the policy type"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_svi_orchestrator_00930b": {
+        "TEST_NOTES": [
+            "POST create, one IOS-XE SVI group: ND echoes Vlan990 (canonical case) as success and rejects vlan991"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Vlan990",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                },
+                {
+                    "name": "vlan991",
+                    "status": "failed",
+                    "message": "VLAN 991 is reserved"
+                }
+            ]
+        }
     }
 }
