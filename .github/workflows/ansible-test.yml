@@ -46,8 +46,18 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - pep8-black
-    # The collection tarball is identical regardless of Python / ansible-core,
-    # so it is built once and reused by every downstream job.
+    strategy:
+      fail-fast: false
+      # Build on every supported ansible-core version to catch version-specific
+      # build/galaxy.yml breakage. The resulting tarball is identical, so only the
+      # canonical cell uploads the artifact that downstream jobs consume.
+      matrix:
+        ansible_version:
+          - "stable-2.19"
+          - "stable-2.18"
+          - "stable-2.17"
+          - "stable-2.16"
+
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -55,15 +65,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.12"
 
-      - name: Install ansible-core (stable-2.19)
-        run: pip install https://github.com/ansible/ansible/archive/stable-2.19.tar.gz --disable-pip-version-check
+      - name: Install ansible-core (${{ matrix.ansible_version }})
+        run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
 
       - name: Build a collection tarball
         run: ansible-galaxy collection build --output-path "${GITHUB_WORKSPACE}/.cache/collection-tarballs"
 
       - name: Store collection artifact
+        if: matrix.ansible_version == 'stable-2.19'
         uses: actions/upload-artifact@v8
         with:
           name: collection
