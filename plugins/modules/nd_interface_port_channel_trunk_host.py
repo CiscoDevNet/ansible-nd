@@ -394,6 +394,8 @@ notes:
 - This module manages the C(trunkPoHost) (NX-OS) and C(iosXeTrunkPoHost) (IOS-XE) policy templates. Port-channels
   carrying any other policy type are never read or modified by this module.
 - The port-channel policy is the source of truth for member interface configuration.
+- The ND 4.3.1 C(deviceTrackingPolicy) and C(flowMonitors) properties of the C(iosXeTrunkPoHost) policy are intentionally not exposed.
+  The module writes one policy shape that both ND 4.2.1 and ND 4.3.1 accept, so these properties cannot be configured through it.
 """
 
 EXAMPLES = r"""
