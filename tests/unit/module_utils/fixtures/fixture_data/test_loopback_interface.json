@@ -918,7 +918,7 @@
     "test_loopback_interface_00460c": {
         "TEST_NOTES": [
             "mixed-result 207 failing group: POST for the 'mplsLoopback' group returns 207 mixing a success item and a failed item.",
-            "Within-group recovery of the reported-success item is deliberately not attempted: whether ND actually creates it is not lab-characterized, and per-item status is inconsistent (vault: multi-status-207-status-field-inconsistent)."
+            "The exact-success item (loopback30) is queued for deploy by _post_bulk_create_group; every other status stays unqueued (vault: multi-status-207-status-field-inconsistent)."
         ],
         "RETURN_CODE": 207,
         "METHOD": "POST",
@@ -933,7 +933,7 @@
     },
     "test_loopback_interface_00460d": {
         "TEST_NOTES": [
-            "mixed-result 207 failing group: failure-path finalizer deploy of the accepted group (loopback10 only)"
+            "mixed-result 207 failing group: failure-path finalizer deploy of the accepted first group (loopback10) and the exact-success item of the failing 207 (loopback30)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "POST",
