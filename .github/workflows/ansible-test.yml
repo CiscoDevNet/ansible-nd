@@ -75,7 +75,7 @@ jobs:
 
       - name: Store collection artifact
         if: matrix.ansible_version == 'stable-2.19'
-        uses: actions/upload-artifact@v8
+        uses: actions/upload-artifact@v7
         with:
           name: collection
           path: .cache/collection-tarballs
@@ -136,7 +136,7 @@ jobs:
           exit(err)
 
       - name: Store galaxy_importer check log file
-        uses: actions/upload-artifact@v8
+        uses: actions/upload-artifact@v7
         with:
           name: galaxy-importer-log
           path: .cache/collection-tarballs/importer_result.json
