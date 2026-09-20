@@ -52,8 +52,12 @@ class FabricGroupMemberModel(NDBaseModel):
 
     member_name: str = Field(alias="name")
     fabric_type: Optional[str] = Field(default=None, alias="type")
-    # Present only for multi-cluster fabric group (OneManage) members, where a member fabric is
-    # addressed by (clusterName, name). Omitted from the wire payload for plain fabric-group members.
+    # Identifies the cluster hosting the member. Required for a multi-cluster fabric group,
+    # where OneManage addresses a member as (clusterName, name) and rejects a member without
+    # it; absent for a plain fabric group, whose Manage responses never carry it. The
+    # orchestrator enforces that split once the surface is resolved, because a clusterName
+    # sent to Manage is accepted and silently dropped, which would desynchronise the identity
+    # below from what ND actually stores.
     cluster_name: Optional[str] = Field(default=None, alias="clusterName")
 
     # --- Identifier ---

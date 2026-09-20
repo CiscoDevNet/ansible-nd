@@ -111,6 +111,55 @@
       - gathered_result.gathered is defined
 
 #############################################################################
+# INPUT VALIDATION TESTS
+#
+# All three of these are silent failures without the surface-resolution checks:
+# the members endpoint answers 200 with an empty list for a fabric, answers 500
+# "Failed to check fabric type" for an unknown name, and Manage accepts a
+# cluster_name only to drop it, which breaks member identity on the next run.
+#############################################################################
+- name: "VALIDATION: Target a fabric group that does not exist"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "ansible_no_such_fabric_group"
+    config:
+      - member_name: "{{ test_member_1 }}"
+    state: merged
+  register: unknown_group_result
+  ignore_errors: true
+
+- name: "VALIDATION: Target a fabric instead of a fabric group"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "{{ test_member_1 }}"
+    config:
+      - member_name: "{{ test_member_2 }}"
+    state: merged
+  register: not_a_group_result
+  ignore_errors: true
+
+- name: "VALIDATION: Supply cluster_name for a single-cluster fabric group"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_1 }}"
+        cluster_name: "some-cluster"
+    state: merged
+  register: unexpected_cluster_name_result
+  ignore_errors: true
+
+- name: "VALIDATION: Verify each invalid target is rejected with a specific reason"
+  ansible.builtin.assert:
+    that:
+      - unknown_group_result is failed
+      - "'was not found through the ND Manage API' in unknown_group_result.msg"
+      - not_a_group_result is failed
+      - "'is a fabric, not a fabric group' in not_a_group_result.msg"
+      - unexpected_cluster_name_result is failed
+      - "'cluster_name' in unexpected_cluster_name_result.msg"
+
+#############################################################################
 # MERGED STATE TESTS - ADD MEMBERS
 #############################################################################
 - name: "MERGED CREATE: Add members to fabric group (check mode)"
@@ -207,6 +256,114 @@
   ansible.builtin.assert:
     that:
       - nm_deleted_remove_remaining is changed
+
+#############################################################################
+# MULTI-CLUSTER FABRIC GROUP TESTS
+#
+# Skipped unless the target controller has a multi-cluster fabric group and the
+# inventory authenticates through its login domain, because neither can be
+# created from this target: a multi-cluster fabric group only exists on a
+# federated controller, and the OneManage API answers every request from a
+# local-domain session with "this API is allowed only for remote user".
+#
+# Define `test_mcfg_group`, `test_mcfg_member` and `test_mcfg_cluster` in the
+# inventory to enable them.
+#############################################################################
+- name: "MCFG: Run the multi-cluster fabric group member tests"
+  when:
+    - test_mcfg_group is defined
+    - test_mcfg_member is defined
+    - test_mcfg_cluster is defined
+  block:
+    - name: "MCFG CLEANUP: Remove the test member before the test starts"
+      cisco.nd.nd_manage_fabric_group_members: &mcfg_member_absent
+        <<: *nd_info
+        fabric_name: "{{ test_mcfg_group }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+            cluster_name: "{{ test_mcfg_cluster }}"
+        state: deleted
+
+    - name: "MCFG VALIDATION: Omit cluster_name for a multi-cluster member"
+      cisco.nd.nd_manage_fabric_group_members:
+        <<: *nd_info
+        fabric_name: "{{ test_mcfg_group }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+        state: merged
+      register: mcfg_missing_cluster_name
+      ignore_errors: true
+
+    - name: "MCFG VALIDATION: Verify a member without cluster_name is rejected"
+      ansible.builtin.assert:
+        that:
+          - mcfg_missing_cluster_name is failed
+          - "'cluster_name' is in mcfg_missing_cluster_name.msg"
+        fail_msg: "OneManage answers an unexplained HTTP 500 for a member without clusterName, so it must be caught first"
+
+    - name: "MCFG MERGED: Add the member (check mode)"
+      cisco.nd.nd_manage_fabric_group_members: &mcfg_member_present
+        <<: *nd_info
+        fabric_name: "{{ test_mcfg_group }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+            cluster_name: "{{ test_mcfg_cluster }}"
+        state: merged
+      check_mode: true
+      register: cm_mcfg_add
+
+    - name: "MCFG MERGED: Add the member (normal mode)"
+      cisco.nd.nd_manage_fabric_group_members:
+        <<: *mcfg_member_present
+      register: nm_mcfg_add
+
+    - name: "MCFG MERGED: Verify the member was added"
+      ansible.builtin.assert:
+        that:
+          - cm_mcfg_add is changed
+          - nm_mcfg_add is changed
+
+    - name: "MCFG IDEMPOTENT: Add the same member again"
+      cisco.nd.nd_manage_fabric_group_members:
+        <<: *mcfg_member_present
+      register: nm_mcfg_add_again
+
+    - name: "MCFG IDEMPOTENT: Verify no change on rerun"
+      ansible.builtin.assert:
+        that:
+          - nm_mcfg_add_again is not changed
+        fail_msg: "A re-add is rejected by ND with 'already assigned to Fabric Group', so identity must match on the second run"
+
+    - name: "MCFG GATHERED: Retrieve the members"
+      cisco.nd.nd_manage_fabric_group_members:
+        <<: *nd_info
+        fabric_name: "{{ test_mcfg_group }}"
+        config: []
+        state: gathered
+      register: mcfg_gathered
+
+    - name: "MCFG GATHERED: Verify the member is reported with its cluster"
+      ansible.builtin.assert:
+        that:
+          - mcfg_gathered is not changed
+          - test_mcfg_member in (mcfg_gathered.gathered | map(attribute='member_name') | list)
+          - test_mcfg_cluster in (mcfg_gathered.gathered | map(attribute='cluster_name') | list)
+
+    - name: "MCFG DELETED: Remove the member"
+      cisco.nd.nd_manage_fabric_group_members:
+        <<: *mcfg_member_absent
+      register: nm_mcfg_remove
+
+    - name: "MCFG DELETED IDEMPOTENT: Remove the same member again"
+      cisco.nd.nd_manage_fabric_group_members:
+        <<: *mcfg_member_absent
+      register: nm_mcfg_remove_again
+
+    - name: "MCFG DELETED: Verify the member was removed exactly once"
+      ansible.builtin.assert:
+        that:
+          - nm_mcfg_remove is changed
+          - nm_mcfg_remove_again is not changed
 
 #############################################################################
 # CLEANUP

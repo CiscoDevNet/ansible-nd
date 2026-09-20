@@ -7,11 +7,14 @@
 """
 Unit tests for `ManageFabricGroupMembersOrchestrator`.
 
-Verifies the orchestrator drives RestSend correctly: fabric_name resolution from
-params, query_all unwrapping the 'fabrics' array, query_one name matching, and
-bulk add/remove building the {"members": [{"name": ...}]} payload from the model.
+Covers surface resolution (which of the Manage and OneManage APIs owns the fabric group),
+the validation that stops a member identity from disagreeing with the resolved surface, and
+the per-surface request shapes for querying, adding and removing members.
 
-Scope: methods defined in manage_fabric_group_members.py only.
+Every orchestrator call resolves the surface first, so each test's response generator starts
+with the Manage fabric GET followed by the OneManage probe.
+
+Scope: methods defined in manage_fabric_group_members.py and the surfaces it selects.
 """
 
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name
@@ -24,6 +27,7 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_group_member_surfaces import ManageSurface, OneManageSurface
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_members import ManageFabricGroupMembersOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -33,6 +37,16 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture 
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+
+# Every negative answer the OneManage probe was observed to give. None of them is fatal:
+# Manage keeps serving fabric groups regardless of whether OneManage can be reached.
+PROBE_NEGATIVES = [
+    "probe_not_found",
+    "probe_single_cluster",
+    "probe_mcfg_fabric_not_found",
+    "probe_local_login_domain",
+    "probe_server_error",
+]
 
 
 def responses_members(key: str):
@@ -60,406 +74,339 @@ def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = Non
     return rest_send
 
 
-def test_manage_fabric_group_members_init() -> None:
-    """Orchestrator instantiates and exposes expected ClassVars and rest_send."""
+def _orchestrator(*fixture_keys: str, config: list | None = None, results: Results | None = None) -> ManageFabricGroupMembersOrchestrator:
+    """Build an orchestrator whose sender replays `fixture_keys` in order."""
 
     def responses():
-        yield {}
+        for key in fixture_keys:
+            yield responses_members(key)
 
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send = _build_rest_send(ResponseGenerator(responses()), config=config)
+    return ManageFabricGroupMembersOrchestrator(rest_send=rest_send, results=results)
 
+
+def _manage(*fixture_keys: str, config: list | None = None, results: Results | None = None) -> ManageFabricGroupMembersOrchestrator:
+    """Build an orchestrator that resolves to the Manage surface, then replays `fixture_keys`.
+
+    Resolution asks OneManage first, then falls back to Manage for existence and category.
+    """
+    return _orchestrator("probe_mcfg_fabric_not_found", "manage_fabric_group", *fixture_keys, config=config, results=results)
+
+
+def _onemanage(*fixture_keys: str, config: list | None = None) -> ManageFabricGroupMembersOrchestrator:
+    """Build an orchestrator that resolves to the OneManage surface, then replays `fixture_keys`.
+
+    A group OneManage claims needs no Manage call at all.
+    """
+    return _orchestrator("probe_multicluster", *fixture_keys, config=config)
+
+
+def test_manage_fabric_group_members_init() -> None:
+    """Orchestrator instantiates and exposes the expected ClassVars."""
     with does_not_raise():
-        instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+        instance = _orchestrator()
 
     assert instance.model_class is FabricGroupMemberModel
-    assert instance.supports_bulk_create is True
-    assert instance.supports_bulk_delete is True
-    assert instance.rest_send is rest_send
+    # ND accepts exactly one member per request on both surfaces, so there is no bulk path.
+    assert instance.supports_bulk_create is False
+    assert instance.supports_bulk_delete is False
 
 
 def test_manage_fabric_group_members_fabric_name() -> None:
     """fabric_name resolves from rest_send.params (regression: base does not define it)."""
+    assert _orchestrator().fabric_name == "GROUP1"
 
-    def responses():
-        yield {}
 
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    assert instance.fabric_name == "GROUP1"
+# --------------------------------------------------------------------------- surface resolution
+
+
+def test_manage_fabric_group_members_resolves_manage_surface() -> None:
+    """A group OneManage does not claim is served by the Manage API."""
+    instance = _manage()
+
+    assert instance.surface is ManageSurface
+    # Cached: a second access must not consume another response.
+    assert instance.surface is ManageSurface
+
+
+def test_manage_fabric_group_members_resolves_onemanage_surface() -> None:
+    """A group OneManage reports as multiClusterFabricGroup is served by the OneManage API."""
+    instance = _onemanage()
+
+    assert instance.surface is OneManageSurface
+    assert instance.surface_note is None
+
+
+def test_manage_fabric_group_members_unknown_fabric_group_fails() -> None:
+    """A fabric_name the controller does not know fails before any member call.
+
+    The members endpoint cannot catch this: it answers 500 "Failed to check fabric type" for
+    an unknown name, so the run would otherwise die on an opaque server error.
+    """
+    instance = _orchestrator("probe_single_cluster", "manage_fabric_missing")
+
+    with pytest.raises(ValueError, match="was not found through the ND Manage API"):
+        _ = instance.surface
+
+
+def test_manage_fabric_group_members_empty_multicluster_group_resolves_to_onemanage() -> None:
+    """An empty multi-cluster fabric group still resolves, even though Manage 404s it.
+
+    Manage stops reporting a multi-cluster fabric group once it holds no member on the local
+    cluster, which is precisely the state the group is in before its first member is added.
+    Asking Manage first would therefore reject the one operation the module exists to perform.
+    """
+    instance = _orchestrator("probe_multicluster", "onemanage_members_empty")
+
+    assert instance.surface is OneManageSurface
+    assert instance.query_all() == []
+
+
+def test_manage_fabric_group_members_fabric_that_is_not_a_group_fails() -> None:
+    """Pointing the module at a fabric rather than a group fails with a focused message.
+
+    A fabric's members endpoint answers 200 with an empty list, so without the category check
+    the run would silently report no members and then try to add one.
+    """
+    instance = _orchestrator("probe_single_cluster", "manage_fabric_plain")
+
+    with pytest.raises(ValueError, match="is a fabric, not a fabric group"):
+        _ = instance.surface
+
+
+@pytest.mark.parametrize("probe_fixture", PROBE_NEGATIVES)
+def test_manage_fabric_group_members_probe_negative_selects_manage(probe_fixture: str) -> None:
+    """Every observed probe failure selects Manage and records why.
+
+    The status code varies with the reason -- 400 on a single-cluster controller, 400 for a
+    single-cluster group on a multi-cluster controller, 500 for a session that did not use the
+    multi-cluster login domain -- so the decision cannot be made by classifying the code.
+    """
+    instance = _orchestrator(probe_fixture, "manage_fabric_group")
+
+    assert instance.surface is ManageSurface
+    assert "Manage API" in instance.surface_note
+
+
+def test_manage_fabric_group_members_probe_does_not_consume_the_retry_window() -> None:
+    """The probe must make a single attempt and leave the caller's timeout untouched.
+
+    ``RestSend`` retries a retryable failure for ``timeout`` seconds every ``send_interval``
+    seconds, and the 500 a federated controller returns to a local-domain session is
+    retryable. Without collapsing the window the probe stalls every task for five minutes
+    before acting on an answer it already had.
+    """
+    instance = _orchestrator("probe_local_login_domain", "manage_fabric_group")
+    instance.rest_send.timeout = 300
+
+    assert instance.surface is ManageSurface
+    assert instance.rest_send.timeout == 300
+
+
+def test_manage_fabric_group_members_probe_failure_is_not_recorded_as_failed() -> None:
+    """The probe's expected failure must not land in Results as a failed API call.
+
+    ``format_with_verbosity`` promotes an aggregated Results failure into module-level
+    ``failed`` at verbosity 2 and above, so registering the probe made every successful run
+    against a single-cluster fabric group report failure under ``-vv``.
+    """
+    results = Results()
+    results.state = "merged"
+    results.check_mode = False
+    instance = _orchestrator("probe_single_cluster", "manage_fabric_group", results=results)
+
+    assert instance.surface is ManageSurface
+    assert True not in results.failed
+
+
+# ------------------------------------------------------------------------- config validation
+
+
+def test_manage_fabric_group_members_requires_cluster_name_on_onemanage() -> None:
+    """A multi-cluster member without cluster_name is rejected before it reaches ND.
+
+    OneManage answers a member lacking ``clusterName`` with an unexplained HTTP 500, and the
+    member would never match what ND stores because its identity is (clusterName, name).
+    """
+    instance = _onemanage(config=[{"member_name": "member-fabric-1", "cluster_name": "cluster-a"}, {"member_name": "member-fabric-2"}])
+
+    with pytest.raises(ValueError, match="'cluster_name' is required"):
+        _ = instance.surface
+
+
+def test_manage_fabric_group_members_rejects_cluster_name_on_manage() -> None:
+    """cluster_name against a group OneManage did not claim is rejected, with both fixes offered.
+
+    Manage accepts a ``clusterName`` and silently drops it, so the proposed member could never
+    match the stored one: it would look absent on every run, be re-added, and fail the second
+    run with "already assigned to Fabric Group".
+    """
+    instance = _manage(config=[{"member_name": "member-fabric-1", "cluster_name": "cluster-a"}])
+
+    with pytest.raises(ValueError, match="multi-cluster login domain"):
+        _ = instance.surface
+
+
+# ------------------------------------------------------------------------------------ query
 
 
 def test_manage_fabric_group_members_query_all() -> None:
-    """query_all GETs the members endpoint and unwraps the 'fabrics' array."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("members_ok")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    """query_all GETs the Manage members endpoint and unwraps the 'fabrics' array."""
+    instance = _manage("members_ok")
 
     with does_not_raise():
         result = instance.query_all()
 
-    assert rest_send.verb == HttpVerbEnum.GET.value
-    assert rest_send.path.endswith("/fabrics/GROUP1/members")
-    assert [m["name"] for m in result] == ["member-fabric-1", "member-fabric-2"]
+    assert instance.rest_send.verb == HttpVerbEnum.GET.value
+    assert instance.rest_send.path.endswith("/manage/fabrics/GROUP1/members")
+    assert [member["name"] for member in result] == ["member-fabric-1", "member-fabric-2"]
 
 
 def test_manage_fabric_group_members_query_all_empty() -> None:
     """query_all returns an empty list when the group has no members."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("members_empty")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    assert instance.query_all() == []
+    assert _manage("members_empty").query_all() == []
 
 
-def test_manage_fabric_group_members_probe_not_found_selects_manage() -> None:
-    """A 404 from OneManage is treated as 'not multi-cluster'.
+def test_manage_fabric_group_members_onemanage_query_all() -> None:
+    """query_all routes to the OneManage members endpoint for a multi-cluster fabric group."""
+    instance = _onemanage("onemanage_members_ok")
 
-    Defensive: no observed ND release answers 404 here (4.2.1 and 4.3.1 both answer 400), but
-    the code tolerates it, so the branch stays covered.
-    """
+    with does_not_raise():
+        result = instance.query_all()
 
-    def responses():
-        yield responses_members("probe_not_found")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    assert instance.is_multicluster is False
-
-
-def test_manage_fabric_group_members_probe_single_cluster_selects_manage() -> None:
-    """A single-cluster controller 400s the whole OneManage surface, so 400 means 'not MCFG'.
-
-    Regression test: mapping only the 404 made every single-cluster run fail, because the
-    controller rejects the OneManage path before it ever resolves the fabric name.
-    """
-
-    def responses():
-        yield responses_members("probe_single_cluster")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    assert instance.is_multicluster is False
-
-
-def test_manage_fabric_group_members_probe_mcfg_fabric_not_found_selects_manage() -> None:
-    """A multi-cluster controller answers 400 'fabric not found' for a non-MCFG fabric.
-
-    Captured from a live two-cluster ND 4.2.1. This is the negative the original 404 assumption
-    was meant to cover; the controller never returns 404 for it.
-    """
-
-    def responses():
-        yield responses_members("probe_mcfg_fabric_not_found")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    assert instance.is_multicluster is False
-
-
-def test_manage_fabric_group_members_probe_failure_is_not_recorded_as_failed() -> None:
-    """The probe's expected 400 must not land in Results as a failed API call.
-
-    ``format_with_verbosity`` promotes an aggregated Results failure into module-level ``failed``
-    at verbosity 2 and above, so registering the probe made every successful run against a
-    non-MCFG fabric report failure under ``-vv``.
-    """
-
-    def responses():
-        yield responses_members("probe_single_cluster")
-
-    results = Results()
-    results.state = "merged"
-    results.check_mode = False
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send, results=results)
-
-    assert instance.is_multicluster is False
-    assert True not in results.failed
-
-
-def test_manage_fabric_group_members_probe_error_is_not_treated_as_manage() -> None:
-    """A probe failure must propagate rather than silently selecting the Manage surface.
-
-    Classifying a 5xx (or auth/transport failure) as "not multi-cluster" would route the run's
-    writes to Manage with the wrong payload shape and discard the diagnostic that mattered.
-    """
-
-    def responses():
-        yield responses_members("probe_server_error")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    with pytest.raises(Exception, match="Multi-cluster detection failed"):
-        instance.is_multicluster
+    assert instance.rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/members")
+    assert [(member["clusterName"], member["name"]) for member in result] == [
+        ("cluster-a", "member-fabric-1"),
+        ("cluster-b", "member-fabric-2"),
+    ]
 
 
 def test_manage_fabric_group_members_query_one_found() -> None:
     """query_one returns the matching member dict by name."""
+    result = _manage("members_ok").query_one(FabricGroupMemberModel(member_name="member-fabric-2"))
 
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("members_ok")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    model = FabricGroupMemberModel(member_name="member-fabric-2")
-
-    result = instance.query_one(model)
     assert result is not None
     assert result["name"] == "member-fabric-2"
 
 
 def test_manage_fabric_group_members_query_one_missing() -> None:
     """query_one returns None when the member is absent."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("members_ok")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    model = FabricGroupMemberModel(member_name="not-a-member")
-
-    assert instance.query_one(model) is None
+    assert _manage("members_ok").query_one(FabricGroupMemberModel(member_name="not-a-member")) is None
 
 
-def test_manage_fabric_group_members_create_bulk() -> None:
-    """Manage addMembers fans out to one request per member, each with a one-element members[].
+# ------------------------------------------------------------------------------------ write
 
-    Regression test: ND 4.2.1 rejects a two-member body with "Only one member fabric can be
-    added at a time", so batching every member into a single request fails against a real
-    controller even though the Manage schema types ``members`` as an array.
+
+def test_manage_fabric_group_members_create_sends_single_member_envelope() -> None:
+    """A Manage add wraps exactly one member in a members[] array.
+
+    ND rejects a two-member body with "Only one member fabric can be added at a time", so the
+    array the Manage schema advertises can never hold more than one element.
     """
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("add_members_success")
-        yield responses_members("add_members_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    models = [FabricGroupMemberModel(member_name="member-fabric-1"), FabricGroupMemberModel(member_name="member-fabric-2")]
-
-    with does_not_raise():
-        result = instance.create_bulk(models)
-
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/fabrics/GROUP1/actions/addMembers")
-    assert len(result) == 2
-    # The last body carries only the second member; a batched body would carry both.
-    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-2"}]}
-
-
-def test_manage_fabric_group_members_delete_bulk() -> None:
-    """delete_bulk POSTs removeMembers with a model-built {'members': [{'name': ...}]} payload."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("remove_members_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    models = [FabricGroupMemberModel(member_name="member-fabric-1")]
-
-    with does_not_raise():
-        instance.delete_bulk(models)
-
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/fabrics/GROUP1/actions/removeMembers")
-    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
-
-
-def test_manage_fabric_group_members_create_delegates_to_bulk() -> None:
-    """create() routes a single member through the bulk add endpoint."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("add_members_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    instance = _manage("add_members_success")
 
     with does_not_raise():
         instance.create(FabricGroupMemberModel(member_name="member-fabric-1"))
 
-    assert rest_send.path.endswith("/fabrics/GROUP1/actions/addMembers")
-    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
+    assert instance.rest_send.verb == HttpVerbEnum.POST.value
+    assert instance.rest_send.path.endswith("/manage/fabrics/GROUP1/actions/addMembers")
+    assert instance.rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
 
 
-def test_manage_fabric_group_members_delete_delegates_to_bulk() -> None:
-    """delete() routes a single member through the bulk remove endpoint."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("remove_members_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+def test_manage_fabric_group_members_delete_sends_single_member_envelope() -> None:
+    """A Manage remove uses the same one-element members[] envelope."""
+    instance = _manage("remove_members_success")
 
     with does_not_raise():
         instance.delete(FabricGroupMemberModel(member_name="member-fabric-1"))
 
-    assert rest_send.path.endswith("/fabrics/GROUP1/actions/removeMembers")
-    assert rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
+    assert instance.rest_send.verb == HttpVerbEnum.POST.value
+    assert instance.rest_send.path.endswith("/manage/fabrics/GROUP1/actions/removeMembers")
+    assert instance.rest_send.committed_payload == {"members": [{"name": "member-fabric-1"}]}
 
 
-def test_manage_fabric_group_members_multicluster_detection() -> None:
-    """A OneManage 'multiClusterFabricGroup' probe flags the orchestrator as multi-cluster (cached)."""
+def test_manage_fabric_group_members_onemanage_create_sends_flat_body() -> None:
+    """A OneManage add sends a flat clusterName/name object, not a members[] wrapper.
 
-    def responses():
-        yield responses_members("probe_multicluster")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    assert instance.is_multicluster is True
-    # Cached: a second access must not consume another response.
-    assert instance.is_multicluster is True
-
-
-def test_manage_fabric_group_members_multicluster_query_all() -> None:
-    """query_all routes to the OneManage members endpoint when the parent is multi-cluster."""
-
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("onemanage_members_ok")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-
-    with does_not_raise():
-        result = instance.query_all()
-
-    assert rest_send.verb == HttpVerbEnum.GET.value
-    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/members")
-    assert [m["name"] for m in result] == ["member-fabric-1", "member-fabric-2"]
-
-
-def test_manage_fabric_group_members_multicluster_create_bulk() -> None:
-    """OneManage addMembers takes one flat member object per request, not a members[] wrapper.
-
-    The operation consumes ``multiClusterFabricGroupMemberUpdate`` (clusterName + name at the
-    root); sending the Manage ``{"members": [...]}`` wrapper would drop both fields.
+    The Manage envelope is rejected with HTTP 500, as is a member without clusterName.
     """
-
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("onemanage_add_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    models = [FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a")]
+    instance = _onemanage("onemanage_add_success", config=[{"member_name": "member-fabric-1", "cluster_name": "cluster-a"}])
 
     with does_not_raise():
-        instance.create_bulk(models)
+        instance.create(FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a"))
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/addMembers")
-    assert rest_send.committed_payload == {"name": "member-fabric-1", "clusterName": "cluster-a"}
+    assert instance.rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/addMembers")
+    assert instance.rest_send.committed_payload == {"name": "member-fabric-1", "clusterName": "cluster-a"}
 
 
-def test_manage_fabric_group_members_multicluster_create_bulk_fans_out() -> None:
-    """Multiple MCFG members become one request each, since the API takes a single object."""
-
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("onemanage_add_success")
-        yield responses_members("onemanage_add_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    models = [
-        FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a"),
-        FabricGroupMemberModel(member_name="member-fabric-2", cluster_name="cluster-b"),
-    ]
+def test_manage_fabric_group_members_onemanage_delete_sends_flat_body() -> None:
+    """A OneManage remove uses the same flat single-member object."""
+    instance = _onemanage("onemanage_remove_success", config=[{"member_name": "member-fabric-1", "cluster_name": "cluster-a"}])
 
     with does_not_raise():
-        result = instance.create_bulk(models)
+        instance.delete(FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a"))
 
-    assert len(result) == 2
-    assert rest_send.committed_payload == {"name": "member-fabric-2", "clusterName": "cluster-b"}
+    assert instance.rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/removeMembers")
+    assert instance.rest_send.committed_payload == {"name": "member-fabric-1", "clusterName": "cluster-a"}
 
 
-def test_manage_fabric_group_members_multicluster_delete_bulk() -> None:
-    """OneManage removeMembers takes the same flat single-member object."""
+def test_manage_fabric_group_members_manage_refusal_names_the_login_domain() -> None:
+    """ND's "managed by OneManage" refusal becomes the one instruction that fixes the run.
 
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("onemanage_remove_success")
+    This is the case the probe cannot pre-empt: from a session that did not use the
+    multi-cluster login domain, OneManage is unreachable, Manage reads the group's members
+    happily, and only the write reveals that the group is multi-cluster.
+    """
+    instance = _manage("add_members_onemanage_refused")
 
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    models = [FabricGroupMemberModel(member_name="member-fabric-1", cluster_name="cluster-a")]
+    with pytest.raises(Exception, match="multi-cluster login domain"):
+        instance.create(FabricGroupMemberModel(member_name="member-fabric-1"))
 
-    with does_not_raise():
-        instance.delete_bulk(models)
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/removeMembers")
-    assert rest_send.committed_payload == {"name": "member-fabric-1", "clusterName": "cluster-a"}
+def test_manage_fabric_group_members_update_is_rejected() -> None:
+    """Membership has no updatable attribute, so update must never reach the API.
+
+    The base implementation would POST to addMembers with the member name substituted into the
+    fabric path; this guard exists so that cannot happen if the diff engine ever changes.
+    """
+    instance = _manage()
+
+    with pytest.raises(Exception, match="cannot be updated in place"):
+        instance.update(FabricGroupMemberModel(member_name="member-fabric-1"))
+
+
+# --------------------------------------------------------------------------- config actions
 
 
 def test_manage_fabric_group_members_config_save_manage() -> None:
-    """config_save routes to the Manage configSave endpoint for a plain fabric group."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("config_save_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    """config_save routes to the Manage configSave endpoint for a single-cluster fabric group."""
+    instance = _manage("config_save_success")
 
     with does_not_raise():
         instance.config_save("GROUP1")
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/manage/fabrics/GROUP1/actions/configSave")
+    assert instance.rest_send.verb == HttpVerbEnum.POST.value
+    assert instance.rest_send.path.endswith("/manage/fabrics/GROUP1/actions/configSave")
 
 
-def test_manage_fabric_group_members_config_save_multicluster() -> None:
+def test_manage_fabric_group_members_config_save_onemanage() -> None:
     """config_save routes to the OneManage configSave endpoint for a multi-cluster fabric group."""
-
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("config_save_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    instance = _onemanage("config_save_success")
 
     with does_not_raise():
         instance.config_save("GROUP1")
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/configSave")
+    assert instance.rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/configSave")
 
 
-def test_manage_fabric_group_members_deploy_global_multicluster() -> None:
+def test_manage_fabric_group_members_deploy_global_onemanage() -> None:
     """deploy_global routes to the OneManage deploy endpoint for a multi-cluster fabric group."""
-
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("deploy_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    instance = _onemanage("deploy_success")
 
     with does_not_raise():
         instance.deploy_global("GROUP1")
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/deploy")
+    assert instance.rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/actions/deploy")
 
 
 def test_manage_fabric_group_members_deploy_global_manage_includes_member_switches() -> None:
@@ -468,54 +415,31 @@ def test_manage_fabric_group_members_deploy_global_manage_includes_member_switch
     The Manage deploy API defaults ``inclAllFabricGroupsSwitches`` to ``false``, which would
     leave member fabrics undeployed despite the module documenting group-wide deployment.
     """
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("deploy_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    instance = _manage("deploy_success")
 
     with does_not_raise():
         instance.deploy_global("GROUP1")
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert "inclAllFabricGroupsSwitches=true" in rest_send.path
+    assert "inclAllFabricGroupsSwitches=true" in instance.rest_send.path
 
 
 def test_manage_fabric_group_members_deploy_switch_manage() -> None:
     """A switch-scoped deploy queries Manage switches and deploys only out-of-sync serials."""
-
-    def responses():
-        yield responses_members("probe_fabric_group")
-        yield responses_members("switches_out_of_sync")
-        yield responses_members("switch_deploy_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+    instance = _manage("switches_out_of_sync", "switch_deploy_success")
 
     with does_not_raise():
         instance.deploy_switch_ids("GROUP1", instance.resolve_switch_deploy_targets("GROUP1"))
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/manage/fabrics/GROUP1/switchActions/deploy")
-    assert rest_send.committed_payload == {"switchIds": ["SN-DRIFT"]}
+    assert instance.rest_send.path.endswith("/manage/fabrics/GROUP1/switchActions/deploy")
+    assert instance.rest_send.committed_payload == {"switchIds": ["SN-DRIFT"]}
 
 
-def test_manage_fabric_group_members_deploy_switch_multicluster() -> None:
-    """A switch-scoped deploy routes to the OneManage switches + switchActions endpoints for MCFG."""
-
-    def responses():
-        yield responses_members("probe_multicluster")
-        yield responses_members("switches_out_of_sync")
-        yield responses_members("switch_deploy_success")
-
-    rest_send = _build_rest_send(ResponseGenerator(responses()))
-    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+def test_manage_fabric_group_members_deploy_switch_onemanage() -> None:
+    """A switch-scoped deploy routes to the OneManage switches and switchActions endpoints."""
+    instance = _onemanage("switches_out_of_sync", "switch_deploy_success")
 
     with does_not_raise():
         instance.deploy_switch_ids("GROUP1", instance.resolve_switch_deploy_targets("GROUP1"))
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/switchActions/deploy")
-    assert rest_send.committed_payload == {"switchIds": ["SN-DRIFT"]}
+    assert instance.rest_send.path.endswith("/oneManage/manage/fabrics/GROUP1/switchActions/deploy")
+    assert instance.rest_send.committed_payload == {"switchIds": ["SN-DRIFT"]}

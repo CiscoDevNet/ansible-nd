@@ -39,8 +39,10 @@ options:
       cluster_name:
         description:
         - The name of the cluster that hosts the member fabric.
-        - Only applicable when O(fabric_name) is a multi-cluster fabric group, where a member
-          fabric is identified by its cluster and name. Ignored for a plain fabric group.
+        - Required when O(fabric_name) is a multi-cluster fabric group, which identifies a member
+          by its cluster and name.
+        - Must be omitted when O(fabric_name) is a single-cluster fabric group, which identifies a
+          member by name alone.
         type: str
         required: false
   state:
@@ -58,9 +60,9 @@ options:
     - Controls save and deploy behavior after fabric group membership is updated.
     - Save writes the pending fabric group configuration to the controller.
     - Deploy pushes the saved configuration to switches.
-    - Skipped automatically when O(state=deleted) or O(state=gathered), or when no changes are made.
-    - Routed to the ND Manage or OneManage surface automatically, matching the detected
-      O(fabric_name) type (plain fabric group vs multi-cluster fabric group).
+    - Skipped automatically when O(state=gathered), or when membership is already as requested.
+    - Routed to the ND Manage or OneManage API automatically, matching the detected
+      O(fabric_name) type (fabric group vs multi-cluster fabric group).
     type: dict
     suboptions:
       save:
@@ -88,11 +90,15 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - The O(fabric_name) must refer to an existing fabric group or multi-cluster fabric group.
-- The module auto-detects whether O(fabric_name) is a plain fabric group (managed via the ND
-  Manage API) or a multi-cluster fabric group (managed via the ND OneManage API) and routes
-  member operations to the correct surface.
-- Fabric group members are identified by their fabric name; multi-cluster fabric group members
-  are identified by the combination of O(config.cluster_name) and O(config.member_name).
+  Pointing it at a fabric, or at a name that does not exist, fails the task.
+- The module detects whether O(fabric_name) is a fabric group (managed through the ND Manage
+  API) or a multi-cluster fabric group (managed through the ND OneManage API) and routes
+  member operations accordingly.
+- Multi-cluster fabric groups are only reachable from a session authenticated through the
+  multi-cluster login domain. Set O(login_domain) to that domain, otherwise ND refuses every
+  OneManage request and the module cannot manage multi-cluster fabric group membership.
+- A fabric can belong to only one fabric group at a time. Remove it from its current group
+  before adding it to another.
 """
 
 EXAMPLES = r"""
@@ -122,6 +128,7 @@ EXAMPLES = r"""
 
 - name: Add members to a multi-cluster fabric group
   cisco.nd.nd_manage_fabric_group_members:
+    login_domain: multi-cluster-domain
     fabric_name: my-multi-cluster-fabric-group
     config:
       - member_name: member-fabric-1
@@ -129,6 +136,16 @@ EXAMPLES = r"""
       - member_name: member-fabric-2
         cluster_name: cluster-b
     state: merged
+  register: result
+
+- name: Remove a member from a multi-cluster fabric group
+  cisco.nd.nd_manage_fabric_group_members:
+    login_domain: multi-cluster-domain
+    fabric_name: my-multi-cluster-fabric-group
+    config:
+      - member_name: member-fabric-1
+        cluster_name: cluster-a
+    state: deleted
   register: result
 
 - name: Add members then save and deploy the fabric group
@@ -205,27 +222,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies i
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_members import ManageFabricGroupMembersOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
-
-
-def _run_gathered(module):
-    """
-    Query the current members of the fabric group without making any change.
-
-    Builds a RestSend-backed orchestrator (mirroring NDStateMachine's REST wiring) so the
-    generic orchestrator can read O(fabric_name) from C(rest_send.params).
-    """
-    sender = Sender()
-    sender.ansible_module = module
-    rest_send = RestSend(dict(module.params))
-    rest_send.sender = sender
-    rest_send.response_handler = ResponseHandler()
-    rest_send.check_mode = False
-
-    orchestrator = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
-    return [FabricGroupMemberModel.from_response(member).to_config() for member in orchestrator.query_all()]
 
 
 def main():
@@ -254,27 +250,29 @@ def main():
 
     nd_state_machine = None
     try:
-        if state == "gathered":
-            module.exit_json(changed=False, gathered=_run_gathered(module))
-        else:
-            nd_state_machine = NDStateMachine(
-                module=module,
-                model_orchestrator=ManageFabricGroupMembersOrchestrator,
+        nd_state_machine = NDStateMachine(
+            module=module,
+            model_orchestrator=ManageFabricGroupMembersOrchestrator,
+        )
+
+        nd_state_machine.manage_state()
+
+        surface_note = nd_state_machine.model_orchestrator.surface_note
+        if surface_note:
+            nd_state_machine.output.assign(logs=[surface_note])
+
+        # Membership changes stage pending configuration on the group whether a member was
+        # added or removed, so both are save/deploy candidates; an unchanged group is not.
+        if len(nd_state_machine.sent) > 0 or len(nd_state_machine.removed) > 0:
+            nd_state_machine.model_orchestrator.run_config_actions(
+                actions=config_actions,
+                fabric_names=[module.params["fabric_name"]],
+                state=state,
+                check_mode=module.check_mode,
             )
 
-            nd_state_machine.manage_state()
-
-            # Save/deploy the parent fabric group only when membership actually changed.
-            if state != "deleted" and len(nd_state_machine.sent) > 0:
-                nd_state_machine.model_orchestrator.run_config_actions(
-                    actions=config_actions,
-                    fabric_names=[module.params["fabric_name"]],
-                    state=state,
-                    check_mode=module.check_mode,
-                )
-
-            verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
-            module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0

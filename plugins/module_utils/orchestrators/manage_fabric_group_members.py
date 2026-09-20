@@ -2,72 +2,67 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-from typing import Type, ClassVar, List, Optional
+from typing import ClassVar
+
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_group_member_surfaces import (
+    FabricGroupMemberSurface,
+    ManageSurface,
+    OneManageSurface,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
-    EpManageFabricsMembersGet,
-    EpManageFabricsMembersAddPost,
-    EpManageFabricsMembersRemovePost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics import (
-    EpOneManageFabricsFabricNameGet,
-    EpOneManageFabricsMembersGet,
-    EpOneManageFabricsMembersAddPost,
-    EpOneManageFabricsMembersRemovePost,
-    EpOneManageFabricsConfigSavePost,
-    EpOneManageFabricsDeployPost,
-    EpOneManageFabricsSwitchesGet,
-    EpOneManageFabricsSwitchActionsDeployPost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
-    EpFabricConfigSavePost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
-    EpFabricDeployPost,
-    FabricDeployQueryParams,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
-    EpManageFabricsSwitchesGet,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
-    EpManageFabricsSwitchActionsDeployPost,
+
+# ND refuses a Manage-surface membership write against a multi-cluster fabric group with
+# "Cannot add member as the fabric 'x' is managed by OneManage" (and the removeMembers
+# equivalent). It is the only signal that distinguishes the two kinds of group when OneManage
+# could not be reached, so it is matched to replace an opaque HTTP 400 with the one action
+# that actually fixes the run.
+_ONEMANAGE_ONLY_ERROR = "is managed by OneManage"
+
+_LOGIN_DOMAIN_HINT = (
+    "Fabric group '{fabric_name}' is a multi-cluster fabric group, which can only be managed "
+    "through the ND OneManage API. Authenticate through the multi-cluster login domain (set "
+    "'login_domain', or ansible_httpapi_login_domain, to the domain configured for "
+    "multi-cluster access) and run the task again."
 )
 
 
 class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[FabricGroupMemberModel]):
-    model_class: ClassVar[Type[NDBaseModel]] = FabricGroupMemberModel
-    supports_bulk_create: ClassVar[bool] = True
-    supports_bulk_delete: ClassVar[bool] = True
+    """Manage the membership of a fabric group or a multi-cluster fabric group.
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersAddPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersAddPost
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersRemovePost
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsMembersGet
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricsMembersAddPost
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricsMembersRemovePost
+    ND models both kinds of group as a set of member fabrics with no mutable attributes, so
+    membership only ever supports add and remove -- there is no update. Both surfaces accept
+    exactly one member per request, so members are sent individually rather than in bulk.
+    """
 
-    # OneManage (multi-cluster fabric group) endpoint variants, selected at runtime when the parent
-    # fabric_name is detected to be a multi-cluster fabric group.
-    onemanage_fabric_get_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsFabricNameGet
-    onemanage_query_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsMembersGet
-    onemanage_add_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsMembersAddPost
-    onemanage_remove_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsMembersRemovePost
+    model_class: ClassVar[type[NDBaseModel]] = FabricGroupMemberModel
 
-    # Probe replies that mean "this fabric is not a multi-cluster fabric group" rather than an error.
-    # 404 is retained defensively; ND 4.2.1 and 4.3.1 both answer 400 (see _detect_multicluster).
-    NOT_MULTICLUSTER_RETURN_CODES: ClassVar[frozenset] = frozenset({400, 404})
+    # Both surfaces reject a multi-member body, so there is no bulk path to opt into: the state
+    # machine issues one create/delete per member, which is exactly what the API requires.
+    supports_bulk_create: ClassVar[bool] = False
+    supports_bulk_delete: ClassVar[bool] = False
 
-    # Cached result of the multi-cluster probe (None until first resolved).
-    _multicluster: Optional[bool] = None
+    # Required by NDBaseOrchestrator. The endpoints actually used come from the resolved
+    # surface, which is not known until the first API call; these name the Manage defaults so
+    # the declaration stays truthful for the common case.
+    create_endpoint: type[NDEndpointBaseModel] = ManageSurface.members_add_endpoint
+    update_endpoint: type[NDEndpointBaseModel] = ManageSurface.members_add_endpoint
+    delete_endpoint: type[NDEndpointBaseModel] = ManageSurface.members_remove_endpoint
+    query_one_endpoint: type[NDEndpointBaseModel] = ManageSurface.members_get_endpoint
+    query_all_endpoint: type[NDEndpointBaseModel] = ManageSurface.members_get_endpoint
+
+    # Resolved once per run, on first use.
+    _surface: type[FabricGroupMemberSurface] | None = None
+
+    # Why OneManage was ruled out, when it was ruled out by a failed probe.
+    _surface_note: str | None = None
 
     @property
     def fabric_name(self) -> str:
@@ -75,118 +70,199 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         return self.rest_send.params.get("fabric_name")
 
     @property
-    def is_multicluster(self) -> bool:
+    def surface(self) -> type[FabricGroupMemberSurface]:
+        """Return the ND API surface that owns this fabric group, resolving it once."""
+        if self._surface is None:
+            self._surface = self._resolve_surface()
+        return self._surface
+
+    @property
+    def surface_note(self) -> str | None:
+        """Return why OneManage was ruled out, when it was ruled out by a failed probe."""
+        return self._surface_note
+
+    # ------------------------------------------------------------------ surface resolution
+
+    def _resolve_surface(self) -> type[FabricGroupMemberSurface]:
+        """Determine which API owns ``fabric_name``, then check the config suits it.
+
+        OneManage is asked first because it is the only authority for a multi-cluster fabric
+        group: Manage reports one as category ``fabricGroup`` with a body that is
+        field-for-field identical to a single-cluster group, and stops listing it at all once
+        it has no member on the local cluster -- which is exactly the state a group is in
+        before its first member is added.
+
+        Manage is consulted only when OneManage does not claim the group, where it is the one
+        surface guaranteed to be reachable and can confirm the target exists and is a group.
         """
-        Return True when the parent fabric_name is a OneManage multi-cluster fabric group.
+        if self._probe_onemanage():
+            surface: type[FabricGroupMemberSurface] = OneManageSurface
+        else:
+            self._assert_fabric_group()
+            surface = ManageSurface
+        self._validate_config_for_surface(surface)
+        return surface
 
-        A multi-cluster fabric group is reported by OneManage with category
-        'multiClusterFabricGroup'. Probed once and cached for the orchestrator's lifetime.
+    def _assert_fabric_group(self) -> None:
+        """Fail early unless ``fabric_name`` names a fabric group the Manage API can see.
+
+        The members endpoint cannot do this itself: it answers 200 with an empty list for a
+        plain fabric, and 500 "Failed to check fabric type" for a name it does not know, so
+        without this check a typo becomes an opaque server error and a fabric becomes a silent
+        no-op.
+
+        A miss here is not proof the group does not exist. Manage stops reporting a
+        multi-cluster fabric group once it holds no member on the local cluster, so a session
+        that could not reach OneManage sees an empty multi-cluster group as absent -- hence
+        the probe's reason is carried into the message.
         """
-        if self._multicluster is None:
-            self._multicluster = self._detect_multicluster()
-        return self._multicluster
+        api_endpoint = ManageSurface.fabric_get_endpoint(fabric_name=self.fabric_name)
+        fabric = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+        if not fabric:
+            raise ValueError(
+                f"Fabric group '{self.fabric_name}' was not found through the ND Manage API ({self._surface_note}). "
+                f"If it is a multi-cluster fabric group, authenticate through the multi-cluster login domain; the "
+                f"Manage API stops reporting one once it has no member fabric on the local cluster."
+            )
+        if fabric.get("category") == "fabric":
+            raise ValueError(f"'{self.fabric_name}' is a fabric, not a fabric group, so it cannot have members.")
 
-    def _detect_multicluster(self) -> bool:
-        """Probe the OneManage fabric GET endpoint; a 'multiClusterFabricGroup' category means MCFG.
+    def _probe_onemanage(self) -> bool:
+        """Return True when OneManage reports ``fabric_name`` as a multi-cluster fabric group.
 
-        Manage cannot answer this: it reports 404 for a multi-cluster fabric group, so the
-        OneManage surface is the only one that can identify one.
+        Every way of saying "no" is a failure response, and the status code varies with why:
+        400 "Multi-cluster environment must be configured" from a single-cluster controller,
+        400 "fabric not found" for a single-cluster group on a multi-cluster controller, and
+        500 "this API is allowed only for remote user" when the session did not authenticate
+        through the multi-cluster login domain. None of them is fatal on its own -- Manage keeps
+        working regardless -- so any failure selects Manage and the reason is kept in
+        ``surface_note`` rather than discarded.
 
-        ND signals "not a multi-cluster fabric group" with 400 rather than 404, in two forms
-        observed on 4.2.1 and 4.3.1: "Multi-cluster environment must be configured before using
-        this feature" from a single-cluster controller, which rejects the whole OneManage surface
-        before resolving the name, and "fabric not found" from a multi-cluster controller for a
-        fabric that is not an MCFG. Any other failure propagates rather than being reclassified,
-        which would silently redirect the run's writes to the wrong API surface.
+        The probe drives ``rest_send`` directly instead of going through ``_request`` so its
+        expected failure is not registered with ``Results``, which would otherwise make a
+        successful run report ``failed`` at ``-vv`` and above.
 
-        The probe deliberately bypasses ``_request`` so that its expected 400 is not recorded with
-        ``Results``: an internal capability check is not an operation the user asked for, and
-        registering the failure makes ``format_with_verbosity`` report a successful run as failed
-        at ``-vv`` and above.
+        It also runs with the retry window collapsed to a single attempt. ``RestSend`` retries a
+        retryable failure for ``timeout`` seconds (300 by default, every 5 seconds), and the
+        500 returned to a local-domain session on a federated controller is retryable -- so
+        without this the probe would stall every task for five minutes before reaching the
+        answer it already had.
         """
-        api_endpoint = self.onemanage_fabric_get_endpoint(fabric_name=self.fabric_name)
+        api_endpoint = OneManageSurface.fabric_get_endpoint(fabric_name=self.fabric_name)
         self.rest_send.path = api_endpoint.path
         self.rest_send.verb = api_endpoint.verb
-        self.rest_send.commit()
-        if self.rest_send.return_code in self.NOT_MULTICLUSTER_RETURN_CODES:
+        self.rest_send.save_settings()
+        self.rest_send.timeout = 1
+        try:
+            self.rest_send.commit()
+        except Exception as error:
+            self._surface_note = f"OneManage probe did not complete ({error}); using the Manage API."
             return False
+        finally:
+            self.rest_send.restore_settings()
         if not self.rest_send.success:
-            raise Exception(f"Multi-cluster detection failed {self.rest_send.error_summary}")
-        result = self.rest_send.response_current.get("DATA", {})
-        return isinstance(result, dict) and result.get("category") == "multiClusterFabricGroup"
+            self._surface_note = f"OneManage probe returned {self.rest_send.return_code}; using the Manage API."
+            return False
+        fabric = self.rest_send.response_current.get("DATA", {})
+        if isinstance(fabric, dict) and fabric.get("category") == "multiClusterFabricGroup":
+            return True
+        # A GET that returns 404 counts as a successful "not found", so this also covers
+        # OneManage answering that it does not know the fabric at all.
+        self._surface_note = f"OneManage does not report '{self.fabric_name}' as a multi-cluster fabric group; using the Manage API."
+        return False
 
-    def _query_endpoint(self) -> NDEndpointBaseModel:
-        """Return the members GET endpoint for the resolved surface, with fabric_name set."""
-        endpoint_cls = self.onemanage_query_endpoint if self.is_multicluster else self.query_all_endpoint
-        api_endpoint = endpoint_cls()
-        api_endpoint.fabric_name = self.fabric_name
-        return api_endpoint
+    def _validate_config_for_surface(self, surface: type[FabricGroupMemberSurface]) -> None:
+        """Reject member config whose identity does not match the resolved surface.
 
-    def _add_endpoint(self) -> NDEndpointBaseModel:
-        """Return the addMembers POST endpoint for the resolved surface, with fabric_name set."""
-        endpoint_cls = self.onemanage_add_endpoint if self.is_multicluster else self.create_bulk_endpoint
-        api_endpoint = endpoint_cls()
-        api_endpoint.fabric_name = self.fabric_name
-        return api_endpoint
+        The two surfaces identify a member differently and neither reports a mismatch usefully.
+        OneManage rejects a member without ``clusterName`` with an unexplained HTTP 500. Manage
+        accepts a ``clusterName`` and silently drops it, so the member ND stores never matches
+        the one the module proposed: the member looks absent on every run, is re-added, and the
+        second run fails with "already assigned to Fabric Group". Both are caught here, before
+        anything is changed.
+        """
+        config = self.rest_send.params.get("config") or []
+        with_cluster = [item.get("member_name") for item in config if item.get("cluster_name")]
+        without_cluster = [item.get("member_name") for item in config if not item.get("cluster_name")]
 
-    def _remove_endpoint(self) -> NDEndpointBaseModel:
-        """Return the removeMembers POST endpoint for the resolved surface, with fabric_name set."""
-        endpoint_cls = self.onemanage_remove_endpoint if self.is_multicluster else self.delete_bulk_endpoint
-        api_endpoint = endpoint_cls()
-        api_endpoint.fabric_name = self.fabric_name
-        return api_endpoint
+        if surface.identifies_members_by_cluster and without_cluster:
+            raise ValueError(
+                f"'cluster_name' is required for every member of multi-cluster fabric group '{self.fabric_name}'; " f"it is missing for {without_cluster}."
+            )
+        if not surface.identifies_members_by_cluster and with_cluster:
+            # Supplying cluster_name declares multi-cluster intent, and the probe could not
+            # confirm it. Which of the two fixes applies depends on why the probe came back
+            # empty-handed, which it does not reliably report, so both are offered with the
+            # reason attached.
+            raise ValueError(
+                f"'cluster_name' was supplied for {with_cluster}, which identifies members of a multi-cluster "
+                f"fabric group, but the ND OneManage API did not confirm '{self.fabric_name}' as one "
+                f"({self._surface_note}). If it is a multi-cluster fabric group, authenticate through the "
+                f"multi-cluster login domain; if it is a single-cluster fabric group, remove 'cluster_name'."
+            )
 
-    # --- ConfigActionsMixin hook overrides ---
-    # Route save/deploy to the OneManage surface for a multi-cluster fabric group; otherwise the
-    # mixin's Manage defaults apply. The OneManage endpoints mirror Manage 1:1 (same bodies), so
-    # the mixin's save/switch-filter/deploy logic is reused unchanged.
+    def _endpoint(self, endpoint_class: type[NDEndpointBaseModel]) -> NDEndpointBaseModel:
+        """Instantiate a surface endpoint bound to the parent fabric group."""
+        return endpoint_class(fabric_name=self.fabric_name)
+
+    # --------------------------------------------------------------- ConfigActionsMixin hooks
+
     def config_save_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
-        endpoint_cls = EpOneManageFabricsConfigSavePost if self.is_multicluster else EpFabricConfigSavePost
-        return endpoint_cls(fabric_name=fabric_name)
+        return self.surface.config_save_endpoint(fabric_name=fabric_name)
 
     def deploy_global_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
-        """Deploy the whole group, including member-fabric switches.
-
-        The Manage deploy API defaults ``inclAllFabricGroupsSwitches`` to ``false``, which leaves a
-        fabric group's member fabrics undeployed, so a ``global`` deploy must set it explicitly.
-        """
-        if self.is_multicluster:
-            return EpOneManageFabricsDeployPost(fabric_name=fabric_name)
-        return EpFabricDeployPost(fabric_name=fabric_name, endpoint_params=FabricDeployQueryParams(incl_all_fabric_groups_switches=True))
+        return self.surface.deploy_global_endpoint(fabric_name)
 
     def switches_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
-        endpoint_cls = EpOneManageFabricsSwitchesGet if self.is_multicluster else EpManageFabricsSwitchesGet
-        return endpoint_cls(fabric_name=fabric_name)
+        return self.surface.switches_endpoint(fabric_name=fabric_name)
 
     def switch_deploy_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
-        endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if self.is_multicluster else EpManageFabricsSwitchActionsDeployPost
-        return endpoint_cls(fabric_name=fabric_name)
+        return self.surface.switch_deploy_endpoint(fabric_name=fabric_name)
+
+    # ------------------------------------------------------------------------------- CRUD
+
+    def _send_member(
+        self,
+        endpoint_class: type[NDEndpointBaseModel],
+        model_instance: FabricGroupMemberModel,
+        operation_type: OperationType,
+    ) -> ResponseType:
+        """Send one membership change, translating ND's OneManage-only refusal."""
+        api_endpoint = self._endpoint(endpoint_class)
+        payload = self.surface.member_body(model_instance.to_payload())
+        try:
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=operation_type)
+        except Exception as error:
+            if _ONEMANAGE_ONLY_ERROR in str(error):
+                raise ValueError(_LOGIN_DOMAIN_HINT.format(fabric_name=self.fabric_name)) from error
+            raise
 
     def create(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
-        """Add a single member via the bulk add endpoint."""
+        """Add one member fabric to the group."""
+        endpoint_class = self.surface.members_add_endpoint
         try:
-            return self.create_bulk([model_instance])
+            return self._send_member(endpoint_class, model_instance, OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Add member failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def update(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
-        """Membership has no in-place update; re-adding a member is idempotent."""
-        try:
-            return self.create_bulk([model_instance])
-        except Exception as e:
-            raise Exception(f"Update member failed for {model_instance.get_identifier_value()}: {e}") from e
+        """Not reachable: a member has no attribute the module can change.
+
+        Defined only so the base implementation, which would POST to addMembers with the member
+        name substituted into the fabric path, can never run.
+        """
+        raise Exception(f"Fabric group membership cannot be updated in place; {model_instance.get_identifier_value()} must be removed and re-added.")
 
     def delete(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
-        """Remove a single member via the bulk remove endpoint."""
+        """Remove one member fabric from the group."""
+        endpoint_class = self.surface.members_remove_endpoint
         try:
-            return self.delete_bulk([model_instance])
+            return self._send_member(endpoint_class, model_instance, OperationType.DELETE)
         except Exception as e:
             raise Exception(f"Remove member failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def query_one(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
-        """
-        Query a specific member of the fabric group by scanning the full members list.
-        """
+        """Return the named member from the group's member list, or None."""
         try:
             for member in self.query_all():
                 if member.get("name") == model_instance.member_name:
@@ -195,59 +271,19 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         except Exception as e:
             raise Exception(f"Query member failed for {model_instance.member_name}: {e}") from e
 
-    def query_all(self, model_instance: Optional[FabricGroupMemberModel] = None, **kwargs) -> ResponseType:
-        """
-        Query all members of the fabric group.
+    def query_all(self, model_instance: FabricGroupMemberModel | None = None, **kwargs) -> ResponseType:
+        """Return the group's members.
 
-        The GET .../members response wraps the members in a 'fabrics' array on both the Manage
-        (fabric group) and OneManage (multi-cluster fabric group) surfaces.
+        Both surfaces wrap the members in a ``fabrics`` array; only OneManage reports a
+        ``clusterName`` for each member.
         """
+        # Resolved outside the try so a surface-resolution or validation failure keeps its own
+        # message instead of being relabelled as a failed query.
+        api_endpoint = self._endpoint(self.surface.members_get_endpoint)
         try:
-            api_endpoint = self._query_endpoint()
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
             if isinstance(result, dict):
-                return result.get("fabrics", []) or []
+                return result.get("fabrics") or []
             return result or []
         except Exception as e:
             raise Exception(f"Query all members failed: {e}") from e
-
-    def _send_members(
-        self,
-        api_endpoint: NDEndpointBaseModel,
-        model_instances: List[FabricGroupMemberModel],
-        operation_type: OperationType,
-    ) -> ResponseType:
-        """Send a membership change as one request per member, in the shape the surface accepts.
-
-        Both surfaces reject multi-member bodies -- ND 4.2.1 answers a two-member Manage request
-        with "Only one member fabric can be added at a time" -- so membership always fans out even
-        though the Manage schema types ``members`` as an array. Only the envelope differs: Manage
-        wants a one-element ``fabricGroupMemberUpdateRequest`` (``{"members": [{...}]}``) and
-        OneManage wants a flat ``multiClusterFabricGroupMemberUpdate``
-        (``{"clusterName": ..., "name": ...}``).
-
-        The fan-out is not atomic: a failure on the Nth member leaves the preceding members
-        applied and raises, matching the rest of the collection's fail-fast behaviour. The
-        accepted work stays visible because each request is registered with Results as it runs.
-        """
-        responses: List[ResponseType] = []
-        for instance in model_instances:
-            payload = instance.to_payload() if self.is_multicluster else {"members": [instance.to_payload()]}
-            responses.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=operation_type))
-        return responses
-
-    def create_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
-        """Add members to the fabric group using the resolved surface's request shape."""
-        try:
-            return self._send_members(self._add_endpoint(), model_instances, OperationType.UPDATE)
-        except Exception as e:
-            names = [instance.member_name for instance in model_instances]
-            raise Exception(f"Add members failed for {names}: {e}") from e
-
-    def delete_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
-        """Remove members from the fabric group using the resolved surface's request shape."""
-        try:
-            return self._send_members(self._remove_endpoint(), model_instances, OperationType.DELETE)
-        except Exception as e:
-            names = [instance.member_name for instance in model_instances]
-            raise Exception(f"Remove members failed for {names}: {e}") from e
