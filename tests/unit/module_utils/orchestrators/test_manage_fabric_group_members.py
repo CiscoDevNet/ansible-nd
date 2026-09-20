@@ -27,6 +27,7 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_group_member_surfaces import ManageSurface, OneManageSurface
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_members import ManageFabricGroupMembersOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -376,6 +377,27 @@ def test_manage_fabric_group_members_update_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------- config actions
+
+
+def test_manage_fabric_group_members_deleted_with_empty_config_removes_nothing() -> None:
+    """``state: deleted`` is scoped to the members listed in ``config``, never "remove all".
+
+    An empty ``config`` is a no-op even when the group has members. This matches every other
+    module in the collection, all of which document ``deleted`` as removing the resources
+    "specified in the configuration", and it means a templated list that resolves to empty
+    cannot silently empty a fabric group.
+    """
+    orchestrator = _manage("members_ok")
+    module = MockAnsibleModule()
+    module.check_mode = False
+    module.params = {"state": "deleted", "config": [], "output_level": "normal", "fabric_name": "GROUP1"}
+
+    state_machine = NDStateMachine(module=module, model_orchestrator=orchestrator)
+    state_machine.manage_state()
+
+    assert len(state_machine.before) == 2
+    assert len(state_machine.removed) == 0
+    assert len(state_machine.existing) == 2
 
 
 def test_manage_fabric_group_members_config_save_manage() -> None:

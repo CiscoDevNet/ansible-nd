@@ -27,6 +27,8 @@ options:
   config:
     description:
     - The list of member fabrics to manage within the fabric group.
+    - This list is the scope of the task. Member fabrics already in the group that are not
+      listed here are never touched, for any O(state).
     type: list
     elements: dict
     required: true
@@ -48,10 +50,13 @@ options:
   state:
     description:
     - The desired state of the fabric group members on the Cisco Nexus Dashboard.
-    - Use O(state=merged) to add member fabrics to the fabric group.
-      Members already in the group will be left unchanged.
-    - Use O(state=deleted) to remove the specified member fabrics from the fabric group.
+    - Use O(state=merged) to add the member fabrics listed in O(config) to the fabric group.
+      Members already in the group are left unchanged.
+    - Use O(state=deleted) to remove the member fabrics listed in O(config) from the fabric group.
+      Only the listed members are removed, so an empty O(config) makes no change rather than
+      emptying the group. There is no state that removes every member; list each one to remove.
     - Use O(state=gathered) to retrieve the current members of the fabric group without making changes.
+      O(config) is ignored and may be an empty list.
     type: str
     default: merged
     choices: [ merged, deleted, gathered ]
