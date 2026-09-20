@@ -5,6 +5,7 @@
 from __future__ import absolute_import, division, print_function
 
 from typing import Type, ClassVar, List, Optional
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -62,7 +63,8 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     onemanage_remove_endpoint: ClassVar[Type[NDEndpointBaseModel]] = EpOneManageFabricsMembersRemovePost
 
     # Probe replies that mean "this fabric is not a multi-cluster fabric group" rather than an error.
-    ONEMANAGE_UNAVAILABLE_CODES: ClassVar[frozenset] = frozenset({400, 404})
+    # 404 is retained defensively; ND 4.2.1 and 4.3.1 both answer 400 (see _detect_multicluster).
+    NOT_MULTICLUSTER_RETURN_CODES: ClassVar[frozenset] = frozenset({400, 404})
 
     # Cached result of the multi-cluster probe (None until first resolved).
     _multicluster: Optional[bool] = None
@@ -87,20 +89,30 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     def _detect_multicluster(self) -> bool:
         """Probe the OneManage fabric GET endpoint; a 'multiClusterFabricGroup' category means MCFG.
 
-        Two controller replies mean "not multi-cluster" rather than "broken":
-        400, which a single-cluster controller returns for every OneManage path because it
-        rejects the surface before resolving the fabric name, and 404, which a multi-cluster
-        controller returns when this particular fabric is not an MCFG. Any other failure
-        (authentication, transport, 5xx) propagates instead of being reclassified, which would
-        silently redirect the run's writes to the wrong API surface.
+        Manage cannot answer this: it reports 404 for a multi-cluster fabric group, so the
+        OneManage surface is the only one that can identify one.
+
+        ND signals "not a multi-cluster fabric group" with 400 rather than 404, in two forms
+        observed on 4.2.1 and 4.3.1: "Multi-cluster environment must be configured before using
+        this feature" from a single-cluster controller, which rejects the whole OneManage surface
+        before resolving the name, and "fabric not found" from a multi-cluster controller for a
+        fabric that is not an MCFG. Any other failure propagates rather than being reclassified,
+        which would silently redirect the run's writes to the wrong API surface.
+
+        The probe deliberately bypasses ``_request`` so that its expected 400 is not recorded with
+        ``Results``: an internal capability check is not an operation the user asked for, and
+        registering the failure makes ``format_with_verbosity`` report a successful run as failed
+        at ``-vv`` and above.
         """
         api_endpoint = self.onemanage_fabric_get_endpoint(fabric_name=self.fabric_name)
-        try:
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-        except Exception:
-            if self.rest_send.return_code in self.ONEMANAGE_UNAVAILABLE_CODES:
-                return False
-            raise
+        self.rest_send.path = api_endpoint.path
+        self.rest_send.verb = api_endpoint.verb
+        self.rest_send.commit()
+        if self.rest_send.return_code in self.NOT_MULTICLUSTER_RETURN_CODES:
+            return False
+        if not self.rest_send.success:
+            raise Exception(f"Multi-cluster detection failed {self.rest_send.error_summary}")
+        result = self.rest_send.response_current.get("DATA", {})
         return isinstance(result, dict) and result.get("category") == "multiClusterFabricGroup"
 
     def _query_endpoint(self) -> NDEndpointBaseModel:
@@ -199,7 +211,12 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         except Exception as e:
             raise Exception(f"Query all members failed: {e}") from e
 
-    def _send_members(self, api_endpoint: NDEndpointBaseModel, model_instances: List[FabricGroupMemberModel]) -> ResponseType:
+    def _send_members(
+        self,
+        api_endpoint: NDEndpointBaseModel,
+        model_instances: List[FabricGroupMemberModel],
+        operation_type: OperationType,
+    ) -> ResponseType:
         """Send a membership change as one request per member, in the shape the surface accepts.
 
         Both surfaces reject multi-member bodies -- ND 4.2.1 answers a two-member Manage request
@@ -216,13 +233,13 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
         responses: List[ResponseType] = []
         for instance in model_instances:
             payload = instance.to_payload() if self.is_multicluster else {"members": [instance.to_payload()]}
-            responses.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+            responses.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload, operation_type=operation_type))
         return responses
 
     def create_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
         """Add members to the fabric group using the resolved surface's request shape."""
         try:
-            return self._send_members(self._add_endpoint(), model_instances)
+            return self._send_members(self._add_endpoint(), model_instances, OperationType.UPDATE)
         except Exception as e:
             names = [instance.member_name for instance in model_instances]
             raise Exception(f"Add members failed for {names}: {e}") from e
@@ -230,7 +247,7 @@ class ManageFabricGroupMembersOrchestrator(ConfigActionsMixin, NDBaseOrchestrato
     def delete_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
         """Remove members from the fabric group using the resolved surface's request shape."""
         try:
-            return self._send_members(self._remove_endpoint(), model_instances)
+            return self._send_members(self._remove_endpoint(), model_instances, OperationType.DELETE)
         except Exception as e:
             names = [instance.member_name for instance in model_instances]
             raise Exception(f"Remove members failed for {names}: {e}") from e

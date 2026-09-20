@@ -27,6 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_grou
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_members import ManageFabricGroupMembersOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
@@ -119,7 +120,11 @@ def test_manage_fabric_group_members_query_all_empty() -> None:
 
 
 def test_manage_fabric_group_members_probe_not_found_selects_manage() -> None:
-    """A 404 from OneManage is the documented 'not multi-cluster' answer."""
+    """A 404 from OneManage is treated as 'not multi-cluster'.
+
+    Defensive: no observed ND release answers 404 here (4.2.1 and 4.3.1 both answer 400), but
+    the code tolerates it, so the branch stays covered.
+    """
 
     def responses():
         yield responses_members("probe_not_found")
@@ -146,6 +151,43 @@ def test_manage_fabric_group_members_probe_single_cluster_selects_manage() -> No
     assert instance.is_multicluster is False
 
 
+def test_manage_fabric_group_members_probe_mcfg_fabric_not_found_selects_manage() -> None:
+    """A multi-cluster controller answers 400 'fabric not found' for a non-MCFG fabric.
+
+    Captured from a live two-cluster ND 4.2.1. This is the negative the original 404 assumption
+    was meant to cover; the controller never returns 404 for it.
+    """
+
+    def responses():
+        yield responses_members("probe_mcfg_fabric_not_found")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
+
+    assert instance.is_multicluster is False
+
+
+def test_manage_fabric_group_members_probe_failure_is_not_recorded_as_failed() -> None:
+    """The probe's expected 400 must not land in Results as a failed API call.
+
+    ``format_with_verbosity`` promotes an aggregated Results failure into module-level ``failed``
+    at verbosity 2 and above, so registering the probe made every successful run against a
+    non-MCFG fabric report failure under ``-vv``.
+    """
+
+    def responses():
+        yield responses_members("probe_single_cluster")
+
+    results = Results()
+    results.state = "merged"
+    results.check_mode = False
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send, results=results)
+
+    assert instance.is_multicluster is False
+    assert True not in results.failed
+
+
 def test_manage_fabric_group_members_probe_error_is_not_treated_as_manage() -> None:
     """A probe failure must propagate rather than silently selecting the Manage surface.
 
@@ -159,7 +201,7 @@ def test_manage_fabric_group_members_probe_error_is_not_treated_as_manage() -> N
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = ManageFabricGroupMembersOrchestrator(rest_send=rest_send)
 
-    with pytest.raises(Exception, match="Request failed"):
+    with pytest.raises(Exception, match="Multi-cluster detection failed"):
         instance.is_multicluster
 
 

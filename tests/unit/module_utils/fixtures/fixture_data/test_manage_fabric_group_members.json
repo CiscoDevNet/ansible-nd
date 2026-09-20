@@ -73,8 +73,9 @@
         "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
         "RETURN_CODE": 404,
         "TEST_NOTES": [
-            "OneManage does not know this fabric. This is the documented negative answer for the",
-            "probe, so the orchestrator falls back to the Manage surface"
+            "Defensive only. No ND release observed returns 404 here -- 4.2.1 and 4.3.1 both answer",
+            "400 (see probe_single_cluster and probe_mcfg_fabric_not_found). Retained so the 404",
+            "branch of NOT_MULTICLUSTER_RETURN_CODES stays covered if a future release uses it"
         ]
     },
     "probe_single_cluster": {
@@ -84,8 +85,20 @@
         "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
         "RETURN_CODE": 400,
         "TEST_NOTES": [
-            "Captured from ND 4.2.1. A single-cluster controller rejects every OneManage path with",
-            "this 400 before it resolves the fabric name, so the probe never reaches a 404"
+            "Captured from ND 4.2.1 and 4.3.1. A single-cluster controller rejects every OneManage",
+            "path with this 400 before it resolves the fabric name"
+        ]
+    },
+    "probe_mcfg_fabric_not_found": {
+        "DATA": {"code": 400, "description": "", "message": "fabric not found"},
+        "MESSAGE": "Bad Request",
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/oneManage/manage/fabrics/GROUP1",
+        "RETURN_CODE": 400,
+        "TEST_NOTES": [
+            "Captured from a multi-cluster ND 4.2.1 (clusters nd01 + nd02). A multi-cluster",
+            "controller answers 400 'fabric not found' -- not 404 -- for a fabric that is not a",
+            "multi-cluster fabric group, so the orchestrator routes to the Manage surface"
         ]
     },
     "probe_server_error": {
