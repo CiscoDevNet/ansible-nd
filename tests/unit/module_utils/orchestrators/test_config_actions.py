@@ -955,6 +955,89 @@ class TestConfigActionsFailurePropagation:
         assert result.status == "completed"
 
 
+# =============================================================================
+# Test: config action mutations are never replayed
+# =============================================================================
+
+
+def _make_counting_rest_send(status_code, method="POST"):
+    """Build a RestSend whose sender answers every request with `status_code`, counting attempts.
+
+    Unlike `_make_rest_send`, the response stream is unbounded, so a retry is
+    observable as an extra attempt instead of a StopIteration that masks it.
+    """
+    attempts = {"count": 0}
+
+    def responses():
+        while True:
+            attempts["count"] += 1
+            yield {
+                "RETURN_CODE": status_code,
+                "METHOD": method,
+                "REQUEST_PATH": "/api/v1/stub",
+                "MESSAGE": "Internal Server Error",
+                "DATA": {},
+            }
+
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(responses())
+
+    rest_send = RestSend({"check_mode": False, "state": "merged"})
+    rest_send.sender = sender
+    rest_send.response_handler = ResponseHandler()
+    rest_send.unit_test = True
+    return rest_send, attempts
+
+
+class TestConfigActionMutationsAreNotReplayed:
+    """A rejected config-action mutation must be issued exactly once.
+
+    RestSend replays a retryable failure every `send_interval` seconds until
+    `timeout` is spent, and a 5xx on a POST is retryable. configSave and both
+    deploy endpoints document HTTP 500 and ND uses it for deterministic
+    rejections, so the 300s default replayed one rejected save 60 times.
+    """
+
+    def test_config_save_is_issued_once_on_server_error(self):
+        rest_send, attempts = _make_counting_rest_send(500)
+        orch = _make_orchestrator(rest_send, _make_results())
+
+        with pytest.raises(Exception, match="Request failed"):
+            orch.config_save("FAB1")
+
+        assert attempts["count"] == 1
+
+    def test_deploy_global_is_issued_once_on_server_error(self):
+        rest_send, attempts = _make_counting_rest_send(500)
+        orch = _make_orchestrator(rest_send, _make_results())
+
+        with pytest.raises(Exception, match="Request failed"):
+            orch.deploy_global("FAB1")
+
+        assert attempts["count"] == 1
+
+    def test_switch_deploy_is_issued_once_on_server_error(self):
+        rest_send, attempts = _make_counting_rest_send(500)
+        orch = _make_orchestrator(rest_send, _make_results())
+
+        with pytest.raises(Exception, match="Request failed"):
+            orch.deploy_switch_ids("FAB1", ["leaf1"])
+
+        assert attempts["count"] == 1
+
+    def test_retry_window_is_restored_after_a_config_action(self):
+        """The collapsed window is scoped to the mutation, not leaked to later requests."""
+        rest_send, _ = _make_counting_rest_send(500)
+        orch = _make_orchestrator(rest_send, _make_results())
+        default_timeout = rest_send.timeout
+
+        with pytest.raises(Exception, match="Request failed"):
+            orch.config_save("FAB1")
+
+        assert rest_send.timeout == default_timeout
+
+
 class TestConfigActionsControllerFacade:
     """Tests for ConfigActionsMixin.execute_config_actions_plan()."""
 

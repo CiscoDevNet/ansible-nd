@@ -95,6 +95,16 @@ class ConfigActionsMixin:
     config_actions_policy: ClassVar[ConfigActionsPolicy] = FABRIC_CONFIG_ACTIONS
     config_actions_backend_class: ClassVar[type[ConfigActionsBackend] | None] = FabricConfigActionsBackend
 
+    # RestSend retry budget, in seconds, for config-action mutations. RestSend replays a
+    # retryable failure every ``send_interval`` seconds until the budget is spent, and a 5xx
+    # on a POST is retryable (only 4xx is terminal — see issue #502). configSave and both
+    # deploy endpoints document HTTP 500, and ND uses it for deterministic rejections such as
+    # a failed vPC sanity check, so the 300s default replayed one rejected save 60 times: 60
+    # real recalculations on the fabric while the task appeared to hang for five minutes.
+    # These are mutations, not polls — a replay cannot turn a rejection into an acceptance, and
+    # re-running the task is the idiomatic remedy — so the window is collapsed to one attempt.
+    config_actions_request_timeout: ClassVar[int] = 1
+
     # ---------------------------------------------------------------- endpoints
 
     def config_save_endpoint(self, fabric_name: str) -> NDEndpointBaseModel:
@@ -284,23 +294,32 @@ class ConfigActionsMixin:
 
     # ------------------------------------------------------- backend operations
 
+    def _config_action_request(self, endpoint: NDEndpointBaseModel, data: dict | None = None) -> ResponseType:
+        """Issue one config-action mutation with the RestSend retry window collapsed.
+
+        See ``config_actions_request_timeout`` for why a save or deploy must not be
+        replayed. The window is restored afterwards so unrelated requests keep the
+        default retry behaviour.
+        """
+        self.rest_send.save_settings()
+        self.rest_send.timeout = self.config_actions_request_timeout
+        try:
+            return self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data=data,
+                operation_type=OperationType.UPDATE,
+            )
+        finally:
+            self.rest_send.restore_settings()
+
     def config_save(self, fabric_name: str) -> ResponseType:
         """Save fabric configuration, triggering intent recalculation. No request body."""
-        ep = self.config_save_endpoint(fabric_name)
-        return self._request(
-            path=ep.path,
-            verb=ep.verb,
-            operation_type=OperationType.UPDATE,
-        )
+        return self._config_action_request(self.config_save_endpoint(fabric_name))
 
     def deploy_global(self, fabric_name: str) -> ResponseType:
         """Deploy entire fabric configuration (no request body)."""
-        ep = self.deploy_global_endpoint(fabric_name)
-        return self._request(
-            path=ep.path,
-            verb=ep.verb,
-            operation_type=OperationType.UPDATE,
-        )
+        return self._config_action_request(self.deploy_global_endpoint(fabric_name))
 
     def deploy_switch_ids(self, fabric_name: str, switch_ids: list[str]) -> ResponseType:
         """Deploy the given switch identifiers.
@@ -311,13 +330,7 @@ class ConfigActionsMixin:
         if not switch_ids:
             return None
 
-        ep = self.switch_deploy_endpoint(fabric_name)
-        return self._request(
-            path=ep.path,
-            verb=ep.verb,
-            data={"switchIds": list(switch_ids)},
-            operation_type=OperationType.UPDATE,
-        )
+        return self._config_action_request(self.switch_deploy_endpoint(fabric_name), data={"switchIds": list(switch_ids)})
 
     def resolve_switch_deploy_targets(self, fabric_name: str) -> list[str]:
         """Return switches needing deployment, queried fresh after config save.
