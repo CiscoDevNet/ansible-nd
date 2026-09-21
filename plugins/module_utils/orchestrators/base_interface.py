@@ -309,12 +309,17 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         consulted only when the request recorded a new one: a sender exception leaves the previous response in place (issue #554), which
         must not be mistaken for this request's result.
 
+        A failure that is not a 207 can still have committed part of the group: ND 4.2.1 answers a flat HTTP 500 naming only the failing
+        item and creates the valid ones ahead of it. For that shape the items are recovered from the switch inventory instead
+        (`_created_despite_failure`): one GET, on the failure path only.
+
         ## Raises
 
         ### RuntimeError
 
         - If the orchestrator defines no `create_bulk_endpoint`.
-        - If the create request fails with a 207 that accepted part of the group. The message names the accepted items.
+        - If the create request fails but the controller accepted (207) or created (any other failure) part of the group. The message
+          names those items.
 
         ### Exception
 
@@ -326,21 +331,62 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
         request_body = {"interfaces": [item.payload for item in items]}
         recorded = len(self.rest_send.responses)
+        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        names_before = set(cached_before) if cached_before is not None else None
         try:
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
         except Exception as e:
             accepted: list[str] = []
-            if len(self.rest_send.responses) > recorded:
+            verb = "accepted"
+            if len(self.rest_send.responses) > recorded and self.rest_send.return_code == 207:
                 accepted_names = self._accepted_multistatus_names()
                 accepted = [item.interface_name for item in items if item.interface_name.strip().lower() in accepted_names]
+            else:
+                accepted = self._created_despite_failure(group_key.switch_id, items, names_before)
+                verb = "created"
             for interface_name in accepted:
                 self._queue_deploy(interface_name, group_key.switch_id)
             if accepted:
-                raise RuntimeError(f"{e}. The controller accepted {accepted} from the same request; their deploy stays queued.") from e
+                raise RuntimeError(f"{e}. The controller {verb} {accepted} from the same request; their deploy stays queued.") from e
             raise
         for item in items:
             self._queue_deploy(item.interface_name, group_key.switch_id)
         return result
+
+    def _created_despite_failure(self, switch_id: str, items: list[BulkCreateItem], names_before: set[str] | None) -> list[str]:
+        """
+        # Summary
+
+        After a bulk create that failed WITHOUT an HTTP 207, return the submitted interface names the controller created anyway, in
+        request order. The switch inventory is dropped from the cache and read once; a name counts only when it exists now and was
+        absent from `names_before`, the lower-cased names of the inventory cached before the request. Presence alone proves nothing
+        for an interface that already existed (e.g. a system-provisioned one the user merely named, which ND refuses as "already in
+        use"), so with no cached "before" (`names_before is None`) the recovery is skipped and no request is made.
+
+        The re-read never masks the create failure: if it fails, an empty list is returned and the cache entry stays dropped, so a
+        later reader fetches fresh data (the request may have changed the switch either way).
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) bulk-interface-create-500-partial-commit
+        # ND 4.2.1 answers a bulk create whose array holds one failing item with a flat HTTP 500 that names only that item, and still
+        # commits the valid items ahead of it; there is no `results[]` to read. ND 4.3.1 answers the same request with a 207. Without
+        # this recovery the committed items stay staged and a retry reads them as unchanged (lab-verified 2026-09-21, 4.2.1.10).
+        if names_before is None:
+            return []
+        self._switch_interfaces_cache.pop(switch_id, None)
+        try:
+            names_now = self._switch_interfaces(switch_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+        created = []
+        for item in items:
+            name = item.interface_name.strip().lower()
+            if name in names_now and name not in names_before:
+                created.append(item.interface_name)
+        return created
 
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:
