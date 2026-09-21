@@ -547,5 +547,116 @@
                 " switchport mode trunk"
             ]
         }
+    },
+    "test_base_interface_00796a": {
+        "TEST_NOTES": [
+            "_post_bulk_create_group flat 500 that still committed a sibling (lab-verified on ND 4.2.1.10, 2026-09-21: the valid loopback207 was created although the request answered 500)"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "description": "",
+            "message": "Out of Range : loopback1024 Id [1024] is not within the range of 0 and 1023"
+        }
+    },
+    "test_base_interface_00796b": {
+        "TEST_NOTES": [
+            "re-read of the switch inventory after the failed create: loopback207 now exists, loopback1024 does not"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback"
+                },
+                {
+                    "interfaceName": "loopback207",
+                    "interfaceType": "loopback"
+                }
+            ]
+        }
+    },
+    "test_base_interface_00797a": {
+        "TEST_NOTES": [
+            "_post_bulk_create_group flat 500 naming an interface that already existed before the request"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "description": "",
+            "message": "loopback100 is already in use.  You can modify the config by editing the interface."
+        }
+    },
+    "test_base_interface_00797b": {
+        "TEST_NOTES": [
+            "re-read after the failed create: loopback100 exists, but it existed before the request too"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback"
+                },
+                {
+                    "interfaceName": "loopback100",
+                    "interfaceType": "loopback"
+                }
+            ]
+        }
+    },
+    "test_base_interface_00798a": {
+        "TEST_NOTES": [
+            "_post_bulk_create_group flat 500 with no cached inventory to compare against"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "description": "",
+            "message": "Out of Range : loopback1024 Id [1024] is not within the range of 0 and 1023"
+        }
+    },
+    "test_base_interface_00799a": {
+        "TEST_NOTES": [
+            "_post_bulk_create_group flat 500 whose follow-up inventory re-read fails as well"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "description": "",
+            "message": "Out of Range : loopback1024 Id [1024] is not within the range of 0 and 1023"
+        }
+    },
+    "test_base_interface_00799b": {
+        "TEST_NOTES": [
+            "the inventory re-read after the failed create fails too; the original create error must be the one reported"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "message": "inventory unavailable"
+        }
     }
 }

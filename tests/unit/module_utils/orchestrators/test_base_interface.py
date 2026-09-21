@@ -1512,6 +1512,157 @@ def test_base_interface_00790() -> None:
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
 
 
+def _bulk_orchestrator_with_inventory(gen_responses: ResponseGenerator, names: list[str] | None) -> _StubBulkCreateOrchestrator:
+    """Return a bulk-create stub whose cached inventory for FDO12345ABC holds `names` (no cache entry at all when `None`)."""
+    instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(gen_responses))
+    if names is not None:
+        instance._switch_interfaces_cache["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
+    return instance
+
+
+def test_base_interface_00796() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` recovers an item the controller created although the request failed WITHOUT a 207: ND 4.2.1
+    answers a flat HTTP 500 naming only the failing item, yet commits the valid sibling (lab-verified 2026-09-21). The switch
+    inventory is re-read once, and a submitted name that exists now but did not exist in the cached inventory before the request is
+    queued for deploy.
+
+    ## Test
+
+    - Cached inventory before the request: loopback10 only
+    - One group: loopback207 (valid) and loopback1024 (out of range); POST returns a flat 500
+    - Re-read inventory lists loopback10 and loopback207
+    - `RuntimeError` names loopback207 as created; `_pending_deploys` holds only loopback207
+    - Exactly two requests: the POST and one inventory GET
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), ["loopback10"])
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(RuntimeError, match=r"created \['loopback207'\] from the same request"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback207", "loopback1024"))
+
+    assert instance._pending_deploys == [("loopback207", "FDO12345ABC")]
+    assert len(instance.rest_send.responses) == 2
+
+
+def test_base_interface_00797() -> None:
+    """
+    # Summary
+
+    Verify the non-207 recovery never claims an interface that already existed before the request: presence after the failure proves
+    acceptance only for a name the cached inventory did not hold. A system-provisioned interface the user merely named (ND answers
+    "already in use") must not be queued for deploy.
+
+    ## Test
+
+    - Cached inventory before the request: loopback10 and loopback100
+    - One group: loopback100; POST returns a flat 500 "already in use"
+    - Re-read inventory still lists loopback100
+    - The original exception propagates without a recovery claim; `_pending_deploys` stays empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), ["loopback10", "loopback100"])
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(Exception) as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback100"))
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+
+
+def test_base_interface_00798() -> None:
+    """
+    # Summary
+
+    Verify the non-207 recovery is skipped when the orchestrator holds no cached inventory for the switch: without a "before" there is
+    nothing to compare against, so no request is added and nothing is queued.
+
+    ## Test
+
+    - No cache entry for the switch
+    - POST returns a flat 500
+    - The original exception propagates; exactly one request was made; `_pending_deploys` stays empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), None)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(Exception, match=r"Out of Range"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback207", "loopback1024"))
+
+    assert instance._pending_deploys == []
+    assert len(instance.rest_send.responses) == 1
+
+
+def test_base_interface_00799() -> None:
+    """
+    # Summary
+
+    Verify a failing inventory re-read never masks the create failure: the original error is the one raised, nothing is queued, and
+    the stale cache entry is gone so a later reader fetches fresh data.
+
+    ## Test
+
+    - Cached inventory before the request: loopback10
+    - POST returns a flat 500; the inventory re-read returns 500 as well
+    - The raised exception carries the create error (`Out of Range`), not the inventory error
+    - `_pending_deploys` stays empty; the switch has no cache entry
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), ["loopback10"])
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(Exception, match=r"Out of Range") as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback207", "loopback1024"))
+
+    assert "inventory unavailable" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+    assert "FDO12345ABC" not in instance._switch_interfaces_cache
+
+
 def test_base_interface_00795() -> None:
     """
     # Summary
