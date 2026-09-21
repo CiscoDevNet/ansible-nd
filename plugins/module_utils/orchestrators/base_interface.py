@@ -22,6 +22,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_pending_config import (
+    EpManageFabricsSwitchesPendingConfigGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
@@ -96,6 +99,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+    # Subclasses whose delete side removes IOS-XE logical interfaces (`interfaceActions/remove` + deploy) set this so `state: deleted`
+    # and `state: overridden` refuse a removal ND cannot complete yet (see `_check_xe_removal_discovered`).
+    xe_removal_requires_discovery: ClassVar[bool] = False
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -362,7 +368,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Pre-mutation validation for the proposed interfaces. Invoked by `NDStateMachine.manage_state` before create/update
         operations — which are skipped in `--check` mode — so a dry run fails on the same input errors a normal run would hit
-        inside `create`/`update`. Two steps:
+        inside `create`/`update`. Four steps:
 
         1. Resolve every `switch_ip` to a `switchId` via `_require_resolvable_switches`. This runs for every interface
            orchestrator, including those that opt out of the capability preflight, so an unknown switch is reported in check
@@ -371,6 +377,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
            switch reports in the inventory fetched by step 1, so a mismatch fails in check mode too (PR #558 review).
         3. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
            `interface_type`/`interface_mode` ClassVars.
+        4. For `state: overridden`, the IOS-XE discovery prerequisite on the interfaces the override would remove, via
+           `_check_overridden_removals_discovered` (a no-op unless the orchestrator sets `xe_removal_requires_discovery`).
 
         ## Raises
 
@@ -379,10 +387,120 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
         - Propagated from `_check_platform_match` (requested `network_os_type` differs from the switch's `platformType`).
         - Propagated from `validate_switches_capable` (see its docstring).
+        - Propagated from `_check_overridden_removals_discovered` (an override would remove an undiscovered IOS-XE interface).
         """
         self._require_resolvable_switches(model_instances)
         self._check_platform_match(model_instances)
         self.validate_switches_capable(model_instances)
+        self._check_overridden_removals_discovered(model_instances)
+
+    def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation validation for `state: deleted`, invoked by `NDStateMachine` with the existing interfaces about to be removed,
+        in check mode too. A no-op unless the orchestrator sets `xe_removal_requires_discovery`; then every interface must pass
+        `_check_xe_removal_discovered` before anything is queued.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Propagated from `_check_xe_removal_discovered`.
+        """
+        if not self.xe_removal_requires_discovery:
+            return
+        self._check_xe_removal_discovered([(model.interface_name, self._resolve_switch_id(model.switch_ip)) for model in model_instances])
+
+    def _check_overridden_removals_discovered(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Apply `_check_xe_removal_discovered` to the interfaces a `state: overridden` run would remove: the managed interfaces
+        `query_all` returns that the proposed config does not name. `NDStateMachine` runs no delete preflight for the fabric-wide
+        override set and removes only after its creates and updates, so the check belongs here, ahead of every mutation. A no-op for
+        every other state and unless the orchestrator sets `xe_removal_requires_discovery`. `query_all` reads the inventory the state
+        machine already cached, so this adds no request of its own.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `query_all` and `_check_xe_removal_discovered`.
+        """
+        if not self.xe_removal_requires_discovery or self.rest_send.params.get("state") != "overridden":
+            return
+        proposed = {(model.switch_ip, model.interface_name.strip().lower()) for model in model_instances}
+        switch_map = self.fabric_context.switch_map
+        pairs = []
+        for iface in self.query_all() or []:
+            if not isinstance(iface, dict):
+                continue
+            switch_ip = iface.get("switchIp")
+            name = str(iface.get("interfaceName") or "")
+            if switch_ip in switch_map and (switch_ip, name.strip().lower()) not in proposed:
+                pairs.append((name, switch_map[switch_ip]))
+        self._check_xe_removal_discovered(pairs)
+
+    def _check_xe_removal_discovered(self, pairs: Sequence[tuple[str, str]]) -> None:
+        """
+        # Summary
+
+        Fail before any mutation when an IOS-XE interface about to be removed is deployed but not yet discovered by the controller.
+        `pairs` are the `(interface_name, switch_id)` removal candidates; names are matched case-insensitively against the cached
+        per-switch inventory (`_switch_interfaces`), so the common case costs no request.
+
+        A candidate is discovered when its `operData.operationalStatus` is `up` or `down` (the spec enum is `up` / `down` / `unknown`;
+        a missing or unrecognized value counts as not discovered). An undiscovered candidate is one of two things the interface record
+        cannot tell apart, so the switch's pending configuration is read once per affected switch to separate them:
+
+        - Its `interface <name>` line is pending: the intent was never deployed (e.g. created with `config_actions.deploy: false`).
+          Nothing is on the switch and the removal is safe.
+        - It is not pending: the intent is deployed and discovery has not caught up. The removal is refused; the module neither polls
+          nor retries, so the caller decides how to wait.
+
+        An undiscovered interface that was deployed and then edited without a deploy also shows pending lines and is let through; the
+        explicit-delete recovery of the rediscovered record covers that corner.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any candidate is an undiscovered IOS-XE interface absent from its switch's pending configuration. The message names every
+          such interface with its `operationalStatus`.
+        - Via `_request` if the pending-configuration query fails.
+        """
+        # TODO(4.2.1) xe-interface-removal-requires-discovery
+        # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface) only once it has
+        # discovered the deployed interface, seconds to tens of seconds after the create deploy. A remove inside that window drops the
+        # intent record, the deploy pushes nothing, and the interface stays on the switch (lab-verified 2026-09-21 on 4.2.1.10 and
+        # 4.3.1.175). NX-OS is unaffected.
+        undiscovered: dict[str, list[tuple[str, str]]] = {}
+        for interface_name, switch_id in pairs:
+            record = self._switch_interfaces(switch_id).get(interface_name.strip().lower())
+            if record is None:
+                continue
+            network_os = (record.get("configData") or {}).get("networkOS") or {}
+            if network_os.get("networkOSType") != "ios-xe":
+                continue
+            status = str((record.get("operData") or {}).get("operationalStatus") or "").strip().lower()
+            if status not in ("up", "down"):
+                undiscovered.setdefault(switch_id, []).append((interface_name, status or "missing"))
+        blocked: list[str] = []
+        for switch_id, candidates in undiscovered.items():
+            api_endpoint = self._configure_endpoint(EpManageFabricsSwitchesPendingConfigGet(), switch_sn=switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+            lines = result.get("pendingConfigs") if isinstance(result, dict) else None
+            pending = {str(line).strip().lower() for line in lines or []}
+            for interface_name, status in candidates:
+                if f"interface {interface_name.strip().lower()}" not in pending:
+                    blocked.append(f"{interface_name} on {switch_id} (operationalStatus={status})")
+        if blocked:
+            raise RuntimeError(
+                f"Cannot remove IOS-XE interface(s) {blocked} because Nexus Dashboard has not finished discovering them. "
+                "Retry after operationalStatus becomes up or down."
+            )
 
     def _check_platform_match(self, model_instances: Sequence[ModelType]) -> None:
         """

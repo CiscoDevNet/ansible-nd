@@ -2151,3 +2151,165 @@ def test_base_interface_01000(params: dict) -> None:
 
     assert result is False
     assert instance.deploy is False
+
+
+# =============================================================================
+# Test: _check_xe_removal_discovered (PR #570 / #571 review)
+# =============================================================================
+
+
+def _xe_record(name: str, status: str | None, network_os_type: str = "ios-xe") -> dict:
+    """Build a minimal interface-list record with the given `operData.operationalStatus` (key omitted when `None`)."""
+    oper_data = {"operationalDescription": "Not discovered"} if status is None else {"operationalStatus": status}
+    return {"interfaceName": name, "configData": {"networkOS": {"networkOSType": network_os_type}}, "operData": oper_data}
+
+
+def _seeded_orchestrator(gen_responses: ResponseGenerator, records: list[dict]) -> _StubInterfaceOrchestrator:
+    """Return a stub orchestrator whose inventory cache for CAT9KV1701 already holds `records` (no interface-list GET needed)."""
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses))
+    instance._switch_interfaces_cache["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
+    return instance
+
+
+def test_base_interface_01100() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` makes no request and does not raise when every removal candidate is discovered
+    (`operationalStatus` `up` or `down`, case- and whitespace-tolerant), including a candidate the inventory does not list.
+
+    ## Test
+
+    - Candidates: port-channel101 (`up`), vlan980 (` Down `), port-channel999 (absent from the inventory)
+    - No exception; no response is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [_xe_record("port-channel101", "up"), _xe_record("vlan980", " Down ")])
+    pairs = [("Port-channel101", "CAT9KV1701"), ("vlan980", "CAT9KV1701"), ("port-channel999", "CAT9KV1701")]
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered(pairs)
+
+    assert len(instance.rest_send.responses) == 0
+
+
+def test_base_interface_01110() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` ignores NX-OS interfaces: the discovery prerequisite is an IOS-XE behaviour, so an
+    undiscovered NX-OS candidate triggers neither a request nor a failure.
+
+    ## Test
+
+    - Candidate port-channel501 is `nx-os` with `operationalStatus: unknown`
+    - No exception; no response is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [_xe_record("port-channel501", "unknown", network_os_type="nx-os")])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("port-channel501", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 0
+
+
+def test_base_interface_01120() -> None:
+    """
+    # Summary
+
+    Verify an undiscovered IOS-XE candidate that the switch's pending configuration still lists is allowed: it is staged intent that
+    was never deployed, so nothing is on the switch and removing it is safe. The `interface <name>` line is matched case-insensitively
+    (ND lists `Port-channel120` / `Vlan985` for the records `port-channel120` / `vlan985`).
+
+    ## Test
+
+    - Candidates port-channel120 and vlan985 are `ios-xe` with `operationalStatus: unknown`
+    - `pendingConfig` lists `interface Port-channel120` and `interface Vlan985`
+    - No exception; exactly one request (the `pendingConfig` GET)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown"), _xe_record("vlan985", "unknown")])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("Port-channel120", "CAT9KV1701"), ("vlan985", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 1
+    assert instance.rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig"
+
+
+@pytest.mark.parametrize("status", ["unknown", None, "initializing"], ids=["unknown", "missing", "unrecognized"])
+def test_base_interface_01130(status: str | None) -> None:
+    """
+    # Summary
+
+    Verify an undiscovered IOS-XE candidate that the pending configuration does NOT list fails the whole operation: its intent is
+    already deployed, and ND generates the switch-side removal only once it has discovered the interface. A missing, `unknown` or
+    unrecognized `operationalStatus` all count as not discovered.
+
+    ## Test
+
+    - Candidate port-channel101 is `ios-xe` with the parametrized `operationalStatus`
+    - `pendingConfig` does not mention it
+    - `RuntimeError` names the interface, its status, and the retry condition
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+
+    def responses():
+        yield responses_base_interface("test_base_interface_01130a")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel101", status)])
+
+    match = r"Cannot remove IOS-XE interface.*Port-channel101.*has not finished discovering.*Retry after operationalStatus becomes up or down"
+    with pytest.raises(RuntimeError, match=match):
+        instance._check_xe_removal_discovered([("Port-channel101", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 1
+
+
+def test_base_interface_01140() -> None:
+    """
+    # Summary
+
+    Verify one `pendingConfig` GET serves every undiscovered candidate on a switch, and that the failure names only the candidates
+    the pending configuration does not list.
+
+    ## Test
+
+    - Candidates port-channel120 (staged, listed) and port-channel121 (deployed, not listed), both `unknown`, same switch
+    - `RuntimeError` names port-channel121 and not port-channel120
+    - Exactly one request
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown"), _xe_record("port-channel121", "unknown")])
+
+    with pytest.raises(RuntimeError, match=r"port-channel121") as exc_info:
+        instance._check_xe_removal_discovered([("port-channel120", "CAT9KV1701"), ("port-channel121", "CAT9KV1701")])
+
+    assert "port-channel120" not in str(exc_info.value)
+    assert len(instance.rest_send.responses) == 1

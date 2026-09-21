@@ -2569,5 +2569,280 @@
                 }
             ]
         }
+    },
+    "test_port_channel_access_orchestrator_01300a": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard, deployed but undiscovered: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01300b": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: inventory: port-channel101 discovered (up), port-channel102 not discovered (unknown)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "operData": {
+                        "operationalStatus": "up",
+                        "operationalDescription": "ok"
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel102",
+                    "interfaceType": "portChannel",
+                    "operData": {
+                        "operationalStatus": "unknown",
+                        "operationalDescription": "Not discovered"
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/3"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01300c": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: pendingConfig does not list port-channel102 (deployed, not yet discovered)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": []
+        }
+    },
+    "test_port_channel_access_orchestrator_01310a": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard, staged intent: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01310b": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: inventory: port-channel101 discovered (up), port-channel102 not discovered (unknown)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "operData": {
+                        "operationalStatus": "up",
+                        "operationalDescription": "ok"
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel102",
+                    "interfaceType": "portChannel",
+                    "operData": {
+                        "operationalStatus": "unknown",
+                        "operationalDescription": "Not discovered"
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/3"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01310c": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: pendingConfig lists port-channel102 (staged, never deployed)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": [
+                "interface Port-channel102",
+                " switchport mode access",
+                " no shutdown"
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01320a": {
+        "TEST_NOTES": [
+            "overridden preflight discovery guard: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01320b": {
+        "TEST_NOTES": [
+            "overridden preflight discovery guard: fabric summary (query_all prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_access_orchestrator_01320c": {
+        "TEST_NOTES": [
+            "overridden preflight discovery guard: inventory: port-channel101 discovered (up), port-channel102 not discovered (unknown); only port-channel101 is proposed, so port-channel102 is the removal candidate"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel101",
+                    "interfaceType": "portChannel",
+                    "operData": {
+                        "operationalStatus": "up",
+                        "operationalDescription": "ok"
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/2"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel102",
+                    "interfaceType": "portChannel",
+                    "operData": {
+                        "operationalStatus": "unknown",
+                        "operationalDescription": "Not discovered"
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccessPoHost",
+                                "accessVlan": 100,
+                                "ports": [
+                                    "GigabitEthernet1/0/3"
+                                ],
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01320d": {
+        "TEST_NOTES": [
+            "overridden preflight discovery guard: pendingConfig does not list port-channel102"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": []
+        }
     }
 }

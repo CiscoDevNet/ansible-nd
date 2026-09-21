@@ -1675,3 +1675,111 @@ def test_port_channel_access_orchestrator_01230() -> None:
     assert instance._pending_deploys == [("Port-channel111", "FDO11111AAA")]
     cached = next(iface for iface in instance._switch_interfaces("FDO11111AAA").values() if iface["interfaceName"] == "Port-channel111")
     assert cached["configData"]["mode"] == "unknown"
+
+
+# =============================================================================
+# Test: IOS-XE removal requires discovery (PR #570 review)
+#
+# Shared inventory shape for switch FDO11111AAA: port-channel101 is a discovered iosXeAccessPoHost (`operationalStatus: up`) and
+# port-channel102 is not discovered yet (`operationalStatus: unknown`).
+# =============================================================================
+
+
+def _xe_existing_model(interface_name: str, ports: list[str]) -> PortChannelAccessInterfaceModel:
+    """Build the existing-side model the state machine hands to `preflight_delete` for an IOS-XE access port-channel."""
+    return _build_xe_pc_model(interface_name=interface_name, ports=ports)
+
+
+def _guard_orchestrator(method_name: str, keys: str, state: str, config: list[dict], check_mode: bool = False) -> PortChannelAccessInterfaceOrchestrator:
+    """Build an orchestrator fed the `<method_name><key>` fixtures in order."""
+
+    def responses():
+        for key in keys:
+            yield responses_pc_access(f"{method_name}{key}")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config, check_mode=check_mode)
+    return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check_mode"])
+def test_port_channel_access_orchestrator_01300(check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify `state: deleted` refuses to remove an IOS-XE port-channel that is deployed but not yet discovered, before anything is
+    queued, in check mode too: ND would drop the intent and leave `interface Port-channel102` on the switch.
+
+    ## Test
+
+    - Responses: switches list, inventory (port-channel102 `unknown`), pendingConfig without port-channel102
+    - `preflight_delete` raises `RuntimeError` naming port-channel102
+    - `_pending_removes` and `_pending_deploys` stay empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_delete()
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel102"}]
+    instance = _guard_orchestrator("test_port_channel_access_orchestrator_01300", "abc", "deleted", config, check_mode=check_mode)
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*port-channel102.*operationalStatus=unknown"):
+        instance.preflight_delete([_xe_existing_model("port-channel102", ["GigabitEthernet1/0/3"])])
+
+    assert instance._pending_removes == []
+    assert instance._pending_deploys == []
+
+
+def test_port_channel_access_orchestrator_01310() -> None:
+    """
+    # Summary
+
+    Verify `state: deleted` still removes staged intent: an undiscovered IOS-XE port-channel that the pending configuration lists was
+    never deployed, and a discovered one needs no pending-configuration lookup at all.
+
+    ## Test
+
+    - Responses: switches list, inventory, pendingConfig listing `interface Port-channel102`
+    - `preflight_delete` for port-channel101 (`up`) and port-channel102 (`unknown`, staged) does not raise
+    - Exactly three requests: one pendingConfig GET for the switch
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_delete()
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": name} for name in ("port-channel101", "port-channel102")]
+    instance = _guard_orchestrator(inspect.stack()[0][3], "abc", "deleted", config)
+    models = [_xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"]), _xe_existing_model("port-channel102", ["GigabitEthernet1/0/3"])]
+
+    with does_not_raise():
+        instance.preflight_delete(models)
+
+    assert len(instance.rest_send.responses) == 3
+
+
+def test_port_channel_access_orchestrator_01320() -> None:
+    """
+    # Summary
+
+    Verify `state: overridden` applies the same prerequisite to the port-channels it would remove (the managed ones the config does
+    not name), before any create or update is sent.
+
+    ## Test
+
+    - Proposed config names only port-channel101, so the fabric-wide override would remove port-channel102 (`unknown`)
+    - Responses: switches list, fabric summary, inventory, pendingConfig without port-channel102
+    - `preflight` raises `RuntimeError` naming port-channel102
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel101"}]
+    instance = _guard_orchestrator(inspect.stack()[0][3], "abcd", "overridden", config)
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*port-channel102"):
+        instance.preflight([_xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"])])
+
+    assert len(instance.rest_send.responses) == 4
