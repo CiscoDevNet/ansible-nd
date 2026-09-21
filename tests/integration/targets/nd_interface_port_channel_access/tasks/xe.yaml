@@ -306,7 +306,11 @@
 # Removing the port-channel already reverts its members to iosXeTrunkHost on the controller; this resets the never-joined
 # members (and any straggler) through the ethernet module's IOS-XE reset path so the leaf is at fabric default for the next target.
 
-# ND 4.2.1 can report a just-detached member as still bundled (operData lags the removal deploy) for up to a minute; retry until the ethernet module accepts the reset.
+# TODO(4.3.1) xe-port-channel-removal-inventory-lag
+# ND keeps reporting a just-detached member as still bundled (`operData.portChannelId` lags the removal deploy), and the ethernet module's
+# member guard refuses the reset until it clears: under a minute on 4.2.1.10, about seven minutes once on 4.3.1.175 (2026-09-21). Retry for
+# up to ten minutes so a slow controller cannot fail the run and leave the members converted for the next target. Shorten the window once
+# ND reports the detach promptly.
 - name: "XE CLEANUP: Reset the member ports to the fabric default"
   cisco.nd.nd_interface_ethernet_access:
     output_level: "{{ nd_info.output_level }}"
@@ -323,5 +327,5 @@
     state: deleted
   register: xe_cleanup
   until: xe_cleanup is not failed
-  retries: 8
+  retries: 40
   delay: 15
