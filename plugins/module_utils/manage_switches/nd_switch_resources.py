@@ -247,6 +247,16 @@ class SwitchServiceContext:
     save_config: bool = True
     deploy_config: bool = True
     deploy_type: str = "switch"
+    inventory_refresh_needed: bool = False
+
+    def mark_inventory_refresh_needed(self) -> None:
+        """
+        # Summary
+
+        Mark that a successful controller mutation requires a fresh inventory
+        snapshot before module exit.
+        """
+        self.inventory_refresh_needed = True
 
     def api_call(
         self,
@@ -289,6 +299,9 @@ class SwitchServiceContext:
             msg = f"{spec.context} failed: {response}" if spec.context else f"API call failed: {response}"
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
+
+        if spec.op_type.changes_state():
+            self.mark_inventory_refresh_needed()
 
         return response
 
@@ -1434,6 +1447,7 @@ class SwitchFabricOps:
         self.ctx.results.verb_current = endpoint.verb
         self.ctx.results.payload_current = payload
         self.ctx.results.register_api_call()
+        self.ctx.mark_inventory_refresh_needed()
 
     def finalize(self, serial_numbers: list[str] | None = None) -> None:
         """Run optional save and deploy actions for the fabric.
@@ -3070,9 +3084,9 @@ class NDSwitchResourceModule:
         elif self.nd.module.check_mode:
             final.update(self._build_check_mode_output())
         else:
-            # Re-query the fabric to get the actual post-operation inventory so
-            # that "after" reflects real state rather than the pre-op snapshot.
-            if True not in self.results.failed:
+            # Re-query only after a successful mutation. Idempotent runs can
+            # reuse the initial inventory snapshot without another full GET.
+            if True not in self.results.failed and self.ctx.inventory_refresh_needed:
                 self.existing = FabricSwitchInventory.from_fabric(self.nd, self.fabric, self.log, SwitchDataModel).collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
             diff_list: list[dict[str, Any]] = []

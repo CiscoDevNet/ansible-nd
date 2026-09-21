@@ -396,6 +396,25 @@ def test_switch_service_context_api_call_registers_successful_result():
     assert nd.calls[0]["timeout"] == 1
     assert results.metadata[0]["action"] == "create"
     assert results.diffs[0]["payload"] is True
+    assert ctx.inventory_refresh_needed is True
+
+
+def test_switch_service_context_api_call_keeps_inventory_clean_for_queries():
+    """Read-only API calls do not require an exit-path inventory refresh."""
+    results = Results()
+    nd = FakeND(data={"ok": True})
+    ctx = _ctx(nd=nd, results=results)
+
+    ctx.api_call(
+        ApiCallSpec(
+            endpoint=SimpleNamespace(path="/api/test", verb="GET"),
+            payload={},
+            action="query",
+            op_type=OperationType.QUERY,
+        )
+    )
+
+    assert ctx.inventory_refresh_needed is False
 
 
 def test_switch_service_context_api_call_fails_on_request_error_and_unsuccessful_result():
@@ -1617,8 +1636,8 @@ def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     assert final["diff"][0]["_action"] == "added"
 
 
-def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeypatch):
-    """exit_json normal branch re-queries successful runs and combines delete/add diffs."""
+def test_exit_json_normal_requeries_dirty_inventory_and_builds_delete_add_diff(monkeypatch):
+    """exit_json normal branch re-queries mutated runs and combines delete/add diffs."""
     before = [_sw("192.0.2.10", "SERIAL1")]
     after = [_sw("192.0.2.11", "SERIAL2")]
     resource = _resource(state="merged", existing=before, output_level="info")
@@ -1631,6 +1650,7 @@ def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeyp
     resource.results.result_current = {"success": True, "changed": True}
     resource.results.diff_current = {"created": ["SERIAL2"]}
     resource.results.register_api_call()
+    resource.ctx.mark_inventory_refresh_needed()
 
     requery_calls = []
 
@@ -1652,6 +1672,27 @@ def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeyp
     assert final["after"][0]["seed_ip"] == "192.0.2.11"
     assert [entry["_action"] for entry in final["diff"]] == ["deleted", "added"]
     assert final["proposed"][0]["seed_ip"] == "192.0.2.11"
+
+
+def test_exit_json_normal_reuses_inventory_when_no_mutation(monkeypatch):
+    """Successful no-op runs reuse the initial inventory snapshot."""
+    before = [_sw("192.0.2.10", "SERIAL1")]
+    resource = _resource(state="merged", existing=before, output_level="info")
+
+    def fail_from_fabric(*_args, **_kwargs):
+        raise AssertionError("clean runs should not re-query inventory")
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_fabric",
+        fail_from_fabric,
+    )
+
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is False
+    assert final["before"][0]["seed_ip"] == "192.0.2.10"
+    assert final["after"][0]["seed_ip"] == "192.0.2.10"
 
 
 def test_exit_json_failed_results_skip_requery_and_fail_json(monkeypatch):
