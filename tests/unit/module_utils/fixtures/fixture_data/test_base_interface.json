@@ -496,5 +496,56 @@
                 "unexpected string item"
             ]
         }
+    },
+    "test_base_interface_01120a": {
+        "TEST_NOTES": [
+            "_check_xe_removal_discovered: pendingConfig lists the undiscovered candidates in canonical case (lab-verified 2026-09-21: staged, never-deployed intent)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": [
+                "interface GigabitEthernet1/0/1",
+                " no switchport",
+                "interface Port-channel120",
+                " switchport mode trunk",
+                " no shutdown",
+                "vlan 985",
+                "interface Vlan985",
+                " no shutdown"
+            ]
+        }
+    },
+    "test_base_interface_01130a": {
+        "TEST_NOTES": [
+            "_check_xe_removal_discovered: pendingConfig without the candidate (lab-verified 2026-09-21: deployed but not yet discovered)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": [
+                "interface GigabitEthernet1/0/1",
+                " no switchport"
+            ]
+        }
+    },
+    "test_base_interface_01140a": {
+        "TEST_NOTES": [
+            "_check_xe_removal_discovered: one pendingConfig GET serves two candidates on the same switch; only Port-channel120 is staged"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": [
+                "interface Port-channel120",
+                " switchport mode trunk"
+            ]
+        }
     }
 }

@@ -92,6 +92,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    xe_removal_requires_discovery: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -256,7 +257,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # stays on the Catalyst and ND's diff never lists it. A remove naming the canonical spelling flips the record to `userDefined`
         # and queues `no interface Port-channel<N>` for the next deploy (lab-verified 2026-09-16 on 4.2.1.10; the GUI delete does the
         # same through the per-interface DELETE). NX-OS deletes correctly with either spelling. The deletion is generated only once ND has
-        # discovered the deployed interface (25-45 s after the create deploy), which is a separate ND-side race this rewrite cannot close.
+        # discovered the deployed interface; that prerequisite is enforced before anything is queued (`_check_xe_removal_discovered`).
         network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
         name = model_instance.interface_name
         if getattr(network_os, "network_os_type", None) != "ios-xe":
