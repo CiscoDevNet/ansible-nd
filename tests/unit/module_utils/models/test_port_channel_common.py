@@ -132,6 +132,53 @@ def test_port_channel_common_00020(value, expected):
         assert normalize_port_channel_interface_name(value) == expected
 
 
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (" Port-Channel501 ", "port-channel501"),
+        ("\tport-channel1\n", "port-channel1"),
+        (" port-channel 501 ", "port-channel 501"),
+    ],
+)
+def test_port_channel_common_00025(value, expected):
+    """
+    # Summary
+
+    Verify surrounding whitespace is stripped from a canonical name before it is recognized (PR #578 review), exactly as it already is
+    for a bare ID, and that a name with no extractable ID still passes through (stripped and lowercased).
+
+    ## Test
+
+    - A padded canonical name normalizes to the bare lowercase form
+    - A padded name with an inner space keeps the inner space and is not range-checked
+
+    ## Classes and Methods
+
+    - normalize_port_channel_interface_name()
+    """
+    with does_not_raise():
+        assert normalize_port_channel_interface_name(value) == expected
+
+
+@pytest.mark.parametrize("value", [" Port-Channel0 ", " Port-Channel5000 ", "port-channel4097 "])
+def test_port_channel_common_00026(value):
+    """
+    # Summary
+
+    Verify a padded canonical name cannot bypass the 1-4096 range check (PR #578 review): the ID is extracted from the stripped value.
+
+    ## Test
+
+    - Padded canonical names with the IDs 0, 5000 and 4097 raise `ValueError`
+
+    ## Classes and Methods
+
+    - normalize_port_channel_interface_name()
+    """
+    with pytest.raises(ValueError, match=r"Port-channel ID must be in the range 1-4096, got \d+\."):
+        normalize_port_channel_interface_name(value)
+
+
 @pytest.mark.parametrize("value", [True, False, None, 5.0, ["port-channel501"]])
 def test_port_channel_common_00030(value):
     """
