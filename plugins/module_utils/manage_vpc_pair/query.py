@@ -669,10 +669,7 @@ def _build_delete_existing_pairs(
         )
         if conflict:
             raise VpcPairResourceError(
-                msg=(
-                    f"Cannot delete requested vPC pair {'/'.join(conflict)}; "
-                    f"controller reports active pair {'/'.join(active_key)}."
-                ),
+                msg=(f"Cannot delete requested vPC pair {'/'.join(conflict)}; " f"controller reports active pair {'/'.join(active_key)}."),
                 requested_pair="/".join(conflict),
                 active_pair="/".join(active_key),
             )
