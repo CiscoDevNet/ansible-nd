@@ -256,6 +256,19 @@ def test_invalid_check_mode_query_status_rejected(
         )
 
 
+@pytest.mark.parametrize("value", [[], [200, "invalid"], {}])
+def test_invalid_check_mode_query_status_list_rejected(action_plugin, value):
+    with pytest.raises(AnsibleActionFail):
+        action_plugin._validate_check_mode_queries(
+            [
+                {
+                    "path": "/api/v1/test",
+                    "expected_status": value,
+                }
+            ]
+        )
+
+
 def test_invalid_check_mode_query_unordered_rejected(
     action_plugin,
 ):
@@ -344,6 +357,19 @@ def test_prepare_check_mode_queries_renders_path(action_plugin):
 
     assert prepared[0]["path"] == "/api/v1/rendered"
     action_plugin._templar.template.assert_called_once_with("/api/v1/{{ value }}")
+
+
+def test_prepare_check_mode_queries_preserves_acceptable_status_list(action_plugin):
+    prepared = action_plugin._prepare_check_mode_queries(
+        [
+            {
+                "path": "/api/v1/test",
+                "expected_status": [200, "400"],
+            }
+        ]
+    )
+
+    assert prepared[0]["expected_status"] == [200, 400]
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,239 @@
+---
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_port_channel_destructive_tests_enabled | bool
+    fail_msg: >-
+      state:overridden can normalize every trunkPoHost port-channel in the
+      fabric. Run only on a dedicated fabric with
+      nd_port_channel_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN SAFETY: Require management IP for every fabric switch"
+  ansible.builtin.assert:
+    that:
+      - item.fabricManagementIp is defined
+      - item.fabricManagementIp | string | length > 0
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.switchId | default('unknown-switch-id') }}"
+
+- name: "OVERRIDDEN SAFETY: Initialize configured-resource inventory"
+  ansible.builtin.set_fact:
+    nd4x_existing_port_channel_trunk_hosts: []
+
+- name: "OVERRIDDEN SAFETY: Discover every fabric interface"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ item.switchId }}/interfaces"
+    method: get
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp }}"
+  register: nd4x_port_channel_fabric_interface_inventory
+  changed_when: false
+
+- name: "OVERRIDDEN SAFETY: Collect configured trunkPoHost port-channels"
+  vars:
+    port_channel_interface: "{{ port_channel_fabric_interface.1 }}"
+    port_channel_policy: >-
+      {{ port_channel_interface.get('configData', {}).get('networkOS', {}).get('policy', {}) }}
+  ansible.builtin.set_fact:
+    nd4x_existing_port_channel_trunk_hosts: "{{ nd4x_existing_port_channel_trunk_hosts + [
+      {'switch_ip': port_channel_fabric_interface.0.item.fabricManagementIp,
+       'interface_name': port_channel_interface.interfaceName}
+    ] }}"
+  loop: >-
+    {{ query('ansible.builtin.subelements', nd4x_port_channel_fabric_interface_inventory.results,
+       'current.interfaces', {'skip_missing': True}) }}
+  loop_control:
+    loop_var: port_channel_fabric_interface
+    label: "{{ port_channel_fabric_interface.0.item.fabricManagementIp }} {{ port_channel_fabric_interface.1.interfaceName }}"
+  when:
+    - port_channel_interface.interfaceType | default('') == 'portChannel'
+    - port_channel_policy.get('policyType', '') == 'trunkPoHost'
+
+- name: "OVERRIDDEN SAFETY: Reject resources outside reserved scope"
+  vars:
+    existing_switch_ips: "{{ nd4x_existing_port_channel_trunk_hosts | map(attribute='switch_ip') | unique | list }}"
+    existing_test_switch_names: >-
+      {{ nd4x_existing_port_channel_trunk_hosts
+         | selectattr('switch_ip', 'equalto', test_switch_ip)
+         | map(attribute='interface_name') | list }}
+  ansible.builtin.assert:
+    that:
+      - existing_switch_ips | difference([test_switch_ip]) | length == 0
+      - existing_test_switch_names | difference(nd4x_port_channel_reserved_interfaces) | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed: a configured trunkPoHost port-channel was
+      found on another switch or outside the reserved port-channel501-504
+      scope.
+
+- name: Run port-channel trunk-host overridden harness scenarios
+  block:
+    - name: "OVERRIDDEN SETUP: Normalize reserved port-channels"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_port_channel_cleanup_config }}"
+        state: deleted
+
+    - name: "OVERRIDDEN SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "OVERRIDDEN SETUP: Recreate original merged state"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ test_pc_501 }}"
+          - "{{ test_pc_502 }}"
+          - "{{ test_pc_503 }}"
+        state: merged
+
+    - name: "OVERRIDDEN SETUP: Recreate original replaced state"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ test_pc_501_replaced }}"
+          - "{{ test_pc_502_replaced }}"
+          - "{{ test_pc_503_replaced }}"
+        state: replaced
+      register: overridden_prerequisite
+
+    - name: "OVERRIDDEN SETUP: Verify exact pre-override state"
+      ansible.builtin.assert:
+        that:
+          - (overridden_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.allowed_vlans == "250"
+          - (overridden_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.native_vlan == 50
+          - (overridden_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports | length == 1
+          - (overridden_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel502') | first).config_data.network_os.policy.allowed_vlans == "222"
+          - (overridden_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel503') | first).config_data.network_os.policy.admin_state is false
+
+    - name: "OVERRIDDEN REDUCE: Retain only port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: overridden
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_overridden }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained port-channel501
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkPoHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: 175}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Overridden port-channel501}
+          - name: Validate omitted port-channels were removed
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel502' & @.interfaceType == 'portChannel' & @.configData.networkOS.policy.policyType == 'trunkPoHost')]", exists: false}
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel503' & @.interfaceType == 'portChannel' & @.configData.networkOS.policy.policyType == 'trunkPoHost')]", exists: false}
+      register: overridden_reduce
+
+    - name: "OVERRIDDEN REDUCE: Verify exact retained set"
+      ansible.builtin.assert:
+        that:
+          - overridden_reduce.first_run_result.changed | bool
+          - overridden_reduce.first_run_result.after | length == 1
+          - overridden_reduce.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 1
+          - overridden_reduce.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 0
+          - overridden_reduce.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel503') | list | length == 0
+          - (overridden_reduce.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.allowed_vlans == "175"
+          - (overridden_reduce.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.description == "Overridden port-channel501"
+
+    - name: "OVERRIDDEN IDEMPOTENT: Re-apply only port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: overridden
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_overridden }}"]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate port-channel501
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: 175}
+      register: overridden_idempotent
+
+    - name: "OVERRIDDEN IDEMPOTENT: Verify no phase changed"
+      ansible.builtin.assert:
+        that:
+          - not overridden_idempotent.check_mode_result.changed | bool
+          - not overridden_idempotent.first_run_result.changed | bool
+          - not overridden_idempotent.second_run_result.changed | bool
+
+    - name: "OVERRIDDEN SWAP: Retain port-channel502 and port-channel503"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: overridden
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - "{{ test_pc_502 }}"
+          - "{{ test_pc_503 }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate swapped port-channel set
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel501')]", exists: false}
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel502' & @.configData.networkOS.policy.allowedVlans == '300-400')]", exists: true}
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel503' & @.configData.networkOS.policy.allowedVlans == 'all')]", exists: true}
+      register: overridden_swap
+
+    - name: "OVERRIDDEN SWAP: Verify returned values"
+      ansible.builtin.assert:
+        that:
+          - overridden_swap.first_run_result.changed | bool
+          - overridden_swap.first_run_result.after | length == 2
+          - overridden_swap.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 0
+          - (overridden_swap.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel502') | first).config_data.network_os.policy.allowed_vlans == "300-400"
+          - (overridden_swap.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel503') | first).config_data.network_os.policy.allowed_vlans == "all"
+
+    - name: "OVERRIDDEN FILTER: Re-apply swap and verify module scope"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: overridden
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - "{{ test_pc_502 }}"
+          - "{{ test_pc_503 }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: overridden_filter
+
+    - name: "OVERRIDDEN FILTER: Verify only trunkPoHost port-channels were queried"
+      ansible.builtin.assert:
+        that:
+          - not overridden_filter.first_run_result.changed | bool
+          - overridden_filter.first_run_result.before | rejectattr('interface_type', 'equalto', 'portChannel') | list | length == 0
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Normalize reserved port-channels"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_port_channel_cleanup_config }}"
+        state: deleted

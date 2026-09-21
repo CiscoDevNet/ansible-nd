@@ -310,7 +310,50 @@ class NDBaseModel(BaseModel, ABC):
                     # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
                     value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
 
-    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
+    @staticmethod
+    def _normalize_missing_empty_lists(
+        existing_data: Dict[str, Any],
+        proposed_data: Dict[str, Any],
+        fields: Set[Tuple[str, ...]],
+    ) -> None:
+        """Normalize explicitly empty proposed list fields when ND omits that leaf.
+
+        Some ND staged objects omit a list field whose semantic value is an empty
+        list.  This normalization is deliberately opt-in and path-scoped.  It
+        only applies when the proposed value is exactly ``[]`` and the existing
+        object has the complete parent path but omits the leaf.  Non-empty values,
+        missing parent objects, and all other fields remain strict differences.
+        """
+        for field_path in fields:
+            if not field_path:
+                continue
+
+            proposed_parent: Any = proposed_data
+            existing_parent: Any = existing_data
+
+            for key in field_path[:-1]:
+                if not isinstance(proposed_parent, dict) or key not in proposed_parent:
+                    proposed_parent = None
+                    break
+                if not isinstance(existing_parent, dict) or key not in existing_parent:
+                    existing_parent = None
+                    break
+                proposed_parent = proposed_parent[key]
+                existing_parent = existing_parent[key]
+
+            if not isinstance(proposed_parent, dict) or not isinstance(existing_parent, dict):
+                continue
+
+            leaf = field_path[-1]
+            if proposed_parent.get(leaf) == [] and leaf not in existing_parent:
+                existing_parent[leaf] = []
+
+    def get_diff(
+        self,
+        other: "NDBaseModel",
+        exclude_unset: bool = False,
+        empty_list_equivalents: Set[Tuple[str, ...]] | None = None,
+    ) -> bool:
         """Diff comparison.
 
         Args:
@@ -333,6 +376,11 @@ class NDBaseModel(BaseModel, ABC):
                 normalized to absent so ND-echoed empty markers keep runs
                 idempotent.
 
+            empty_list_equivalents: Optional set of aliased field paths where an
+                explicitly proposed ``[]`` may match an omitted existing leaf.
+                This is opt-in for API representations such as staged objects;
+                it is never applied to non-empty values or unrelated fields.
+
         Raises:
             TypeError: If ``other`` is not an instance of this model's type
                 (same contract as ``merge``). The reverse pass applies
@@ -344,6 +392,14 @@ class NDBaseModel(BaseModel, ABC):
 
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
+
+        if empty_list_equivalents:
+            self._normalize_missing_empty_lists(
+                existing_data=self_data,
+                proposed_data=other_data,
+                fields=empty_list_equivalents,
+            )
+
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False

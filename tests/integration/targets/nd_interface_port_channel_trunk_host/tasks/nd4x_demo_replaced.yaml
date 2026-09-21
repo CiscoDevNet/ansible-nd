@@ -1,0 +1,108 @@
+---
+- name: Run port-channel trunk-host replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Normalize reserved port-channels"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_port_channel_cleanup_config }}"
+        state: deleted
+
+    - name: "REPLACED SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "REPLACED SETUP: Reconstruct the original merged prerequisite"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ test_pc_501_removed_member }}"
+          - "{{ test_pc_502 }}"
+          - "{{ test_pc_503 }}"
+        state: merged
+      register: replaced_prerequisite
+
+    - name: "REPLACED SETUP: Verify exact prerequisite state"
+      ansible.builtin.assert:
+        that:
+          - (replaced_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.allowed_vlans == "100-200"
+          - (replaced_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports | length == 1
+          - (replaced_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel502') | first).config_data.network_os.policy.allowed_vlans == "300-400"
+          - (replaced_prerequisite.after | selectattr('interface_name', 'equalto', 'port-channel503') | first).config_data.network_os.policy.allowed_vlans == "all"
+
+    - name: "REPLACED SINGLE: Replace port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: replaced
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_replaced }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced port-channel501
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: 250}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 50}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Replaced port-channel501}
+      register: replaced_single
+
+    - name: "REPLACED SINGLE: Verify returned replacement"
+      ansible.builtin.assert:
+        that:
+          - replaced_single.check_mode_result.changed | bool
+          - replaced_single.first_run_result.changed | bool
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.allowed_vlans == "250"
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.native_vlan == 50
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.description == "Replaced port-channel501"
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports | length == 1
+          - test_pc_member_a in (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+          - not replaced_single.second_run_result.changed | bool
+
+    - name: "REPLACED MULTI: Replace port-channel502 and port-channel503"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: replaced
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - "{{ test_pc_502_replaced }}"
+          - "{{ test_pc_503_replaced }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced port-channel502 and port-channel503
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel502' & @.configData.networkOS.policy.allowedVlans == 222 & @.configData.networkOS.policy.description == 'Replaced port-channel502')]", exists: true}
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel503' & @.configData.networkOS.policy.allowedVlans == '333,444' & @.configData.networkOS.policy.adminState == false)]", exists: true}
+      register: replaced_multi
+
+    - name: "REPLACED MULTI: Verify both returned replacements"
+      ansible.builtin.assert:
+        that:
+          - replaced_multi.first_run_result.changed | bool
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel502') | first).config_data.network_os.policy.allowed_vlans == "222"
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel502') | first).config_data.network_os.policy.native_vlan == 22
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel502') | first).config_data.network_os.policy.description == "Replaced port-channel502"
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel503') | first).config_data.network_os.policy.allowed_vlans == "333,444"
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel503') | first).config_data.network_os.policy.admin_state is false
+          - replaced_multi.nd_query_results | length == 1
+          - not replaced_multi.second_run_result.changed | bool
+
+  always:
+    - name: "REPLACED CLEANUP: Normalize reserved port-channels"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_port_channel_cleanup_config }}"
+        state: deleted

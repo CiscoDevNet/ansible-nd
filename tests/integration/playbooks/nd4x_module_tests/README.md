@@ -390,7 +390,7 @@ Each query supports:
 |---|---:|---|---|
 | `name` | No | Query path | Human-readable query name |
 | `path` | Yes | None | ND REST API path |
-| `expected_status` | No | `200` | Required HTTP response status |
+| `expected_status` | No | `200` | Required HTTP response status, or a non-empty list of acceptable statuses |
 | `unordered` | No | `false` | Treat lists as unordered during normalization |
 | `ignore_keys` | No | `[]` | Dictionary keys removed recursively before comparison |
 

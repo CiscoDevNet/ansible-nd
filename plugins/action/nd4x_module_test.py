@@ -105,6 +105,25 @@ class ActionModule(ActionBase):
         except (TypeError, ValueError):
             raise AnsibleActionFail("Argument %s must be an integer, got %r" % (argument_name, value))
 
+    def _parse_expected_status(self, value, argument_name):
+        """Parse one or more acceptable HTTP statuses for a snapshot query."""
+        if isinstance(value, list):
+            if not value:
+                raise AnsibleActionFail(
+                    "Argument %s must be an integer or a non-empty list of integers, got %r"
+                    % (argument_name, value)
+                )
+
+            return [
+                self._parse_int(
+                    status,
+                    "%s[%s]" % (argument_name, status_index),
+                )
+                for status_index, status in enumerate(value)
+            ]
+
+        return self._parse_int(value, argument_name)
+
     def _validate_arguments(self, args):
         if not isinstance(args, dict):
             raise AnsibleActionFail("Action-plugin arguments must be a dictionary")
@@ -192,7 +211,7 @@ class ActionModule(ActionBase):
                 raise AnsibleActionFail("check_mode_queries[%s].path must be a non-empty string" % query_index)
 
             if "expected_status" in query:
-                self._parse_int(
+                self._parse_expected_status(
                     query["expected_status"],
                     "check_mode_queries[%s].expected_status" % query_index,
                 )
@@ -220,7 +239,7 @@ class ActionModule(ActionBase):
                 {
                     "name": query.get("name"),
                     "path": self._templar.template(query["path"]),
-                    "expected_status": self._parse_int(
+                    "expected_status": self._parse_expected_status(
                         query.get("expected_status", 200),
                         "check_mode_queries[%s].expected_status" % query_index,
                     ),
@@ -656,28 +675,15 @@ class ActionModule(ActionBase):
             finally:
                 self._task.check_mode = original_check_mode
 
-            actual_failed = bool(query_result.get("failed", False))
-
-            if actual_failed:
-                raise AnsibleActionFail(
-                    "Check-mode snapshot query %s failed: %s"
-                    % (
-                        query_label,
-                        query_result.get(
-                            "msg",
-                            "unknown error",
-                        ),
-                    )
-                )
-
             actual_status = query_result.get("status")
             expected_status = query["expected_status"]
+            expected_statuses = expected_status if isinstance(expected_status, list) else [expected_status]
 
             if actual_status is None:
                 raise AnsibleActionFail("Check-mode snapshot query %s did not " "return a status" % query_label)
 
             try:
-                status_matches = int(actual_status) == int(expected_status)
+                status_matches = int(actual_status) in [int(status) for status in expected_statuses]
             except (TypeError, ValueError):
                 raise AnsibleActionFail(
                     "Check-mode snapshot query %s returned "
@@ -689,6 +695,15 @@ class ActionModule(ActionBase):
                 )
 
             if not status_matches:
+                if query_result.get("failed", False):
+                    raise AnsibleActionFail(
+                        "Check-mode snapshot query %s failed: %s"
+                        % (
+                            query_label,
+                            query_result.get("msg", "unknown error"),
+                        )
+                    )
+
                 raise AnsibleActionFail(
                     "Check-mode snapshot query %s expected "
                     "status %s but got %s"
@@ -750,6 +765,17 @@ class ActionModule(ActionBase):
                     % (
                         before_path,
                         after_path,
+                    )
+                )
+
+            if before.get("status") != after.get("status"):
+                raise AnsibleActionFail(
+                    "Controller response status changed during predictive "
+                    "check mode for query %s: before=%s, after=%s"
+                    % (
+                        query_label,
+                        before.get("status"),
+                        after.get("status"),
                     )
                 )
 

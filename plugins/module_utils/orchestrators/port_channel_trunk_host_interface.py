@@ -40,6 +40,15 @@ class PortChannelTrunkHostInterfaceOrchestrator(PortChannelBaseOrchestrator):
 
     model_class: ClassVar[type[NDBaseModel]] = PortChannelTrunkHostInterfaceModel
 
+    # ND's staged representation for a newly-created no-deploy port-channel can
+    # omit policy.ports when the requested member list is explicitly empty.  The
+    # state machine enables this path only for merged operations with deploy=False.
+    # Keep the equivalence at the exact API alias path so non-empty member
+    # mismatches and all unrelated fields remain strict.
+    staged_empty_list_equivalents: ClassVar[set[tuple[str, ...]]] = {
+        ("configData", "networkOS", "policy", "ports"),
+    }
+
     def _managed_policy_types(self) -> set[str]:
         """
         # Summary
