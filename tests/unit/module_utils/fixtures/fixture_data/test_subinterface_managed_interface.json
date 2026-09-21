@@ -692,5 +692,83 @@
                 }
             ]
         }
+    },
+    "test_subinterface_managed_orchestrator_00940a": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00940b": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: the .100 subinterface is discovered (down), the .101 subinterface is deployed but not discovered (unknown)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.100",
+                    "interfaceType": "subInterface",
+                    "operData": {
+                        "operationalStatus": "down"
+                    },
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeSubinterface",
+                                "adminState": true,
+                                "vlanId": 100
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.101",
+                    "interfaceType": "subInterface",
+                    "operData": {
+                        "operationalStatus": "unknown"
+                    },
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeSubinterface",
+                                "adminState": true,
+                                "vlanId": 101
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00940c": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: pendingConfig without the .101 subinterface"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "MESSAGE": "OK",
+        "DATA": {
+            "pendingConfigs": []
+        }
     }
 }

@@ -771,3 +771,44 @@ def test_subinterface_managed_orchestrator_00930() -> None:
 
     assert len(orchestrator.rest_send.responses) == 2
     assert orchestrator._pending_deploys == [("GigabitEthernet1/0/2.100", "CAT9KV1701")]
+
+
+def test_subinterface_managed_orchestrator_00940() -> None:
+    """
+    # Summary
+
+    Verify `state: deleted` refuses to remove an IOS-XE subinterface that is deployed but not yet discovered, before anything is
+    queued, while a discovered sibling passes.
+
+    ## Test
+
+    - The `.100` subinterface is `down`; the `.101` subinterface is `unknown` and absent from `pendingConfig`
+    - `preflight_delete` raises `RuntimeError` naming the `.101` subinterface only
+    - Exactly three requests; nothing is queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_delete()
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+
+    def responses():
+        yield responses_subif("test_subinterface_managed_orchestrator_00940a")
+        yield responses_subif("test_subinterface_managed_orchestrator_00940b")
+        yield responses_subif("test_subinterface_managed_orchestrator_00940c")
+
+    names = (("GigabitEthernet1/0/2.100", 100), ("GigabitEthernet1/0/2.101", 101))
+    config = [{"switch_ip": "192.168.12.181", "interface_name": name} for name, vlan in names]
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="deleted", config=config)
+    models = [
+        _build_model(switch_ip="192.168.12.181", interface_name=name, network_os_type="ios-xe", vlan_id=vlan, ip=f"10.99.{vlan}.1", prefix=24)
+        for name, vlan in names
+    ]
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*GigabitEthernet1/0/2\.101") as exc_info:
+        orchestrator.preflight_delete(models)
+
+    assert "GigabitEthernet1/0/2.100" not in str(exc_info.value)
+    assert len(orchestrator.rest_send.responses) == 3
+    assert orchestrator._pending_removes == []
+    assert orchestrator._pending_deploys == []
