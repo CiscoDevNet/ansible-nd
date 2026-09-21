@@ -716,3 +716,41 @@ def test_svi_orchestrator_00930(policy_kwargs: dict) -> None:
 
     assert len(orchestrator.rest_send.responses) == 2
     assert orchestrator._pending_deploys == [("vlan990", "CAT9KV1701")]
+
+
+def test_svi_orchestrator_00940() -> None:
+    """
+    # Summary
+
+    Verify `state: deleted` refuses to remove an IOS-XE SVI that is deployed but not yet discovered (PR #571 review), while a
+    discovered SVI and a staged, never-deployed SVI on the same switch pass, with one pending-configuration GET for the switch.
+
+    ## Test
+
+    - vlan980 is `up`, vlan981 is `unknown` and listed in `pendingConfig` as `interface Vlan981`, vlan982 is `unknown` and not listed
+    - `preflight_delete` raises `RuntimeError` naming vlan982 only
+    - Exactly three requests; nothing is queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_delete()
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+
+    def responses():
+        yield responses_svi("test_svi_orchestrator_00940a")
+        yield responses_svi("test_svi_orchestrator_00940b")
+        yield responses_svi("test_svi_orchestrator_00940c")
+
+    names = ("vlan980", "vlan981", "vlan982")
+    config = [{"switch_ip": "192.168.12.181", "interface_name": name} for name in names]
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="deleted", config=config)
+    models = [_build_model(switch_ip="192.168.12.181", interface_name=name, network_os_type="ios-xe", admin_state=True) for name in names]
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*vlan982") as exc_info:
+        orchestrator.preflight_delete(models)
+
+    assert "vlan981" not in str(exc_info.value)
+    assert len(orchestrator.rest_send.responses) == 3
+    assert orchestrator._pending_removes == []
+    assert orchestrator._pending_deploys == []
