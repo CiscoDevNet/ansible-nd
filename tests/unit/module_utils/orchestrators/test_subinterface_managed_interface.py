@@ -812,3 +812,81 @@ def test_subinterface_managed_orchestrator_00940() -> None:
     assert len(orchestrator.rest_send.responses) == 3
     assert orchestrator._pending_removes == []
     assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: preflight_create -- IOS-XE create requirements (PR #572 review)
+# =============================================================================
+
+
+def test_subinterface_managed_orchestrator_00950() -> None:
+    """
+    # Summary
+
+    Verify `preflight_create` rejects a new full `iosXeSubinterface` that lacks the fields ND requires on create (`vlan_id`, `ip`),
+    before any request, aggregating every incomplete item into one error that names the missing fields per item.
+
+    ## Test
+
+    - Create subset: `.100` with only `admin_state`, `.101` with `vlan_id` but no `ip`, `.102` complete
+    - `RuntimeError` names `.100` (vlan_id, ip) and `.101` (ip) and not `.102`
+    - No request is made
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceOrchestrator.preflight_create()
+    """
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
+    models = [
+        _build_model(switch_ip="192.168.12.181", interface_name="GigabitEthernet1/0/2.100", network_os_type="ios-xe", admin_state=True),
+        _build_model(switch_ip="192.168.12.181", interface_name="GigabitEthernet1/0/2.101", network_os_type="ios-xe", vlan_id=101),
+        _build_model(
+            switch_ip="192.168.12.181", interface_name="GigabitEthernet1/0/2.102", network_os_type="ios-xe", vlan_id=102, ip="10.99.102.1", prefix=24
+        ),
+    ]
+
+    match = r"GigabitEthernet1/0/2\.100.*missing: vlan_id, ip.*GigabitEthernet1/0/2\.101.*missing: ip"
+    with pytest.raises(RuntimeError, match=match) as exc_info:
+        orchestrator.preflight_create(models)
+
+    assert "GigabitEthernet1/0/2.102" not in str(exc_info.value)
+    assert len(orchestrator.rest_send.responses) == 0
+
+
+def test_subinterface_managed_orchestrator_00960() -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE create requirements apply only to the full `iosXeSubinterface` policy: a complete one, the admin-state-only
+    `iosXeSubinterfaceShutNoshut`, and an NX-OS `subinterface` all pass, and the inherited policy-less guard still fires.
+
+    ## Test
+
+    - A complete `iosXeSubinterface`, an `iosXeSubinterfaceShutNoshut` with only `admin_state`, and an NX-OS subinterface do not raise
+    - A create item with no policy still raises the inherited "without a policy" error
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceOrchestrator.preflight_create()
+    - NDBaseInterfaceOrchestrator.preflight_create()
+    """
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
+    models = [
+        _build_model(
+            switch_ip="192.168.12.181", interface_name="GigabitEthernet1/0/2.100", network_os_type="ios-xe", vlan_id=100, ip="10.99.100.1", prefix=24
+        ),
+        _build_model(
+            switch_ip="192.168.12.181",
+            interface_name="GigabitEthernet1/0/2.101",
+            network_os_type="ios-xe",
+            policy_type="iosXeSubinterfaceShutNoshut",
+            admin_state=False,
+        ),
+        _build_model(interface_name="Ethernet1/3.2", admin_state=True),
+    ]
+
+    with does_not_raise():
+        orchestrator.preflight_create(models)
+
+    with pytest.raises(RuntimeError, match=r"without a policy"):
+        orchestrator.preflight_create([_build_model(interface_name="Ethernet1/3.3")])
