@@ -248,6 +248,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
     deploy_enabled = bool(config_actions.get("deploy", False))
     action_type = config_actions.get("type", "switch")
     action_payload = {"type": action_type}
+    state_changed_before_actions = bool(result.get("changed"))
 
     # Defensive runtime validation (model validation already enforces this).
     if deploy_enabled and not save_enabled:
@@ -370,7 +371,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                     return_code=error.status,
                     message=error.msg,
                     success=False,
-                    changed=False,
+                    changed=state_changed_before_actions,
                 )
                 results.build_final_result()
                 final_result = dict(results.final_result)
@@ -447,7 +448,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 return_code=error.status,
                 message=error.msg,
                 success=False,
-                changed=False,
+                changed=state_changed_before_actions or bool(nrm.module.params.get("_not_in_sync_pairs")),
             )
 
             # Build final result and fail

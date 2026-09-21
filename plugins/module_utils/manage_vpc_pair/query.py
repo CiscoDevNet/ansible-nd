@@ -660,6 +660,23 @@ def _build_delete_existing_pairs(
     Returns:
         List of pair dicts to seed the delete state machine's existing set.
     """
+    requested_keys = {key for key in (_vpc_pair_identity_key(item) for item in config) if key}
+    for active_pair in pairs:
+        active_key = _vpc_pair_identity_key(active_pair)
+        conflict = next(
+            (key for key in sorted(requested_keys) if active_key and active_key != key and set(active_key) & set(key)),
+            None,
+        )
+        if conflict:
+            raise VpcPairResourceError(
+                msg=(
+                    f"Cannot delete requested vPC pair {'/'.join(conflict)}; "
+                    f"controller reports active pair {'/'.join(active_key)}."
+                ),
+                requested_pair="/".join(conflict),
+                active_pair="/".join(active_key),
+            )
+
     present_pairs = _filter_vpc_pairs_by_requested_config(pairs, config)
     reconstructed_pairs = _reconstruct_requested_delete_pairs(config)
     if not reconstructed_pairs:
@@ -935,6 +952,11 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
             list_query_succeeded = True
         except Exception as list_error:
             nrm.module.warn(f"VPC pairs list query failed for fabric {fabric_name}: " f"{str(list_error).splitlines()[0]}.")
+
+        if state == "deleted" and nrm.module.params.get("_post_apply_refresh"):
+            if not list_query_succeeded:
+                raise VpcPairResourceError(msg="Post-delete refresh could not query the vPC pair list.", fabric=fabric_name)
+            return _set_lightweight_context(_filter_vpc_pairs_by_requested_config(have, config))
 
         # Lightweight path for gathered and explicit-pair delete workflows.
         if state in ("gathered", "deleted"):

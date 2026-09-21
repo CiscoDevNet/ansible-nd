@@ -5,11 +5,17 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair import query
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcActionEnum,
     VpcFieldNames,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import VpcPairResourceError
 
 SER_A = "SER-A"
 SER_B = "SER-B"
@@ -59,6 +65,18 @@ def test_manage_vpc_pair_query_00020_build_delete_keeps_present_requested_and_ex
     assert result == [present_ab]
 
 
+def test_manage_vpc_pair_query_00025_build_delete_rejects_member_conflict():
+    """A requested delete must not reconstruct a pair over a different live peer."""
+    with pytest.raises(VpcPairResourceError) as exc:
+        query._build_delete_existing_pairs(
+            [_present_pair(SER_A, SER_C)],
+            [_config_item(SER_A, SER_B)],
+        )
+
+    assert "cannot delete requested vpc pair ser-a/ser-b" in exc.value.msg.lower()
+    assert exc.value.details["active_pair"] == "SER-A/SER-C"
+
+
 def test_manage_vpc_pair_query_00030_build_delete_empty_config_returns_all_pairs():
     """Empty config preserves prior behavior: all queried pairs are returned unchanged."""
     pairs = [_present_pair(SER_A, SER_B), _present_pair(SER_C, SER_D)]
@@ -105,3 +123,23 @@ def test_manage_vpc_pair_query_00050_reconstruct_skips_incomplete_and_carries_fi
     assert pair[VpcFieldNames.USE_VIRTUAL_PEER_LINK] is True
     assert pair[VpcFieldNames.VPC_ACTION] == VpcActionEnum.PAIR.value
     assert pair[VpcFieldNames.VPC_PAIR_DETAILS] == {"detail": "value"}
+
+
+def test_manage_vpc_pair_query_00060_authoritative_delete_refresh_does_not_reconstruct():
+    """Post-delete refresh must report the controller's empty state as empty."""
+    module = MagicMock()
+    module.params = {
+        "fabric_name": "fab1",
+        "state": "deleted",
+        "config": [_config_item(SER_A, SER_B)],
+        "_post_apply_refresh": True,
+    }
+    context = SimpleNamespace(module=module)
+    fake_nd = MagicMock()
+    fake_nd.request.return_value = {"vpcPairs": []}
+
+    with patch.object(query, "NDModuleV2", return_value=fake_nd):
+        result = query.custom_vpc_query_all(context)
+
+    assert result == []
+    assert module.params["_have"] == []
