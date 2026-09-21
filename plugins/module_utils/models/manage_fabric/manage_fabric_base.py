@@ -27,6 +27,8 @@ import types
 import typing
 from typing import Any, ClassVar, Literal, get_args, get_origin
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -34,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -92,6 +95,30 @@ def _unwrap_optional(annotation):
 def _is_pydantic_model(annotation) -> bool:
     """Check if annotation is a pydantic BaseModel subclass."""
     return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+
+
+def _is_secret_field(field_info, inner_type) -> bool:
+    """True when a field is declared secret via metadata (authoritative) or typed as SecretStr (backstop)."""
+    extra = getattr(field_info, "json_schema_extra", None)
+    if isinstance(extra, dict) and extra.get("secret") is True:
+        return True
+    return inner_type is SecretStr
+
+
+def serialize_secret_value(value, info):
+    """Serialize a secret field: real value only for the API payload, masked everywhere else.
+
+    Accepts a ``SecretStr`` or a plain string (empty-string defaults are stored as-is).
+    """
+    if value is None:
+        return None
+    raw = value.get_secret_value() if hasattr(value, "get_secret_value") else value
+    if raw == "":
+        return ""
+    mode = (info.context or {}).get("mode")
+    if mode == "payload":
+        return raw
+    return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
 
 def _python_type_to_ansible(annotation) -> str:
@@ -195,6 +222,11 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
         if field_info.is_required():
             if not is_optional:
                 spec["required"] = True
+
+        # Secrets: metadata {"secret": True} is authoritative; SecretStr is a backstop.
+        # no_log lets Ansible scrub the real value from task args, results, and error text.
+        if _is_secret_field(field_info, inner_type):
+            spec["no_log"] = True
 
         options[field_name] = spec
 
@@ -334,13 +366,5 @@ class FabricBaseModel(NDBaseModel):
                 "elements": "dict",
                 "options": config_options,
             },
-            config_actions={
-                "type": "dict",
-                "required": False,
-                "options": {
-                    "save": {"type": "bool", "default": False},
-                    "deploy": {"type": "bool", "default": False},
-                    "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
-                },
-            },
+            **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )

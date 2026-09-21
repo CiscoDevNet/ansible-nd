@@ -34,14 +34,23 @@ options:
     required: true
   state:
     description:
-      - Desired state of the Network resources.
+      - Desired state of Network resources.
       - V(merged) creates or updates Networks that do not match the desired config.
       - V(replaced) replaces existing Networks that match the desired config.
       - V(overridden) replaces all Networks; removes any not in config.
       - V(deleted) removes specified Networks (or all if config is empty).
       - V(gathered) returns current Network state.
+      - V(staged) uses V(replaced) definition semantics for listed Networks,
+        so omitted definition properties can be reset to their defaults.
+      - V(staged) uses fabric-wide V(overridden) attachment scope. Attachments
+        not present in the desired config are detached, but Network definitions
+        are retained.
+      - V(staged) always skips deployment. Item-level C(deploy=true) is ignored;
+        deploy staged changes later with a deployment workflow.
+      - V(staged) with C(config=[]) stages detachment of every current Network
+        attachment while retaining all Network definitions.
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered ]
+    choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
   config:
     description:
@@ -536,6 +545,34 @@ EXAMPLES = r"""
         layer: layer2
         network_id: 50010
         vlan_id: 2001
+        is_l2only: true
+
+- name: Stage complete desired Network attachments without deployment
+  cisco.nd.nd_manage_networks:
+    fabric_name: fab1
+    state: staged
+    config:
+      - network_name: Network_BLUE
+        is_l2only: true
+        network_id: 50010
+        vlan_id: 2001
+        vlan_name: Network_BLUE_VLAN
+        deploy: true
+        attach:
+          - ip_address: 192.0.2.10
+            interfaces:
+              - interface_range: Ethernet1/10
+                mode: trunk
+      - network_name: Network_GREEN
+        is_l2only: true
+        network_id: 50011
+        vlan_id: 2002
+        vlan_name: Network_GREEN_VLAN
+        attach:
+          - ip_address: 192.0.2.11
+            interfaces:
+              - interface_range: Ethernet1/11
+                mode: trunk
 """
 RETURN = r"""
 changed:
@@ -647,7 +684,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered", "staged"],
         ),
         config=dict(
             type="list",

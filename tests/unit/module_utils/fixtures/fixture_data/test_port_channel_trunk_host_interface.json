@@ -335,5 +335,345 @@
                 }
             ]
         }
+    },
+    "test_port_channel_trunk_host_orchestrator_00900a": {
+        "TEST_NOTES": [
+            "preflight free member passes: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_00900b": {
+        "TEST_NOTES": [
+            "preflight free member passes: interfaces list",
+            "Member-conflict inventory (issue #369): port-channel501/accessPoHost owns Ethernet1/1, port-channel502/trunkPoHost owns Ethernet1/3, port-channel500/vpcPeerlinkPo (unmanaged type) owns Ethernet1/2, Ethernet1/35 is a free trunkHost, Ethernet1/36 is an accessPoMember with no owning port-channel record. Every operData.portChannelId is -1 (owners are intent-only, undeployed)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel500",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "vpcPeerlinkPo",
+                                "ports": [
+                                    "Ethernet1/2"
+                                ],
+                                "allowedVlans": "all"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel501",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoHost",
+                                "ports": [
+                                    "Ethernet1/1"
+                                ],
+                                "accessVlan": 100,
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel502",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkPoHost",
+                                "ports": [
+                                    "Ethernet1/3"
+                                ],
+                                "allowedVlans": "1-100",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "access",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "vpcPeerLinkMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "trunk",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkPoMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "trunk",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/35",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "1-100"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "trunk",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/36",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "access",
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_00910a": {
+        "TEST_NOTES": [
+            "preflight cross-PO conflict: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_00910b": {
+        "TEST_NOTES": [
+            "preflight cross-PO conflict: interfaces list",
+            "Member-conflict inventory (issue #369): port-channel501/accessPoHost owns Ethernet1/1, port-channel502/trunkPoHost owns Ethernet1/3, port-channel500/vpcPeerlinkPo (unmanaged type) owns Ethernet1/2, Ethernet1/35 is a free trunkHost, Ethernet1/36 is an accessPoMember with no owning port-channel record. Every operData.portChannelId is -1 (owners are intent-only, undeployed)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel500",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "vpcPeerlinkPo",
+                                "ports": [
+                                    "Ethernet1/2"
+                                ],
+                                "allowedVlans": "all"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel501",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoHost",
+                                "ports": [
+                                    "Ethernet1/1"
+                                ],
+                                "accessVlan": 100,
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel502",
+                    "interfaceType": "portChannel",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkPoHost",
+                                "ports": [
+                                    "Ethernet1/3"
+                                ],
+                                "allowedVlans": "1-100",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "access",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "vpcPeerLinkMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "trunk",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkPoMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "trunk",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/35",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "1-100"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "trunk",
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/36",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoMember"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "mode": "access",
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
     }
 }

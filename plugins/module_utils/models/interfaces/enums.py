@@ -242,3 +242,104 @@ class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
     """
 
     MONITOR_SUBINTERFACE = "monitorSubinterface"
+
+
+class EthernetRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed NX-OS ethernet routed-mode policy types owned by the `nd_interface_ethernet_routed` module (issue #447).
+
+    Initial scope is `routedHost` (`int_routed_host` template) only. The remaining create-side types (`endPointLocator`,
+    `ipfmL3Port`, `dataBrokerL3Host`) are feature-gated follow-up branches; system-provisioned routed types (`numbered`,
+    `vrfLiteLinkMember`, `multiSiteLinkMember`, `vpcPeerKeepAlive`, `mplsUplink`, ...) and `userDefined` are intentionally
+    excluded so `overridden` can never touch fabric underlay intent.
+
+    ## Raises
+
+    None
+    """
+
+    ROUTED_HOST = "routedHost"
+
+
+class XeEthernetRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed IOS-XE ethernet routed-mode policy types owned by the `nd_interface_ethernet_routed` module (issue #447).
+
+    Initial scope is `iosXeRoutedHost` (`ios_xe_int_routed_host` template) only. `iosXeNumbered`, `csrMultisiteIfcMember`,
+    and `iosXeInternalL3PoMember` are fabric-link / system-provisioned; `userDefined` is intentionally excluded.
+
+    ## Raises
+
+    None
+    """
+
+    IOS_XE_ROUTED_HOST = "iosXeRoutedHost"
+
+
+class XeEthernetSpeedEnum(str, Enum):
+    """
+    # Summary
+
+    Interface speed setting for IOS-XE ethernet templates (`ios_xe_int_routed_host`). Diverges from the Nexus `SpeedEnum`:
+    adds `noNegotiate`, lacks 200/400/800Gb.
+
+    ## Raises
+
+    None
+    """
+
+    AUTO = "auto"
+    TEN_MB = "10Mb"
+    HUNDRED_MB = "100Mb"
+    ONE_GB = "1Gb"
+    TEN_GB = "10Gb"
+    TWO_POINT_FIVE_GB = "2.5Gb"
+    FIVE_GB = "5Gb"
+    TWENTY_FIVE_GB = "25Gb"
+    FORTY_GB = "40Gb"
+    HUNDRED_GB = "100Gb"
+    NO_NEGOTIATE = "noNegotiate"
+
+
+class LoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed NX-OS loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    ## Raises
+
+    None
+    """
+
+    LOOPBACK = "loopback"
+    IPFM_LOOPBACK = "ipfmLoopback"
+    MPLS_LOOPBACK = "mplsLoopback"
+
+
+class XeLoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed IOS-XE loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    The ND 4.2.1 OpenAPI READ schema drifts on the CSR branch: it lists the discriminator as `csrIntLoopback`, but a
+    live-lab probe (2026-07-18) proved the wire echoes the create-side `csrLoopback` on reads too. Only the
+    wire-verified `csrLoopback` is listed here; the drift is recorded in the bug-tracker vault
+    (`csr-loopback-read-schema-name-drift`).
+
+    ## Raises
+
+    None
+    """
+
+    IOS_XE_LOOPBACK = "iosXeLoopback"
+    IOS_XE_LOOPBACK_SHUT_NOSHUT = "iosXeLoopbackShutNoshut"
+    IOS_XE_UNDERLAY_LOOPBACK = "iosXeUnderlayLoopback"
+    IOS_XE_INTERNAL_LOOPBACK = "iosXeInternalLoopback"
+    CSR_LOOPBACK = "csrLoopback"
+    CSR1KV_LOOPBACK = "csr1kvLoopback"
