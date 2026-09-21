@@ -51,11 +51,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
     default_policy_type,
     normalize_member_interface_names,
+    reconcile_cidr_prefix,
+    require_address_prefix_pair,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import PortChannelInterfaceBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6Host
 
 
 class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
@@ -116,12 +118,50 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         """
         return default_policy_type(data, PortChannelRoutedPolicyTypeEnum.L3_PO.value)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_cidr_input(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Move a CIDR mask on `ip` / `ipv6` into `prefix` / `ipv6_prefix` instead of dropping it (`ethernet_common.reconcile_cidr_prefix`).
+
+        ## Raises
+
+        ### ValueError
+
+        - If a CIDR mask disagrees with the explicit prefix.
+        """
+        data = reconcile_cidr_prefix(data, "ip", ("prefix",), 4)
+        return reconcile_cidr_prefix(data, "ipv6", ("ipv6_prefix", "ipv6Prefix"), 6)
+
+    @model_validator(mode="after")
+    def _validate_address_prefix_paired(self) -> PortChannelRoutedPolicyModel:
+        """
+        # Summary
+
+        Require `ip` with `prefix` and `ipv6` with `ipv6_prefix` (`ethernet_common.require_address_prefix_pair`).
+
+        ## Raises
+
+        ### ValueError
+
+        - If exactly one of `ip` / `prefix`, or exactly one of `ipv6` / `ipv6_prefix`, is set.
+        """
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix")
+        require_address_prefix_pair(self.ipv6, self.ipv6_prefix, "ipv6", "ipv6_prefix")
+        return self
+
     copy_description: bool | None = Field(default=None, alias="copyDescription", description="Propagate the port-channel description to all member interfaces")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    ip: IPv4Host = Field(
+        default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and reconciled with `prefix`)"
+    )
     ip_redirects: bool | None = Field(default=None, alias="ipRedirects", description="Disable IPv4 and IPv6 redirects on the interface")
-    ipv6: str | None = Field(default=None, alias="ipv6", description="IPv6 address of the interface")
+    ipv6: IPv6Host = Field(
+        default=None, alias="ipv6", description="Interface IPv6 address (bare host form; CIDR input is accepted and reconciled with `ipv6_prefix`)"
+    )
     ipv6_prefix: int | None = Field(default=None, alias="ipv6Prefix", ge=1, le=127, description="IPv6 prefix length used with `ipv6` (1-127)")
     mtu: int | None = Field(default=None, alias="mtu", ge=576, le=9216, description="Interface MTU (576-9216)")
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable netflow (requires netflow enabled on the fabric)")
@@ -217,9 +257,43 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         """
         return default_policy_type(data, XePortChannelRoutedPolicyTypeEnum.IOS_XE_L3_PORT_CHANNEL.value)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_cidr_input(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Move a CIDR mask on `ip` into `prefix` instead of dropping it (`ethernet_common.reconcile_cidr_prefix`).
+
+        ## Raises
+
+        ### ValueError
+
+        - If a CIDR mask disagrees with the explicit prefix.
+        """
+        return reconcile_cidr_prefix(data, "ip", ("prefix",), 4)
+
+    @model_validator(mode="after")
+    def _validate_address_prefix_paired(self) -> XePortChannelRoutedPolicyModel:
+        """
+        # Summary
+
+        Require `ip` with `prefix` (`ethernet_common.require_address_prefix_pair`).
+
+        ## Raises
+
+        ### ValueError
+
+        - If exactly one of `ip` / `prefix` is set.
+        """
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix")
+        return self
+
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    ip: IPv4Host = Field(
+        default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and reconciled with `prefix`)"
+    )
     mtu: int | None = Field(default=None, alias="mtu", ge=1500, le=9216, description="Port-channel MTU (1500-9216)")
     port_channel_mode: XePortChannelModeEnum | None = Field(
         default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive/auto/desirable)"
