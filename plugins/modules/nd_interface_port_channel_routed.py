@@ -115,8 +115,10 @@ options:
                     type: str
                   ip:
                     description:
-                    - The IPv4 address of the port-channel (e.g. C(10.1.1.1)). CIDR input such as C(10.1.1.1/30) is accepted and
-                      reduced to the address; the mask length is taken from O(config[].config_data.network_os.policy.prefix).
+                    - The IPv4 address of the port-channel (e.g. C(10.1.1.1)). Required together with
+                      O(config[].config_data.network_os.policy.prefix).
+                    - CIDR input such as C(10.1.1.1/30) is accepted. Its mask length fills
+                      O(config[].config_data.network_os.policy.prefix) when that option is omitted and must agree with it when it is set.
                     - Applies to all policy_type values.
                     type: str
                   ip_redirects:
@@ -127,7 +129,10 @@ options:
                     type: bool
                   ipv6:
                     description:
-                    - The IPv6 address of the port-channel.
+                    - The IPv6 address of the port-channel. Required together with
+                      O(config[].config_data.network_os.policy.ipv6_prefix).
+                    - CIDR input such as C(2001:db8::1/64) is accepted. Its prefix length fills
+                      O(config[].config_data.network_os.policy.ipv6_prefix) when that option is omitted and must agree with it when it is set.
                     - Applies when policy_type is C(l3Po).
                     type: str
                   ipv6_prefix:

@@ -319,12 +319,12 @@ def test_port_channel_routed_interface_00220(config):
         ({"mtu": 575}, True),
         ({"mtu": 576}, False),
         ({"mtu": 9217}, True),
-        ({"prefix": 0}, True),
-        ({"prefix": 31}, False),
-        ({"prefix": 32}, True),
-        ({"ipv6_prefix": 0}, True),
-        ({"ipv6_prefix": 127}, False),
-        ({"ipv6_prefix": 128}, True),
+        ({"ip": "10.1.1.1", "prefix": 0}, True),
+        ({"ip": "10.1.1.1", "prefix": 31}, False),
+        ({"ip": "10.1.1.1", "prefix": 32}, True),
+        ({"ipv6": "2001:db8::1", "ipv6_prefix": 0}, True),
+        ({"ipv6": "2001:db8::1", "ipv6_prefix": 127}, False),
+        ({"ipv6": "2001:db8::1", "ipv6_prefix": 128}, True),
         ({"pim_dr_priority": 0}, True),
         ({"pim_dr_priority": 4294967295}, False),
         ({"description": "d" * 254}, False),
@@ -364,10 +364,10 @@ def test_port_channel_routed_interface_00230(policy, should_raise):
         ({"mtu": 1500}, False),
         ({"mtu": 9216}, False),
         ({"mtu": 9217}, True),
-        ({"prefix": 7}, True),
-        ({"prefix": 8}, False),
-        ({"prefix": 31}, False),
-        ({"prefix": 32}, True),
+        ({"ip": "10.1.1.1", "prefix": 7}, True),
+        ({"ip": "10.1.1.1", "prefix": 8}, False),
+        ({"ip": "10.1.1.1", "prefix": 31}, False),
+        ({"ip": "10.1.1.1", "prefix": 32}, True),
         ({"description": "d" * 200}, False),
         ({"description": "d" * 201}, True),
         ({"port_channel_mode": "desirable"}, False),
@@ -583,3 +583,87 @@ def test_port_channel_routed_interface_00300():
     model_fields = set(PortChannelRoutedPolicyModel.model_fields) | set(XePortChannelRoutedPolicyModel.model_fields)
     assert set(policy) == model_fields
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+
+
+# =============================================================================
+# Test: address / prefix reconciliation (PR #577 review)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "model_cls, policy, expected",
+    [
+        (PortChannelRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+        (PortChannelRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 24}, {"ip": "10.1.1.1", "prefix": 24}),
+        (PortChannelRoutedPolicyModel, {"ip": "10.1.1.1", "prefix": 30}, {"ip": "10.1.1.1", "prefix": 30}),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64"}, {"ipv6": "2001:db8::1", "ipv6Prefix": 64}),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6Prefix": 64}, {"ipv6": "2001:db8::1", "ipv6Prefix": 64}),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1", "ipv6_prefix": 126}, {"ipv6": "2001:db8::1", "ipv6Prefix": 126}),
+        (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+    ],
+)
+def test_port_channel_routed_interface_00400(model_cls, policy, expected):
+    """
+    # Summary
+
+    Verify CIDR input never loses its mask: the prefix is derived into the sibling field when that field is absent, an agreeing
+    explicit prefix is accepted, the address is serialized in bare host form, and a plain address / prefix pair is unchanged. Holds for
+    field names and wire aliases alike.
+
+    ## Test
+
+    - `ip: 10.1.1.1/24` with no `prefix` yields `ip: 10.1.1.1`, `prefix: 24` on both OS branches
+    - `ipv6: 2001:db8::1/64` with no `ipv6_prefix` yields the bare address and `ipv6Prefix: 64`
+    - CIDR input with an agreeing explicit prefix, and a bare address with a prefix, are accepted as given
+
+    ## Classes and Methods
+
+    - PortChannelRoutedPolicyModel
+    - XePortChannelRoutedPolicyModel
+    - reconcile_cidr_prefix()
+    """
+    with does_not_raise():
+        dumped = model_cls(**policy).model_dump(by_alias=True, exclude_none=True)
+    for key, value in expected.items():
+        assert dumped[key] == value
+
+
+@pytest.mark.parametrize(
+    "model_cls, policy, match",
+    [
+        (PortChannelRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 30}, r"ip.*/24.*prefix.*30"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6_prefix": 126}, r"ipv6.*/64.*ipv6_prefix.*126"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6Prefix": 126}, r"ipv6.*/64.*ipv6_prefix.*126"),
+        (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 16}, r"ip.*/24.*prefix.*16"),
+        (PortChannelRoutedPolicyModel, {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        (PortChannelRoutedPolicyModel, {"prefix": 24}, r"ip and prefix are required together"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1"}, r"ipv6 and ipv6_prefix are required together"),
+        (PortChannelRoutedPolicyModel, {"ipv6_prefix": 64}, r"ipv6 and ipv6_prefix are required together"),
+        (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "not-an-ipv6", "ipv6_prefix": 64}, r"not a valid IPv6 address"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "10.1.1.1", "ipv6_prefix": 64}, r"not a valid IPv6 address"),
+        (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1/4"}, r"prefix"),
+    ],
+)
+def test_port_channel_routed_interface_00410(model_cls, policy, match):
+    """
+    # Summary
+
+    Verify the routed port-channel policies reject a CIDR mask that contradicts the explicit prefix, half of an address / prefix pair,
+    a malformed or wrong-family IPv6 address, and a derived prefix outside the field's range, all before any controller call.
+
+    ## Test
+
+    - A CIDR mask that differs from the sibling prefix raises, naming both values, for field names and wire aliases
+    - An address without its prefix, or a prefix without its address, raises
+    - `not-an-ipv6` and an IPv4 address in `ipv6` raise
+    - On IOS-XE `10.1.1.1/4` derives prefix 4, below the template's minimum of 8, and raises
+
+    ## Classes and Methods
+
+    - PortChannelRoutedPolicyModel
+    - XePortChannelRoutedPolicyModel
+    - reconcile_cidr_prefix()
+    """
+    with pytest.raises(ValidationError, match=match):
+        model_cls(**policy)
