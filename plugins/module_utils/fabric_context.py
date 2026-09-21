@@ -266,6 +266,8 @@ class FabricContext:
         # letting an empty switch map surface a misleading "switch not found" downstream (issue #399).
         if self._rest_send.return_code == 404 and not self.fabric_exists():
             raise RuntimeError(self._fabric_not_found_message())
+        if result and "code" in result:
+            raise RuntimeError(f"GET {ep.path} returned an embedded error instead of switch inventory: {result.get('message', result)}")
         switches = (result.get("switches") or []) if result else []
         self._switches = switches
         self._switch_map = {sw["fabricManagementIp"]: sw["switchId"] for sw in switches if sw.get("fabricManagementIp") and sw.get("switchId")}

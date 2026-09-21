@@ -338,6 +338,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.fabric = "FAB1"
     resource.state = state
     resource.ctx = SwitchServiceContext(nd=nd, results=resource.results, fabric="FAB1", log=resource.log, save_config=False, deploy_config=False)
+    resource.fabric_context = SimpleNamespace(invalidate=lambda: None, switches=[])
 
     existing_collection = NDConfigCollection(model_class=SwitchDataModel, items=existing or [])
     resource.proposed = NDConfigCollection(model_class=SwitchDataModel)
@@ -1654,13 +1655,13 @@ def test_exit_json_normal_requeries_dirty_inventory_and_builds_delete_add_diff(m
 
     requery_calls = []
 
-    def fake_from_fabric(nd, fabric, log, model_class):  # pylint: disable=unused-argument
-        requery_calls.append(fabric)
+    def fake_from_context(fabric_context, model_class):  # pylint: disable=unused-argument
+        requery_calls.append(resource.fabric)
         return SimpleNamespace(collection=NDConfigCollection(model_class=SwitchDataModel, items=after))
 
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_fabric",
-        fake_from_fabric,
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_context",
+        fake_from_context,
     )
 
     resource.exit_json()
@@ -1679,12 +1680,12 @@ def test_exit_json_normal_reuses_inventory_when_no_mutation(monkeypatch):
     before = [_sw("192.0.2.10", "SERIAL1")]
     resource = _resource(state="merged", existing=before, output_level="info")
 
-    def fail_from_fabric(*_args, **_kwargs):
+    def fail_from_context(*_args, **_kwargs):
         raise AssertionError("clean runs should not re-query inventory")
 
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_fabric",
-        fail_from_fabric,
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_context",
+        fail_from_context,
     )
 
     resource.exit_json()
@@ -1705,12 +1706,12 @@ def test_exit_json_failed_results_skip_requery_and_fail_json(monkeypatch):
     resource.results.diff_current = {"attempted": True}
     resource.results.register_api_call()
 
-    def fail_from_fabric(*_args, **_kwargs):
+    def fail_from_context(*_args, **_kwargs):
         raise AssertionError("failed runs should not re-query inventory")
 
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_fabric",
-        fail_from_fabric,
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_context",
+        fail_from_context,
     )
 
     with pytest.raises(FailJsonError):

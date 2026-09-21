@@ -69,6 +69,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_details_cache import (
     FabricDetailsCache,
 )
@@ -2721,11 +2722,12 @@ class NDSwitchResourceModule:
             deploy_config=config_actions.get("deploy", True),
             deploy_type=config_actions.get("type", "switch"),
         )
+        self.fabric_context = FabricContext(self.nd._get_rest_send(), self.fabric)  # pylint: disable=protected-access
 
         # Switch collections
         try:
             self.proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
-            self.inventory = FabricSwitchInventory.from_fabric(nd, self.fabric, log, SwitchDataModel)
+            self.inventory = self._load_fabric_switch_inventory()
             self.existing: NDConfigCollection = self.inventory.collection
             self.before: NDConfigCollection = self.existing.copy()
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
@@ -2757,6 +2759,30 @@ class NDSwitchResourceModule:
         self.rma_handler = RMAHandler(self.ctx, self.fabric_ops, self.wait_utils, self.bootstrap_cache)
 
         log.info("Initialized NDSwitchResourceModule for fabric: %s", self.fabric)
+
+    def _load_fabric_switch_inventory(self, *, refresh: bool = False) -> FabricSwitchInventory:
+        """
+        # Summary
+
+        Load parsed switch inventory from the module's cached fabric context.
+
+        ## Parameters
+
+        - `refresh`: Invalidate cached fabric context data before loading.
+
+        ## Returns
+
+        - Parsed and indexed switch inventory.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switch inventory query fails.
+        """
+        if refresh:
+            self.fabric_context.invalidate()
+        return FabricSwitchInventory.from_context(self.fabric_context, SwitchDataModel)
 
     def _inventory_to_config_list(self, collection: "NDConfigCollection") -> list[dict[str, Any]]:
         """Convert an inventory collection (SwitchDataModel) to gathered-format config dicts.
@@ -3087,7 +3113,8 @@ class NDSwitchResourceModule:
             # Re-query only after a successful mutation. Idempotent runs can
             # reuse the initial inventory snapshot without another full GET.
             if True not in self.results.failed and self.ctx.inventory_refresh_needed:
-                self.existing = FabricSwitchInventory.from_fabric(self.nd, self.fabric, self.log, SwitchDataModel).collection
+                self.inventory = self._load_fabric_switch_inventory(refresh=True)
+                self.existing = self.inventory.collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
             diff_list: list[dict[str, Any]] = []
             for sw in self.sent:
