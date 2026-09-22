@@ -1774,12 +1774,7 @@ def main():
                 if name and name not in fabric_names:
                     fabric_names.append(name)
             if fabric_names:
-                nd_state_machine.model_orchestrator.run_config_actions(
-                    actions=config_actions,
-                    fabric_names=fabric_names,
-                    state=state,
-                    check_mode=module.check_mode,
-                )
+                nd_state_machine.run_config_actions(actions=config_actions, fabric_names=fabric_names)
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

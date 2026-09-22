@@ -16,6 +16,7 @@ and no import cycle exists between a backend and the mixin that selects it.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any, Protocol
 
 
@@ -83,4 +84,18 @@ class FabricConfigActionsOwner(Protocol):
         ### Exception
 
         - Raised by the implementation when the switches query fails.
+        """
+
+    def verify_deploy(self, fabric_name: str, switch_ids: Collection[str] | None = None) -> None:
+        """
+        # Summary
+
+        Confirm a deploy of `switch_ids` in `fabric_name` landed, checking `switch_ids` only when
+        given and the whole fabric otherwise.
+
+        ## Raises
+
+        ### Exception
+
+        - Raised by the implementation when a switch reports a failed configuration sync.
         """

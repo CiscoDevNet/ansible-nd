@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsFailed
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -135,6 +136,32 @@ class NDStateMachine:
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
+
+    def run_config_actions(self, actions, fabric_names: list[str], only_switch_ids=None) -> None:
+        """Run config save/deploy, recording the outcome in module output whether it passes or fails.
+
+        Records on the failure path too: a run whose save completed and whose deploy then failed
+        leaves saved-but-undeployed configuration, and the user needs to see that the save landed.
+
+        ## Raises
+
+        ### ConfigActionsFailed
+
+        - If any save or deploy step failed, after recording the partial result.
+        """
+        try:
+            result = self.model_orchestrator.run_config_actions(
+                actions=actions,
+                fabric_names=fabric_names,
+                state=self.state,
+                check_mode=self.check_mode,
+                only_switch_ids=only_switch_ids,
+            )
+        except ConfigActionsFailed as error:
+            self.output.assign(config_actions=error.result.to_result())
+            raise
+        if result is not None:
+            self.output.assign(config_actions=result.to_result())
 
     # State Management (core function)
     def manage_state(self) -> None:

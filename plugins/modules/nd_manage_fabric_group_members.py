@@ -269,12 +269,7 @@ def main():
         # Membership changes stage pending configuration on the group whether a member was
         # added or removed, so both are save/deploy candidates; an unchanged group is not.
         if len(nd_state_machine.sent) > 0 or len(nd_state_machine.removed) > 0:
-            nd_state_machine.model_orchestrator.run_config_actions(
-                actions=config_actions,
-                fabric_names=[module.params["fabric_name"]],
-                state=state,
-                check_mode=module.check_mode,
-            )
+            nd_state_machine.run_config_actions(actions=config_actions, fabric_names=[module.params["fabric_name"]])
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
