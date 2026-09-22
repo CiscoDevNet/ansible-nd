@@ -117,3 +117,22 @@ def test_login_id_gathered_filter(login_id, expected):
     )
 
     assert len(result) == expected
+
+
+def test_gathered_filter_strips_whitespace():
+    result = validate_gathered_filters(
+        filters=[{"login_id": " user1 "}],
+        normalize_filter=LocalUserModel.normalize_gathered_filter,
+        supported_properties=LocalUserModel.gathered_filter_properties,
+    )
+
+    assert result == [{"login_id": "user1"}]
+
+
+def test_whitespace_only_gathered_filter_is_rejected():
+    with pytest.raises(ValueError, match="filtering criterion"):
+        validate_gathered_filters(
+            filters=[{"login_id": "   "}],
+            normalize_filter=LocalUserModel.normalize_gathered_filter,
+            supported_properties=LocalUserModel.gathered_filter_properties,
+        )
