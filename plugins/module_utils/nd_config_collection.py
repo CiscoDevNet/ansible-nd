@@ -160,7 +160,7 @@ class NDConfigCollection:
         self,
         new_item: NDBaseModel,
         exclude_unset: bool = False,
-        empty_list_equivalents: Set[Tuple[str, ...]] | None = None,
+        empty_list_equivalents: Optional[Set[Tuple[str, ...]]] = None,
     ) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
