@@ -61,6 +61,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
 
     # Opt-in. Existing orchestrators do not receive gathered filters.
     supports_gathered_server_filtering: ClassVar[bool] = False
+    # States that never mutate controller configuration. Unknown or absent states
+    # deliberately use mutation validation, which is the safer default.
+    read_only_states: ClassVar[frozenset[str]] = frozenset({"gathered"})
 
     # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
     # e.g. "links" for /api/v1/manage/links POST.
@@ -80,6 +83,18 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # REST infrastructure
     rest_send: RestSend
     results: Optional[Results] = None
+
+    @property
+    def is_read_only_operation(self) -> bool:
+        """
+        Return whether the current module state performs no configuration
+        mutations.
+
+        Unknown or absent states return False so that callers retain the stricter
+        mutation preflight.
+        """
+        params = self.rest_send.params if self.rest_send else None
+        return bool(params) and params.get("state") in self.read_only_states
 
     def _register_api_call(
         self,

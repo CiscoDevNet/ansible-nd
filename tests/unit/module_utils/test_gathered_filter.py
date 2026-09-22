@@ -116,7 +116,7 @@ def test_format_lucene_value(value, expected):
 
 
 def test_no_filters_returns_all_responses():
-    responses = [_response(), _response(interface_name="loopback102")]
+    responses = [_response(), _response(), _response(interface_name="loopback102")]
     result = _filter(responses, [])
     assert len(result) == 2
     assert result[0].interface_name == "loopback101"
