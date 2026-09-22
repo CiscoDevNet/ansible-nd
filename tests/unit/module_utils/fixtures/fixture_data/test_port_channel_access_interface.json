@@ -2844,5 +2844,201 @@
         "DATA": {
             "pendingConfigs": []
         }
+    },
+    "test_port_channel_access_orchestrator_01400a": {
+        "TEST_NOTES": [
+            "capability preflight (PR #570 review): switches list, two switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01400b": {
+        "TEST_NOTES": [
+            "capableSwitches for portChannel/access: [('FDO11111AAA', 'S1_BG1'), ('CAT9KV1701', 'C1_LE1')]"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "S1_BG1"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01410a": {
+        "TEST_NOTES": [
+            "capability preflight: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01410b": {
+        "TEST_NOTES": [
+            "capableSwitches for portChannel/access: [('FDO11111AAA', 'S1_BG1')]"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "S1_BG1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_capable_switches_shared": {
+        "TEST_NOTES": [
+            "SHARED fixture (PR #570 review): capableSwitches?interfaceType=portChannel&mode=access listing every switch the preflight tests target.",
+            "Shared because the orchestrator now opts in to the capability preflight, which inserts one capableSwitches GET between the switches list and the interface list in every preflight test; the answer is the same for all of them and carries no test-specific data."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "SW-A"
+                },
+                {
+                    "switchId": "FDO22222BBB",
+                    "switchName": "SW-B"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01400c": {
+        "TEST_NOTES": [
+            "capability preflight scale test: interface list for FDO11111AAA (members free, XE members on their host policy)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_01400d": {
+        "TEST_NOTES": [
+            "capability preflight scale test: interface list for CAT9KV1701 (members free, XE members on their host policy)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccess"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeAccess"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
     }
 }

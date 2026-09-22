@@ -58,6 +58,7 @@ def _build_rest_send(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    check_mode: bool = False,
 ) -> RestSend:
     """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
 
@@ -73,7 +74,7 @@ def _build_rest_send(
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    params: dict = {"check_mode": check_mode, "fabric_name": fabric_name}
     if state is not None:
         params["state"] = state
     if config is not None:
@@ -414,6 +415,7 @@ def _preflight_orchestrator(method_name: str) -> PortChannelTrunkHostInterfaceOr
 
     def responses():
         yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_capable_switches_shared")
         yield responses_pc_trunk_host(f"{method_name}b")
 
     return _build_orchestrator(ResponseGenerator(responses()), state="merged")
@@ -659,6 +661,7 @@ def test_port_channel_trunk_host_orchestrator_01100() -> None:
 
     def responses():
         yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_capable_switches_shared")
         yield responses_pc_trunk_host(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
@@ -742,3 +745,102 @@ def test_port_channel_trunk_host_orchestrator_01210() -> None:
     expected = [("port-channel501", "FDO11111AAA"), ("Port-channel103", "FDO22222BBB")]
     assert sorted(instance._pending_removes) == sorted(expected)
     assert sorted(instance._pending_deploys) == sorted(expected)
+
+
+# =============================================================================
+# Test: capability preflight opt-in (PR #570 review)
+# =============================================================================
+
+
+def test_port_channel_trunk_host_orchestrator_01390() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator opts in to the shared capability preflight as `portChannel` / `trunk`.
+
+    ## Test
+
+    - `interface_type == "portChannel"` and `interface_mode == "trunk"`
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceOrchestrator.interface_type
+    - PortChannelTrunkHostInterfaceOrchestrator.interface_mode
+    """
+    assert PortChannelTrunkHostInterfaceOrchestrator.interface_type == "portChannel"
+    assert PortChannelTrunkHostInterfaceOrchestrator.interface_mode == "trunk"
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check_mode"])
+def test_port_channel_trunk_host_orchestrator_01400(check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify `preflight` validates every target switch against the cached `capableSwitches` answer for `portChannel` / `trunk`, at
+    scale: four port-channels on two switches cost exactly one switches GET and one `capableSwitches` GET, in normal and check mode.
+
+    ## Test
+
+    - Two NX-OS port-channels on switch A and two IOS-XE port-channels on the Catalyst; both switches are capable
+    - `preflight` does not raise
+    - One switches GET and one `capableSwitches` GET, then one interface-list GET per switch for the member checks: four responses
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host(f"{method_name}b")
+        yield responses_pc_trunk_host(f"{method_name}c")
+        yield responses_pc_trunk_host(f"{method_name}d")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
+    instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_pc_model(interface_name="port-channel501", ports=["Ethernet1/1"]),
+        _build_pc_model(interface_name="port-channel502", ports=["Ethernet1/2"]),
+        _build_xe_pc_model(interface_name="port-channel103", ports=["GigabitEthernet1/0/2"], switch_ip="192.168.12.181"),
+        _build_xe_pc_model(interface_name="port-channel109", ports=["GigabitEthernet1/0/3"], switch_ip="192.168.12.181"),
+    ]
+
+    with does_not_raise():
+        instance.preflight(models)
+
+    paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
+    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=trunk"]
+    assert len(rest_send.responses) == 4
+
+
+def test_port_channel_trunk_host_orchestrator_01410() -> None:
+    """
+    # Summary
+
+    Verify `preflight` refuses a port-channel on a switch the controller does not list as capable of `portChannel` / `trunk`, outside
+    check mode, naming the switch.
+
+    ## Test
+
+    - `capableSwitches` lists switch A only; the Catalyst is the target
+    - `preflight` raises `RuntimeError` naming the Catalyst's switch id and the mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_xe_pc_model(interface_name="port-channel103", ports=["GigabitEthernet1/0/2"], switch_ip="192.168.12.181")
+
+    with pytest.raises(RuntimeError, match=r"not capable of hosting interface_type='portChannel' mode='trunk'.*CAT9KV1701"):
+        instance.preflight([model])

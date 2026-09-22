@@ -1087,6 +1087,7 @@ def _preflight_orchestrator(method_name: str, check_mode: bool = False) -> PortC
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), state="merged", check_mode=check_mode)
@@ -1259,14 +1260,15 @@ def test_port_channel_access_orchestrator_00960() -> None:
     """
     # Summary
 
-    Verify `preflight` issues no additional request after `query_all` has already fetched the switch's interfaces: both
-    read the shared `_switch_interfaces` cache (CLAUDE.md performance rule -- fetch each resource at most once per run).
+    Verify `preflight` issues no additional inventory request after `query_all` has already fetched the switch's interfaces: both
+    read the shared `_switch_interfaces` cache (CLAUDE.md performance rule -- fetch each resource at most once per run). The only
+    request `preflight` adds is the capability query, which reads no inventory.
 
     ## Test
 
     - `query_all` (state merged, config scoped to 192.168.1.1) consumes summary (a), switches (b), interfaces (c)
-    - No further responses are queued; the response generator is exhausted
-    - `preflight` for a free member does not raise (an extra GET would exhaust the generator and raise)
+    - Only the `capableSwitches` response remains queued
+    - `preflight` for a free member does not raise (an extra inventory GET would exhaust the generator and raise)
     - `_switch_interfaces_cache` holds the unfiltered inventory for FDO11111AAA
 
     ## Classes and Methods
@@ -1281,6 +1283,7 @@ def test_port_channel_access_orchestrator_00960() -> None:
         yield responses_pc_access(f"{method_name}a")
         yield responses_pc_access(f"{method_name}b")
         yield responses_pc_access(f"{method_name}c")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel701"}]
     instance = _build_orchestrator(ResponseGenerator(responses()), state="merged", config=config)
@@ -1489,13 +1492,14 @@ def test_port_channel_access_orchestrator_01100(ports, match) -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_pc_model(ports=ports)])
-    assert len(rest_send.responses) == 2
+    assert len(rest_send.responses) == 3
 
 
 def test_port_channel_access_orchestrator_01110() -> None:
@@ -1518,6 +1522,7 @@ def test_port_channel_access_orchestrator_01110() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
@@ -1544,6 +1549,7 @@ def test_port_channel_access_orchestrator_01120() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
@@ -1695,7 +1701,7 @@ def _guard_orchestrator(method_name: str, keys: str, state: str, config: list[di
 
     def responses():
         for key in keys:
-            yield responses_pc_access(f"{method_name}{key}")
+            yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared" if key == "+" else f"{method_name}{key}")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config, check_mode=check_mode)
     return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
@@ -1768,7 +1774,7 @@ def test_port_channel_access_orchestrator_01320() -> None:
     ## Test
 
     - Proposed config names only port-channel101, so the fabric-wide override would remove port-channel102 (`unknown`)
-    - Responses: switches list, fabric summary, inventory, pendingConfig without port-channel102
+    - Responses: switches list, capableSwitches, fabric summary, inventory, pendingConfig without port-channel102
     - `preflight` raises `RuntimeError` naming port-channel102
 
     ## Classes and Methods
@@ -1777,9 +1783,108 @@ def test_port_channel_access_orchestrator_01320() -> None:
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
     """
     config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel101"}]
-    instance = _guard_orchestrator(inspect.stack()[0][3], "abcd", "overridden", config)
+    instance = _guard_orchestrator(inspect.stack()[0][3], "a+bcd", "overridden", config)
 
     with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*port-channel102"):
         instance.preflight([_xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"])])
 
-    assert len(instance.rest_send.responses) == 4
+    assert len(instance.rest_send.responses) == 5
+
+
+# =============================================================================
+# Test: capability preflight opt-in (PR #570 review)
+# =============================================================================
+
+
+def test_port_channel_access_orchestrator_01390() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator opts in to the shared capability preflight as `portChannel` / `access`.
+
+    ## Test
+
+    - `interface_type == "portChannel"` and `interface_mode == "access"`
+
+    ## Classes and Methods
+
+    - PortChannelAccessInterfaceOrchestrator.interface_type
+    - PortChannelAccessInterfaceOrchestrator.interface_mode
+    """
+    assert PortChannelAccessInterfaceOrchestrator.interface_type == "portChannel"
+    assert PortChannelAccessInterfaceOrchestrator.interface_mode == "access"
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check_mode"])
+def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify `preflight` validates every target switch against the cached `capableSwitches` answer for `portChannel` / `access`, at
+    scale: four port-channels on two switches cost exactly one switches GET and one `capableSwitches` GET, in normal and check mode.
+
+    ## Test
+
+    - Two NX-OS port-channels on switch A and two IOS-XE port-channels on the Catalyst; both switches are capable
+    - `preflight` does not raise
+    - One switches GET and one `capableSwitches` GET, then one interface-list GET per switch for the member checks: four responses
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access(f"{method_name}c")
+        yield responses_pc_access(f"{method_name}d")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_pc_model(interface_name="port-channel501", ports=["Ethernet1/1"]),
+        _build_pc_model(interface_name="port-channel502", ports=["Ethernet1/2"]),
+        _build_xe_pc_model(interface_name="port-channel101", ports=["GigabitEthernet1/0/2"], switch_ip="192.168.12.181"),
+        _build_xe_pc_model(interface_name="port-channel109", ports=["GigabitEthernet1/0/3"], switch_ip="192.168.12.181"),
+    ]
+
+    with does_not_raise():
+        instance.preflight(models)
+
+    paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
+    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access"]
+    assert len(rest_send.responses) == 4
+
+
+def test_port_channel_access_orchestrator_01410() -> None:
+    """
+    # Summary
+
+    Verify `preflight` refuses a port-channel on a switch the controller does not list as capable of `portChannel` / `access`, outside
+    check mode, naming the switch.
+
+    ## Test
+
+    - `capableSwitches` lists switch A only; the Catalyst is the target
+    - `preflight` raises `RuntimeError` naming the Catalyst's switch id and the mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_xe_pc_model(interface_name="port-channel101", ports=["GigabitEthernet1/0/2"], switch_ip="192.168.12.181")
+
+    with pytest.raises(RuntimeError, match=r"not capable of hosting interface_type='portChannel' mode='access'.*CAT9KV1701"):
+        instance.preflight([model])
