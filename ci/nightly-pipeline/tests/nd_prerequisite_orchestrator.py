@@ -201,7 +201,6 @@ def _link_exists(current_state, src, dst, template):
     return False
 
 
-
 def plan_topology_delta(registry, resolved_execution, current_state):
     """Return a deterministic allowlisted operation list for one confirmed execution."""
     _validated_registry(registry)

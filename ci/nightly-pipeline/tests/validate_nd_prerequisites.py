@@ -383,7 +383,12 @@ def jenkins_targets(text):
 def validate_playbook_summary(path, profile):
     plays = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8")) or []
     actual = plays[0].get("vars", {}).get("nd_prerequisite") if plays else None
-    wanted = {"profile": profile["profile_id"], "fabric_types": [item["type"] for item in profile["fabrics"]], "switch_count": profile["switches"]["required_count"], "switch_roles": [item["desired_role"] for item in profile["switches"]["members"]]}
+    wanted = {
+        "profile": profile["profile_id"],
+        "fabric_types": [item["type"] for item in profile["fabrics"]],
+        "switch_count": profile["switches"]["required_count"],
+        "switch_roles": [item["desired_role"] for item in profile["switches"]["members"]],
+    }
     return [] if actual == wanted else [f"{path}: nd_prerequisite summary mismatch"]
 
 
@@ -504,9 +509,19 @@ def sanitize_interface_payload(payload, switch_id, admin_state, registry=None):
 def normalized_equal(domain, before, after):
     if domain not in ALLOWED_DOMAINS:
         raise ValidationError(f"unsupported normalized domain: {domain}")
+
     def normalize(value):
-        if isinstance(value, dict): return {key: normalize(item) for key, item in sorted(value.items()) if key not in {"createdOn", "lastModified", "status", "metadata", "uuid"}}
-        if isinstance(value, list): return sorted((normalize(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
+        if isinstance(value, dict):
+            return {
+                key: normalize(item)
+                for key, item in sorted(value.items())
+                if key not in {"createdOn", "lastModified", "status", "metadata", "uuid"}
+            }
+        if isinstance(value, list):
+            return sorted(
+                (normalize(item) for item in value),
+                key=lambda item: json.dumps(item, sort_keys=True),
+            )
         return value
     return normalize(before) == normalize(after)
 

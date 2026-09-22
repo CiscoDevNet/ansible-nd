@@ -104,7 +104,7 @@ def read_local(path, timeout=READ_TIMEOUT):
     if not os.path.exists(path):
         return None, "missing"
     try:
-        p = subprocess.run(["cat", path], capture_output=True, timeout=timeout)
+        p = subprocess.run(["cat", path], capture_output=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return None, "timeout>%ss (dataless/stall)" % timeout
     if p.returncode != 0:

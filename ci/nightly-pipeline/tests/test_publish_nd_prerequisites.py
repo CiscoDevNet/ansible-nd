@@ -81,8 +81,10 @@ def test_consul_read_decodes_base64_and_handles_missing(monkeypatch):
     assert ConsulKV("http://consul").read("ansible-nd/nd_manage_acl.yaml") == KVRecord(
         "ansible-nd/nd_manage_acl.yaml", b"body", 41, True
     )
+
     def missing(*args, **kwargs):
         raise urllib.error.HTTPError("http://consul", 404, "missing", {}, None)
+
     monkeypatch.setattr(release.urllib.request, "urlopen", missing)
     assert ConsulKV("http://consul").read("ansible-nd/new.yaml", allow_absent=True).exists is False
     with pytest.raises(ReleaseError, match="HTTP 404"):
@@ -92,12 +94,14 @@ def test_consul_read_decodes_base64_and_handles_missing(monkeypatch):
 def test_snapshot_uses_restrictive_create_mode(monkeypatch, tmp_path):
     observed = []
     original_open = release.os.open
+
     def guarded_open(path, flags, mode=0o777):
         observed.append((flags, mode))
         return original_open(path, flags, mode)
+
     monkeypatch.setattr(release.os, "open", guarded_open)
     snapshot_keys(FakeConsul({"ansible-nd/nd_manage_acl.yaml": (41, b"body")}), ["ansible-nd/nd_manage_acl.yaml"], tmp_path)
-    assert any(mode == 0o600 for _, mode in observed)
+    assert any(mode == 0o600 for ignored_flags, mode in observed)
 
 
 def test_manifest_rejects_inventory_and_output_keys(tmp_path):

@@ -213,7 +213,13 @@ mkdir -p "$LOGDIR"
 _old_umask="$(umask)"; umask 077
 VARS_JSON="$(mktemp "${TMPDIR%/}/nd_runtime_vars.XXXXXX")"
 umask "$_old_umask"
-cleanup_vars() { [ -n "${VARS_JSON:-}" ] && rm -f "$VARS_JSON" 2>/dev/null || true; }
+# This function is invoked indirectly by trap, so ShellCheck cannot see its call site.
+# shellcheck disable=SC2317
+cleanup_vars() {
+  if [ -n "${VARS_JSON:-}" ]; then
+    rm -f "$VARS_JSON" 2>/dev/null || true
+  fi
+}
 trap cleanup_vars EXIT INT TERM
 EXTRA_VARS_FILE_ARGS=()
 if ansible-inventory -i "$INVENTORY" --host "$INVENTORY_HOST" >"$VARS_JSON" 2>/dev/null && [ -s "$VARS_JSON" ]; then
@@ -421,6 +427,7 @@ for m in "${MODULES[@]}"; do
 
   start=$(date +%s)
   # $cap, $VERBOSITY and $MOD_XTRA are intentionally left unquoted (word-split into args).
+  # shellcheck disable=SC2086 # these values intentionally expand into argument lists
   $cap ansible-playbook ${VERBOSITY} -i "$INVENTORY" "$RUN_PLAYBOOK" \
       ${EXTRA_VARS_FILE_ARGS[@]+"${EXTRA_VARS_FILE_ARGS[@]}"} \
       "${RUN_E_ARGS[@]}" \

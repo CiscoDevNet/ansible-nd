@@ -28,7 +28,37 @@ class ReleaseError(RuntimeError):
 
 
 ALLOWED_RELEASE_SOURCE_NAMES = frozenset({
-    "nd_manage_acl.yaml", "nd_manage_prefix_list.yaml", "nd_manage_route_map.yaml", "nd_manage_vrfs.yaml", "nd_manage_networks.yaml", "nd_manage_policy.yaml", "nd_manage_policy_group.yaml", "nd_manage_switches.yaml", "nd_manage_vpc_pair.yaml", "nd_interface_vpc_access.yaml", "nd_interface_vpc_trunk_host.yaml", "nd_manage_vrf_lite.yaml", "nd_manage_l3out.yaml", "nd_manage_resource_manager.yaml", "nd_manage_fabric_ibgp_vxlan.yaml", "nd_manage_fabric_ebgp_vxlan.yaml", "nd_manage_fabric_ai_ibgp_vxlan.yaml", "nd_manage_fabric_ai_ebgp_vxlan.yaml", "nd_manage_fabric_external.yaml", "run_integration_module.yaml", "reset_fabric.yaml", "nd_prerequisite_profiles.yaml", "nd_prerequisite_wrapper.yaml", "nd_prerequisite_capture.yaml", "nd_prerequisite_reconcile.yaml", "nd_prerequisite_wait.yaml", "nd_prerequisite_verify.yaml", "nd_prerequisite_restore.yaml", "validate_nd_prerequisites.py", "publish_nd_prerequisites.py", "nd_prerequisite_release_manifest.json",
+    "nd_manage_acl.yaml",
+    "nd_manage_prefix_list.yaml",
+    "nd_manage_route_map.yaml",
+    "nd_manage_vrfs.yaml",
+    "nd_manage_networks.yaml",
+    "nd_manage_policy.yaml",
+    "nd_manage_policy_group.yaml",
+    "nd_manage_switches.yaml",
+    "nd_manage_vpc_pair.yaml",
+    "nd_interface_vpc_access.yaml",
+    "nd_interface_vpc_trunk_host.yaml",
+    "nd_manage_vrf_lite.yaml",
+    "nd_manage_l3out.yaml",
+    "nd_manage_resource_manager.yaml",
+    "nd_manage_fabric_ibgp_vxlan.yaml",
+    "nd_manage_fabric_ebgp_vxlan.yaml",
+    "nd_manage_fabric_ai_ibgp_vxlan.yaml",
+    "nd_manage_fabric_ai_ebgp_vxlan.yaml",
+    "nd_manage_fabric_external.yaml",
+    "run_integration_module.yaml",
+    "reset_fabric.yaml",
+    "nd_prerequisite_profiles.yaml",
+    "nd_prerequisite_wrapper.yaml",
+    "nd_prerequisite_capture.yaml",
+    "nd_prerequisite_reconcile.yaml",
+    "nd_prerequisite_wait.yaml",
+    "nd_prerequisite_verify.yaml",
+    "nd_prerequisite_restore.yaml",
+    "validate_nd_prerequisites.py",
+    "publish_nd_prerequisites.py",
+    "nd_prerequisite_release_manifest.json",
 })
 
 
