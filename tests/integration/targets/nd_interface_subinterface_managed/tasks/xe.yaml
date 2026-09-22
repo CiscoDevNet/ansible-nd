@@ -245,9 +245,9 @@
 # --- XE DISCOVERY WAIT (before overridden) ---
 # TODO(4.3.1) xe-interface-removal-requires-discovery
 # ND generates the switch-side removal of an IOS-XE interface only once it has discovered the deployed interface, and the module refuses
-# a removal before that. Discovery takes 5-30 s on 4.2.1.10 but took about two and a half minutes on 4.3.1.175 (2026-09-21). Real playbooks
-# delete long after creating; this scenario does both in one run, so wait here, for up to ten minutes so a slow controller cannot fail the
-# run. Shorten the window once ND discovers deployed interfaces promptly.
+# a removal before that. Discovery is load-dependent, not release-specific: 5-30 s on either release when idle, about two and a half
+# minutes on 4.3.1.175 while two integration chains ran in parallel (2026-09-21). Real playbooks delete long after creating; this
+# scenario does both in one run, so wait here, for up to ten minutes so a loaded controller cannot fail the run.
 
 - name: "XE DISCOVERY WAIT: Wait until ND has discovered .100, .101 and .102 on the Catalyst"
   cisco.nd.nd_rest:
