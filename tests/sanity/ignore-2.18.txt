@@ -5,9 +5,6 @@ plugins/action/tests/integration/_nd_network_validate.py action-plugin-docs
 ci/nightly-pipeline/consul_sync.py shebang
 ci/nightly-pipeline/nd_readonly_diagnostic.yaml shebang
 ci/nightly-pipeline/playbooks/nd_prerequisite/apply_ensure_link.yaml shebang
-ci/nightly-pipeline/run_all_integ.sh shellcheck:SC2015
-ci/nightly-pipeline/run_all_integ.sh shellcheck:SC2086
-ci/nightly-pipeline/run_all_integ.sh shellcheck:SC2317
 ci/nightly-pipeline/setup_local.sh shebang
 ci/nightly-pipeline/tests/nd_prerequisite_orchestrator.py shebang
 ci/nightly-pipeline/tests/publish_nd_prerequisites.py shebang
