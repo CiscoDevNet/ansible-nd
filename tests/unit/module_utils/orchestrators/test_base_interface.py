@@ -1691,6 +1691,179 @@ def test_base_interface_00795() -> None:
 
 
 # =============================================================================
+# Test: bulk-create / remove freshness bookkeeping never copies the response history (PR #570 review)
+# =============================================================================
+
+
+def _switch_inventory_response(switch_id: str) -> dict:
+    """Build a GET-inventory-shaped response for `switch_id` so the RestSend history resembles a real per-switch query fan-out."""
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/interfaces?switchId={switch_id}",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [{"interfaceName": f"port-channel{index}", "switchId": switch_id} for index in range(1, 65)]},
+    }
+
+
+def _scale_bulk_orchestrator(switch_count: int) -> _StubBulkCreateOrchestrator:
+    """
+    Build a bulk-create stub whose RestSend history already holds one inventory response per switch, mirroring the state after
+    `query_all` fanned out over `switch_count` switches, so every per-group freshness snapshot faces a history that grows with the
+    fabric.
+    """
+    instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    for index in range(switch_count):
+        instance.rest_send.add_response(_switch_inventory_response(f"FDO{index:08d}"))
+    return instance
+
+
+def _forbid_response_history_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any read of the deep-copying `RestSend.responses` property fail the test."""
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("freshness bookkeeping must not read the deep-copying RestSend.responses property")
+
+    monkeypatch.setattr(RestSend, "responses", property(_no_copy))
+
+
+def test_base_interface_00791(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Scale regression for the bulk-create freshness snapshot: `create_bulk` sends one group per `(switch, policyType)`, and the per-group
+    snapshot must be a cheap counter, not a deep copy of the whole response history, which already holds one inventory response per
+    switch and so makes the run quadratic in the switch count (PR #570 review benchmark: ~18 s of local copying at 200 switches).
+
+    ## Test
+
+    - The RestSend history holds 50 inventory responses; `RestSend.responses` is patched to raise if read
+    - `_request` is replaced by a stub that records one 207 per POST
+    - `_post_bulk_create_group` is called once per switch, 50 times, and never reads `responses`
+    - Every item is deploy-queued; `response_count` grew by exactly one per group
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - RestSend.response_count
+    """
+    switch_count = 50
+    instance = _scale_bulk_orchestrator(switch_count)
+    posted: list[str] = []
+
+    def _stub_request(self, path, verb, data=None, **kwargs):  # pylint: disable=unused-argument
+        posted.append(data["interfaces"][0]["switchId"])
+        self.rest_send.add_response({"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": path, "MESSAGE": "Multi-Status", "DATA": {}})
+        return {}
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_request", _stub_request)
+    _forbid_response_history_copy(monkeypatch)
+
+    with does_not_raise():
+        for index in range(switch_count):
+            switch_id = f"FDO{index:08d}"
+            group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type="iosXeAccessPoHost")
+            items = [BulkCreateItem(interface_name="port-channel101", payload={"interfaceName": "port-channel101", "switchId": switch_id})]
+            instance._post_bulk_create_group(group_key, items)
+
+    assert posted == [f"FDO{index:08d}" for index in range(switch_count)]
+    assert instance._pending_deploys == [("port-channel101", f"FDO{index:08d}") for index in range(switch_count)]
+    assert instance.rest_send.response_count == 2 * switch_count
+
+
+def test_base_interface_00792(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the failure side of the bulk-create freshness check is also copy-free and still correct: when the request raises WITHOUT
+    the controller answering (the sender raised; issue #554 keeps the previous `response_current`), the 207 branch must see that the
+    count did not grow, claim nothing, and let the error propagate, all without reading the deep-copying `responses`.
+
+    ## Test
+
+    - The RestSend history holds 20 inventory responses; `RestSend.responses` is patched to raise if read
+    - No cached inventory for the switch, so the non-207 recovery is skipped without a GET
+    - `_request` raises without recording a response
+    - The error propagates without a `from the same request` claim; nothing is queued; `response_count` is unchanged
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    - RestSend.response_count
+    """
+    switch_count = 20
+    instance = _scale_bulk_orchestrator(switch_count)
+
+    def _stub_request(self, path, verb, data=None, **kwargs):  # pylint: disable=unused-argument
+        raise RuntimeError("sender raised before any response")
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_request", _stub_request)
+    _forbid_response_history_copy(monkeypatch)
+    group_key = BulkCreateGroupKey(switch_id="FDO00000003", policy_type="iosXeAccessPoHost")
+
+    with pytest.raises(RuntimeError, match=r"sender raised before any response") as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("port-channel101"))
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == switch_count
+
+
+def test_base_interface_00793(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the remove-path freshness snapshot (`remove_pending`, PR #547) is copy-free as well: both its reads of the history, before
+    the request and on the failure path, must use the counter, never the deep-copying `responses`.
+
+    ## Test
+
+    - 50 pairs are queued for removal; the RestSend history holds 50 inventory responses; `RestSend.responses` is patched to raise
+    - `_remove_interfaces` is replaced by a stub that records one 207 and returns; `remove_pending` succeeds and empties the queue
+    - The stub is then made to raise without recording a response; `remove_pending` raises `Bulk remove failed` with no accepted claim,
+      leaves the queue intact, and never reads `responses`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - RestSend.response_count
+    """
+    switch_count = 50
+    instance = _scale_bulk_orchestrator(switch_count)
+    pairs = [("port-channel101", f"FDO{index:08d}") for index in range(switch_count)]
+    for name, switch_id in pairs:
+        instance._queue_remove(name, switch_id)
+
+    def _stub_remove(self):
+        self.rest_send.add_response({"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": "/remove", "MESSAGE": "Multi-Status", "DATA": {}})
+        return {}
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_remove_interfaces", _stub_remove)
+    _forbid_response_history_copy(monkeypatch)
+
+    with does_not_raise():
+        instance.remove_pending()
+    assert instance._pending_removes == []
+    assert instance.rest_send.response_count == switch_count + 1
+
+    for name, switch_id in pairs:
+        instance._queue_remove(name, switch_id)
+
+    def _stub_remove_raises(self):
+        raise RuntimeError("sender raised before any response")
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_remove_interfaces", _stub_remove_raises)
+
+    with pytest.raises(RuntimeError, match=r"Bulk remove failed") as exc_info:
+        instance.remove_pending()
+
+    assert "accepted the removal" not in str(exc_info.value)
+    assert instance._pending_removes == pairs
+    assert instance.rest_send.response_count == switch_count + 1
+
+
+# =============================================================================
 # Test: validate_switches_capable
 # =============================================================================
 

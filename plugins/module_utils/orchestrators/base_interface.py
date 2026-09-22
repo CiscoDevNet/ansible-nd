@@ -330,7 +330,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             raise RuntimeError(f"'{self.__class__.__name__}' cannot bulk create: 'create_bulk_endpoint' is not defined.")
         api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
         request_body = {"interfaces": [item.payload for item in items]}
-        recorded = len(self.rest_send.responses)
+        recorded = self.rest_send.response_count
         cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
         names_before = set(cached_before) if cached_before is not None else None
         try:
@@ -338,7 +338,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         except Exception as e:
             accepted: list[str] = []
             verb = "accepted"
-            if len(self.rest_send.responses) > recorded and self.rest_send.return_code == 207:
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
                 accepted_names = self._accepted_multistatus_names()
                 accepted = [item.interface_name for item in items if item.interface_name.strip().lower() in accepted_names]
             else:
