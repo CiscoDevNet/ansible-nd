@@ -84,9 +84,9 @@ def INTEGRATION_MODULES = [
     // 'nd_manage_vpc_pair',
     // 'nd_interface_vpc_access',
     // 'nd_interface_vpc_trunk_host',
-    'nd_manage_switches',
-    // nd_resource_manager + nd_manage_fabric run DEAD LAST -- they are appended after
-    // nd_manage_links + the interface modules in effectiveIntegrationModules (below).
+    // nd_manage_switches is destructive and is appended after every other test below.
+    // nd_resource_manager + nd_manage_fabric are also appended after nd_manage_links
+    // and the interface modules in effectiveIntegrationModules (below).
     // Rationale (build #27): nd_resource_manager's vPC-pair config-save can push the
     // fabric into "migration mode" and corrupt the underlay; running it (then fabric)
     // after every role-neutral + interface test keeps that blast radius off them.
@@ -162,6 +162,12 @@ def CONSUL_CONFIG_FILES = [
 // together with each active playbook before anything can execute.
 @Field
 def CONSUL_RUNNER_FILES = ['run_integration_module.yaml']
+
+// Optional engineer-maintained patch retrieved from Consul when ENABLE_PATCH is true.
+// The key is kept separate from the normal runtime files so ordinary nightly runs
+// never download or apply it.
+@Field
+def CONSUL_PATCH_FILE = 'patch.git.diff'
 
 // Switch-membership pre-flight / self-heal playbook. Always downloaded and installed;
 // a missing Consul key is non-fatal (the pre-flight is skipped, never failing the build).
@@ -250,7 +256,7 @@ def RUN_INTEGRATION_MODULE_YAML = '''---
     ansible_mcfg_switch1: ""
     switch_serial_1: 9PICV0LTD7C
     switch_serial_2: 9VISBXAWYYB
-    switch_serial_3: 9FKMQG17900
+    switch_serial_3: 9FKMQG17900 
   tasks:
     # -------------------------------------------------------------------------
     # Not every target has tasks/cleanup.yaml, and include_role + tasks_from on
@@ -322,6 +328,7 @@ pipeline {
 
     parameters {
         booleanParam(name: 'DEBUG', defaultValue: false, description: 'Enable debug logging')
+        booleanParam(name: 'ENABLE_PATCH', defaultValue: false, description: 'Apply patch.git.diff from Consul to the existing ansible-nd checkout and run the nightly suite against that patched checkout')
         // Prerequisite check + live reconciliation, switch pre-flight + auto-onboard,
         // the ND 4.2 nd_manage_links target, and the nd_interface_* targets are always
         // on (non-optional): the pipeline reconciles the live setup to the required
@@ -332,8 +339,9 @@ pipeline {
 
     environment {
         WEBEX_TOKEN = credentials('ANSIBLE_WEBEX_TOKEN')
-        WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PUBLIC}"   // Public space
-        // WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PRIVATE}"     // Private space (active)
+        ND_PATCH_ENABLED = "${params.ENABLE_PATCH}"
+        // WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PUBLIC}"   // Public space
+        WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PRIVATE}"     // Private space (active)
         NDFC_USER = credentials('ANSIBLE_NDFC_USERNAME')
         NDFC_PASSWORD = credentials('ANSIBLE_NDFC_41_117_PASSWORD') //NDFC_32_PASSWORD
         // Switch credentials are bound only around pre-flight/test lifecycle calls below.
@@ -348,7 +356,7 @@ pipeline {
     }
     
     options {
-        disableConcurrentBuilds(abortPrevious: true)
+        disableConcurrentBuilds(abortPrevious: false)
         timeout(time: 10, unit: 'HOURS')
     }
 
@@ -582,6 +590,27 @@ pipeline {
                 [ -r "${BASE_DIRECTORY}/venv/bin/activate" ] || fail "Virtual environment is not available"
                 git check-ref-format --branch "${ND_GIT_BRANCH}" >/dev/null 2>&1 || \
                     fail "Invalid Git branch name: ${ND_GIT_BRANCH}"
+
+                # Patch mode is deliberately fail-closed: it must run against the
+                # checkout already present on the agent. Do not contact GitHub,
+                # fetch a newer branch, compare remote trees, or replace the
+                # checkout in this mode. The Consul patch is applied later, after
+                # the normal Consul runtime files have been installed.
+                case "${ND_PATCH_ENABLED:-false}" in
+                    true|false) ;;
+                    *) fail "ND_PATCH_ENABLED must be true or false" ;;
+                esac
+                if [ "${ND_PATCH_ENABLED:-false}" = "true" ]; then
+                    [ -d "${TARGET_DIR}" ] || \
+                        fail "Patch mode requires an existing ansible-nd checkout: ${TARGET_DIR}"
+                    [ ! -L "${TARGET_DIR}" ] || \
+                        fail "Refusing to use symlinked checkout in patch mode: ${TARGET_DIR}"
+                    git -C "${TARGET_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
+                        fail "Patch mode requires a Git working tree: ${TARGET_DIR}"
+                    echo "🩹 PATCH ENABLED: reusing existing ansible-nd checkout; latest repository download and remote tree validation are skipped"
+                    echo "📍 Existing checkout commit: $(git -C "${TARGET_DIR}" rev-parse --verify HEAD)"
+                    exit 0
+                fi
 
                 # Resolve and validate the requested branch before modifying the checkout.
                 if ! REMOTE_OUTPUT=$(git ls-remote --exit-code --refs "${REPO_URL}" "refs/heads/${ND_GIT_BRANCH}"); then
@@ -848,9 +877,11 @@ pipeline {
                     env.TEST_RESULT_SUMMARY = ''
                     env.TEST_RESULT_ARTIFACTS = ''
                     env.SKIPLIST_FILES = ''
+                    env.SKIPLIST_DETAILS = ''
                     env.BUILD_FAILURE_REASON = ''
                     env.TOTAL_PASSED_COUNT = '0'
                     env.TOTAL_FAILED_COUNT = '0'
+                    env.PATCH_APPLIED = 'false'
 
                     // Prerequisites are always enabled AND applied so the live setup is
                     // reconciled to the required setup before the tests; audit-only mode
@@ -955,9 +986,21 @@ pipeline {
                 try {
                     echo "⏱ Post-build Webex notification block started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
 
-                    // Build the message in Groovy (avoid doing Groovy inside shell)
-                    def message = "ND NIGHTLY NOTIFICATION \n"
-                    message += "📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER} \n"
+                    // Build the message in Groovy (avoid doing Groovy inside shell).
+                    // The current pipeline runs ND 4.3; use the active-version
+                    // environment value so the version is shown once in the title.
+                    def activeNdVersions = (env.ACTIVE_DCNM_VERSIONS ?: '4.3').trim()
+                    def notificationTitle = activeNdVersions.contains(',')
+                        ? "ND ${activeNdVersions} NIGHTLY NOTIFICATION"
+                        : "ND${activeNdVersions} NIGHTLY NOTIFICATION"
+                    def patchNotice = env.PATCH_APPLIED == 'true'
+                        ? "🩹 PATCH ENABLED: Consul ${CONSUL_PATCH_FILE} applied to the existing ansible-nd checkout\n"
+                        : (env.ND_PATCH_ENABLED == 'true'
+                            ? "🩹 PATCH REQUESTED: ${CONSUL_PATCH_FILE} was enabled but not applied\n"
+                            : '')
+                    def message = "${notificationTitle}\n"
+                    message += "📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n"
+                    message += patchNotice
                     message += "\n"
 
                     // Add grand total summary
@@ -987,16 +1030,37 @@ pipeline {
                         message += "❌ ${failCount} module failure(s) — see DETAILED TEST RESULTS above / console\n"
                     }
 
-                    message += "🔗 Results: ${JOB_URL}${BUILD_NUMBER}/console"
-                    // Link the archived module-wise skipped-tests summary artifact(s).
-                    def skipFiles = (env.SKIPLIST_FILES ?: '').split('\n').findAll { it.trim() }
-                    skipFiles.each { sf ->
-                        message += "\n📋 Skipped tests: ${JOB_URL}${BUILD_NUMBER}/artifact/${sf}"
-                    }
+                    message += "🔗 Results: [Jenkins console](${JOB_URL}${BUILD_NUMBER}/console)"
                     // Link the full build-numbered log bundle (all per-module console
                     // output, skip summaries, lint + consolidated summary in one zip).
                     if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
-                        message += "\n📦 All logs (zip): ${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE}"
+                        message += "\n📦 [All logs (zip)](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})"
+                    }
+
+                    // Webex limits message content to 7,439 characters before
+                    // encryption. Keep headroom for encoding and future additions.
+                    // The complete report remains available in the archived artifacts.
+                    final int WEBEX_SAFE_MESSAGE_LIMIT = 7000
+                    def fullMessageLength = message.length()
+                    echo "📨 Webex notification before size check (${fullMessageLength} characters):\n${message}"
+                    if (fullMessageLength > WEBEX_SAFE_MESSAGE_LIMIT) {
+                        def compactMessage = new StringBuilder()
+                        compactMessage.append("${notificationTitle}\n")
+                        compactMessage.append("Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n\n")
+                        compactMessage.append(patchNotice)
+                        compactMessage.append("Total Passed: ${totalPassed}\n")
+                        compactMessage.append("Total Failed: ${totalFailed}\n")
+                        compactMessage.append("\nDetailed results were omitted from this Webex message because they exceeded the Webex size limit.\n")
+                        compactMessage.append("Full results and skipped-test details are available in the Jenkins artifacts.\n")
+                        compactMessage.append("🔗 Results: [Jenkins console](${JOB_URL}${BUILD_NUMBER}/console)")
+                        if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
+                            compactMessage.append("\n📦 [All logs (zip)](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})")
+                        }
+                        message = compactMessage.toString()
+                        echo "⚠️ Webex message shortened from ${fullMessageLength} to ${message.length()} characters"
+                        echo "📨 Webex notification sent after compaction (${message.length()} characters):\n${message}"
+                    } else {
+                        echo "📏 Webex message length: ${fullMessageLength} characters"
                     }
 
                     // Send directly to the Webex REST API with httpRequest (the same step
@@ -1020,14 +1084,60 @@ pipeline {
                             asciiSafe.append(ch)
                         }
                     }
-                    def payload = '{"roomId":"' + env.WEBEX_ROOM_ID + '","markdown":"' + asciiSafe.toString() + '"}'
+                    def makeWebexPayload = { String cardJson ->
+                        '{"roomId":"' + env.WEBEX_ROOM_ID +
+                            '","markdown":"' + asciiSafe.toString() +
+                            '","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":' +
+                            cardJson + '}]}'
+                    }
+                    def adaptiveCard = buildWebexAdaptiveCard(
+                        env.TEST_RESULT_SUMMARY,
+                        env.TEST_RESULT_ARTIFACTS,
+                        notificationTitle,
+                        BUILD_NUMBER,
+                        JOB_URL,
+                        totalPassed,
+                        totalFailed,
+                        lintSummary,
+                        env.LOG_BUNDLE_FILE ?: '',
+                        null,
+                        patchNotice
+                    )
+                    def payload = makeWebexPayload(adaptiveCard)
+                    int payloadBytes = payload.getBytes('UTF-8').length
+                    // The byte-count line is part of the card, so recalculate a
+                    // few times until the displayed value includes that line.
+                    for (int sizePass = 0; sizePass < 3; sizePass++) {
+                        adaptiveCard = buildWebexAdaptiveCard(
+                            env.TEST_RESULT_SUMMARY,
+                            env.TEST_RESULT_ARTIFACTS,
+                            notificationTitle,
+                            BUILD_NUMBER,
+                            JOB_URL,
+                            totalPassed,
+                            totalFailed,
+                            lintSummary,
+                            env.LOG_BUNDLE_FILE ?: '',
+                            payloadBytes,
+                            patchNotice
+                        )
+                        payload = makeWebexPayload(adaptiveCard)
+                        int recalculatedPayloadBytes = payload.getBytes('UTF-8').length
+                        if (recalculatedPayloadBytes == payloadBytes) {
+                            break
+                        }
+                        payloadBytes = recalculatedPayloadBytes
+                    }
+                    echo "🃏 Webex Adaptive Card payload size: ${payloadBytes} bytes (${payload.length()} characters)"
 
                     withCredentials([string(credentialsId: 'ANSIBLE_WEBEX_TOKEN', variable: 'WEBEX_TOKEN')]) {
+                        // Build a plain String without Groovy interpolation of the secret.
+                        def authorizationHeader = 'Bearer ' + env.WEBEX_TOKEN
                         def resp = httpRequest(
                             url: 'https://webexapis.com/v1/messages',
                             httpMode: 'POST',
                             contentType: 'APPLICATION_JSON_UTF8',
-                            customHeaders: [[name: 'Authorization', value: "Bearer ${WEBEX_TOKEN}", maskValue: true]],
+                            customHeaders: [[name: 'Authorization', value: authorizationHeader, maskValue: true]],
                             requestBody: payload,
                             validResponseCodes: '100:599'
                         )
@@ -1231,6 +1341,10 @@ def archiveTestOutput(ndfcConfig, playbookName) {
 def archiveSkipList(ndfcConfig) {
     def skipFileName = "skipped_tests_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}.txt"
     try {
+        def alreadyRecorded = (env.SKIPLIST_FILES ?: '').split('\n').findAll { it.trim() }.contains(skipFileName)
+        if (alreadyRecorded) {
+            return
+        }
         // The summary is written into COLLECTIONS_DIRECTORY by the test-run shell.
         def present = sh(script: "cd ${COLLECTIONS_DIRECTORY} && [ -s '${skipFileName}' ]", returnStatus: true) == 0
         if (!present) {
@@ -1243,6 +1357,37 @@ def archiveSkipList(ndfcConfig) {
             chmod 0644 "${env.WORKSPACE}/${skipFileName}"
         """
         archiveArtifacts artifacts: "${skipFileName}", allowEmptyArchive: true, fingerprint: true
+        def report = readFile(file: skipFileName).trim()
+        if (report) {
+            def compact = []
+            def includeNumbered = false
+            report.readLines().each { line ->
+                def trimmed = line.trim()
+                def keep = trimmed.startsWith('MODULE:') ||
+                    trimmed.startsWith('RESULT:') ||
+                    trimmed.startsWith('ANSIBLE EXIT STATUS:') ||
+                    trimmed.startsWith('COMPLETED / OBSERVED TESTS:') ||
+                    trimmed.startsWith('LAST COMPLETED / OBSERVED:') ||
+                    trimmed.startsWith('FAILED TESTS:') ||
+                    trimmed.startsWith('PENDING / FULLY SKIPPED TESTS:') ||
+                    trimmed.startsWith('NOT OBSERVED / NOT REACHED TESTS:')
+                if (trimmed ==~ /^\d+\..*/) {
+                    keep = includeNumbered
+                }
+                if (trimmed.startsWith('FAILED TESTS:') || trimmed.startsWith('PENDING / FULLY SKIPPED TESTS:')) {
+                    includeNumbered = true
+                } else if (trimmed.startsWith('NOT OBSERVED / NOT REACHED TESTS:') ||
+                           trimmed.startsWith('MODULE:') || trimmed.startsWith('====')) {
+                    includeNumbered = false
+                }
+                if (keep) {
+                    compact << line
+                }
+            }
+            def details = (["### ${skipFileName}"] + compact).join('\n')
+            env.SKIPLIST_DETAILS = (env.SKIPLIST_DETAILS ?: '').trim() ?
+                "${env.SKIPLIST_DETAILS}\n\n${details}" : details
+        }
         sh "rm -f ${env.WORKSPACE}/${skipFileName}"
         // Accumulate one filename per fabric/version for the Webex link.
         env.SKIPLIST_FILES = (env.SKIPLIST_FILES ?: '').trim() ? "${env.SKIPLIST_FILES}\n${skipFileName}" : skipFileName
@@ -1257,9 +1402,9 @@ def archiveSkipList(ndfcConfig) {
  * Rows are stored pipe-delimited as
  * "status|playbook|fabric|nd|passed|failed|skipped|duration|note".
  *
- * Webex receives a real Markdown table so each module can have its artifact link
- * in the same row. The plain-text bundle continues to receive an aligned ASCII
- * table because it is intended to be readable when downloaded as a text file.
+ * Webex receives a real Markdown table with the module name itself linked to
+ * that module's artifact. Fabric and ND version remain in the raw summary data
+ * but are intentionally omitted from the notification table.
  */
 def formatResultsTable(rawSummary, linkArtifacts = false) {
     def lines = (rawSummary ?: '').split('\n').findAll { it.trim() }
@@ -1267,7 +1412,6 @@ def formatResultsTable(rawSummary, linkArtifacts = false) {
         return '(no per-module results captured)'
     }
     def rows = []
-    def anyNote = false
     def artifactLinks = [:]
     if (linkArtifacts) {
         (env.TEST_RESULT_ARTIFACTS ?: '').split('\n').findAll { it.trim() }.each { ln ->
@@ -1279,7 +1423,6 @@ def formatResultsTable(rawSummary, linkArtifacts = false) {
         def f = ln.split('\\|', -1)
         def cell = { int i -> (i < f.size() && f[i] != null) ? f[i].trim() : '' }
         def note = cell(8)
-        if (note) { anyNote = true }
         rows << [cell(0), cell(1), cell(2), cell(3), cell(4), cell(5), cell(6), cell(7), note]
     }
 
@@ -1287,23 +1430,10 @@ def formatResultsTable(rawSummary, linkArtifacts = false) {
         // Keep the link text short but specific. For example:
         // nd_manage_policy -> policy-logs
         // nd_interface_loopback -> interface-loopback-logs
-        def artifactLabel = { String moduleName ->
-            def token = (moduleName ?: '')
-                .replaceFirst(/^nd_manage_/, '')
-                .replaceFirst(/^nd_interface_/, 'interface_')
-                .replaceFirst(/^nd_/, '')
-                .replaceAll('_', '-')
-                .replaceAll('[^A-Za-z0-9-]+', '-')
-                .replaceAll('-+', '-')
-                .replaceAll('^-|-$', '')
-                .toLowerCase()
-            "${token ?: 'module'}-logs"
-        }
         def markdownCell = { value ->
             (value ?: '').toString().replace('|', '\\|').replace('\n', ' ')
         }
-        def markdownHeaders = ['Status', 'Playbook', 'Fabric', 'ND', 'Passed', 'Failed', 'Skipped', 'Duration', 'Logs']
-        if (anyNote) { markdownHeaders << 'Note' }
+        def markdownHeaders = ['Status', 'Playbook', 'Passed', 'Failed', 'Skipped', 'Duration']
         def separator = markdownHeaders.collect { header ->
             ['Passed', 'Failed', 'Skipped'].contains(header) ? '---:' : '---'
         }
@@ -1313,28 +1443,23 @@ def formatResultsTable(rawSummary, linkArtifacts = false) {
         rows.each { r ->
             def artifact = artifactLinks[r[1]]
             def logCell = artifact
-                ? "[${artifactLabel(r[1])}](${JOB_URL}${BUILD_NUMBER}/artifact/${artifact})"
-                : '-'
+                ? "[${markdownCell(r[1])}](${JOB_URL}${BUILD_NUMBER}/artifact/${artifact})"
+                : markdownCell(r[1])
             def display = [
                 markdownCell(r[0]),
-                "`${markdownCell(r[1])}`",
-                markdownCell(r[2]),
-                markdownCell(r[3]),
+                logCell,
                 markdownCell(r[4]),
                 markdownCell(r[5]),
                 markdownCell(r[6]),
-                markdownCell(r[7]),
-                logCell
+                markdownCell(r[7])
             ]
-            if (anyNote) { display << markdownCell(r[8]) }
             sb.append('| ' + display.join(' | ') + ' |\n')
         }
         return sb.toString().trim()
     }
 
-    def headers = ['Status', 'Playbook', 'Fabric', 'ND', 'Passed', 'Failed', 'Skipped', 'Duration']
-    def cols = [0, 1, 2, 3, 4, 5, 6, 7]
-    if (anyNote) { headers << 'Note'; cols << 8 }
+    def headers = ['Status', 'Playbook', 'Passed', 'Failed', 'Skipped', 'Duration']
+    def cols = [0, 1, 4, 5, 6, 7]
     // Column widths = max(header, any data cell).
     def widths = []
     for (int c = 0; c < headers.size(); c++) {
@@ -1369,6 +1494,147 @@ def formatResultsTable(rawSummary, linkArtifacts = false) {
 }
 
 /**
+ * Escapes a value for safe inclusion in a JSON string. Non-ASCII characters
+ * are emitted as unicode escapes because the Jenkins httpRequest client has
+ * previously altered emoji characters when writing the request body.
+ */
+def webexJsonEscape(value) {
+    def source = (value ?: '').toString()
+    def escaped = new StringBuilder()
+    for (int i = 0; i < source.length(); i++) {
+        char ch = source.charAt(i)
+        switch (ch) {
+            case '\\': escaped.append('\\\\'); break
+            case '"': escaped.append('\\"'); break
+            case '\r': escaped.append('\\r'); break
+            case '\n': escaped.append('\\n'); break
+            case '\t': escaped.append('\\t'); break
+            default:
+                if (ch < 0x20 || ch > 0x7E) {
+                    escaped.append(String.format('\\u%04x', (int) ch))
+                } else {
+                    escaped.append(ch)
+                }
+        }
+    }
+    escaped.toString()
+}
+
+/**
+ * Builds one fixed-width Adaptive Card row. The module-name cell receives a
+ * selectAction so the displayed module name opens its archived log artifact.
+ */
+def buildWebexCardColumnSet(List values, List urls = [], boolean header = false) {
+    // Give the linked Playbook column most of the available card width so
+    // module names wrap less often while result columns remain aligned.
+    def widths = ['1', '10', '1', '1', '1', '2']
+    def columns = []
+    values.eachWithIndex { value, index ->
+        def textBlock = '{"type":"TextBlock","text":"' + webexJsonEscape(value) +
+            '","wrap":true'
+        if (header) {
+            textBlock += ',"weight":"Bolder"'
+        }
+        if (index != 1) {
+            textBlock += ',"horizontalAlignment":"Center"'
+        }
+        if (!header && index == 0) {
+            if (value == 'FAIL') {
+                textBlock += ',"color":"Attention"'
+            } else if (value == 'OK') {
+                textBlock += ',"color":"Good"'
+            }
+        }
+        if (!header && index == 1 && index < urls.size() && urls[index]) {
+            textBlock += ',"selectAction":{"type":"Action.OpenUrl","url":"' +
+                webexJsonEscape(urls[index]) + '"}'
+        }
+        textBlock += '}'
+        columns << '{"type":"Column","width":"' + widths[index] +
+            '","items":[' + textBlock + ']}'
+    }
+    '{"type":"ColumnSet","separator":' + (header ? 'true' : 'false') +
+        ',"spacing":"Small","columns":[' + columns.join(',') + ']}'
+}
+
+/**
+ * Builds the Webex Adaptive Card used for the detailed notification. Unlike
+ * Markdown pipe tables, ColumnSets are rendered as aligned columns by Webex
+ * and retain clickable module-name actions.
+ */
+def buildWebexAdaptiveCard(rawSummary, rawArtifacts, title, buildNumber, jobUrl,
+                           totalPassed, totalFailed, lintSummary, logBundleFile,
+                           payloadBytes = null, patchNotice = '') {
+    def artifactLinks = [:]
+    (rawArtifacts ?: '').split('\n').findAll { it.trim() }.each { line ->
+        def parts = line.split('\\|', 2)
+        if (parts.size() == 2) {
+            artifactLinks[parts[0].trim()] = parts[1].trim()
+        }
+    }
+
+    def body = []
+    body << '{"type":"TextBlock","text":"' + webexJsonEscape(title) +
+        '","weight":"Bolder","size":"Medium","wrap":true}'
+    body << '{"type":"TextBlock","text":"' +
+        webexJsonEscape("📊 Pipeline completed for the ND Nightly run - Build ${buildNumber}") +
+        '","wrap":true}'
+    if ((patchNotice ?: '').trim()) {
+        body << '{"type":"TextBlock","text":"' +
+            webexJsonEscape(patchNotice.trim()) +
+            '","wrap":true,"color":"Warning","spacing":"Small"}'
+    }
+    body << '{"type":"TextBlock","text":"' +
+        webexJsonEscape("Total Passed: ${totalPassed}\nTotal Failed: ${totalFailed}") +
+        '","wrap":true}'
+    body << '{"type":"TextBlock","text":"' +
+        webexJsonEscape('📝 DETAILED TEST RESULTS:') +
+        '","weight":"Bolder","spacing":"Medium","wrap":true}'
+    body << buildWebexCardColumnSet(
+        ['Status', 'Playbook', 'Passed', 'Failed', 'Skipped', 'Duration'],
+        [],
+        true
+    )
+
+    (rawSummary ?: '').split('\n').findAll { it.trim() }.each { line ->
+        def fields = line.split('\\|', -1)
+        def cell = { int index ->
+            (index < fields.size() && fields[index] != null) ? fields[index].trim() : ''
+        }
+        def playbook = cell(1)
+        def artifact = artifactLinks[playbook]
+        def artifactUrl = artifact ? "${jobUrl}${buildNumber}/artifact/${artifact}" : ''
+        body << buildWebexCardColumnSet(
+            [cell(0), playbook, cell(4), cell(5), cell(6), cell(7)],
+            ['', artifactUrl, '', '', '', ''],
+            false
+        )
+    }
+
+    if ((lintSummary ?: '').trim()) {
+        body << '{"type":"TextBlock","text":"' +
+            webexJsonEscape("🧹 Ansible-lint Results:\n${lintSummary}") +
+            '","wrap":true,"spacing":"Medium"}'
+    }
+
+    def footerLinks = "[Jenkins console](${jobUrl}${buildNumber}/console)"
+    if ((logBundleFile ?: '').trim()) {
+        footerLinks += " | [All logs (zip)](${jobUrl}${buildNumber}/artifact/${logBundleFile})"
+    }
+    body << '{"type":"TextBlock","text":"' + webexJsonEscape(footerLinks) +
+        '","wrap":true,"spacing":"Medium"}'
+    if (payloadBytes != null) {
+        body << '{"type":"TextBlock","text":"' +
+            webexJsonEscape("Payload size: ${payloadBytes} bytes") +
+            '","size":"Small","isSubtle":true,"wrap":true,"spacing":"Small"}'
+    }
+
+    '{"$schema":"http://adaptivecards.io/schemas/adaptive-card.json",' +
+        '"type":"AdaptiveCard","version":"1.3","body":[' + body.join(',') +
+        ']}'
+}
+
+/**
  * Bundles every log this build produced — per-module test/console output, the
  * module-wise skip summaries, the ansible-lint result and a consolidated run
  * summary — into ONE build-numbered zip, archives it (so it shows in the build's
@@ -1384,6 +1650,7 @@ def bundleAllLogs() {
         def summary = """ND NIGHTLY RUN - Build ${BUILD_NUMBER}
 Generated: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 Console: ${JOB_URL}${BUILD_NUMBER}/console
+Patch mode: ${env.PATCH_APPLIED == 'true' ? "ENABLED (${CONSUL_PATCH_FILE} from Consul)" : 'disabled'}
 
 Total Passed: ${env.TOTAL_PASSED_COUNT ?: '0'}
 Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}
@@ -1415,10 +1682,40 @@ ${env.BUILD_FAILURE_REASON}
                 STAGE="${WORKSPACE}/nd_logs_build_${BUILD_NUMBER}"
                 rm -rf "${STAGE}"; mkdir -p "${STAGE}"
 
-                cp "${COLLECTIONS_DIRECTORY}"/test_output_*.txt   "${STAGE}/" 2>/dev/null || true
-                cp "${COLLECTIONS_DIRECTORY}"/skipped_tests_*.txt "${STAGE}/" 2>/dev/null || true
-                cp "${BASE_DIRECTORY}/lint_summary.txt"           "${STAGE}/" 2>/dev/null || true
-                cp "${WORKSPACE}/pipeline_summary_build_${BUILD_NUMBER}.txt" "${STAGE}/" 2>/dev/null || true
+                # Do not hide missing artifacts: a failed run can legitimately
+                # produce no per-module logs (for example, when a pre-test patch
+                # fails), but the bundle must say exactly what was unavailable.
+                MANIFEST="${STAGE}/bundle_manifest.txt"
+                {
+                    echo "ND NIGHTLY LOG BUNDLE MANIFEST"
+                    echo "Build: ${BUILD_NUMBER}"
+                    echo "Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                    echo ""
+                } > "${MANIFEST}"
+                copy_matches() {
+                    local label="$1"
+                    local found=0
+                    shift
+                    for candidate in "$@"; do
+                        if [ -f "${candidate}" ] && [ ! -L "${candidate}" ]; then
+                            if cp "${candidate}" "${STAGE}/" 2>/dev/null; then
+                                echo "COPIED ${label}: ${candidate}" >> "${MANIFEST}"
+                            else
+                                echo "COPY_FAILED ${label}: ${candidate}" >> "${MANIFEST}"
+                            fi
+                            found=1
+                        fi
+                    done
+                    if [ "${found}" -eq 0 ]; then
+                        echo "MISSING ${label}" >> "${MANIFEST}"
+                    fi
+                }
+                # Bash keeps an unmatched glob literal, which copy_matches treats
+                # as absent; this avoids relying on shell-specific nullglob flags.
+                copy_matches "module-log" "${COLLECTIONS_DIRECTORY}"/test_output_*.txt
+                copy_matches "skip-summary" "${COLLECTIONS_DIRECTORY}"/skipped_tests_*.txt
+                copy_matches "lint-summary" "${BASE_DIRECTORY}/lint_summary.txt"
+                copy_matches "pipeline-summary" "${WORKSPACE}/pipeline_summary_build_${BUILD_NUMBER}.txt"
 
                 # Full live Jenkins console needs Overall/Read; on a locked-down controller
                 # this 403s -> drop a pointer so the zip always says where it lives.
@@ -1484,6 +1781,99 @@ def downloadFromConsul(fileName, localFileName = null) {
         env.CONSUL_SYNC_FAILED = 'true'
         error("Required Consul download failed for ${fileName}: ${e.getMessage()}")
     }
+}
+
+/**
+ * Applies the engineer-maintained patch from Consul to the existing checkout.
+ * This runs after Consul runtime files are installed, so a patch can target
+ * either the collection source or an injected runtime file without being
+ * overwritten by the synchronization step.
+ */
+def applyConsulPatchIfEnabled() {
+    if ((env.ND_PATCH_ENABLED ?: 'false').toBoolean() == false) {
+        env.PATCH_APPLIED = 'false'
+        return
+    }
+
+    // A patch-validation or patch-application failure is a required runtime
+    // synchronization failure; the outer version loop must not reset the lab
+    // and continue as if the requested patched run had started.
+    env.CONSUL_SYNC_FAILED = 'true'
+    echo "🩹 PATCH ENABLED: downloading ${CONSUL_PATCH_FILE} from Consul"
+    downloadFromConsul(CONSUL_PATCH_FILE, CONSUL_PATCH_FILE)
+
+    def patchSource = "${pwd()}/${CONSUL_PATCH_FILE}"
+    def patchTarget = "${COLL_DIR}/nd"
+    withEnv([
+        "PATCH_SOURCE_FILE=${patchSource}",
+        "PATCH_TARGET_DIR=${patchTarget}",
+        "PATCH_FILE_NAME=${CONSUL_PATCH_FILE}"
+    ]) {
+        sh '''#!/bin/bash
+            set -euo pipefail
+
+            : "${PATCH_SOURCE_FILE:?PATCH_SOURCE_FILE must be set}"
+            : "${PATCH_TARGET_DIR:?PATCH_TARGET_DIR must be set}"
+            : "${PATCH_FILE_NAME:?PATCH_FILE_NAME must be set}"
+            [ -s "${PATCH_SOURCE_FILE}" ] || {
+                echo "❌ Consul patch is empty: ${PATCH_FILE_NAME}" >&2
+                exit 1
+            }
+            [ -d "${PATCH_TARGET_DIR}" ] || {
+                echo "❌ Patch target checkout does not exist: ${PATCH_TARGET_DIR}" >&2
+                exit 1
+            }
+            git -C "${PATCH_TARGET_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+                echo "❌ Patch target is not a Git working tree: ${PATCH_TARGET_DIR}" >&2
+                exit 1
+            }
+
+            PATCH_IN_REPO="${PATCH_TARGET_DIR}/${PATCH_FILE_NAME}"
+            TEMP_PATCH="${PATCH_SOURCE_FILE}.prepared-${BUILD_NUMBER:-manual}-$$"
+            trap 'rm -f -- "${TEMP_PATCH}"' EXIT
+            cp -- "${PATCH_SOURCE_FILE}" "${TEMP_PATCH}"
+
+            # If the previous patch run left its patch applied, reverse only that
+            # exact patch. Any unrelated working-tree change stops the build rather
+            # than being overwritten.
+            if [ -n "$(git -C "${PATCH_TARGET_DIR}" status --porcelain=v1 --untracked-files=all)" ]; then
+                [ -f "${PATCH_IN_REPO}" ] || {
+                    echo "❌ Existing ansible-nd checkout has changes, but no prior ${PATCH_FILE_NAME} is available for safe reversal" >&2
+                    git -C "${PATCH_TARGET_DIR}" status --short >&2 || true
+                    exit 1
+                }
+                git -C "${PATCH_TARGET_DIR}" apply --reverse --check --whitespace=nowarn "${PATCH_IN_REPO}" || {
+                    echo "❌ Existing ansible-nd checkout contains changes that are not exactly the previous Consul patch" >&2
+                    git -C "${PATCH_TARGET_DIR}" status --short >&2 || true
+                    exit 1
+                }
+                git -C "${PATCH_TARGET_DIR}" apply --reverse --whitespace=nowarn "${PATCH_IN_REPO}"
+            fi
+
+            # After the safe reversal, only the old patch file itself may remain
+            # untracked. No engineer changes are silently discarded.
+            if git -C "${PATCH_TARGET_DIR}" status --porcelain=v1 --untracked-files=all | \
+                awk -v allowed="${PATCH_FILE_NAME}" '$1 == "??" && $2 == allowed { next } NF { bad = 1 } END { exit bad }'; then
+                :
+            else
+                echo "❌ Checkout is not clean after previous patch reversal" >&2
+                git -C "${PATCH_TARGET_DIR}" status --short >&2 || true
+                exit 1
+            fi
+
+            cd "${PATCH_TARGET_DIR}"
+            git apply --check --whitespace=nowarn "${TEMP_PATCH}" || {
+                echo "❌ Consul patch failed validation: ${PATCH_FILE_NAME}" >&2
+                exit 1
+            }
+            git apply --whitespace=nowarn "${TEMP_PATCH}"
+            mv -- "${TEMP_PATCH}" "${PATCH_IN_REPO}"
+            echo "✅ Applied Consul ${PATCH_FILE_NAME} to existing ansible-nd checkout"
+            echo "🧪 All configured nightly tests will run against the patched checkout"
+        '''
+    }
+    env.PATCH_APPLIED = 'true'
+    env.CONSUL_SYNC_FAILED = 'false'
 }
 
 /**
@@ -1935,6 +2325,9 @@ def runNDFCVersionTests(ndfcConfig) {
             '''
         }
         env.REQUIRED_FILES_READY = 'true'
+        // Apply the optional Consul patch only after all Consul runtime files
+        // have been installed into the checkout.
+        applyConsulPatchIfEnabled()
         // Use inventory.yaml and requirements.yaml files from Jenkins workspace
         ndfcConfig.requirementsFile = "${COLLECTIONS_DIRECTORY}/requirements.txt"  // Adjust if Jenkins uses a different filename
         ndfcConfig.requirementsYamlFile = "${COLLECTIONS_DIRECTORY}/requirements.yaml"  // Use Jenkins-provided requirements.yaml
@@ -1948,243 +2341,12 @@ def runNDFCVersionTests(ndfcConfig) {
         // echo "Using requirements yaml file: ${ndfcConfig.requirementsYamlFile}"
         // echo "${sh(script: 'ansible-galaxy collection list', returnStdout: true)}"
 
-        // TODO
-        // ---- ND 4.2.1 upstream-test workarounds (items 8, 9 & 10) ----
-        // Patch the freshly cloned CiscoDevNet/ansible-nd integration tests in
-        // place for ND 4.2.1 behavior changes. Each edit is idempotent and
-        // NON-FATAL: a missing target is logged and skipped so a stale patch can
-        // never break the pipeline. Remove once upstream ships equivalents.
-        sh '''#!/bin/bash
-            set -uo pipefail
-
-            patch_test_file() {
-                _f="$1"; _sed="$2"; _verify="$3"; _desc="$4"
-                if [ ! -f "${_f}" ]; then echo "⚠️  ND-4.2.1 patch skipped (missing): ${_desc} -> ${_f}"; return 0; fi
-                if ! sed -i.bak -e "${_sed}" "${_f}"; then echo "⚠️  ND-4.2.1 patch sed failed (non-fatal): ${_desc}"; rm -f "${_f}.bak"; return 0; fi
-                if grep -qF "${_verify}" "${_f}"; then echo "✅ ND-4.2.1 patch applied: ${_desc}"; else echo "⚠️  ND-4.2.1 patch matched nothing (non-fatal): ${_desc}"; fi
-                rm -f "${_f}.bak"
-            }
-
-            ACL_IPV6="${COLLECTIONS_DIRECTORY}/tests/integration/targets/nd_manage_acl/tasks/acl_ipv6.yaml"
-            FABRIC_VARS="${COLLECTIONS_DIRECTORY}/tests/integration/targets/nd_manage_fabric/vars/main.yaml"
-            ND_REST_MODULE="${COLLECTIONS_DIRECTORY}/plugins/modules/nd_rest.py"
-            NETWORK_VALIDATE="${COLLECTIONS_DIRECTORY}/plugins/action/tests/integration/_nd_network_validate.py"
-            VRFS_ORCHESTRATOR="${COLLECTIONS_DIRECTORY}/plugins/module_utils/orchestrators/vrfs.py"
-            POLICY_DELETED_TEST="${COLLECTIONS_DIRECTORY}/tests/integration/targets/nd_manage_policy/tests/deleted.yaml"
-            POLICY_GROUP_SPECIAL_TEST="${COLLECTIONS_DIRECTORY}/tests/integration/targets/nd_manage_policy_group/tests/special_cases.yaml"
-
-            # Item 8: ND 4.2.1 now stores/returns IPv6 ACLs as type "ipv6" (the module
-            # 'after' already asserts "ipv6"); only the direct-wire assert still expects
-            # pre-4.2.1 "ipv4". Align the wire assert to "ipv6".
-            patch_test_file "${ACL_IPV6}" 's/ipv6_acl_wire\\.type == "ipv4"/ipv6_acl_wire.type == "ipv6"/' 'ipv6_acl_wire.type == "ipv6"' "item8: nd_manage_acl IPv6 wire type ipv4->ipv6"
-
-            # Item 9: ND 4.2.1 rejects the asdot iBGP bgp_asn "65001.55" on create
-            # (generic 400); asplain is accepted. Downstream validations assert the
-            # post-update ASN "65002", not this create-time value, so asdot->asplain
-            # "65001" (matches site_id "65001") is safe.
-            patch_test_file "${FABRIC_VARS}" 's/bgp_asn: "65001\\.55"/bgp_asn: "65001"/g' 'bgp_asn: "65001"' "item9: nd_manage_fabric iBGP asdot->asplain"
-
-            # Item 10: the upstream iBGP fixtures request four route reflectors,
-            # but these integration fabrics are intentionally created without
-            # switches. ND 4.2.1 rejects that combination with only a generic
-            # 400 "Request validation failed". Two is the API-compatible default
-            # and is also the value returned by the retained test fabric.
-            patch_test_file "${FABRIC_VARS}" 's/route_reflector_count: 4/route_reflector_count: 2/g' 'route_reflector_count: 2' "item10: nd_manage_fabric iBGP route-reflector count 4->2"
-
-            # Item 11: some ND POST/DELETE endpoints return a successful empty
-            # body.  The upstream nd_rest module currently sanitizes that None
-            # body unconditionally and raises before failed_when can handle it.
-            if [ -f "${ND_REST_MODULE}" ]; then
-                python3 - "${ND_REST_MODULE}" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-old = """        nd.existing = sanitize(nd.result[\"jsondata\"], ND_REST_KEYS_TO_SANITIZE)
-
-    # Report changes for idempotency depending on methods
-    nd.result[\"status\"] = nd.status
-    if sanitize(nd.result[\"jsondata\"], ND_REST_KEYS_TO_SANITIZE) != nd.previous and method != \"GET\":
-"""
-new = """        if nd.result[\"jsondata\"] is not None:
-            nd.existing = sanitize(nd.result[\"jsondata\"], ND_REST_KEYS_TO_SANITIZE)
-
-    # Report changes for idempotency depending on methods
-    nd.result[\"status\"] = nd.status
-    if nd.result[\"jsondata\"] is not None and sanitize(nd.result[\"jsondata\"], ND_REST_KEYS_TO_SANITIZE) != nd.previous and method != \"GET\":
-"""
-if new in text:
-    print("already present: item11 nd_rest empty-body handling")
-elif old in text:
-    path.write_text(text.replace(old, new, 1))
-    print("applied: item11 nd_rest empty-body handling")
-else:
-    print("matched nothing (non-fatal): item11 nd_rest empty-body handling")
-PY
-                grep -qF 'if nd.result["jsondata"] is not None:' "${ND_REST_MODULE}" || echo "verification failed (non-fatal): item11"
-            else
-                echo "patch skipped (missing, non-fatal): item11 -> ${ND_REST_MODULE}"
-            fi
-
-            # Item 12: ND's network GET response omits some write-only fields
-            # (networkId, rtAuto, enableIr).  Do not report a false mismatch for
-            # a field the controller did not return; returned fields remain checked.
-            if [ -f "${NETWORK_VALIDATE}" ]; then
-                python3 - "${NETWORK_VALIDATE}" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-old = """                actual_value = _first_value(live, field)
-                if not _values_equal(expected_value, actual_value):
-"""
-new = """                actual_value = _first_value(live, field)
-                if actual_value is None:
-                    continue
-                if not _values_equal(expected_value, actual_value):
-"""
-if new in text:
-    print("already present: item12 network omitted-field handling")
-elif old in text:
-    path.write_text(text.replace(old, new, 1))
-    print("applied: item12 network omitted-field handling")
-else:
-    print("matched nothing (non-fatal): item12 network omitted-field handling")
-PY
-                grep -qF 'if actual_value is None:' "${NETWORK_VALIDATE}" || echo "verification failed (non-fatal): item12"
-            else
-                echo "patch skipped (missing, non-fatal): item12 -> ${NETWORK_VALIDATE}"
-            fi
-
-            # Item 13: the VRF model retains legacy numeric key types (3/7),
-            # while ND's REST contract requires 3des/type7 and rejects the
-            # numeric value with HTTP 400.  Omit the key type without a password;
-            # otherwise translate it only at the API boundary.
-            if [ -f "${VRFS_ORCHESTRATOR}" ]; then
-                python3 - "${VRFS_ORCHESTRATOR}" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-old = """    def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
-        if getattr(self.strategy, \"is_parent\", False) and getattr(self.strategy, \"is_multicluster\", False):
-            return self._mcfg_parent_vrf_payload(model_instance)
-        return model_instance.to_payload()
-"""
-new = """    def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
-        if getattr(self.strategy, \"is_parent\", False) and getattr(self.strategy, \"is_multicluster\", False):
-            payload = self._mcfg_parent_vrf_payload(model_instance)
-        else:
-            payload = model_instance.to_payload()
-
-        # The Python model retains legacy numeric values for compatibility,
-        # but ND's REST API accepts the string enum on the wire.
-        fabric_data = payload.get(\"fabricData\")
-        if isinstance(fabric_data, dict):
-            if not fabric_data.get(\"bgpPassword\"):
-                fabric_data.pop(\"bgpPasswordKeyType\", None)
-            else:
-                key_type = fabric_data.get(\"bgpPasswordKeyType\")
-                fabric_data[\"bgpPasswordKeyType\"] = {3: \"3des\", 7: \"type7\", \"3\": \"3des\", \"7\": \"type7\"}.get(key_type, key_type)
-        return payload
-"""
-if new in text:
-    print("already present: item13 VRF BGP key-type wire enum")
-elif old in text:
-    path.write_text(text.replace(old, new, 1))
-    print("applied: item13 VRF BGP key-type wire enum")
-else:
-    print("matched nothing (non-fatal): item13 VRF BGP key-type wire enum")
-PY
-                grep -qF 'fabric_data["bgpPasswordKeyType"] = {3: "3des"' "${VRFS_ORCHESTRATOR}" || echo "verification failed (non-fatal): item13"
-            else
-                echo "patch skipped (missing, non-fatal): item13 -> ${VRFS_ORCHESTRATOR}"
-            fi
-
-            # Item 14: a repeated policy delete can return the valid ND no-op
-            # response "No Commands to execute".  Accept only that known case.
-            if [ -f "${POLICY_DELETED_TEST}" ]; then
-                python3 - "${POLICY_DELETED_TEST}" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-old = (
-    '    - name: "DELETED TC2 - Delete clock_timezone again triggers cleanup deploy"\n'
-    '      cisco.nd.nd_manage_policy:\n'
-    '        fabric_name: "{{ fabric_name }}"\n'
-    '        state: deleted\n'
-    '        deploy: true\n'
-    '        config:\n'
-    '          - name: clock_timezone\n'
-    '          - switch:\n'
-    '              - serial_number: "{{ switch_serial_1 }}"\n'
-    '      register: result\n'
-    '      tags: deleted\n'
-)
-new = old.replace(
-    'DELETED TC2 - Delete clock_timezone again triggers cleanup deploy',
-    'DELETED TC2 - Delete clock_timezone again accepts ND no-op deploy',
-).replace(
-    '      register: result\n      tags: deleted\n',
-    '      register: result\n'
-    '      # ND returns 207 when the repeated delete has nothing left to deploy.\n'
-    '      ignore_errors: true\n'
-    '      tags: deleted\n',
-)
-if new in text:
-    print("already present: item14 policy repeat-delete no-op")
-elif old in text:
-    path.write_text(text.replace(old, new, 1))
-    print("applied: item14 policy repeat-delete no-op")
-else:
-    print("matched nothing (non-fatal): item14 policy repeat-delete no-op")
-PY
-            else
-                echo "patch skipped (missing, non-fatal): item14 -> ${POLICY_DELETED_TEST}"
-            fi
-
-            # Item 15: the force-create scenario needs a baseline policy-group
-            # object, not a second switch deployment.  Avoid a duplicate command
-            # when rapid-pvst is already present on the retained switch.
-            if [ -f "${POLICY_GROUP_SPECIAL_TEST}" ]; then
-                python3 - "${POLICY_GROUP_SPECIAL_TEST}" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-old = (
-    '    - name: "SPECIAL A.SETUP - Baseline switch_freeform group"\n'
-    '      cisco.nd.nd_manage_policy_group:\n'
-    '        fabric_name: "{{ fabric_name }}"\n'
-    '        state: merged\n'
-    '        deploy: true\n'
-)
-new = old.replace(
-    '        deploy: true\n',
-    '        # Baseline identity is all this setup needs.\n'
-    '        deploy: false\n',
-)
-if new in text:
-    print("already present: item15 policy-group baseline no deploy")
-elif old in text:
-    path.write_text(text.replace(old, new, 1))
-    print("applied: item15 policy-group baseline no deploy")
-else:
-    print("matched nothing (non-fatal): item15 policy-group baseline no deploy")
-PY
-            else
-                echo "patch skipped (missing, non-fatal): item15 -> ${POLICY_GROUP_SPECIAL_TEST}"
-            fi
-        '''
+        // Patch mode, when enabled, has already applied the Consul-managed diff to
+        // the existing checkout immediately above. Normal nightly runs remain
+        // unchanged and use the validated repository checkout.
     }
-    
-    echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+
+        echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
     generateDynamicInventory(ndfcConfig)
     // Switch availability is confirmed at three points so no module ever runs on a
     // fabric that is missing a canonical switch: (1) an ENFORCED pre-flight here that
@@ -2267,10 +2429,7 @@ def runSwitchMembershipSync(ndfcConfig, phase) {
         // removed. Only a prerequisite-only audit stays read-only.
         def autoOnboard = (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')
         try {
-            withCredentials([usernamePassword(credentialsId: 'ANSIBLE_NXOS_SWITCH_CREDENTIALS',
-                                               usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME',
-                                               passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD')]) {
-                withEnv(["PREFLIGHT_INVENTORY=${inventoryFile}",
+            withEnv(["PREFLIGHT_INVENTORY=${inventoryFile}",
                          "PREFLIGHT_APPLY=${autoOnboard}",
                          "PREFLIGHT_FAIL_ON_MISSING=false",
                          "PREFLIGHT_TIMEOUT=${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}"]) {
@@ -2288,13 +2447,6 @@ def runSwitchMembershipSync(ndfcConfig, phase) {
                         exit 1
                     fi
                     echo "🔎 Switch membership sync (apply=${PREFLIGHT_APPLY}, timeout=${PREFLIGHT_TIMEOUT}s) against ${PREFLIGHT_INVENTORY}"
-                    # Switch discovery creds are bound only for this lifecycle call and
-                    # are read by nd_ensure_switches from the masked environment; no
-                    # switch secret is stored in inventory or passed on the CLI.
-                    if [ -z "${ANSIBLE_NXOS_SWITCH_USERNAME:-}" ] || [ -z "${ANSIBLE_NXOS_SWITCH_PASSWORD:-}" ]; then
-                        echo "❌ Switch credential binding is empty; refusing membership sync" >&2
-                        exit 1
-                    fi
                     # Bound the onboard: a switch that will not become manageable can
                     # otherwise hang here for hours (the module's internal manageability
                     # wait is ~175 min and un-tunable). Default 3600s (60 min) lets a
@@ -2310,7 +2462,6 @@ def runSwitchMembershipSync(ndfcConfig, phase) {
                         -e "nd_switch_require_full_roster=true" \
                         -e "nd_switch_fail_on_missing=${PREFLIGHT_FAIL_ON_MISSING}"
                     '''
-                }
             }
             echo "✅ Switch membership ${label} passed for ND ${ndfcConfig.version}"
         } catch (Exception e) {
@@ -2358,9 +2509,10 @@ def runFabricTest(ndfcConfig) {
             // nd_manage_links (ND 4.2) and the nd_interface_* targets always run
             // (non-optional): appended unconditionally. nd_manage_links assumes its
             // dedicated test fabric/switches are provisioned (nd_test_fabric_numbered).
-            // nd_resource_manager + nd_manage_fabric are pinned DEAD LAST (fabric-mutating;
-            // see INTEGRATION_MODULES note) -- keep this list in sync with the results parser.
-            def effectiveIntegrationModules = INTEGRATION_MODULES + ['nd_manage_links'] + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric']
+            // nd_resource_manager, nd_manage_fabric, and the destructive
+            // nd_manage_switches test are pinned LAST -- keep this list in sync
+            // with the results parser.
+            def effectiveIntegrationModules = INTEGRATION_MODULES + ['nd_manage_links'] + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_switches']
             def integrationForShell = effectiveIntegrationModules.join(' ')
             def standaloneIntegrationForShell = STANDALONE_INTEGRATION_MODULES.join(' ')
             def vpcPairSwitch1Serial = "${ndfcConfig.vpc_pair_switch1_serial ?: ''}".trim()
@@ -2400,10 +2552,7 @@ def runFabricTest(ndfcConfig) {
                         echo "Using inventory file: ${inventory_file}"
                         //echo "Using playbook file: ${playbook_file}"
                         echo "Tests Run starts for ${ndfcConfig.fabric_name} to NDFC version: ${ndfcConfig.version}"
-                        withCredentials([usernamePassword(credentialsId: 'ANSIBLE_NXOS_SWITCH_CREDENTIALS',
-                                                           usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME',
-                                                           passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD')]) {
-                            withEnv(["PLAYBOOK_LIST=${playbooksForShell}",
+                        withEnv(["PLAYBOOK_LIST=${playbooksForShell}",
                                  "INTEGRATION_LIST=${integrationForShell}",
                                  "STANDALONE_INTEGRATION_LIST=${standaloneIntegrationForShell}",
                                  "VPC_PAIR_SWITCH1_SERIAL=${vpcPairSwitch1Serial}",
@@ -2444,11 +2593,6 @@ def runFabricTest(ndfcConfig) {
                                     echo 'Error: ansible-playbook is not installed or not in PATH. Exiting.'
                                     exit 1
                                 fi
-                                if [ -z "${ANSIBLE_NXOS_SWITCH_USERNAME:-}" ] || [ -z "${ANSIBLE_NXOS_SWITCH_PASSWORD:-}" ]; then
-                                    echo "❌ Switch credential binding is empty; refusing to run switch-dependent integration tests" >&2
-                                    exit 1
-                                fi
-
                                 # Verify inventory file exists
                                 if [ ! -f "${INVENTORY_FILE}" ] || [ -L "${INVENTORY_FILE}" ] || [ ! -s "${INVENTORY_FILE}" ]; then
                                     echo "⚠️ Inventory file not found: ${INVENTORY_FILE}"
@@ -2867,7 +3011,6 @@ def runFabricTest(ndfcConfig) {
                                     exit "${RUN_FAILURE}"
                                 fi
                             '''
-                            }
                         }
                         echo "🚀 End of function - ${ndfcConfig.fabric_name}"
                         //parseDeploymentResults(ndfcConfig, failureFlagName)
@@ -2882,9 +3025,10 @@ def runFabricTest(ndfcConfig) {
                     def resultTargets = []
                     // Mirror integrationForShell: nd_manage_links and the nd_interface_*
                     // targets always run (non-optional), so the parser always expects
-                    // their output. nd_resource_manager + nd_manage_fabric are pinned DEAD
-                    // LAST here too -- MUST match effectiveIntegrationModules above.
-                    def effectiveIntegrationModulesForResults = INTEGRATION_MODULES + ['nd_manage_links'] + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric']
+                    // their output. nd_resource_manager, nd_manage_fabric, and the
+                    // destructive nd_manage_switches test are pinned LAST here too --
+                    // MUST match effectiveIntegrationModules above.
+                    def effectiveIntegrationModulesForResults = INTEGRATION_MODULES + ['nd_manage_links'] + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_switches']
                     effectiveIntegrationModulesForResults.each { m -> resultTargets.add([m, 'integration']) }
                     if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
                         STANDALONE_INTEGRATION_MODULES.each { m -> resultTargets.add([m, 'integration']) }
@@ -2914,7 +3058,13 @@ def runFabricTest(ndfcConfig) {
                             }
                         } else {
                             setFailureFlag(failureFlagName, true)
-                            error("Required test output file not found: ${testOutputFile}")
+                            // Preserve the report and skip-list archive even when an
+                            // earlier fail-closed guard prevented this target from
+                            // starting.  The owner must see NOT_RUN/PENDING instead
+                            // of losing every later module from the Webex summary.
+                            def missingLabel = (testType == 'smoke') ? "${token} (smoke)" : token
+                            env.TEST_RESULT_SUMMARY += "\nNOT_RUN|${missingLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|0|0|0|not reached|output file missing"
+                            echo "⚠️ Required test output file not found; recording ${missingLabel} as NOT_RUN: ${testOutputFile}"
                         }
                     }
                     // Archive the module-wise skipped-tests summary and record its link.

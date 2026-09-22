@@ -40,7 +40,7 @@ WORKERS = int(os.environ.get("ND_WORKERS", "8"))
 # Keys whose local source lives outside nd_pipeline/playbooks/ (see consul-sync.md).
 CONFIG_KEYS = {
     "ansible.cfg", "inventory.yaml", "requirements.txt",
-    "requirements.yaml", "reset_fabric.yaml",
+    "requirements.yaml", "reset_fabric.yaml", "patch.git.diff",
 }
 TESTS_KEYS = {
     "integration_config.yml", "run_integration_module.yaml",
