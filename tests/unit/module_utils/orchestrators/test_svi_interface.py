@@ -26,6 +26,8 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.svi_interface import SviInterfaceModel
@@ -49,6 +51,7 @@ def _build_rest_send(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    check_mode: bool = False,
 ) -> RestSend:
     """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
 
@@ -64,7 +67,7 @@ def _build_rest_send(
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    params: dict = {"check_mode": check_mode, "fabric_name": fabric_name}
     if state is not None:
         params["state"] = state
     if config is not None:
@@ -83,9 +86,10 @@ def _build_orchestrator(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    check_mode: bool = False,
 ) -> SviInterfaceOrchestrator:
     """Construct an orchestrator with the file-based RestSend injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config, check_mode=check_mode)
     return SviInterfaceOrchestrator(rest_send=rest_send)
 
 
@@ -754,3 +758,97 @@ def test_svi_orchestrator_00940() -> None:
     assert len(orchestrator.rest_send.responses) == 3
     assert orchestrator._pending_removes == []
     assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: capability preflight opt-in (PR #571 review)
+# =============================================================================
+
+
+def test_svi_orchestrator_00945() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator opts in to the shared capability preflight as `svi` / `managed`.
+
+    ## Test
+
+    - `interface_type == "svi"` and `interface_mode == "managed"`
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.interface_type
+    - SviInterfaceOrchestrator.interface_mode
+    """
+    assert SviInterfaceOrchestrator.interface_type == "svi"
+    assert SviInterfaceOrchestrator.interface_mode == "managed"
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check_mode"])
+def test_svi_orchestrator_00950(check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify `preflight` validates every target switch against the cached `capableSwitches` answer for `svi` / `managed`, at scale:
+    four SVIs on two switches cost exactly one switches GET and one `capableSwitches` GET, in normal and check mode.
+
+    ## Test
+
+    - Two NX-OS SVIs on switch A and two IOS-XE SVIs on the Catalyst; both switches are capable
+    - `preflight` does not raise
+    - Exactly two responses were consumed: the switches list, then the `capableSwitches` GET
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_svi(f"{method_name}a")
+        yield responses_svi(f"{method_name}b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), check_mode=check_mode)
+    models = [
+        _build_model(interface_name="vlan333", admin_state=True),
+        _build_model(interface_name="vlan334", admin_state=True),
+        _build_model(switch_ip="192.168.12.181", interface_name="vlan980", network_os_type="ios-xe", admin_state=True),
+        _build_model(switch_ip="192.168.12.181", interface_name="vlan981", network_os_type="ios-xe", admin_state=True),
+    ]
+
+    with does_not_raise():
+        orchestrator.preflight(models)
+
+    paths = [response.get("REQUEST_PATH") for response in orchestrator.rest_send.responses]
+    assert paths == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=svi&mode=managed"]
+
+
+def test_svi_orchestrator_00960() -> None:
+    """
+    # Summary
+
+    Verify `preflight` refuses an SVI on a switch the controller does not list as capable of `svi` / `managed`, outside check mode,
+    naming the switch.
+
+    ## Test
+
+    - `capableSwitches` lists switch A only; the Catalyst is the target
+    - `preflight` raises `RuntimeError` naming the Catalyst's switch id and the mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_svi(f"{method_name}a")
+        yield responses_svi(f"{method_name}b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    model = _build_model(switch_ip="192.168.12.181", interface_name="vlan980", network_os_type="ios-xe", admin_state=True)
+
+    with pytest.raises(RuntimeError, match=r"not capable of hosting interface_type='svi' mode='managed'.*CAT9KV1701"):
+        orchestrator.preflight([model])

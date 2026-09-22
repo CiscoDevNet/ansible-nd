@@ -657,5 +657,85 @@
                 " no shutdown"
             ]
         }
+    },
+    "test_svi_orchestrator_00950a": {
+        "TEST_NOTES": [
+            "capability preflight (PR #571 review): switches list, two switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_svi_orchestrator_00950b": {
+        "TEST_NOTES": [
+            "capableSwitches for svi/managed: both switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=svi&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "S1_BG1"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_svi_orchestrator_00960a": {
+        "TEST_NOTES": [
+            "capability preflight: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_svi_orchestrator_00960b": {
+        "TEST_NOTES": [
+            "capableSwitches for svi/managed: switch A only"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=svi&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "S1_BG1"
+                }
+            ]
+        }
     }
 }
