@@ -68,11 +68,11 @@ def _build_rest_send(gen_responses: ResponseGenerator, state: str | None = None,
     return rest_send
 
 
-def _build_nx_model(interface_name: str = "port-channel20", ports: list[str] | None = None) -> PortChannelRoutedInterfaceModel:
+def _build_nx_model(interface_name: str = "port-channel20", ports: list[str] | None = None, switch_ip: str = "192.168.1.1") -> PortChannelRoutedInterfaceModel:
     """Build an NX-OS `l3Po` model (members default to `["Ethernet1/10"]`)."""
     return PortChannelRoutedInterfaceModel.from_config(
         {
-            "switch_ip": "192.168.1.1",
+            "switch_ip": switch_ip,
             "interface_name": interface_name,
             "config_data": {
                 "network_os": {
@@ -84,11 +84,13 @@ def _build_nx_model(interface_name: str = "port-channel20", ports: list[str] | N
     )
 
 
-def _build_xe_model(interface_name: str = "port-channel120", ports: list[str] | None = None) -> PortChannelRoutedInterfaceModel:
+def _build_xe_model(
+    interface_name: str = "port-channel120", ports: list[str] | None = None, switch_ip: str = "192.168.1.1"
+) -> PortChannelRoutedInterfaceModel:
     """Build an IOS-XE `iosXeL3PortChannel` model (members default to `["GigabitEthernet1/0/3"]`)."""
     return PortChannelRoutedInterfaceModel.from_config(
         {
-            "switch_ip": "192.168.1.1",
+            "switch_ip": switch_ip,
             "interface_name": interface_name,
             "config_data": {
                 "network_os": {
@@ -209,13 +211,14 @@ def test_port_channel_routed_orchestrator_00200(ports, match) -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=rest_send)
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_model(ports=ports)])
-    assert len(rest_send.responses) == 2
+    assert len(rest_send.responses) == 3
 
 
 def test_port_channel_routed_orchestrator_00210() -> None:
@@ -238,6 +241,7 @@ def test_port_channel_routed_orchestrator_00210() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
 
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
@@ -264,6 +268,7 @@ def test_port_channel_routed_orchestrator_00220() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
 
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
@@ -298,6 +303,7 @@ def test_port_channel_routed_orchestrator_00300() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
         yield responses_pc_routed(f"{method_name}c")
 
@@ -346,3 +352,101 @@ def test_port_channel_routed_orchestrator_00310() -> None:
     assert instance._pending_removes == expected
     assert instance._pending_deploys == expected
     assert len(rest_send.responses) == 1
+
+
+# =============================================================================
+# Test: capability preflight opt-in (PR #577 review)
+# =============================================================================
+
+
+def test_port_channel_routed_orchestrator_00390() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator opts in to the shared capability preflight as `portChannel` / `routed`.
+
+    ## Test
+
+    - `interface_type == "portChannel"` and `interface_mode == "routed"`
+
+    ## Classes and Methods
+
+    - PortChannelRoutedInterfaceOrchestrator.interface_type
+    - PortChannelRoutedInterfaceOrchestrator.interface_mode
+    """
+    assert PortChannelRoutedInterfaceOrchestrator.interface_type == "portChannel"
+    assert PortChannelRoutedInterfaceOrchestrator.interface_mode == "routed"
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check_mode"])
+def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify `preflight` validates every target switch against the cached `capableSwitches` answer for `portChannel` / `routed`, at
+    scale: four routed port-channels on two switches cost exactly one switches GET and one `capableSwitches` GET (then one
+    interface-list GET per switch for the member checks), in normal and check mode.
+
+    ## Test
+
+    - Two NX-OS and two IOS-XE routed port-channels on two capable switches
+    - `preflight` does not raise
+    - The first two responses are the switches list and the `capableSwitches` GET; four in all
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        for key in "abcd":
+            yield responses_pc_routed(f"{method_name}{key}")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
+    instance = PortChannelRoutedInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_nx_model(interface_name="port-channel20", ports=["Ethernet1/10"]),
+        _build_nx_model(interface_name="port-channel21", ports=["Ethernet1/11"]),
+        _build_xe_model(interface_name="port-channel120", ports=["GigabitEthernet1/0/3"], switch_ip="192.168.12.181"),
+        _build_xe_model(interface_name="port-channel121", ports=["GigabitEthernet1/0/4"], switch_ip="192.168.12.181"),
+    ]
+
+    with does_not_raise():
+        instance.preflight(models)
+
+    paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
+    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed"]
+    assert len(rest_send.responses) == 4
+
+
+def test_port_channel_routed_orchestrator_00410() -> None:
+    """
+    # Summary
+
+    Verify `preflight` refuses a routed port-channel on a switch the controller does not list as capable of `portChannel` / `routed`,
+    outside check mode, naming the switch.
+
+    ## Test
+
+    - `capableSwitches` lists switch A only; the Catalyst is the target
+    - `preflight` raises `RuntimeError` naming the Catalyst's switch id and the mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = PortChannelRoutedInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_xe_model(interface_name="port-channel120", ports=["GigabitEthernet1/0/3"], switch_ip="192.168.12.181")
+
+    with pytest.raises(RuntimeError, match=r"not capable of hosting interface_type='portChannel' mode='routed'.*CAT9KV1701"):
+        instance.preflight([model])
