@@ -727,13 +727,13 @@ def test_svi_orchestrator_00940() -> None:
     # Summary
 
     Verify `state: deleted` refuses to remove an IOS-XE SVI that is deployed but not yet discovered (PR #571 review), while a
-    discovered SVI and a staged, never-deployed SVI on the same switch pass, with one pending-configuration GET for the switch.
+    discovered SVI and a staged, never-deployed SVI on the same switch pass, with one deployment-history GET per undiscovered SVI.
 
     ## Test
 
-    - vlan980 is `up`, vlan981 is `unknown` and listed in `pendingConfig` as `interface Vlan981`, vlan982 is `unknown` and not listed
+    - vlan980 is `up`; vlan981 is `unknown` with no interface push in its history (staged); vlan982 is `unknown` with its create push newest
     - `preflight_delete` raises `RuntimeError` naming vlan982 only
-    - Exactly three requests; nothing is queued
+    - Exactly four requests; nothing is queued
 
     ## Classes and Methods
 
@@ -745,6 +745,7 @@ def test_svi_orchestrator_00940() -> None:
         yield responses_svi("test_svi_orchestrator_00940a")
         yield responses_svi("test_svi_orchestrator_00940b")
         yield responses_svi("test_svi_orchestrator_00940c")
+        yield responses_svi("test_svi_orchestrator_00940d")
 
     names = ("vlan980", "vlan981", "vlan982")
     config = [{"switch_ip": "192.168.12.181", "interface_name": name} for name in names]
@@ -755,7 +756,7 @@ def test_svi_orchestrator_00940() -> None:
         orchestrator.preflight_delete(models)
 
     assert "vlan981" not in str(exc_info.value)
-    assert len(orchestrator.rest_send.responses) == 3
+    assert len(orchestrator.rest_send.responses) == 4
     assert orchestrator._pending_removes == []
     assert orchestrator._pending_deploys == []
 

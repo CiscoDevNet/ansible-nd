@@ -644,18 +644,122 @@
     },
     "test_svi_orchestrator_00940c": {
         "TEST_NOTES": [
-            "preflight_delete discovery guard: pendingConfig lists the staged Vlan981 (canonical case, lab-verified 2026-09-21) but not the deployed vlan982"
+            "preflight_delete discovery guard: vlan981's history holds only the companion `vlan 981` push ND files under entity Vlan981 (lab shape 2026-09-22): no interface push, so staged, never deployed"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Avlan981&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": [
-                "vlan 981",
-                "interface Vlan981",
-                " no shutdown"
-            ]
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "vlan 981",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "Vlan981",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
+        }
+    },
+    "test_svi_orchestrator_00940d": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: vlan982's newest push is its create `interface Vlan982` (deployed, not yet discovered; record shape lab-verified 2026-09-22)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Avlan982&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Vlan982",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "vlan982",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                },
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "vlan 982",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "Vlan982",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 2
+                }
+            }
         }
     },
     "test_svi_orchestrator_00950a": {
