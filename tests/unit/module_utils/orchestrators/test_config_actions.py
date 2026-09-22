@@ -1072,7 +1072,7 @@ class TestConfigActionMutationsAreNotReplayed:
 
     def test_retry_window_is_restored_after_a_config_action(self):
         """The collapsed window is scoped to the mutation, not leaked to later requests."""
-        rest_send, _ = _make_counting_rest_send(500)
+        rest_send = _make_counting_rest_send(500)[0]
         orch = _make_orchestrator(rest_send, _make_results())
         default_timeout = rest_send.timeout
 
@@ -1118,7 +1118,7 @@ class TestContentionIsRetried:
         assert sum("retrying" in warning for warning in rest_send.sender.ansible_module.warnings) == 2
 
     def test_contention_beyond_the_budget_fails(self):
-        rest_send = _make_rest_send([self._contention_response() for _ in range(5)])
+        rest_send = _make_rest_send([self._contention_response()] * 5)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         with pytest.raises(Exception, match="recalculate and deploy is in progress"):
@@ -1258,7 +1258,7 @@ class TestReadFabricSwitches:
         assert any("retrying" in warning for warning in rest_send.sender.ansible_module.warnings)
 
     def test_a_persistent_read_failure_surfaces_the_controller_error(self):
-        rest_send = _make_rest_send([_error_response(method="GET", message="Failed to check fabric type") for _ in range(3)])
+        rest_send = _make_rest_send([_error_response(method="GET", message="Failed to check fabric type")] * 3)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         with pytest.raises(Exception, match="Failed to check fabric type"):
@@ -1298,7 +1298,7 @@ class TestTruncatedSwitchList:
 
     def test_truncation_is_not_retried(self):
         """Re-reading cannot un-paginate a response, so it must not spend the retry budget."""
-        rest_send = _make_rest_send([self._paginated(2, 12) for _ in range(5)])
+        rest_send = _make_rest_send([self._paginated(2, 12)] * 5)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         with pytest.raises(ConfigActionsPreconditionError):
@@ -1384,7 +1384,7 @@ class TestVerifyDeploy:
         assert len(_paths(rest_send)) == 2
 
     def test_fails_when_a_switch_never_converges(self):
-        rest_send = _make_rest_send([_switches({"S1": "outOfSync"}) for _ in range(5)])
+        rest_send = _make_rest_send([_switches({"S1": "outOfSync"})] * 5)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         with pytest.raises(Exception, match=r"has come into sync for 10s; still waiting on S1 \(outOfSync\)"):
@@ -1409,7 +1409,7 @@ class TestVerifyDeploy:
 
     def test_the_hard_ceiling_stops_a_drip_feed(self):
         """The stall timer alone is unbounded: one switch settling per expiry resets it forever."""
-        rest_send = _make_rest_send([_switches({"S1": "outOfSync"}) for _ in range(5)])
+        rest_send = _make_rest_send([_switches({"S1": "outOfSync"})] * 5)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=NoCeilingOrchestrator)
 
         with pytest.raises(Exception, match=r"did not come into sync within 0s"):
@@ -1418,7 +1418,7 @@ class TestVerifyDeploy:
         assert len(_paths(rest_send)) == 1
 
     def test_an_undocumented_status_keeps_waiting_and_is_named(self):
-        rest_send = _make_rest_send([_switches({"S1": "someNewStatus"}) for _ in range(5)])
+        rest_send = _make_rest_send([_switches({"S1": "someNewStatus"})] * 5)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         with pytest.raises(Exception, match=r"still waiting on S1 \(someNewStatus\)"):
