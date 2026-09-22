@@ -220,12 +220,8 @@ class TestNDOutputFormat:
         - NDOutput.format()
         - NDConfigCollection.get_diff_collection()
         """
-        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
-            EthernetTrunkHostInterfaceModel,
-        )
-        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-            NDConfigCollection,
-        )
+        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceModel
+        from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 
         def response(policy):
             return {
@@ -266,6 +262,7 @@ class TestNDOutputGatheredState:
         """state='gathered' keeps the common snapshot keys empty."""
         output = NDOutput("info", state="gathered")
         result = output.format()
+
         assert result["before"] == []
         assert result["after"] == []
         for key in ("diff", "proposed"):

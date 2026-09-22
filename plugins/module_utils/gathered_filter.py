@@ -213,21 +213,13 @@ def filter_gathered_response(
     Returns validated model instances directly so callers can construct an
     NDConfigCollection without redundant from_response() calls.
     """
-    # Validation duplicates validate_gathered_filters() intentionally so this
-    # function remains safe to call standalone (e.g., from unit tests).
-    active_filters: list[dict[str, Any]] = []
-    for filter_item in filters or []:
-        if not isinstance(filter_item, dict):
-            raise ValueError("Each gathered filter item must be a dictionary.")
-
-        normalized = deepcopy(filter_item)
-        if normalize_filter is not None:
-            normalized = normalize_filter(normalized)
-
-        if not _contains_active_value(normalized):
-            raise ValueError("A gathered filter item must contain at least one filtering criterion.")
-
-        active_filters.append(normalized)
+    # Revalidate here so direct callers receive the same property, shape, and
+    # active-criterion checks as the state-machine path.
+    active_filters = validate_gathered_filters(
+        filters=filters,
+        normalize_filter=normalize_filter,
+        supported_properties=model_class.gathered_filter_properties,
+    )
 
     filtered_models: list[NDBaseModel] = []
     seen_identifiers = set()
@@ -254,49 +246,48 @@ def validate_gathered_filters(
     filters: list[Any],
     normalize_filter: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     supported_properties: tuple[str, ...] = (),
-) -> None:
+) -> list[dict[str, Any]]:
     """
-    Pre-flight validation for gathered filter items.
+    Pre-flight validation and normalization for gathered filter items.
 
     Validates each filter item through a strict pipeline:
-      1. Type check — must be a dict
-      2. Property check — all active properties must be in the supported set
-      3. Normalize — transform values to canonical form (e.g., lowercase)
-      4. Active check — at least one non-None criterion must exist
 
-    Property validation runs BEFORE normalization because:
-      - It checks KEYS (property paths), normalization transforms VALUES.
-      - Unsupported properties should be rejected without wasting normalization effort.
-      - Error messages should show what the user wrote, not the normalized form.
+    1. Type check — the item must be a dictionary.
+    2. Property check — every active property must be supported.
+    3. Model-specific validation and normalization — field constraints are
+    applied and values are converted to canonical form.
+    4. Active-value check — at least one non-empty criterion must remain.
 
-    Args:
-        filters: The raw config list from module.params["config"].
-            Example: [{"switch_ip": "10.1.1.1", "interface_name": "loopback0"}]
+    Property validation runs before model-specific normalization so unsupported
+    keys are reported using the exact property paths supplied by the user.
 
-        normalize_filter: Model-specific value transformer (e.g., lowercase interface_name).
-            Signature: (dict) -> dict. May be None if no normalization needed.
-
-        supported_properties: The model's gathered_filter_properties tuple.
-            Example: ("switch_ip", "interface_name", "config_data.network_os.policy.vrf")
-            Empty tuple means property validation is skipped (backward-compatible).
+    Returns:
+        A new list containing validated, canonical filter dictionaries.
 
     Raises:
-        ValueError: If any filter item fails any validation step.
+        ValueError: If an item has an invalid shape, unsupported property, empty
+            criteria, or a model-specific field-validation error.
     """
+    normalized_filters: list[dict[str, Any]] = []
+
     for idx, filter_item in enumerate(filters):
-        # Step 1: Type check
         if not isinstance(filter_item, dict):
             raise ValueError(f"Each gathered filter item must be a dictionary, " f"got {type(filter_item).__name__} at index {idx}.")
 
-        # Step 2: Property validation (before normalize - checks keys, not values)
         if supported_properties:
-            _reject_unsupported_filter_properties(filter_item, supported_properties, idx)
+            _reject_unsupported_filter_properties(
+                filter_item,
+                supported_properties,
+                idx,
+            )
 
-        # Step 3: Normalize values to canonical form
         normalized = deepcopy(filter_item)
         if normalize_filter is not None:
             normalized = normalize_filter(normalized)
 
-        # Step 4: Active value check
         if not _contains_active_value(normalized):
             raise ValueError(f"Gathered filter item at index {idx} must contain " f"at least one filtering criterion.")
+
+        normalized_filters.append(normalized)
+
+    return normalized_filters
