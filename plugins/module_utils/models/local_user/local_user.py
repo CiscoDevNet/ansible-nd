@@ -88,6 +88,17 @@ class LocalUserModel(NDBaseModel):
         "last_name",
     )
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        normalized = dict(filter_item)
+
+        for field_name in cls.gathered_filter_properties:
+            value = normalized.get(field_name)
+            if isinstance(value, str):
+                normalized[field_name] = value.strip()
+
+        return normalized
+
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[set] = {"user_password"}

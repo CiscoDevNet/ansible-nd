@@ -42,7 +42,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6Host
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
+    AsciiDescription,
+    IPv4Host,
+    IPv4HostStrict,
+    IPv6Host,
+)
 
 
 class LoopbackPolicyStrictBase(NDNestedModel):
@@ -117,9 +122,23 @@ class NexusLoopbackPolicyBase(LoopbackPolicyStrictBase):
     None
     """
 
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4Host = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)",
+    )
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=254,
+        description="Interface description",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
 
 
 class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
@@ -144,10 +163,22 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
 
     policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
     ipv6: IPv6Host = Field(
-        default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
+        default=None,
+        alias="ipv6",
+        description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)",
     )
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
+    route_map_tag: str | None = Field(
+        default=None,
+        alias="routeMapTag",
+        description="Route-Map tag associated with interface IP",
+    )
 
     # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
     # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
@@ -180,8 +211,18 @@ class SecondaryIpModel(NDNestedModel):
     None
     """
 
-    ip: IPv4HostStrict = Field(default=None, alias="ip", description="Secondary IPv4 address (bare host form; the mask length is set via `prefix`)")
-    prefix: int | None = Field(default=None, alias="prefix", ge=4, le=32, description="Subnet mask length (4-32)")
+    ip: IPv4HostStrict = Field(
+        default=None,
+        alias="ip",
+        description="Secondary IPv4 address (bare host form; the mask length is set via `prefix`)",
+    )
+    prefix: int | None = Field(
+        default=None,
+        alias="prefix",
+        ge=4,
+        le=32,
+        description="Subnet mask length (4-32)",
+    )
 
 
 class IpfmLoopbackPolicyModel(NexusLoopbackPolicyBase):
@@ -207,10 +248,28 @@ class IpfmLoopbackPolicyModel(NexusLoopbackPolicyBase):
     }
 
     policy_type: Literal["ipfmLoopback"] = Field(alias="policyType", description="IPFM loopback policy template discriminator")
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    advertise_loopback: bool | None = Field(default=None, alias="advertiseLoopback", description="Advertise loopback via OSPF/IS-IS")
-    is_service_reflect: bool | None = Field(default=None, alias="isServiceReflect", description="Use loopback as service-reflect source")
-    routing_tag: str | None = Field(default=None, alias="routingTag", description="Routing tag associated with the interface IP")
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
+    advertise_loopback: bool | None = Field(
+        default=None,
+        alias="advertiseLoopback",
+        description="Advertise loopback via OSPF/IS-IS",
+    )
+    is_service_reflect: bool | None = Field(
+        default=None,
+        alias="isServiceReflect",
+        description="Use loopback as service-reflect source",
+    )
+    routing_tag: str | None = Field(
+        default=None,
+        alias="routingTag",
+        description="Routing tag associated with the interface IP",
+    )
     secondary_ip_list: list[SecondaryIpModel] | None = Field(default=None, alias="secondaryIpList", description="Secondary IPv4 addresses")
 
 
@@ -237,9 +296,19 @@ class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
     }
 
     policy_type: Literal["mplsLoopback"] = Field(alias="policyType", description="MPLS loopback policy template discriminator")
-    dci_routing_protocol: Literal["ospf", "isis"] | None = Field(default=None, alias="dciRoutingProtocol", description="DCI link-state routing protocol")
+    dci_routing_protocol: Literal["ospf", "isis"] | None = Field(
+        default=None,
+        alias="dciRoutingProtocol",
+        description="DCI link-state routing protocol",
+    )
     dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", description="DCI routing tag")
-    ospf_area_id: str | None = Field(default=None, alias="ospfAreaId", min_length=1, max_length=15, description="OSPF area identifier")
+    ospf_area_id: str | None = Field(
+        default=None,
+        alias="ospfAreaId",
+        min_length=1,
+        max_length=15,
+        description="OSPF area identifier",
+    )
 
 
 class XeLoopbackPolicyModel(LoopbackPolicyStrictBase):
@@ -255,10 +324,30 @@ class XeLoopbackPolicyModel(LoopbackPolicyStrictBase):
     """
 
     policy_type: Literal["iosXeLoopback"] = Field(alias="policyType", description="IOS-XE loopback policy template discriminator")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=200,
+        description="Interface description",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
+    ip: IPv4Host = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)",
+    )
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
 
 
 class XeLoopbackShutNoshutPolicyModel(LoopbackPolicyStrictBase):
@@ -273,7 +362,10 @@ class XeLoopbackShutNoshutPolicyModel(LoopbackPolicyStrictBase):
     None
     """
 
-    policy_type: Literal["iosXeLoopbackShutNoshut"] = Field(alias="policyType", description="IOS-XE admin-state-only loopback policy template discriminator")
+    policy_type: Literal["iosXeLoopbackShutNoshut"] = Field(
+        alias="policyType",
+        description="IOS-XE admin-state-only loopback policy template discriminator",
+    )
 
 
 class XeUnderlayLoopbackPolicyModel(LoopbackPolicyStrictBase):
@@ -288,10 +380,27 @@ class XeUnderlayLoopbackPolicyModel(LoopbackPolicyStrictBase):
     None
     """
 
-    policy_type: Literal["iosXeUnderlayLoopback"] = Field(alias="policyType", description="IOS-XE underlay loopback policy template discriminator")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
+    policy_type: Literal["iosXeUnderlayLoopback"] = Field(
+        alias="policyType",
+        description="IOS-XE underlay loopback policy template discriminator",
+    )
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=254,
+        description="Interface description",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
+    ip: IPv4Host = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)",
+    )
     secondary_ip: IPv4Host = Field(
         default=None,
         alias="secondaryIp",
@@ -321,13 +430,40 @@ class XeInternalLoopbackPolicyModel(LoopbackPolicyStrictBase):
         "enablePim": False,
     }
 
-    policy_type: Literal["iosXeInternalLoopback"] = Field(alias="policyType", description="IOS-XE internal loopback policy template discriminator")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    policy_type: Literal["iosXeInternalLoopback"] = Field(
+        alias="policyType",
+        description="IOS-XE internal loopback policy template discriminator",
+    )
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=200,
+        description="Interface description",
+    )
     enable_pim: bool | None = Field(default=None, alias="enablePim", description="Enable PIM")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
-    ipv6: IPv6Host = Field(default=None, alias="ipv6", description="Loopback IPv6 address (bare host form; CIDR input is accepted and normalized)")
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
+    ip: IPv4Host = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)",
+    )
+    ipv6: IPv6Host = Field(
+        default=None,
+        alias="ipv6",
+        description="Loopback IPv6 address (bare host form; CIDR input is accepted and normalized)",
+    )
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
 
 
 class CsrLoopbackPolicyModel(LoopbackPolicyStrictBase):
@@ -345,10 +481,30 @@ class CsrLoopbackPolicyModel(LoopbackPolicyStrictBase):
     """
 
     policy_type: Literal["csrLoopback"] = Field(alias="policyType", description="CSR loopback policy template discriminator")
-    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)")
-    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        min_length=1,
+        max_length=254,
+        description="Interface description",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
+    ip: IPv4Host = Field(
+        default=None,
+        alias="ip",
+        description="Loopback IPv4 address (bare host form; CIDR input is accepted and normalized)",
+    )
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
 
 
 class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):
@@ -363,7 +519,11 @@ class Csr1kvLoopbackPolicyModel(LoopbackPolicyStrictBase):
     """
 
     policy_type: Literal["csr1kvLoopback"] = Field(alias="policyType", description="CSR1kv loopback policy template discriminator")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
 
 
 class NexusLoopbackNetworkOSModel(NDNestedModel):
@@ -379,7 +539,10 @@ class NexusLoopbackNetworkOSModel(NDNestedModel):
 
     # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
     # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
-    network_os_type: Literal["nx-os"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
+    network_os_type: Literal["nx-os"] = Field(
+        alias="networkOSType",
+        description="Network OS (platform) type discriminator; required by the ND API schema",
+    )
     policy: NexusLoopbackPolicyModel | IpfmLoopbackPolicyModel | MplsLoopbackPolicyModel | None = Field(
         default=None, alias="policy", discriminator="policy_type"
     )
@@ -398,7 +561,10 @@ class XeLoopbackNetworkOSModel(NDNestedModel):
 
     # Not frozen: NDBaseModel.merge() assigns every explicitly-set field, and required fields are always
     # explicitly set. The Literal constrains the value; same pattern as the policy_type discriminator.
-    network_os_type: Literal["ios-xe"] = Field(alias="networkOSType", description="Network OS (platform) type discriminator; required by the ND API schema")
+    network_os_type: Literal["ios-xe"] = Field(
+        alias="networkOSType",
+        description="Network OS (platform) type discriminator; required by the ND API schema",
+    )
     policy: (
         XeLoopbackPolicyModel
         | XeLoopbackShutNoshutPolicyModel
@@ -423,6 +589,47 @@ class LoopbackConfigDataModel(NDNestedModel):
 
     mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
     network_os: NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel = Field(alias="networkOS", discriminator="network_os_type")
+
+
+class LoopbackGatheredPolicyFilterModel(LoopbackPolicyStrictBase):
+    """
+    # Summary
+
+    Validate and normalize the policy fields supported as partial
+    `state: gathered` loopback filters.
+
+    This model intentionally does not require `network_os_type` or
+    `policy_type`: gathered filters are partial criteria, not complete writable
+    resources. It reuses the same IPv4, IPv6, Boolean, and VRF constraints as
+    the writable loopback policy models.
+
+    ## Raises
+
+    ### ValidationError
+
+    - If `ip` is not a valid IPv4 host or interface address.
+    - If `ipv6` is not a valid IPv6 host or interface address.
+    - If `vrf` is empty or longer than 32 characters.
+    - If another supplied value violates its declared field type.
+    """
+
+    ip: IPv4Host = Field(
+        default=None,
+        alias="ip",
+        description=("Loopback IPv4 filter; bare or CIDR input is accepted and " "normalized to bare host form"),
+    )
+    ipv6: IPv6Host = Field(
+        default=None,
+        alias="ipv6",
+        description=("Loopback IPv6 filter; bare or CIDR input is accepted and " "normalized to bare host form"),
+    )
+    vrf: str | None = Field(
+        default=None,
+        alias="vrfInterface",
+        min_length=1,
+        max_length=32,
+        description="Interface VRF name",
+    )
 
 
 class LoopbackInterfaceModel(NDBaseModel):
@@ -504,20 +711,55 @@ class LoopbackInterfaceModel(NDBaseModel):
         """
         # Summary
 
-        Normalize a partial gathered-state filter.
+        Validate and normalize a partial gathered-state filter.
 
-        Gathered filters are not complete LoopbackInterfaceModel instances, so
-        the normal Pydantic interface_name validator does not run against them.
+        Gathered filters are not complete `LoopbackInterfaceModel` instances, so
+        their values do not automatically pass through the complete resource
+        model. This method applies the relevant partial-policy validation and
+        preserves the existing interface-name normalization.
+
+        IPv4 and IPv6 criteria are normalized to bare host form, matching the
+        corresponding values emitted by gathered candidates.
 
         ## Raises
 
-        None
+        ### ValidationError
+
+        - If a supported nested policy criterion fails its normal field
+        validation.
         """
         normalized = deepcopy(filter_item)
 
+        switch_ip = normalized.get("switch_ip")
+        if isinstance(switch_ip, str):
+            normalized["switch_ip"] = switch_ip.strip()
+
         interface_name = normalized.get("interface_name")
         if isinstance(interface_name, str):
-            normalized["interface_name"] = interface_name.lower()
+            normalized["interface_name"] = interface_name.strip().lower()
+
+        config_data = normalized.get("config_data")
+        if not isinstance(config_data, dict):
+            return normalized
+
+        network_os = config_data.get("network_os")
+        if not isinstance(network_os, dict):
+            return normalized
+
+        policy = network_os.get("policy")
+        if not isinstance(policy, dict):
+            return normalized
+
+        validated_policy = LoopbackGatheredPolicyFilterModel.model_validate(
+            policy,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        network_os["policy"] = validated_policy.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
         return normalized
 
@@ -549,13 +791,17 @@ class LoopbackInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", required=True, choices=["nx-os", "ios-xe"]),
+                                    network_os_type=dict(
+                                        type="str",
+                                        required=False,
+                                        choices=["nx-os", "ios-xe"],
+                                    ),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
                                             policy_type=dict(
                                                 type="str",
-                                                required=True,
+                                                required=False,
                                                 choices=[
                                                     "loopback",
                                                     "ipfmLoopback",
@@ -578,7 +824,14 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             advertise_loopback=dict(type="bool"),
                                             is_service_reflect=dict(type="bool"),
                                             routing_tag=dict(type="str"),
-                                            secondary_ip_list=dict(type="list", elements="dict", options=dict(ip=dict(type="str"), prefix=dict(type="int"))),
+                                            secondary_ip_list=dict(
+                                                type="list",
+                                                elements="dict",
+                                                options=dict(
+                                                    ip=dict(type="str"),
+                                                    prefix=dict(type="int"),
+                                                ),
+                                            ),
                                             secondary_ip=dict(type="str"),
                                             enable_pim=dict(type="bool"),
                                             dci_routing_protocol=dict(type="str", choices=["ospf", "isis"]),

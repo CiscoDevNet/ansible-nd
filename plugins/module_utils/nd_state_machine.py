@@ -5,7 +5,6 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-from copy import deepcopy
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
@@ -102,13 +101,11 @@ class NDStateMachine:
         self.gathered_filtering_enabled = self.state == "gathered" and self.model_class.supports_gathered_filtering
 
         if self.gathered_filtering_enabled and raw_config:
-            validate_gathered_filters(
+            raw_config = validate_gathered_filters(
                 filters=raw_config,
                 normalize_filter=self.model_class.normalize_gathered_filter,
                 supported_properties=self.model_class.gathered_filter_properties,
             )
-            # Normalize once — downstream consumers receive canonical filters.
-            raw_config = [self.model_class.normalize_gathered_filter(deepcopy(item)) for item in raw_config]
 
         # ``prepare_config_data`` remains the caller's responsibility. Workflow
         # coordinators already prepare configuration before invoking the state
