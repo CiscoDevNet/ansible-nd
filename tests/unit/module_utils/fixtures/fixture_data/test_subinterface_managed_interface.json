@@ -761,14 +761,67 @@
     },
     "test_subinterface_managed_orchestrator_00940c": {
         "TEST_NOTES": [
-            "preflight_delete discovery guard: pendingConfig without the .101 subinterface"
+            "preflight_delete discovery guard: the .101 subinterface's newest push is its create (deployed, not yet discovered; entity keyed by the switch spelling, record shape lab-verified 2026-09-22)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Agigabitethernet1%2F0%2F2.101&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": []
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface GigabitEthernet1/0/2.101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " encapsulation dot1q 101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " ip address 10.99.101.1 255.255.255.0",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "GigabitEthernet1/0/2.101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
         }
     }
 }

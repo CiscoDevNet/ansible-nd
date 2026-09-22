@@ -782,7 +782,7 @@ def test_subinterface_managed_orchestrator_00940() -> None:
 
     ## Test
 
-    - The `.100` subinterface is `down`; the `.101` subinterface is `unknown` and absent from `pendingConfig`
+    - The `.100` subinterface is `down`; the `.101` subinterface is `unknown` and its newest history push is its create
     - `preflight_delete` raises `RuntimeError` naming the `.101` subinterface only
     - Exactly three requests; nothing is queued
 
