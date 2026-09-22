@@ -17,8 +17,8 @@
       - nm_gathered_all_local_users.gathered | selectattr('login_id', 'equalto', 'ansible_local_user') | list | length == 1
       - nm_gathered_all_local_users.gathered | selectattr('login_id', 'equalto', 'ansible_local_user_2') | list | length == 1
       - nm_gathered_all_local_users.gathered | selectattr('user_password', 'defined') | list | length == 0
-      - nm_gathered_all_local_users.before is not defined
-      - nm_gathered_all_local_users.after is not defined
+      - nm_gathered_all_local_users.before == []
+      - nm_gathered_all_local_users.after == []
       - nm_gathered_all_local_users.diff is not defined
       - nm_gathered_all_local_users.proposed is not defined
 

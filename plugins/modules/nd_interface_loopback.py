@@ -8,7 +8,11 @@
 
 from __future__ import annotations
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -34,10 +38,14 @@ options:
     - The structure mirrors the ND Manage Interfaces API payload.
     - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
     - Not required for O(state=gathered).
-    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
-      while multiple list items use OR semantics.
-    - Supported endpoint criteria are used to reduce candidates with server-side Lucene queries. All criteria are then
-      evaluated locally to preserve complete and consistent matching semantics.
+    - For O(state=gathered), O(config) may be omitted to gather all user-managed loopback interfaces.
+    - Supported gathered filter properties are O(config[].switch_ip), O(config[].interface_name),
+      O(config[].config_data.network_os.policy.admin_state), O(config[].config_data.network_os.policy.ip),
+      O(config[].config_data.network_os.policy.ipv6), and O(config[].config_data.network_os.policy.vrf).
+    - Criteria within one list item use AND semantics, while multiple list items use OR semantics.
+    - Unsupported gathered filter properties are rejected before any controller query.
+    - Switch and interface-name criteria may reduce candidates through server-side Lucene queries. All criteria are
+      evaluated locally as the final correctness layer.
     type: list
     elements: dict
     required: false
@@ -72,8 +80,12 @@ options:
                 - The network OS (platform) type of the target switch. This is a discriminator that determines which
                   policy templates are applicable, and is required by the ND API schema.
                 - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst/CSR IOS-XE devices.
+                - Selects the network OS branch used to validate a loopback configuration.
+                - Required when O(config[].config_data.network_os) is supplied for
+                  O(state=merged), O(state=replaced), or O(state=overridden).
+                - Do not include this field in a partial O(state=gathered) filter.
                 type: str
-                required: true
+                required: false
                 choices: [ nx-os, ios-xe ]
               policy:
                 description:
@@ -94,8 +106,11 @@ options:
                     - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
                     - Use V(csrLoopback) for a CSR loopback.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
+                    - Required when policy configuration is supplied for
+                      O(state=merged), O(state=replaced), or O(state=overridden).
+                    - Do not include this field in a partial O(state=gathered) filter.
                     type: str
-                    required: true
+                    required: false
                     choices: [ loopback, ipfmLoopback, mplsLoopback, iosXeLoopback, iosXeLoopbackShutNoshut, iosXeUnderlayLoopback,
                       iosXeInternalLoopback, csrLoopback, csr1kvLoopback ]
                   admin_state:
@@ -636,8 +651,9 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
-  - An empty list when no matching interface configuration existed.
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as O(config).
+  - For O(state=gathered), this is an empty list because gathered resources are returned under C(gathered).
+  - For write states, an empty list means no matching existing interface configuration was found.
   returned: always
   type: list
   elements: dict
@@ -656,8 +672,9 @@ before:
           vrf: management
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
-  - In check mode, the configuration that would result had the module run outside of check mode.
+  - The resulting interface configuration after reconciliation, structured the same as O(config).
+  - In check mode, this is the configuration that would result if the module ran outside check mode.
+  - For O(state=gathered), this is an empty list because no reconciliation is performed.
   returned: always
   type: list
   elements: dict
@@ -683,7 +700,7 @@ gathered:
   elements: dict
 diff:
   description: The per-interface difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -695,7 +712,7 @@ diff:
           ip: 10.1.1.2
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:

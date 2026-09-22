@@ -50,15 +50,22 @@ class FabricContext:
 
     Cached fabric metadata with pre-flight validation for fabric-level orchestrators.
 
-    Lazily fetches fabric summary and switch inventory on first access. Provides simple
-    boolean checks and a `validate_for_mutation` method that raises `RuntimeError` with
-    a clear message when the fabric cannot be modified.
+    Lazily fetches fabric summary and switch inventory on first access.
+
+    Provides `validate_for_read` for operations that require an existing, locally
+    owned fabric, and `validate_for_mutation` for operations that additionally
+    require deployment freeze to be disabled. Both methods reuse the cached fabric
+    summary and raise `RuntimeError` with a clear message when their prerequisites
+    are not satisfied.
 
     ## Raises
 
     ### RuntimeError
 
-    - Via `validate_for_mutation` if the fabric does not exist on any ND node.
+    - Via `validate_for_read` if the fabric does not exist or is owned by another
+      controller.
+    - Via `validate_for_mutation` if the read prerequisites fail or deployment
+      freeze is enabled.
     - Via `get_switch_id` if no switch matches the given management IP.
     - Via `get_switch_ip` if no switch matches the given switch ID.
     - Via `get_platform_type` if no switch matches the given management IP.
@@ -403,6 +410,40 @@ class FabricContext:
                     return None
         return None
 
+    def validate_for_read(self) -> None:
+        """
+        # Summary
+
+        Run pre-flight checks required before reading resources from this fabric.
+        Raises `RuntimeError` with a clear, actionable message on the first failing
+        check.
+
+        Deployment freeze is deliberately not checked here. Freeze prevents
+        configuration changes from reaching switches; it does not prevent reading
+        existing controller configuration.
+
+        ## Checks
+
+        1. Fabric exists on a node in the cluster.
+        2. Fabric is owned by the controller this `RestSend` is connected to.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the fabric does not exist.
+        - If the fabric is owned by a different controller in the cluster.
+        """
+        if not self.fabric_exists():
+            raise RuntimeError(self._fabric_not_found_message())
+
+        if not self.fabric_is_local():
+            raise RuntimeError(
+                f"Fabric '{self._fabric_name}' is owned by a different controller "
+                "in this cluster. Connect to the controller that owns this fabric "
+                "before retrying."
+            )
+
     def validate_for_mutation(self) -> None:
         """
         # Summary
@@ -424,15 +465,11 @@ class FabricContext:
         - If the fabric is owned by a different controller in the cluster.
         - If the fabric is in deployment freeze mode.
         """
-        if not self.fabric_exists():
-            raise RuntimeError(self._fabric_not_found_message())
-        if not self.fabric_is_local():
-            raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is owned by a different controller in this cluster. "
-                "Connect to the controller that owns this fabric to make configuration changes."
-            )
+        self.validate_for_read()
         if self.fabric_is_deployment_frozen():
             raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is in deployment freeze mode. Configuration changes cannot be deployed to switches "
-                "while deployment freeze is enabled. Disable deployment freeze on the fabric before retrying."
+                f"Fabric '{self._fabric_name}' is in deployment freeze mode. "
+                "Configuration changes cannot be deployed to switches while "
+                "deployment freeze is enabled. Disable deployment freeze on the "
+                "fabric before retrying."
             )
