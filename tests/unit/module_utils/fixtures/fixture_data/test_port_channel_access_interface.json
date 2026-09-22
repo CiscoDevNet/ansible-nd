@@ -2646,14 +2646,60 @@
     },
     "test_port_channel_access_orchestrator_01300c": {
         "TEST_NOTES": [
-            "preflight_delete discovery guard: pendingConfig does not list port-channel102 (deployed, not yet discovered)"
+            "preflight_delete discovery guard: port-channel102's newest push is its create (deployed, not yet discovered; record shape lab-verified 2026-09-22)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/deploymentHistory?filter=entityName%3Aport-channel102&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": []
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel102",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport mode access",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel102",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "FDO11111AAA",
+                    "switchIp": "192.168.1.1",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
         }
     },
     "test_port_channel_access_orchestrator_01310a": {
@@ -2732,18 +2778,20 @@
     },
     "test_port_channel_access_orchestrator_01310c": {
         "TEST_NOTES": [
-            "preflight_delete discovery guard: pendingConfig lists port-channel102 (staged, never deployed)"
+            "preflight_delete discovery guard: no history for port-channel102 (staged, never deployed)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/deploymentHistory?filter=entityName%3Aport-channel102&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": [
-                "interface Port-channel102",
-                " switchport mode access",
-                " no shutdown"
-            ]
+            "deploymentRecords": [],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 0
+                }
+            }
         }
     },
     "test_port_channel_access_orchestrator_01320a": {
@@ -2835,14 +2883,60 @@
     },
     "test_port_channel_access_orchestrator_01320d": {
         "TEST_NOTES": [
-            "overridden preflight discovery guard: pendingConfig does not list port-channel102"
+            "overridden preflight discovery guard: port-channel102's newest push is its create"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/deploymentHistory?filter=entityName%3Aport-channel102&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": []
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel102",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport mode access",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel102",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "FDO11111AAA",
+                    "switchIp": "192.168.1.1",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
         }
     },
     "test_port_channel_access_orchestrator_01400a": {

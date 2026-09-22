@@ -499,53 +499,447 @@
     },
     "test_base_interface_01120a": {
         "TEST_NOTES": [
-            "_check_xe_removal_discovered: pendingConfig lists the undiscovered candidates in canonical case (lab-verified 2026-09-21: staged, never-deployed intent)"
+            "_xe_interface_deployed: no history for port-channel120 (never deployed; record shape lab-verified 2026-09-22 on 4.2.1.10 and 4.3.1.175)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel120&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": [
-                "interface GigabitEthernet1/0/1",
-                " no switchport",
-                "interface Port-channel120",
-                " switchport mode trunk",
-                " no shutdown",
-                "vlan 985",
-                "interface Vlan985",
-                " no shutdown"
-            ]
+            "deploymentRecords": [],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 0
+                }
+            }
+        }
+    },
+    "test_base_interface_01120b": {
+        "TEST_NOTES": [
+            "_xe_interface_deployed: vlan985's history holds only the companion `vlan 985` push ND files under entity Vlan985 (lab shape 2026-09-22); no interface push, so never deployed"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Avlan985&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "vlan 985",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "Vlan985",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
+        }
+    },
+    "test_base_interface_01125a": {
+        "TEST_NOTES": [
+            "_xe_interface_deployed: newest push is a successful `no interface Port-channel120` (removed from the switch, lab-verified 2026-09-22), older create push below it"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel120&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:46:30.739Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "no interface Port-channel120",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:46:30.739Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel120",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:46:30.739Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                },
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel120",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport mode trunk",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport trunk allowed vlan none",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel120",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 2
+                }
+            }
         }
     },
     "test_base_interface_01130a": {
         "TEST_NOTES": [
-            "_check_xe_removal_discovered: pendingConfig without the candidate (lab-verified 2026-09-21: deployed but not yet discovered)"
+            "_xe_interface_deployed: the create push of Port-channel101 is the newest record (deployed, not yet discovered; a later staged edit leaves the history unchanged, lab-verified 2026-09-22)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel101&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": [
-                "interface GigabitEthernet1/0/1",
-                " no switchport"
-            ]
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport mode access",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
+        }
+    },
+    "test_base_interface_01135a": {
+        "TEST_NOTES": [
+            "_xe_interface_deployed: newest record is a FAILED `no interface Port-channel101`, so the interface may still be on the switch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel101&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:46:30.739Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "no interface Port-channel101",
+                            "commandExecutionStatus": "failed",
+                            "completeTimestamp": "2026-09-22T20:46:30.739Z",
+                            "status": "failed"
+                        }
+                    ],
+                    "entityName": "port-channel101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:46:30.739Z",
+                    "status": "failed",
+                    "statusDescription": "Deployment failed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                },
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport mode access",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 2
+                }
+            }
+        }
+    },
+    "test_base_interface_01135b": {
+        "TEST_NOTES": [
+            "_xe_interface_deployed: records oldest first (sort ignored): a successful removal, then a NEWER create push"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel101&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:46:30.739Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "no interface Port-channel101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:46:30.739Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:46:30.739Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                },
+                {
+                    "completeTimestamp": "2026-09-22T20:47:10.000Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:47:10.000Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:47:10.000Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:47:10.000Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 2
+                }
+            }
         }
     },
     "test_base_interface_01140a": {
         "TEST_NOTES": [
-            "_check_xe_removal_discovered: one pendingConfig GET serves two candidates on the same switch; only Port-channel120 is staged"
+            "_xe_interface_deployed: no history for port-channel120 (never deployed)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel120&sort=completeTimestamp%3Adesc&max=10",
         "MESSAGE": "OK",
         "DATA": {
-            "pendingConfigs": [
-                "interface Port-channel120",
-                " switchport mode trunk"
-            ]
+            "deploymentRecords": [],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 0
+                }
+            }
+        }
+    },
+    "test_base_interface_01140b": {
+        "TEST_NOTES": [
+            "_xe_interface_deployed: create push of Port-channel121 (deployed, not yet discovered)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Aport-channel121&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface Port-channel121",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " switchport mode trunk",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "port-channel121",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
         }
     },
     "test_base_interface_00796a": {

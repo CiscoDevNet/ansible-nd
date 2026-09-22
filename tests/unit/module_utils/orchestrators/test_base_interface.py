@@ -2548,32 +2548,68 @@ def test_base_interface_01120() -> None:
     """
     # Summary
 
-    Verify an undiscovered IOS-XE candidate that the switch's pending configuration still lists is allowed: it is staged intent that
-    was never deployed, so nothing is on the switch and removing it is safe. The `interface <name>` line is matched case-insensitively
-    (ND lists `Port-channel120` / `Vlan985` for the records `port-channel120` / `vlan985`).
+    Verify undiscovered IOS-XE candidates whose deployment history holds no push of their configuration are allowed: the intent was
+    never deployed, so nothing is on the switch and removing it is safe. One history GET per candidate, filtered to its records and
+    capped at `XE_HISTORY_MAX`; companion records ND files under the same entity (the SVI's `vlan 985`) are not a push of the
+    interface and do not count.
 
     ## Test
 
     - Candidates port-channel120 and vlan985 are `ios-xe` with `operationalStatus: unknown`
-    - `pendingConfig` lists `interface Port-channel120` and `interface Vlan985`
-    - No exception; exactly one request (the `pendingConfig` GET)
+    - port-channel120's history is empty; vlan985's holds only `vlan 985` records
+    - No exception; exactly two requests, the last one the filtered, sorted, capped history GET for vlan985
 
     ## Classes and Methods
 
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
 
     instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown"), _xe_record("vlan985", "unknown")])
 
     with does_not_raise():
         instance._check_xe_removal_discovered([("Port-channel120", "CAT9KV1701"), ("vlan985", "CAT9KV1701")])
 
+    assert len(instance.rest_send.responses) == 2
+    path, query = instance.rest_send.path.split("?", 1)
+    assert path == "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory"
+    assert set(query.split("&")) == {"filter=entityName%3Avlan985", "sort=completeTimestamp%3Adesc", "max=10"}
+
+
+def test_base_interface_01125() -> None:
+    """
+    # Summary
+
+    Verify an undiscovered IOS-XE candidate whose newest configuration push was a successful `no interface <name>` is allowed: the
+    interface was removed from the switch and re-staged, so nothing is on the switch. The older create push does not count.
+
+    ## Test
+
+    - Candidate port-channel120 is `ios-xe` with `operationalStatus: unknown`
+    - History (newest first): a successful `no interface Port-channel120`, then the create push
+    - No exception; exactly one request
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown")])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("Port-channel120", "CAT9KV1701")])
+
     assert len(instance.rest_send.responses) == 1
-    assert instance.rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/pendingConfig"
 
 
 @pytest.mark.parametrize("status", ["unknown", None, "initializing"], ids=["unknown", "missing", "unrecognized"])
@@ -2581,19 +2617,21 @@ def test_base_interface_01130(status: str | None) -> None:
     """
     # Summary
 
-    Verify an undiscovered IOS-XE candidate that the pending configuration does NOT list fails the whole operation: its intent is
-    already deployed, and ND generates the switch-side removal only once it has discovered the interface. A missing, `unknown` or
-    unrecognized `operationalStatus` all count as not discovered.
+    Verify an undiscovered IOS-XE candidate whose newest configuration push is a create fails the whole operation: its intent is on
+    the switch, and ND generates the switch-side removal only once it has discovered the interface. A missing, `unknown` or
+    unrecognized `operationalStatus` all count as not discovered. This is also the reviewer's corner: a deployed, undiscovered
+    interface that was then edited without a deploy has the same history, so it is refused too.
 
     ## Test
 
     - Candidate port-channel101 is `ios-xe` with the parametrized `operationalStatus`
-    - `pendingConfig` does not mention it
-    - `RuntimeError` names the interface, its status, and the retry condition
+    - History holds the successful `interface Port-channel101` create push
+    - `RuntimeError` names the interface, its status, and the retry condition; exactly one request
 
     ## Classes and Methods
 
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
     """
 
     def responses():
@@ -2608,27 +2646,58 @@ def test_base_interface_01130(status: str | None) -> None:
     assert len(instance.rest_send.responses) == 1
 
 
+@pytest.mark.parametrize("key", ["a", "b"], ids=["failed_removal_newest", "ascending_response_order"])
+def test_base_interface_01135(key: str) -> None:
+    """
+    # Summary
+
+    Verify the history verdict errs on the side of refusing: a `no interface <name>` push that did not succeed leaves the interface on
+    the switch, and the newest push is chosen by its own `completeTimestamp`, so a response the controller did not sort newest-first
+    still resolves to the create push.
+
+    ## Test
+
+    - `a`: newest record is `no interface Port-channel101` with `status: failed`, older one is the create push
+    - `b`: records arrive oldest first: a successful removal, then a newer create push
+    - `RuntimeError` names Port-channel101 in both cases
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+
+    def responses():
+        yield responses_base_interface(f"test_base_interface_01135{key}")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel101", "unknown")])
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*Port-channel101"):
+        instance._check_xe_removal_discovered([("Port-channel101", "CAT9KV1701")])
+
+
 def test_base_interface_01140() -> None:
     """
     # Summary
 
-    Verify one `pendingConfig` GET serves every undiscovered candidate on a switch, and that the failure names only the candidates
-    the pending configuration does not list.
+    Verify each undiscovered candidate on a switch gets its own history GET, and that the failure names only the candidates whose
+    configuration is on the switch.
 
     ## Test
 
-    - Candidates port-channel120 (staged, listed) and port-channel121 (deployed, not listed), both `unknown`, same switch
+    - Candidates port-channel120 (never deployed, empty history) and port-channel121 (create push in history), both `unknown`, same switch
     - `RuntimeError` names port-channel121 and not port-channel120
-    - Exactly one request
+    - Exactly two requests
 
     ## Classes and Methods
 
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
 
     instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown"), _xe_record("port-channel121", "unknown")])
 
@@ -2636,4 +2705,4 @@ def test_base_interface_01140() -> None:
         instance._check_xe_removal_discovered([("port-channel120", "CAT9KV1701"), ("port-channel121", "CAT9KV1701")])
 
     assert "port-channel120" not in str(exc_info.value)
-    assert len(instance.rest_send.responses) == 1
+    assert len(instance.rest_send.responses) == 2
