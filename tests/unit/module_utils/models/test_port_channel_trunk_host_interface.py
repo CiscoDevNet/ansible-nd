@@ -1791,11 +1791,14 @@ def test_port_channel_trunk_host_interface_01026(existing_ports, proposed_ports)
     existing = PortChannelTrunkHostInterfaceModel.from_response(existing_response)
     proposed = PortChannelTrunkHostInterfaceModel.from_config(proposed_config)
 
-    assert existing.get_diff(
-        proposed,
-        exclude_unset=True,
-        empty_list_equivalents={("configData", "networkOS", "policy", "ports")},
-    ) is False
+    assert (
+        existing.get_diff(
+            proposed,
+            exclude_unset=True,
+            empty_list_equivalents={("configData", "networkOS", "policy", "ports")},
+        )
+        is False
+    )
 
 
 def test_port_channel_trunk_host_interface_01030():

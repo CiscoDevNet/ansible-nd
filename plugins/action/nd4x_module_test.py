@@ -109,10 +109,7 @@ class ActionModule(ActionBase):
         """Parse one or more acceptable HTTP statuses for a snapshot query."""
         if isinstance(value, list):
             if not value:
-                raise AnsibleActionFail(
-                    "Argument %s must be an integer or a non-empty list of integers, got %r"
-                    % (argument_name, value)
-                )
+                raise AnsibleActionFail("Argument %s must be an integer or a non-empty list of integers, got %r" % (argument_name, value))
 
             return [
                 self._parse_int(
