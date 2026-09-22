@@ -277,6 +277,9 @@ notes:
   carrying any other policy type, including routed port-channels provisioned by Nexus Dashboard itself, are never read or
   modified by this module.
 - The port-channel policy is the source of truth for member interface configuration.
+- Removing a port-channel (O(state=deleted), or O(state=overridden) for a port-channel absent from O(config)) also releases its
+  member interfaces, which the controller returns to its own default policy for the platform. This module does not set a policy on
+  released members; configure them with the C(nd_interface_ethernet_*) modules afterwards.
 """
 
 EXAMPLES = r"""
