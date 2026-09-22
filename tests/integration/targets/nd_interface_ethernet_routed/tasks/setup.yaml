@@ -1,0 +1,33 @@
+---
+# Pre-test cleanup for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged/replaced/overridden/deleted state
+# blocks. Resets the test ethernet interfaces to fabric defaults so each test
+# run starts from a known-clean state. Interfaces already at the fabric default
+# are outside this module's managed scope, so re-running this cleanup on a
+# clean testbed is a no-op.
+
+- name: "SETUP: Reset test routed interfaces before state tests"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/31
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/32
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/33
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/34
+    state: deleted
+  register: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Show cleanup result"
+  ansible.builtin.debug:
+    var: setup_cleanup
+  tags: always

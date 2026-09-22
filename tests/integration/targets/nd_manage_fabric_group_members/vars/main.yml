@@ -1,0 +1,33 @@
+---
+# Fabric group and member fabrics created by this target's prerequisite block.
+# Everything here is created and torn down by the target itself, so the test is
+# self-contained and does not depend on pre-existing fabrics on the controller.
+
+test_fabric_group: "ansible_test_fabric_group"
+
+test_member_1: "ansible_member_fabric_1"
+test_member_2: "ansible_member_fabric_2"
+test_member_3: "ansible_member_fabric_3"
+
+# ND refuses to add a member whose anycast gateway MAC differs from the fabric group's, so the
+# group and every member fabric below are built from this one value.
+test_anycast_gateway_mac: "2020.0000.00cc"
+
+# Member fabrics of a VXLAN fabric group must each own a distinct BGP ASN.
+test_member_fabrics:
+  - name: "ansible_member_fabric_1"
+    bgp_asn: "65101"
+  - name: "ansible_member_fabric_2"
+    bgp_asn: "65102"
+  - name: "ansible_member_fabric_3"
+    bgp_asn: "65103"
+
+# Minimal VXLAN fabric group. Ranges are scoped away from the defaults used by the
+# nd_manage_fabric_group_vxlan target so the two can run against the same controller.
+fabric_config_group:
+  management:
+    l2_vni_range: "130000-139000"
+    l3_vni_range: "150000-159000"
+    anycast_gateway_mac: "{{ test_anycast_gateway_mac }}"
+    multisite_loopback_ip_range: "10.60.0.0/24"
+    multisite_underlay_subnet_range: "10.60.1.0/24"

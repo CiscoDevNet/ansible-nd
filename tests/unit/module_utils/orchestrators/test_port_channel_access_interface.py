@@ -60,11 +60,13 @@ def _build_rest_send(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    check_mode: bool = False,
 ) -> RestSend:
     """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
 
     `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
-    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised. `check_mode` drives
+    `rest_send.check_mode` so the member-availability preflight's check-mode behavior can be exercised.
     """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -75,7 +77,7 @@ def _build_rest_send(
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    params: dict = {"check_mode": check_mode, "fabric_name": fabric_name}
     if state is not None:
         params["state"] = state
     if config is not None:
@@ -104,13 +106,16 @@ def _build_pc_model(
     switch_ip: str = "192.168.1.1",
     interface_name: str = "port-channel501",
     include_config: bool = True,
+    ports: list[str] | None = None,
 ) -> PortChannelAccessInterfaceModel:
-    """Build a minimal `PortChannelAccessInterfaceModel` instance for CRUD tests."""
+    """Build a minimal `PortChannelAccessInterfaceModel` instance for CRUD tests. `ports` defaults to `["Ethernet1/1"]`."""
     kwargs: dict = {"switch_ip": switch_ip, "interface_name": interface_name}
     if include_config:
         kwargs["config_data"] = PortChannelAccessConfigDataModel(
             network_os=PortChannelAccessNetworkOSModel(
-                policy=PortChannelAccessPolicyModel(admin_state=True, access_vlan=100, port_channel_mode="active", ports=["Ethernet1/1"]),
+                policy=PortChannelAccessPolicyModel(
+                    admin_state=True, access_vlan=100, port_channel_mode="active", ports=ports if ports is not None else ["Ethernet1/1"]
+                ),
             ),
         )
     return PortChannelAccessInterfaceModel(**kwargs)
@@ -967,3 +972,254 @@ def test_port_channel_access_orchestrator_00800() -> None:
         instance.create(model)
 
     assert instance._pending_deploys == [("port-channel501", "FDO11111AAA")]
+
+
+# =============================================================================
+# Test: preflight -- member-already-in-use (issue #369)
+#
+# Shared inventory for switch FDO11111AAA (see fixture TEST_NOTES): port-channel501 (accessPoHost) owns
+# Ethernet1/1, port-channel502 (trunkPoHost) owns Ethernet1/3, port-channel500 (vpcPeerlinkPo, a type this
+# orchestrator does NOT manage) owns Ethernet1/2, Ethernet1/35 is a free trunkHost, and Ethernet1/36 carries
+# an accessPoMember policy type with no owning port-channel record. Every operData.portChannelId is -1
+# (owners are intent-only), which is exactly why membership must be read from intent rather than operData.
+# =============================================================================
+
+
+def _preflight_orchestrator(method_name: str, check_mode: bool = False) -> PortChannelAccessInterfaceOrchestrator:
+    """Build an orchestrator whose responses are the switches list (a) then the member-conflict inventory (b)."""
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="merged", check_mode=check_mode)
+    return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+
+
+def test_port_channel_access_orchestrator_00900() -> None:
+    """
+    # Summary
+
+    Verify `preflight` passes when every proposed member is free (case (a) in issue #369).
+
+    ## Test
+
+    - Proposed port-channel701 claims Ethernet1/35, whose intent policyType is trunkHost and which no port-channel record lists
+    - `preflight` does not raise
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+    model = _build_pc_model(interface_name="port-channel701", ports=["Ethernet1/35"])
+
+    with does_not_raise():
+        instance.preflight([model])
+
+
+def test_port_channel_access_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    Verify `preflight` rejects members owned by a different port-channel, naming each member and its current owner,
+    and aggregates every offender into one message (case (b) in issue #369).
+
+    ## Test
+
+    - Proposed port-channel702 claims Ethernet1/1 (owned by port-channel501/accessPoHost) and Ethernet1/3 (owned by port-channel502/trunkPoHost)
+    - `preflight` raises RuntimeError naming both members and both owners
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+    model = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/1", "Ethernet1/3"])
+
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.preflight([model])
+
+    message = str(exc_info.value)
+    assert "port-channel702" in message
+    assert "Ethernet1/1" in message and "port-channel501" in message
+    assert "Ethernet1/3" in message and "port-channel502" in message
+    assert "192.168.1.1" in message
+
+
+def test_port_channel_access_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    Verify `preflight` reads membership from the unfiltered inventory: a member owned by a port-channel of a policy type this
+    orchestrator does not manage (vpcPeerlinkPo) is still a conflict (case (c) in issue #369).
+
+    ## Test
+
+    - Proposed port-channel702 claims Ethernet1/2 (owned by port-channel500/vpcPeerlinkPo, which query_all would filter out)
+    - `preflight` raises RuntimeError naming Ethernet1/2 and port-channel500
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+    model = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/2"])
+
+    with pytest.raises(RuntimeError, match=r"Ethernet1/2.*port-channel500"):
+        instance.preflight([model])
+
+
+def test_port_channel_access_orchestrator_00930() -> None:
+    """
+    # Summary
+
+    Verify `preflight` allows a member already owned by the port-channel under management, so an idempotent re-apply of
+    `merged` passes (case (d) in issue #369). Member names are compared case-insensitively.
+
+    ## Test
+
+    - Proposed port-channel501 claims ethernet1/1, which port-channel501 already owns in intent
+    - `preflight` does not raise
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+    model = _build_pc_model(interface_name="port-channel501", ports=["ethernet1/1"])
+
+    with does_not_raise():
+        instance.preflight([model])
+
+
+def test_port_channel_access_orchestrator_00940() -> None:
+    """
+    # Summary
+
+    Verify `preflight` hard-fails on a member conflict even in check mode (case (e) in issue #369). Unlike the capability
+    preflight, which downgrades to a warning in check mode, membership comes from the standard interfaces GET.
+
+    ## Test
+
+    - rest_send.check_mode is True
+    - Proposed port-channel702 claims Ethernet1/1 (owned by port-channel501)
+    - `preflight` raises RuntimeError
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name, check_mode=True)
+    assert instance.rest_send.check_mode is True
+    model = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/1"])
+
+    with pytest.raises(RuntimeError, match=r"Ethernet1/1.*port-channel501"):
+        instance.preflight([model])
+
+
+def test_port_channel_access_orchestrator_00950() -> None:
+    """
+    # Summary
+
+    Verify `preflight` rejects two proposed port-channels on the same switch that both claim the same free member. ND would
+    accept the first create and reject the second with the same opaque 500, so the conflict is caught before any write.
+
+    ## Test
+
+    - Proposed port-channel701 and port-channel702 both claim Ethernet1/35 (free in ND)
+    - `preflight` raises RuntimeError naming Ethernet1/35 and both port-channels
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+    first = _build_pc_model(interface_name="port-channel701", ports=["Ethernet1/35"])
+    second = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/35"])
+
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.preflight([first, second])
+
+    message = str(exc_info.value)
+    assert "Ethernet1/35" in message
+    assert "port-channel701" in message and "port-channel702" in message
+
+
+def test_port_channel_access_orchestrator_00960() -> None:
+    """
+    # Summary
+
+    Verify `preflight` issues no additional request after `query_all` has already fetched the switch's interfaces: both
+    read the shared `_switch_interfaces` cache (CLAUDE.md performance rule -- fetch each resource at most once per run).
+
+    ## Test
+
+    - `query_all` (state merged, config scoped to 192.168.1.1) consumes summary (a), switches (b), interfaces (c)
+    - No further responses are queued; the response generator is exhausted
+    - `preflight` for a free member does not raise (an extra GET would exhaust the generator and raise)
+    - `_switch_interfaces_cache` holds the unfiltered inventory for FDO11111AAA
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.query_all()
+    - PortChannelBaseOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator._switch_interfaces()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access(f"{method_name}c")
+
+    config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel701"}]
+    instance = _build_orchestrator(ResponseGenerator(responses()), state="merged", config=config)
+
+    with does_not_raise():
+        result = instance.query_all()
+        instance.preflight([_build_pc_model(interface_name="port-channel701", ports=["Ethernet1/35"])])
+
+    # query_all still returns only the managed accessPoHost port-channels...
+    assert [iface["interfaceName"] for iface in result] == ["port-channel501"]
+    # ...while the cache retains the unfiltered inventory the preflight reads.
+    assert set(instance._switch_interfaces_cache) == {"FDO11111AAA"}
+    assert "ethernet1/2" in instance._switch_interfaces_cache["FDO11111AAA"]
+    assert "port-channel500" in instance._switch_interfaces_cache["FDO11111AAA"]
+
+
+def test_port_channel_access_orchestrator_00970() -> None:
+    """
+    # Summary
+
+    Verify `preflight` rejects a member whose intent policyType ends in `Member` even when no port-channel record on the
+    switch lists it, reporting the owner as unknown rather than treating the member as free.
+
+    ## Test
+
+    - Proposed port-channel702 claims Ethernet1/36 (policyType accessPoMember, listed by no port-channel record)
+    - `preflight` raises RuntimeError naming Ethernet1/36 and its accessPoMember policy type
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.preflight()
+    - PortChannelBaseOrchestrator._validate_members_available()
+    """
+    method_name = inspect.stack()[0][3]
+    instance = _preflight_orchestrator(method_name)
+    model = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/36"])
+
+    with pytest.raises(RuntimeError, match=r"Ethernet1/36.*accessPoMember"):
+        instance.preflight([model])

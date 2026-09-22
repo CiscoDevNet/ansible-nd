@@ -74,6 +74,8 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
+    empty_string_means_unset: ClassVar[bool] = True
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 
@@ -124,11 +126,11 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     day0_plug_and_play: bool = Field(alias="day0PlugAndPlay", description="Enable Plug n Play for Catalyst 9000 switches", default=False)
 
     # DHCP
-    dhcp_end_address: str = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default="")
+    dhcp_end_address: str | None = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: str = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default="")
+    dhcp_start_address: str | None = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
 
     # DNS
     dns_collection: list[str] = Field(alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses", default_factory=list)
@@ -169,7 +171,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     local_dhcp_server: bool = Field(alias="localDhcpServer", description="Automatic IP Assignment For POAP from Local DHCP Server", default=False)
 
     # Management
-    management_gateway: str = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default="")
+    management_gateway: str | None = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
@@ -221,8 +223,8 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # Scheduled Backup
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
-    scheduled_backup_time: str = Field(
-        alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=""
+    scheduled_backup_time: str | None = Field(
+        alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=None
     )
 
     # SNMP

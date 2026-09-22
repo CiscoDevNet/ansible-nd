@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import ClassVar
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,40 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesNormalize
 
     PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
+
+    # Policy types a create/update may OVERWRITE on an existing interface: the host-facing ethernet policy types a user can create
+    # through the ND 4.2.1 create-side OpenAPI discriminators (`createInterfaceEthernet{Trunk,Access,Routed,Pvlan,Dot1qTunnel,
+    # Unmanaged}{Nexus,Xe}Type`, `policyType` mappings), minus `userDefined` and minus the fabric-provisioned types those mappings also
+    # list for IOS-XE (`iosXeNumbered`, `csrMultisiteIfcMember`, `iosXeInternalL3PoMember`, the stackwise link types). Everything
+    # else on the wire (`numbered`, `unnumbered`, `vrfLiteLinkMember`, `multiSiteLinkMember`, `vpcPeerKeepAlive`, `mplsUplink`, ...)
+    # is fabric-owned link intent that ND stamps on the interface itself (lab-verified 2026-09-03, ND 4.2.1: SITE1 leaf->spine links
+    # carry `numbered`, the BGW VRF-Lite member `vrfLiteLinkMember`, the multisite underlay member `multiSiteLinkMember`), and a
+    # mistyped `interface_name` must not be able to replace it. See `_check_fabric_ownership` (PR #550 review).
+    CONVERTIBLE_POLICY_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {
+            # NX-OS trunk / access / pvlan / dot1q-tunnel / monitor
+            "trunkHost",
+            "classicHost",
+            "ipfmTrunkHost",
+            "dataBrokerHost",
+            "dataBrokerPoMember",
+            "accessHost",
+            "ipfmAccessHost",
+            "pvlanHost",
+            "dot1qTunnelHost",
+            "monitor",
+            # NX-OS routed
+            "routedHost",
+            "endPointLocator",
+            "ipfmL3Port",
+            "dataBrokerL3Host",
+            # IOS-XE host-facing
+            "iosXeTrunkHost",
+            "iosXeAccess",
+            "iosXeMonitor",
+            "iosXeRoutedHost",
+        }
+    )
 
     def model_post_init(self, __context) -> None:
         """
@@ -203,11 +238,18 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         model (which carries every existing wire field) — flagging every non-None field would block legitimate
         whitelisted-only changes.
 
+        Under `state: replaced` / `overridden` the proposed model is the user's config as-is, and a field it omits is a
+        removal: the PUT body omits it and ND resets it to the template default. Such a removal counts as a change
+        whenever the existing value is not already that default — the existing policy's `to_reverse_diff_dict` strips
+        default-valued keys with the same `reverse_diff_defaults` scrub `NDBaseModel.get_diff` uses — so a
+        description-only replacement of a member carrying `ip`/`prefix`/`mtu` is rejected instead of silently clearing
+        them (PR #550 review).
+
         ## Raises
 
         ### RuntimeError
 
-        - If the interface is a port-channel member and non-whitelisted fields are being modified.
+        - If the interface is a port-channel member and non-whitelisted fields are being modified or removed.
         """
         port_channel_id = self._existing_port_channel_id(existing_data)
         if port_channel_id is None:
@@ -233,12 +275,20 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # query_all, so a value the model could not represent would have failed there first.
         existing_model = type(policy).from_response(existing_policy)
 
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+        removal_state = state in ("replaced", "overridden")
+        # Aliased dump of the existing policy with default-valued keys stripped: any alias still present is a
+        # user-configured value that an omitted proposed field would clear under replaced/overridden.
+        existing_configured = existing_model.to_reverse_diff_dict() if removal_state else {}
+
         changed_fields = set()
-        for field_name in type(policy).model_fields:
+        for field_name, field_info in type(policy).model_fields.items():
             if field_name == "policy_type":
                 continue
             proposed_value = getattr(policy, field_name)
             if proposed_value is None:
+                if removal_state and (field_info.alias or field_name) in existing_configured:
+                    changed_fields.add(field_name)
                 continue
             if proposed_value != getattr(existing_model, field_name):
                 changed_fields.add(field_name)
@@ -250,6 +300,122 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"The following fields cannot be modified on port-channel members: {sorted(non_whitelisted)}. "
                 f"Only these fields can be modified: {sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
             )
+
+    @staticmethod
+    def _existing_policy_type(existing_data: dict | None) -> str | None:
+        """
+        # Summary
+
+        Return the `configData.networkOS.policy.policyType` of an interface's current wire state, or `None` when the interface is
+        absent from the inventory or carries no policy.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(existing_data, dict):
+            return None
+        policy = ((existing_data.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        policy_type = policy.get("policyType")
+        return policy_type if isinstance(policy_type, str) and policy_type else None
+
+    def _check_fabric_ownership(self, model_instance: ModelType, existing_data: dict | None) -> None:
+        """
+        # Summary
+
+        Refuse to create/update an interface whose CURRENT wire policy is fabric-owned. The type-specific `query_all` filters keep
+        system routed policy types (`numbered`, `multiSiteLinkMember`, `vrfLiteLinkMember`, ...) out of `before[]`, but that alone only
+        protects them from `state: overridden`: an interface the task names explicitly is invisible to the state machine, classified as
+        a create, and the bulk POST would replace the fabric link's intent with the host policy (PR #550 review). This guard inspects
+        the unfiltered per-switch inventory before any POST/PUT and allows the write only when the existing policy type is one a user
+        can create (`CONVERTIBLE_POLICY_TYPES`, e.g. trunkHost -> routedHost) or when the interface has no policy at all.
+
+        Subclasses extend this for ownership that policy type alone cannot express (the routed orchestrator adds a fabric-link check
+        for IOS-XE, whose fabric links can carry a plain `iosXeRoutedHost`).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the existing wire policy type is not in `CONVERTIBLE_POLICY_TYPES`.
+        """
+        existing_type = self._existing_policy_type(existing_data)
+        if existing_type is None or existing_type in self.CONVERTIBLE_POLICY_TYPES:
+            return
+        raise RuntimeError(
+            f"Interface {model_instance.interface_name} on switch {model_instance.switch_ip} is owned by the fabric "
+            f"(system policy '{existing_type}'). Refusing to overwrite it with policy '{self._desired_policy_type(model_instance)}'. "
+            f"Only interfaces carrying a user-managed host policy can be converted; fabric links must be changed through the fabric "
+            f"link workflow, not an interface module."
+        )
+
+    @staticmethod
+    def _desired_policy_type(model_instance: ModelType) -> str | None:
+        """
+        # Summary
+
+        Return the `policy_type` the proposed model carries (`config_data.network_os.policy.policy_type`), or `None` when the model has
+        no policy. Used only for error reporting.
+
+        ## Raises
+
+        None
+        """
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None)
+        policy = getattr(network_os, "policy", None)
+        policy_type = getattr(policy, "policy_type", None)
+        return getattr(policy_type, "value", policy_type)
+
+    def preflight(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Extend the shared interface preflight (switch resolution, capability opt-in) with the fabric-ownership and port-channel
+        membership guards, so a `--check` run rejects an overwrite of a fabric-owned interface or a prohibited change to a
+        port-channel member exactly like a normal run would inside `create`/`update` (PR #550 review). Each interface's current wire
+        state comes from the per-switch `interfaceList` cache that `query_all` already populated, so no additional requests are
+        issued. Non-mutating: the mutation itself re-runs the same guards against the same cached state.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `NDBaseInterfaceOrchestrator.preflight` (unresolvable `switch_ip`, capability preflight).
+        - If any proposed interface currently carries a fabric-owned policy (`_check_fabric_ownership`).
+        - If any proposed interface is a port-channel member and a non-whitelisted field would be modified.
+        - If the interface-list query used to resolve port-channel membership fails.
+        """
+        super().preflight(model_instances)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
+            self._check_port_channel_restrictions(model_instance, existing_data)
+
+    def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-delete validation run by `NDStateMachine` for `state: deleted` before `delete`/`delete_bulk` — which are skipped
+        in `--check` mode — so a dry run fails on an unresolvable `switch_ip` or on an explicitly named port-channel member
+        exactly like a normal run would (PR #550 review). Wire state comes from the per-switch `interfaceList` cache
+        `query_all` populated; no additional requests. The fabric-wide `overridden` delete set is not routed through this
+        hook: `delete_bulk` skips port-channel members silently there.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more `switch_ip` values do not match any switch in the fabric.
+        - If any named interface is a port-channel member.
+        - If the interface-list query used to resolve port-channel membership fails.
+        """
+        self._require_resolvable_switches(model_instances)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_port_channel_delete_restriction(model_instance, existing_data)
 
     @staticmethod
     def _existing_port_channel_id(existing_data: dict | None) -> int | None:
@@ -319,14 +485,15 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         required for `bandwidth` / `debounceLinkupTimer` / `inheritBandwidth` because ND's validator rejects 0/null
         on those three fields, so the normalize template cannot drive them back to default.
 
-        Clears both pending queues after their respective flushes.
+        Both queues are drained pair by pair as the controller accepts each reset, so after a failure they hold exactly the
+        pairs whose reset was rejected or never attempted (see `_normalize_interfaces` for the mixed HTTP 207 case).
 
         ## Raises
 
         ### RuntimeError
 
-        - If the bulk normalize request fails. The message names the normalize-queued interfaces (none were reset) and
-          any per-interface resets that were consequently not attempted.
+        - If a bulk normalize request fails (raised by `_normalize_interfaces` naming the rejected, accepted, and not-attempted
+          interfaces); the message additionally names any per-interface resets that were consequently not attempted.
         - If a per-interface PUT reset fails (raised by `_reset_interfaces` with partial-state detail).
         """
         if not self._pending_normalizes and not self._pending_resets:
@@ -334,16 +501,12 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         results: list = []
         if self._pending_normalizes:
             try:
-                normalize_result = self._normalize_interfaces()
-            except Exception as e:
-                normalized = [name for name, switch_id in self._pending_normalizes]
+                results.extend(self._normalize_interfaces())
+            except RuntimeError as e:
                 not_attempted = [name for name, switch_id in self._pending_resets]
-                msg = f"Bulk normalize failed for {normalized}: {e}. None of these interfaces were reset."
                 if not_attempted:
-                    msg += f" Per-interface resets were not attempted: {not_attempted}."
-                raise RuntimeError(msg) from e
-            self._pending_normalizes = []
-            results.append(normalize_result)
+                    raise RuntimeError(f"{e} Per-interface resets were not attempted: {not_attempted}.") from e
+                raise
         if self._pending_resets:
             # `_reset_interfaces` raises a RuntimeError carrying precise partial-state detail on failure; let it
             # propagate unwrapped rather than re-interpolate the full (now-stale) pending list as an "everything failed" message.
@@ -352,23 +515,95 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             results.extend(reset_results)
         return results
 
-    def _normalize_interfaces(self) -> ResponseType:
+    def _normalize_groups(self) -> list[list[tuple[str, str]]]:
         """
         # Summary
 
-        Normalize queued interfaces via `interfaceActions/normalize` using the `InterfaceDefaultConfig` model
-        which provides the full `int_trunk_host` template defaults.
+        Split the normalize queue into the request groups `_normalize_interfaces` sends. The normalize 207 response identifies each
+        result only by interface `name` (no switch), so a mixed 207 can only be correlated back to `(interface_name, switch_id)` pairs
+        when no name repeats within a request. When every queued name is unique the whole queue is one group (one POST, the common
+        case); when the same name is queued on more than one switch the queue is grouped per switch (queue order preserved), which
+        makes every response item unambiguous at the cost of one POST per switch.
 
         ## Raises
 
-        ### Exception
+        None
+        """
+        names = [name.lower() for name, _switch_id in self._pending_normalizes]
+        if len(set(names)) == len(names):
+            return [list(self._pending_normalizes)]
+        groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for pair in self._pending_normalizes:
+            groups[pair[1]].append(pair)
+        return list(groups.values())
 
-        - If the normalize API request fails (propagated to caller).
+    def _normalize_interfaces(self) -> list[ResponseType]:
+        """
+        # Summary
+
+        Normalize the queued interfaces via `interfaceActions/normalize` using the `InterfaceDefaultConfig` model (the full
+        `int_trunk_host` template defaults), one POST per `_normalize_groups` group, dequeuing each group from `_pending_normalizes`
+        as the controller accepts it.
+
+        The endpoint answers HTTP 207 with an independent `results[]` status per interface, so a request can reset one interface and
+        reject another. On a failed request, the members the response reports as an exact `success` (`_accepted_multistatus_names`;
+        vault `multi-status-207-status-field-inconsistent`) are dequeued — their reset IS on the controller, and the module's
+        failure-path finalizer (`deploy_accepted_mutations`) must ship it rather than strand it staged, where a retry would filter
+        the interface out (its intent is already `trunkHost`) and never deploy it (PR #550 review). Rejected, status-less, and
+        unknown-status members stay queued as unsent. Fail-fast across groups: after a failed group the remaining groups are not
+        attempted and stay queued.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If a normalize request fails. The message names the interfaces the controller rejected, the ones it accepted from the same
+          request (whose deploy stays queued), and the ones not attempted.
         """
         api_endpoint = EpManageInterfacesNormalize()
         api_endpoint.fabric_name = self.fabric_name
-        payload = InterfaceDefaultConfig.to_normalize_payload(self._pending_normalizes)
-        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        results: list[ResponseType] = []
+        groups = self._normalize_groups()
+        for index, group in enumerate(groups):
+            payload = InterfaceDefaultConfig.to_normalize_payload(group)
+            try:
+                results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+            except Exception as e:
+                accepted = self._dequeue_accepted_normalizes(group)
+                rejected = [name for name, switch_id in group if (name, switch_id) in self._pending_normalizes]
+                not_attempted = [name for later in groups[index + 1 :] for name, _switch_id in later]
+                msg = f"Bulk normalize failed for {rejected}: {e}."
+                if accepted:
+                    msg += f" The controller accepted {accepted} from the same request; their deploy stays queued."
+                else:
+                    msg += " None of these interfaces were reset."
+                if not_attempted:
+                    msg += f" Not attempted: {not_attempted}."
+                raise RuntimeError(msg) from e
+            for pair in group:
+                self._pending_normalizes.remove(pair)
+        return results
+
+    def _dequeue_accepted_normalizes(self, group: list[tuple[str, str]]) -> list[str]:
+        """
+        # Summary
+
+        After a failed normalize request for `group`, dequeue from `_pending_normalizes` every member the most recent response reported
+        as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`) and return their names in request order.
+        Names are unique within a group by construction (`_normalize_groups`), so a response `name` maps to exactly one pair. Returns an
+        empty list when the failure was not a partial 207.
+
+        ## Raises
+
+        None
+        """
+        accepted_names = self._accepted_multistatus_names()
+        accepted: list[str] = []
+        for interface_name, switch_id in group:
+            if interface_name.lower() in accepted_names:
+                self._pending_normalizes.remove((interface_name, switch_id))
+                accepted.append(interface_name)
+        return accepted
 
     def _reset_interfaces(self) -> list[ResponseType]:
         """
@@ -391,14 +626,17 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         results: list[ResponseType] = []
         succeeded: list[str] = []
-        for index, (interface_name, switch_id) in enumerate(self._pending_resets):
+        # Iterate over a snapshot: each pair is dequeued as soon as its PUT succeeds, so after a failure the queue holds exactly
+        # the failed and not-attempted pairs and the failure-path finalizer (`_unsent_delete_pairs`) never deploys them.
+        pending = list(self._pending_resets)
+        for index, (interface_name, switch_id) in enumerate(pending):
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(interface_name)
             payload = InterfaceDefaultConfig.to_reset_payload(interface_name, switch_id)
             try:
                 results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
             except Exception as e:
-                not_attempted = [name for name, switch_id in self._pending_resets[index + 1 :]]
+                not_attempted = [name for name, switch_id in pending[index + 1 :]]
                 raise RuntimeError(
                     f"Reset failed at {interface_name} on {switch_id}: {e}. "
                     f"Successfully reset before failure: {succeeded or 'none'}. "
@@ -406,15 +644,31 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     f"Interfaces reset before the failure are now at fabric default and were not rolled back."
                 ) from e
             succeeded.append(interface_name)
+            self._pending_resets.remove((interface_name, switch_id))
         return results
+
+    def _unsent_delete_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Extend the base set of not-yet-accepted delete pairs with ethernet's deferred queues: the bulk normalize queue (dequeued
+        per request group as the controller accepts it, and per exact-success member on a mixed HTTP 207) and the per-interface
+        reset queue (dequeued pair by pair as each PUT succeeds). See `NDBaseInterfaceOrchestrator._unsent_delete_pairs` /
+        `deploy_accepted_mutations`.
+
+        ## Raises
+
+        None
+        """
+        return super()._unsent_delete_pairs() | set(self._pending_normalizes) | set(self._pending_resets)
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
         # Summary
 
         Create an ethernet interface configuration. Resolves `switch_ip` from the model instance, fetches the
-        interface's current wire state to enforce port-channel membership restrictions, injects `switchId`, and
-        wraps the payload in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`.
+        interface's current wire state to enforce the fabric-ownership and port-channel membership guards, injects `switchId`,
+        and wraps the payload in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`.
 
         An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
 
@@ -422,6 +676,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         ### RuntimeError
 
+        - If the interface currently carries a fabric-owned policy (`_check_fabric_ownership`).
         - If the interface is a port-channel member and non-whitelisted fields are being modified.
         - If the interface-list query used to resolve port-channel membership fails.
         - If the create API request fails.
@@ -429,6 +684,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
@@ -445,8 +701,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Update an ethernet interface configuration. Resolves `switch_ip` from the model instance, fetches the
-        interface's current wire state to enforce port-channel membership restrictions, injects `switchId` into
-        the payload. Queues a deploy for later bulk execution via `deploy_pending`.
+        interface's current wire state to enforce the fabric-ownership and port-channel membership guards, injects
+        `switchId` into the payload. Queues a deploy for later bulk execution via `deploy_pending`.
 
         An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
 
@@ -454,6 +710,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         ### RuntimeError
 
+        - If the interface currently carries a fabric-owned policy (`_check_fabric_ownership`).
         - If the interface is a port-channel member and non-whitelisted fields are being modified.
         - If the interface-list query used to resolve port-channel membership fails.
         - If the update API request fails.
@@ -461,6 +718,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
@@ -516,8 +774,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Create multiple ethernet interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
         interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Each interface's current wire
-        state is fetched (one cached `interfaceList` GET per switch) to enforce port-channel membership restrictions.
-        Queues deploys for all created interfaces for later bulk execution via `deploy_pending`.
+        state is fetched (one cached `interfaceList` GET per switch) to enforce the fabric-ownership and port-channel
+        membership guards — every guard runs before the first POST, so a fabric-owned target anywhere in the batch fails
+        the whole batch with nothing written. Queues deploys for all created interfaces for later bulk execution via
+        `deploy_pending`.
+
+        A per-switch POST can fail with HTTP 207 Multi-Status while the controller still accepted some of the group's
+        interfaces (`DATA.results[]` items reporting an exact `success`). Those accepted interfaces are queued for deploy
+        before the error propagates, so the module's failure-path finalizer (`deploy_accepted_mutations`) ships them
+        rather than leaving them staged; a retry would otherwise classify them as unchanged and never deploy them
+        (PR #550 review). Only an exact `success` is trusted — see `_accepted_multistatus_names`.
 
         An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
 
@@ -525,15 +791,18 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         ### RuntimeError
 
+        - If any interface currently carries a fabric-owned policy (`_check_fabric_ownership`).
         - If any interface is a port-channel member and non-whitelisted fields are being modified.
         - If the interface-list query used to resolve port-channel membership fails.
-        - If any create API request fails.
+        - If any create API request fails. When the failing response was a 207 that accepted part of the group, the
+          message names the accepted interfaces.
         """
         try:
             groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)
                 existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+                self._check_fabric_ownership(model_instance, existing_data)
                 self._check_port_channel_restrictions(model_instance, existing_data)
                 payload = model_instance.to_payload()
                 payload["switchId"] = switch_id
@@ -541,16 +810,58 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
             results = []
             for switch_id, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [payload for interface_name, payload in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
+                results.append(self._post_bulk_group(switch_id, items))
                 for interface_name, payload in items:
                     self._queue_deploy(interface_name, switch_id)
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
+
+    def _post_bulk_group(self, switch_id: str, items: list[tuple[str, dict]]) -> ResponseType:
+        """
+        # Summary
+
+        Send one per-switch bulk create POST for `items` (`(interface_name, payload)` pairs). On failure, queue a deploy for every
+        interface the response reported as accepted (partial HTTP 207, see `_queue_accepted_bulk_items`) before re-raising, naming
+        the accepted subset in the error when there is one.
+
+        ## Raises
+
+        ### Exception
+
+        - Propagated from `_request` when the POST fails (wrapped in `RuntimeError` naming the accepted subset when the failing
+          207 accepted part of the group).
+        """
+        # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
+        api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
+        request_body = {"interfaces": [payload for _interface_name, payload in items]}
+        try:
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+        except Exception as e:
+            accepted = self._queue_accepted_bulk_items(items, switch_id)
+            if accepted:
+                raise RuntimeError(f"{e}. The controller accepted {accepted} from the same request; their deploy stays queued.") from e
+            raise
+
+    def _queue_accepted_bulk_items(self, items: list[tuple[str, dict]], switch_id: str) -> list[str]:
+        """
+        # Summary
+
+        After a failed per-switch bulk POST, queue a deploy for every interface in `items` that the most recent response
+        reported as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`). Returns the accepted
+        interface names in request order (empty when the failure was not a partial 207).
+
+        ## Raises
+
+        None
+        """
+        accepted_names = self._accepted_multistatus_names()
+        accepted: list[str] = []
+        for interface_name, _payload in items:
+            if interface_name.lower() in accepted_names:
+                self._queue_deploy(interface_name, switch_id)
+                accepted.append(interface_name)
+        return accepted
 
     def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> None:
         """
