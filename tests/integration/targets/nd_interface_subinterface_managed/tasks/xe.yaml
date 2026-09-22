@@ -388,7 +388,10 @@
       deploy: true
     state: deleted
   register: xe_parent_reset
-
+# TODO(4.3.1) xe-interface-removal-requires-discovery
+# ND's discovered mode of the parent lags the trunk-host reset deploy; on 2026-09-21 it read `routed` for more than three minutes after
+# the deploy on an otherwise idle controller, on both releases. Wait for up to ten minutes so the next target starts from a discovered
+# trunk parent.
 - name: "XE TEARDOWN: Wait until ND has discovered the parent as a trunk again"
   cisco.nd.nd_rest:
     path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
@@ -400,5 +403,5 @@
     | selectattr('operData.mode', 'defined')
     | selectattr('operData.mode', 'equalto', 'trunk')
     | list | length == 1
-  retries: 18
+  retries: 60
   delay: 10
