@@ -1717,7 +1717,7 @@ def test_port_channel_access_orchestrator_01300(check_mode: bool) -> None:
 
     ## Test
 
-    - Responses: switches list, inventory (port-channel102 `unknown`), pendingConfig without port-channel102
+    - Responses: switches list, inventory (port-channel102 `unknown`), deployment history holding port-channel102's create push
     - `preflight_delete` raises `RuntimeError` naming port-channel102
     - `_pending_removes` and `_pending_deploys` stay empty
 
@@ -1740,14 +1740,14 @@ def test_port_channel_access_orchestrator_01310() -> None:
     """
     # Summary
 
-    Verify `state: deleted` still removes staged intent: an undiscovered IOS-XE port-channel that the pending configuration lists was
-    never deployed, and a discovered one needs no pending-configuration lookup at all.
+    Verify `state: deleted` still removes staged intent: an undiscovered IOS-XE port-channel with no configuration push in its
+    deployment history was never deployed, and a discovered one needs no history lookup at all.
 
     ## Test
 
-    - Responses: switches list, inventory, pendingConfig listing `interface Port-channel102`
+    - Responses: switches list, inventory, empty deployment history for port-channel102
     - `preflight_delete` for port-channel101 (`up`) and port-channel102 (`unknown`, staged) does not raise
-    - Exactly three requests: one pendingConfig GET for the switch
+    - Exactly three requests: one history GET for the undiscovered candidate
 
     ## Classes and Methods
 
@@ -1774,7 +1774,7 @@ def test_port_channel_access_orchestrator_01320() -> None:
     ## Test
 
     - Proposed config names only port-channel101, so the fabric-wide override would remove port-channel102 (`unknown`)
-    - Responses: switches list, capableSwitches, fabric summary, inventory, pendingConfig without port-channel102
+    - Responses: switches list, capableSwitches, fabric summary, inventory, deployment history holding port-channel102's create push
     - `preflight` raises `RuntimeError` naming port-channel102
 
     ## Classes and Methods

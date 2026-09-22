@@ -22,8 +22,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_pending_config import (
-    EpManageFabricsSwitchesPendingConfigGet,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
+    EpManageFabricsSwitchesDeploymentHistoryGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
@@ -102,6 +102,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # Subclasses whose delete side removes IOS-XE logical interfaces (`interfaceActions/remove` + deploy) set this so `state: deleted`
     # and `state: overridden` refuse a removal ND cannot complete yet (see `_check_xe_removal_discovered`).
     xe_removal_requires_discovery: ClassVar[bool] = False
+    # Newest deployment-history records read per undiscovered IOS-XE removal candidate (see `_xe_interface_deployed`).
+    XE_HISTORY_MAX: ClassVar[int] = 10
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -499,30 +501,32 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         A candidate is discovered when its `operData.operationalStatus` is `up` or `down` (the spec enum is `up` / `down` / `unknown`;
         a missing or unrecognized value counts as not discovered). An undiscovered candidate is one of two things the interface record
-        cannot tell apart, so the switch's pending configuration is read once per affected switch to separate them:
+        cannot tell apart, so `_xe_interface_deployed` asks the switch's deployment history, one GET per such candidate:
 
-        - Its `interface <name>` line is pending: the intent was never deployed (e.g. created with `config_actions.deploy: false`).
-          Nothing is on the switch and the removal is safe.
-        - It is not pending: the intent is deployed and discovery has not caught up. The removal is refused; the module neither polls
-          nor retries, so the caller decides how to wait.
+        - Its configuration was never pushed, or its last push was a successful `no interface <name>`: nothing is on the switch and the
+          removal is safe (e.g. intent created with `config_actions.deploy: false`).
+        - Its last push was a create or update, or a removal that did not succeed: the intent is on the switch and discovery has not
+          caught up. The removal is refused; the module neither polls nor retries, so the caller decides how to wait.
 
-        An undiscovered interface that was deployed and then edited without a deploy also shows pending lines and is let through; the
-        explicit-delete recovery of the rediscovered record covers that corner.
+        Unlike the interface diff or the switch's pending configuration, the history is not rewritten by a later staged edit, so a
+        deployed, undiscovered interface that was then edited without a deploy is still refused.
 
         ## Raises
 
         ### RuntimeError
 
-        - If any candidate is an undiscovered IOS-XE interface absent from its switch's pending configuration. The message names every
-          such interface with its `operationalStatus`.
-        - Via `_request` if the pending-configuration query fails.
+        - If any candidate is an undiscovered IOS-XE interface whose deployment history shows it on the switch. The message names
+          every such interface with its `operationalStatus`.
+        - Via `_request` if a deployment-history query fails.
         """
         # TODO(4.2.1) xe-interface-removal-requires-discovery
         # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface) only once it has
-        # discovered the deployed interface, seconds to tens of seconds after the create deploy. A remove inside that window drops the
+        # discovered the deployed interface, seconds to minutes after the create deploy. A remove inside that window drops the
         # intent record, the deploy pushes nothing, and the interface stays on the switch (lab-verified 2026-09-21 on 4.2.1.10 and
-        # 4.3.1.175). NX-OS is unaffected.
-        undiscovered: dict[str, list[tuple[str, str]]] = {}
+        # 4.3.1.175). NX-OS is unaffected. The record reads `unknown` / `Not discovered` whether the intent was deployed or not, the
+        # per-interface diff reads all-`insert` for both staged intent and a deployed-undiscovered interface with a staged edit, and
+        # the pending configuration lists both; only the per-switch deployment history separates them (lab-verified 2026-09-22).
+        blocked: list[str] = []
         for interface_name, switch_id in pairs:
             record = self._switch_interfaces(switch_id).get(interface_name.strip().lower())
             if record is None:
@@ -531,22 +535,62 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             if network_os.get("networkOSType") != "ios-xe":
                 continue
             status = str((record.get("operData") or {}).get("operationalStatus") or "").strip().lower()
-            if status not in ("up", "down"):
-                undiscovered.setdefault(switch_id, []).append((interface_name, status or "missing"))
-        blocked: list[str] = []
-        for switch_id, candidates in undiscovered.items():
-            api_endpoint = self._configure_endpoint(EpManageFabricsSwitchesPendingConfigGet(), switch_sn=switch_id)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-            lines = result.get("pendingConfigs") if isinstance(result, dict) else None
-            pending = {str(line).strip().lower() for line in lines or []}
-            for interface_name, status in candidates:
-                if f"interface {interface_name.strip().lower()}" not in pending:
-                    blocked.append(f"{interface_name} on {switch_id} (operationalStatus={status})")
+            if status in ("up", "down"):
+                continue
+            if self._xe_interface_deployed(interface_name, switch_id):
+                blocked.append(f"{interface_name} on {switch_id} (operationalStatus={status or 'missing'})")
         if blocked:
             raise RuntimeError(
                 f"Cannot remove IOS-XE interface(s) {blocked} because Nexus Dashboard has not finished discovering them. "
                 "Retry after operationalStatus becomes up or down."
             )
+
+    def _xe_interface_deployed(self, interface_name: str, switch_id: str) -> bool:
+        """
+        # Summary
+
+        Return whether the switch's deployment history says `interface_name`'s configuration is on the switch. One GET of the
+        per-switch `deploymentHistory`, filtered to the interface's records (`entityName:<name>`, matched case-insensitively by the
+        controller), newest first, at most `XE_HISTORY_MAX` records. Only records whose first pushed line is `interface <name>` or
+        `no interface <name>` count; ND files companion pushes under the same entity (an SVI's `vlan <id>` / `no vlan <id>`), which are
+        skipped. The newest counted record decides, by its own `completeTimestamp` rather than the response order:
+
+        - none: never deployed -> `False`
+        - a successful `no interface <name>`: removed from the switch -> `False`
+        - anything else (a create or update push, or a removal that did not succeed): on the switch -> `True`
+
+        A response without `deploymentRecords` counts as no history.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_request` if the deployment-history query fails.
+        """
+        name = interface_name.strip().lower()
+        api_endpoint = self._configure_endpoint(EpManageFabricsSwitchesDeploymentHistoryGet(), switch_sn=switch_id)
+        api_endpoint.endpoint_params.filter = f"entityName:{name}"
+        api_endpoint.endpoint_params.sort = "completeTimestamp:desc"
+        api_endpoint.endpoint_params.max = self.XE_HISTORY_MAX
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+        records = result.get("deploymentRecords") if isinstance(result, dict) else None
+        newest: tuple[str, bool] | None = None  # (timestamp, removed_from_switch)
+        for record in records if isinstance(records, list) else []:
+            if not isinstance(record, dict):
+                continue
+            commands = record.get("configCommandResponses") or []
+            first = commands[0] if commands and isinstance(commands[0], dict) else {}
+            first_line = " ".join(str(first.get("command") or "").split()).lower()
+            if first_line == f"interface {name}":
+                removed = False
+            elif first_line == f"no interface {name}":
+                removed = str(record.get("status") or "").strip().lower() == "success"
+            else:
+                continue
+            stamp = str(record.get("completeTimestamp") or record.get("startTimestamp") or "")
+            if newest is None or stamp > newest[0]:
+                newest = (stamp, removed)
+        return newest is not None and not newest[1]
 
     def _check_platform_match(self, model_instances: Sequence[ModelType]) -> None:
         """
