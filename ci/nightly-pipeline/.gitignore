@@ -24,6 +24,9 @@ _*.yaml
 *.bak
 *.orig
 
+# locally retained investigation/design notes; do not include them in PRs
+docs/superpowers/
+
 # secrets — never commit
 *.pem
 *.key
