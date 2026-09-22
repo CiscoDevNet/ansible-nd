@@ -220,8 +220,11 @@
       - nm_xe_merged_982.after | selectattr('interface_name', 'equalto', 'vlan982') | list | length == 1
 
 # --- XE DISCOVERY WAIT (before overridden) ---
-# ND generates the switch-side removal of an IOS-XE interface only once it has discovered the deployed interface (operData leaves
-# `unknown` 10-30 s after the create deploy). Real playbooks delete long after creating; this scenario does both in one run, so wait here.
+# TODO(4.3.1) xe-interface-removal-requires-discovery
+# ND generates the switch-side removal of an IOS-XE interface only once it has discovered the deployed interface, and the module refuses
+# a removal before that. Discovery usually takes 10-30 s but is variable: the last SVI created took over three minutes on an otherwise
+# idle 4.2.1.10 and on 4.3.1.175 (2026-09-21). Real playbooks delete long after creating; this scenario does both in one run, so wait
+# here, for up to ten minutes so a slow discovery cannot fail the run.
 
 - name: "XE DISCOVERY WAIT: Wait until ND has discovered vlan980, vlan981 and vlan982 on the Catalyst"
   cisco.nd.nd_rest:
@@ -234,7 +237,7 @@
     | selectattr('operData.operationalStatus', 'defined')
     | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
     | list | length == 3
-  retries: 12
+  retries: 60
   delay: 10
 
 # --- XE OVERRIDDEN ---
