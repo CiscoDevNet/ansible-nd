@@ -39,8 +39,10 @@ options:
     - The structure mirrors the ND Manage Interfaces API payload.
     - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
     - Not required for O(state=gathered).
-    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
-      while multiple list items use OR semantics.
+    - For O(state=gathered), supported supplied fields are filter criteria. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics. Supported properties are O(config.switch_ip), O(config.interface_names),
+      O(config.config_data.network_os.policy.admin_state), O(config.config_data.network_os.policy.allowed_vlans), and
+      O(config.config_data.network_os.policy.native_vlan). Other configuration properties are rejected when used as gathered filters.
     type: list
     elements: dict
     required: false
@@ -865,9 +867,13 @@ def expand_gathered_filters(config_list):
     the same name-flattening for mutation states. Both exist because the user-facing
     argspec uses interface_names (list) while the internal model uses interface_name
     (singular).
+
+    Raises ValueError when an interface_names entry is null, empty/whitespace-only, or not a string,
+    so invalid partial filters fail before the state machine can issue an API request.
     """
     if not config_list:
         return config_list
+    _validate_ethernet_interface_names(config_list, require_interface_names=False)
     expanded = []
     for item in config_list:
         names = item.get("interface_names", None) or []
