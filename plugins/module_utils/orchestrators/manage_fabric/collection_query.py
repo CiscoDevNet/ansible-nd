@@ -28,7 +28,7 @@ class ManageFabricCollectionQueryMixin:
     fabric_inventory_category: ClassVar[str]
     fabric_inventory_management_type: ClassVar[str]
     fabric_inventory_page_size: ClassVar[int] = 100
-    fabric_inventory_max_pages: ClassVar[int] = 1000
+    fabric_inventory_max_pages: ClassVar[int] = 100
     gathered_lucene_spec: ClassVar[Any] = None
     fabric_gathered_max_queries: ClassVar[int] = 3
 
@@ -198,11 +198,7 @@ class ManageFabricCollectionQueryMixin:
 
         for filter_item in gathered_filters or [{}]:
             fabric_name = filter_item.get("fabric_name")
-            other_active_keys = {
-                key
-                for key, value in filter_item.items()
-                if key != "fabric_name" and value not in (None, "")
-            }
+            other_active_keys = {key for key, value in filter_item.items() if key != "fabric_name" and value not in (None, "")}
             if isinstance(fabric_name, str) and fabric_name and not other_active_keys:
                 if fabric_name not in exact_names:
                     exact_names.append(fabric_name)

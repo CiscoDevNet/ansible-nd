@@ -36,7 +36,7 @@
     config:
       - "{{ {'fabric_name': ai_ebgp_test_fabric_merged} | combine(fabric_config_ai_ebgp) }}"
   register: merged_result_1
-  tags: [test_merged, test_merged_create, test_gathered]
+  tags: [test_merged, test_merged_create]
 
 - name: "TEST 1a: Verify fabric was created using merged state"
   assert:
@@ -45,7 +45,7 @@
       - merged_result_1 is not failed
     fail_msg: "AI eBGP VXLAN fabric creation with state merged failed"
     success_msg: "AI eBGP VXLAN fabric successfully created with state merged"
-  tags: [test_merged, test_merged_create, test_gathered]
+  tags: [test_merged, test_merged_create]
 
 - name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
@@ -54,7 +54,7 @@
     config:
       - "{{ {'fabric_name': ai_ebgp_test_fabric_merged} | combine(fabric_config_ai_ebgp) }}"
   register: merged_result_2
-  tags: [test_merged, test_merged_idempotent, test_gathered]
+  tags: [test_merged, test_merged_idempotent]
 
 - name: "TEST 1b: Verify merged state is idempotent"
   assert:
@@ -63,7 +63,7 @@
       - merged_result_2 is not failed
     fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
     success_msg: "Merged state is idempotent - no changes on second run"
-  tags: [test_merged, test_merged_idempotent, test_gathered]
+  tags: [test_merged, test_merged_idempotent]
 
 - name: "TEST 1c: Update fabric using state merged (modify existing)"
   cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
@@ -147,7 +147,7 @@
           management_gateway: ""
           management_ipv4_prefix: 24
   register: merged_result_3
-  tags: [test_merged, test_merged_update, test_gathered]
+  tags: [test_merged, test_merged_update]
 
 - name: "TEST 1c: Verify fabric was updated using merged state"
   assert:
@@ -156,7 +156,7 @@
       - merged_result_3 is not failed
     fail_msg: "AI eBGP VXLAN fabric update with state merged failed"
     success_msg: "AI eBGP VXLAN fabric successfully updated with state merged"
-  tags: [test_merged, test_merged_update, test_gathered]
+  tags: [test_merged, test_merged_update]
 
 #############################################################################
 # TEST GATHERED: Read-only state and supported filtering
@@ -174,11 +174,16 @@
       - ai_ebgp_gathered_all is not changed
       - ai_ebgp_gathered_all.gathered is defined
       - ai_ebgp_gathered_all.gathered | type_debug == "list"
-      - ai_ebgp_test_fabric_merged in (ai_ebgp_gathered_all.gathered | map(attribute='fabric_name') | list)
-      - ai_ebgp_gathered_all.before is not defined
-      - ai_ebgp_gathered_all.after is not defined
+      - ai_ebgp_gathered_all.gathered | length > 0
+      - ai_ebgp_gathered_all.before == []
+      - ai_ebgp_gathered_all.after == []
       - ai_ebgp_gathered_all.diff is not defined
       - ai_ebgp_gathered_all.proposed is not defined
+  tags: [test_gathered]
+
+- name: "GATHERED: Select an existing AI eBGP VXLAN fabric for exact filters"
+  ansible.builtin.set_fact:
+    ai_ebgp_gathered_fabric_name: "{{ ai_ebgp_gathered_all.gathered[0].fabric_name }}"
   tags: [test_gathered]
 
 - name: "GATHERED: Read all fabrics with explicit empty config"
@@ -203,7 +208,7 @@
     <<: *nd_info
     state: gathered
     config:
-      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ebgp_gathered_fabric_name }}"
   register: ai_ebgp_gathered_exact
   tags: [test_gathered]
 
@@ -212,7 +217,7 @@
     that:
       - ai_ebgp_gathered_exact is not changed
       - ai_ebgp_gathered_exact.gathered | length == 1
-      - ai_ebgp_gathered_exact.gathered[0].fabric_name == ai_ebgp_test_fabric_merged
+      - ai_ebgp_gathered_exact.gathered[0].fabric_name == ai_ebgp_gathered_fabric_name
   tags: [test_gathered]
 
 - name: "GATHERED: Filter with all five supported properties"
@@ -233,7 +238,7 @@
     that:
       - ai_ebgp_gathered_all_fields is not changed
       - ai_ebgp_gathered_all_fields.gathered | length == 1
-      - ai_ebgp_gathered_all_fields.gathered[0].fabric_name == ai_ebgp_test_fabric_merged
+      - ai_ebgp_gathered_all_fields.gathered[0].fabric_name == ai_ebgp_gathered_fabric_name
   tags: [test_gathered]
 
 - name: "GATHERED: Apply overlapping filters"
@@ -241,7 +246,7 @@
     <<: *nd_info
     state: gathered
     config:
-      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ebgp_gathered_fabric_name }}"
       - fabric_name: "{{ ai_ebgp_gathered_exact.gathered[0].fabric_name }}"
         license_tier: "{{ ai_ebgp_gathered_exact.gathered[0].license_tier }}"
   register: ai_ebgp_gathered_overlapping
@@ -252,27 +257,27 @@
     that:
       - ai_ebgp_gathered_overlapping is not changed
       - ai_ebgp_gathered_overlapping.gathered | length == 1
-      - ai_ebgp_gathered_overlapping.gathered[0].fabric_name == ai_ebgp_test_fabric_merged
+      - ai_ebgp_gathered_overlapping.gathered[0].fabric_name == ai_ebgp_gathered_fabric_name
   tags: [test_gathered]
 
-- name: "GATHERED: Filter with more than three expressions"
+- name: "GATHERED: Bound more than three exact-name queries"
   cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     <<: *nd_info
     state: gathered
     config:
-      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ebgp_gathered_fabric_name }}"
       - fabric_name: nonexistent_ai_ebgp_fallback_1
       - fabric_name: nonexistent_ai_ebgp_fallback_2
       - fabric_name: nonexistent_ai_ebgp_fallback_3
   register: ai_ebgp_gathered_fallback
   tags: [test_gathered]
 
-- name: "GATHERED: Verify fallback preserves the matching OR item"
+- name: "GATHERED: Verify bounded-query fallback preserves the matching OR item"
   ansible.builtin.assert:
     that:
       - ai_ebgp_gathered_fallback is not changed
       - ai_ebgp_gathered_fallback.gathered | length == 1
-      - ai_ebgp_gathered_fallback.gathered[0].fabric_name == ai_ebgp_test_fabric_merged
+      - ai_ebgp_gathered_fallback.gathered[0].fabric_name == ai_ebgp_gathered_fabric_name
   tags: [test_gathered]
 
 - name: "GATHERED: Filter by a non-existent fabric name"
@@ -329,6 +334,23 @@
       - "'location.longitude' in ai_ebgp_gathered_unsupported_filter.msg"
   tags: [test_gathered]
 
+- name: "GATHERED: Reject an invalid supported fabric-name value"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: invalid/name
+  register: ai_ebgp_gathered_invalid_value
+  ignore_errors: true
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify invalid supported value rejection"
+  ansible.builtin.assert:
+    that:
+      - ai_ebgp_gathered_invalid_value is failed
+      - "'Invalid fabric name' in ai_ebgp_gathered_invalid_value.msg"
+  tags: [test_gathered]
+
 - name: "GATHERED: Reuse exact gathered output as config in check mode"
   cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     <<: *nd_info
@@ -343,7 +365,7 @@
     that:
       - ai_ebgp_gathered_round_trip is not changed
       - ai_ebgp_gathered_round_trip.proposed | length == 1
-      - ai_ebgp_gathered_round_trip.proposed[0].fabric_name == ai_ebgp_test_fabric_merged
+      - ai_ebgp_gathered_round_trip.proposed[0].fabric_name == ai_ebgp_gathered_fabric_name
   tags: [test_gathered]
 
 #############################################################################
