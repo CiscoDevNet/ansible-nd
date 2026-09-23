@@ -130,11 +130,16 @@
       - ext_gathered_all is not changed
       - ext_gathered_all.gathered is defined
       - ext_gathered_all.gathered | type_debug == "list"
-      - ext_test_fabric_merged in (ext_gathered_all.gathered | map(attribute='fabric_name') | list)
-      - ext_gathered_all.before is not defined
-      - ext_gathered_all.after is not defined
+      - ext_gathered_all.gathered | length > 0
+      - ext_gathered_all.before == []
+      - ext_gathered_all.after == []
       - ext_gathered_all.diff is not defined
       - ext_gathered_all.proposed is not defined
+  tags: [test_gathered]
+
+- name: "GATHERED: Select an existing External Connectivity fabric for exact filters"
+  ansible.builtin.set_fact:
+    ext_gathered_fabric_name: "{{ ext_gathered_all.gathered[0].fabric_name }}"
   tags: [test_gathered]
 
 - name: "GATHERED: Read all fabrics with explicit empty config"
@@ -159,7 +164,7 @@
     <<: *nd_info
     state: gathered
     config:
-      - fabric_name: "{{ ext_test_fabric_merged }}"
+      - fabric_name: "{{ ext_gathered_fabric_name }}"
   register: ext_gathered_exact
   tags: [test_gathered]
 
@@ -168,7 +173,7 @@
     that:
       - ext_gathered_exact is not changed
       - ext_gathered_exact.gathered | length == 1
-      - ext_gathered_exact.gathered[0].fabric_name == ext_test_fabric_merged
+      - ext_gathered_exact.gathered[0].fabric_name == ext_gathered_fabric_name
   tags: [test_gathered]
 
 - name: "GATHERED: Filter with all five supported properties"
@@ -189,7 +194,7 @@
     that:
       - ext_gathered_all_fields is not changed
       - ext_gathered_all_fields.gathered | length == 1
-      - ext_gathered_all_fields.gathered[0].fabric_name == ext_test_fabric_merged
+      - ext_gathered_all_fields.gathered[0].fabric_name == ext_gathered_fabric_name
   tags: [test_gathered]
 
 - name: "GATHERED: Apply overlapping filters"
@@ -197,7 +202,7 @@
     <<: *nd_info
     state: gathered
     config:
-      - fabric_name: "{{ ext_test_fabric_merged }}"
+      - fabric_name: "{{ ext_gathered_fabric_name }}"
       - fabric_name: "{{ ext_gathered_exact.gathered[0].fabric_name }}"
         license_tier: "{{ ext_gathered_exact.gathered[0].license_tier }}"
   register: ext_gathered_overlapping
@@ -208,27 +213,27 @@
     that:
       - ext_gathered_overlapping is not changed
       - ext_gathered_overlapping.gathered | length == 1
-      - ext_gathered_overlapping.gathered[0].fabric_name == ext_test_fabric_merged
+      - ext_gathered_overlapping.gathered[0].fabric_name == ext_gathered_fabric_name
   tags: [test_gathered]
 
-- name: "GATHERED: Filter with more than three expressions"
+- name: "GATHERED: Bound more than three exact-name queries"
   cisco.nd.nd_manage_fabric_external:
     <<: *nd_info
     state: gathered
     config:
-      - fabric_name: "{{ ext_test_fabric_merged }}"
+      - fabric_name: "{{ ext_gathered_fabric_name }}"
       - fabric_name: nonexistent_external_fallback_1
       - fabric_name: nonexistent_external_fallback_2
       - fabric_name: nonexistent_external_fallback_3
   register: ext_gathered_fallback
   tags: [test_gathered]
 
-- name: "GATHERED: Verify fallback preserves the matching OR item"
+- name: "GATHERED: Verify bounded-query fallback preserves the matching OR item"
   ansible.builtin.assert:
     that:
       - ext_gathered_fallback is not changed
       - ext_gathered_fallback.gathered | length == 1
-      - ext_gathered_fallback.gathered[0].fabric_name == ext_test_fabric_merged
+      - ext_gathered_fallback.gathered[0].fabric_name == ext_gathered_fabric_name
   tags: [test_gathered]
 
 - name: "GATHERED: Filter by a non-existent fabric name"
@@ -285,6 +290,23 @@
       - "'location.longitude' in ext_gathered_unsupported_filter.msg"
   tags: [test_gathered]
 
+- name: "GATHERED: Reject an invalid supported fabric-name value"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: gathered
+    config:
+      - fabric_name: invalid/name
+  register: ext_gathered_invalid_value
+  ignore_errors: true
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify invalid supported value rejection"
+  ansible.builtin.assert:
+    that:
+      - ext_gathered_invalid_value is failed
+      - "'Invalid fabric name' in ext_gathered_invalid_value.msg"
+  tags: [test_gathered]
+
 - name: "GATHERED: Reuse exact gathered output as config in check mode"
   cisco.nd.nd_manage_fabric_external:
     <<: *nd_info
@@ -299,7 +321,7 @@
     that:
       - ext_gathered_round_trip is not changed
       - ext_gathered_round_trip.proposed | length == 1
-      - ext_gathered_round_trip.proposed[0].fabric_name == ext_test_fabric_merged
+      - ext_gathered_round_trip.proposed[0].fabric_name == ext_gathered_fabric_name
   tags: [test_gathered]
 
 #############################################################################
