@@ -18,15 +18,15 @@
       - ndnetstgomit
     target_network_delete_config:
       - network_name: ndnetstgcreate
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetstgadd
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetstgremove
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetstgdetach
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetstgomit
-        is_l2only: true
+        layer: layer2
     nd_network_staged_primary_attach_block: >-
       {{
         [
@@ -91,28 +91,28 @@
   ansible.builtin.set_fact:
     nd_network_staged_seed:
       - network_name: ndnetstgadd
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 70 }}"
         vlan_id: "{{ nd_network_base_vlan + 70 }}"
         vlan_name: ndnetstgadd_vlan
         attach: "{{ nd_network_staged_primary_attach_block }}"
         deploy: false
       - network_name: ndnetstgremove
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 71 }}"
         vlan_id: "{{ nd_network_base_vlan + 71 }}"
         vlan_name: ndnetstgremove_vlan
         attach: "{{ nd_network_staged_primary_attach_block + nd_network_staged_secondary_attach_block }}"
         deploy: false
       - network_name: ndnetstgdetach
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 74 }}"
         vlan_id: "{{ nd_network_base_vlan + 74 }}"
         vlan_name: ndnetstgdetach_vlan
         attach: "{{ nd_network_staged_primary_attach_block }}"
         deploy: false
       - network_name: ndnetstgomit
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 72 }}"
         vlan_id: "{{ nd_network_base_vlan + 72 }}"
         vlan_name: ndnetstgomit_vlan
@@ -120,7 +120,7 @@
         deploy: false
     nd_network_staged_create_config:
       - network_name: ndnetstgcreate
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 73 }}"
         vlan_id: "{{ nd_network_base_vlan + 73 }}"
         vlan_name: ndnetstgcreate_vlan
@@ -128,28 +128,28 @@
         deploy: true
     nd_network_staged_config:
       - network_name: ndnetstgcreate
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 73 }}"
         vlan_id: "{{ nd_network_base_vlan + 73 }}"
         vlan_name: ndnetstgcreate_vlan
         attach: "{{ nd_network_staged_create_attach_block }}"
         deploy: true
       - network_name: ndnetstgadd
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 70 }}"
         vlan_id: "{{ nd_network_base_vlan + 70 }}"
         vlan_name: ndnetstgadd_vlan
         attach: "{{ nd_network_staged_primary_attach_block + nd_network_staged_secondary_attach_block }}"
         deploy: true
       - network_name: ndnetstgremove
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 71 }}"
         vlan_id: "{{ nd_network_base_vlan + 71 }}"
         vlan_name: ndnetstgremove_vlan
         attach: "{{ nd_network_staged_primary_attach_block }}"
         deploy: true
       - network_name: ndnetstgdetach
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 74 }}"
         vlan_id: "{{ nd_network_base_vlan + 74 }}"
         vlan_name: ndnetstgdetach_vlan

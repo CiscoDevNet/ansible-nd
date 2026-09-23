@@ -545,7 +545,6 @@ EXAMPLES = r"""
         layer: layer2
         network_id: 50010
         vlan_id: 2001
-        is_l2only: true
 
 - name: Stage complete desired Network attachments without deployment
   cisco.nd.nd_manage_networks:
@@ -553,7 +552,7 @@ EXAMPLES = r"""
     state: staged
     config:
       - network_name: Network_BLUE
-        is_l2only: true
+        layer: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -564,7 +563,7 @@ EXAMPLES = r"""
               - interface_range: Ethernet1/10
                 mode: trunk
       - network_name: Network_GREEN
-        is_l2only: true
+        layer: layer2
         network_id: 50011
         vlan_id: 2002
         vlan_name: Network_GREEN_VLAN
