@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     NetworkAttachmentMode,
     NetworkLayer,
     NetworkType,
+    VlanNetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
@@ -307,12 +308,92 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address and ds_vni")
 
         normalized["dhcp_servers"] = cls._normalize_dhcp_servers(normalized)
+        normalized["layer"] = cls._normalize_effective_layer(normalized)
 
         has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS)
         if has_custom_template_fields and not (normalized.get("network_type") or normalized.get("networkType")):
             normalized["network_type"] = NetworkType.USER_DEFINED.value
 
         return normalized
+
+    @staticmethod
+    def _normalize_effective_layer(data: dict[str, Any]) -> str | None:
+        """Return the explicit or derived network layer used by runtime payload construction."""
+        layer = data.get("layer")
+        if layer:
+            return layer
+        if any(data.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS):
+            return None
+        if not NetworkConfigModel._has_definition_intent_for_layer(data):
+            return None
+        vlan_network_type = data.get("vlan_network_type") or data.get("vlanNetworkType")
+        if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
+            vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
+        if vlan_network_type in (VlanNetworkType.PRIVATE_PRIMARY.value, *_PRIVATE_SECONDARY_VLAN_NETWORK_TYPES):
+            return NetworkLayer.LAYER2.value
+        return NetworkLayer.LAYER3.value
+
+    @staticmethod
+    def _has_definition_intent_for_layer(data: dict[str, Any]) -> bool:
+        """Return true when sparse input is intended to create or update a network definition."""
+        definition_fields = {
+            "display_name",
+            "displayName",
+            "network_id",
+            "networkId",
+            "vlan_id",
+            "vlanId",
+            "vlan_network_type",
+            "vlanNetworkType",
+            "primary_network_id",
+            "primaryNetworkId",
+            "vlan_name",
+            "vlanName",
+            "x_connect",
+            "xConnect",
+            "multicast_group_address",
+            "multicastGroup",
+            "ds_vni",
+            "dsVni",
+            "gateway_ipv4_address",
+            "gatewayIpv4Address",
+            "gateway_ipv6_address",
+            "gatewayIpv6Address",
+            "secondary_gateway_ipv4_collection",
+            "secondaryGatewayIpv4Collection",
+            "secondary_gateway_ipv6_collection",
+            "secondaryGatewayIpv6Collection",
+            "vlan_intf_desc",
+            "vlanIntfDesc",
+            "routing_tag",
+            "routingTag",
+            "dhcp_servers",
+            "dhcpServers",
+            "loopback_id",
+            "loopbackId",
+            "igmp_version",
+            "igmpVersion",
+            "trm_enable",
+            "trmEnable",
+            "ipv6_trm",
+            "ipv6Trm",
+            "vlan_netflow_monitor",
+            "l2NetflowMonitor",
+            "interface_netflow_monitor",
+            "l3NetflowMonitor",
+            "gateway_on_border",
+            "gatewayOnBorder",
+        }
+        if any(data.get(field) is not None for field in definition_fields):
+            return True
+        default_sensitive_fields = {
+            "netflow_enable": False,
+            "netflowEnable": False,
+            "arp_suppression": False,
+            "arpSuppression": False,
+            "mtu": 9216,
+        }
+        return any(data.get(field) not in (None, default) for field, default in default_sensitive_fields.items() if field in data)
 
     @staticmethod
     def _normalize_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -419,7 +500,7 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
-        if self.layer == "layer3" and not self.vrf_name:
+        if self.layer == "layer3" and network_type != NetworkType.USER_DEFINED.value and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
         self._check_trm_rules()
         self._check_netflow_rules()

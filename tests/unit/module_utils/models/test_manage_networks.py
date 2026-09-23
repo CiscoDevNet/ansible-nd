@@ -321,6 +321,53 @@ def test_manage_network_attachment_config_models_00316() -> None:
     assert private_secondary.primary_network_id == 30000
 
 
+def test_manage_network_config_models_00318() -> None:
+    """Verify omitted layer is validated using the same effective layer as payload construction."""
+    with pytest.raises(ValidationError, match="vrf_name is required for layer3 networks"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "net_no_vrf",
+                "network_id": 30001,
+                "vlan_id": 101,
+            }
+        )
+
+    implicit_l3 = NetworkConfigModel.from_config(
+        {
+            "network_name": "net_with_vrf",
+            "network_id": 30002,
+            "vlan_id": 102,
+            "vrf_name": "VRF_BLUE",
+        }
+    )
+    explicit_l2 = NetworkConfigModel.from_config(
+        {
+            "network_name": "net_l2",
+            "network_id": 30003,
+            "vlan_id": 103,
+            "layer": "layer2",
+        }
+    )
+    attachment_only = NetworkConfigModel.from_config(
+        {
+            "network_name": "net_attach_only",
+            "attach": [{"ip_address": "192.0.2.10"}],
+        }
+    )
+    secondary_pvlan = NetworkConfigModel.from_config(
+        {
+            "network_name": "pvlan_community",
+            "vlan_network_type": "community",
+            "primary_network_id": 30000,
+        }
+    )
+
+    assert implicit_l3.layer == "layer3"
+    assert explicit_l2.layer == "layer2"
+    assert attachment_only.layer is None
+    assert secondary_pvlan.layer == "layer2"
+
+
 def test_manage_network_attachment_models_00320() -> None:
     """Verify interface validation payload accepts controller probe VLAN."""
     attachment = NetworkAttachmentValidateInterfaceModel(

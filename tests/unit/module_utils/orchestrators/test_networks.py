@@ -1395,6 +1395,40 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
     ]
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        _mcfg_parent_orchestrator().strategy,
+    ],
+)
+def test_parse_config_rejects_implicit_layer3_without_vrf_name(check_mode, strategy):
+    class Module:
+        params = {"output_level": "normal"}
+
+        def __init__(self):
+            self.check_mode = check_mode
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=strategy)
+
+    with pytest.raises(AssertionError, match="vrf_name is required for layer3 networks"):
+        coordinator._parse_config(
+            [
+                {
+                    "network_name": "BLUE_NET",
+                    "network_id": 30001,
+                    "vlan_id": 2301,
+                }
+            ],
+            strategy.config_model_cls,
+            "merged",
+        )
+
+
 def test_mcfg_parent_workflow_validates_but_skips_child_network_crud():
     class Module:
         check_mode = False
