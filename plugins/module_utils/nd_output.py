@@ -53,9 +53,9 @@ class NDOutput:
         output = {
             "output_level": self._output_level,
             "changed": self._changed,
-            "after": self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after,
-            "before": self._before.to_ansible_config() if isinstance(self._before, NDConfigCollection) else self._before,
-            "diff": self._diff.to_ansible_config() if isinstance(self._diff, NDConfigCollection) else self._diff,
+            "after": (self._after.to_ansible_config() if isinstance(self._after, NDConfigCollection) else self._after),
+            "before": (self._before.to_ansible_config() if isinstance(self._before, NDConfigCollection) else self._before),
+            "diff": (self._diff.to_ansible_config() if isinstance(self._diff, NDConfigCollection) else self._diff),
         }
 
         if self._output_level in ("debug", "info"):

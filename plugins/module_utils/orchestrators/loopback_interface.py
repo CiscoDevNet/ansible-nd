@@ -40,8 +40,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    LoopbackPolicyTypeEnum,
+    XeLoopbackPolicyTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -104,7 +108,10 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist or is owned by
+      another controller.
+    - For mutation states, also if the fabric is in deployment-freeze mode.
+    - Read-only gathered operations remain permitted during deployment freeze.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
     - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
@@ -115,11 +122,21 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     - Via `query_all` if the query API request fails.
     """
 
+    _MANAGED_POLICY_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {policy_type.value for policy_type in XeLoopbackPolicyTypeEnum}
+    )
     model_class: ClassVar[type[NDBaseModel]] = LoopbackInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("interfaceType", "loopback"),),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -290,7 +307,44 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
+    @staticmethod
+    def _is_managed_loopback(interface: object) -> bool:
+        """
+        Return whether a controller response represents a loopback policy
+        managed by this module.
+        """
+        if not isinstance(interface, dict):
+            return False
+
+        if interface.get("interfaceType") != "loopback":
+            return False
+
+        config_data = interface.get("configData")
+        if not isinstance(config_data, dict):
+            return False
+
+        network_os = config_data.get("networkOS")
+        if not isinstance(network_os, dict):
+            return False
+
+        policy = network_os.get("policy")
+        if not isinstance(policy, dict):
+            return False
+
+        return policy.get("policyType") in LoopbackInterfaceOrchestrator._MANAGED_POLICY_TYPES
+
+    def _configure_lucene_endpoint(self, api_endpoint) -> None:
+        """
+        Include the complete config in Lucene results for local filtering.
+        """
+        api_endpoint.endpoint_params.config_only = False
+
+    def query_all(
+        self,
+        model_instance: NDBaseModel | None = None,
+        gathered_filters: list[dict] | None = None,
+        **kwargs,
+    ) -> ResponseType:
         """
         # Summary
 
@@ -301,15 +355,17 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         wire name is lab-verified (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as `csrIntLoopback`, but
         the wire echoes `csrLoopback` on reads too (drift recorded in the bug-tracker vault).
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
-
         IOS-XE's `iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is
         system-provisioned) and is therefore included in the managed set above. System-provisioned loopbacks (e.g.
         NX-OS Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and the `userDefined` policy
         type are excluded - those are out of scope for this module.
 
-        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
+        For gathered state, switch and interface-name criteria reduce the endpoint query scope; all other criteria
+        are applied by the generic local gathered filter.
+
+        Runs `validate_prerequisites` before querying. Gathered operations require a
+        readable fabric and remain permitted during deployment freeze; management
+        states require a modifiable fabric and remain blocked by deployment freeze.
 
         Each returned interface dict is enriched with a `switch_ip` field so that `LoopbackInterfaceModel` can be constructed
         with the composite identifier `(switch_ip, interface_name)`.
@@ -319,22 +375,78 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode for a management state.
         - If the query API request fails.
         """
         try:
             self.validate_prerequisites()
-            all_loopbacks = []
-            managed_policy_types = {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {
-                policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
-            }
-            for switch_ip, switch_id in self._switches_to_query().items():
-                interfaces = list(self._switch_interfaces(switch_id).values())
-                loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
-                for iface in managed:
-                    iface["switchIp"] = switch_ip
-                all_loopbacks.extend(managed)
-            return all_loopbacks
+            if gathered_filters is None:
+                return self._query_all_for_management_states()
+            return self._query_all_for_gathered(gathered_filters)
+
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self) -> list[dict]:
+        """
+        Return managed loopbacks for merged, replaced, overridden, and deleted
+        states, reusing the shared per-switch interface inventory cache.
+        """
+        candidates_by_switch: list[tuple[str, list[dict]]] = []
+
+        for switch_ip, switch_id in self._switches_to_query().items():
+            candidates = list(self._switch_interfaces(switch_id).values())
+            candidates_by_switch.append((switch_ip, candidates))
+
+        return self._collect_managed_loopbacks(candidates_by_switch)
+
+    def _query_all_for_gathered(self, gathered_filters: list[dict]) -> list[dict]:
+        """Run server-filtered gathered requests."""
+        candidates_by_switch: list[tuple[str, list[dict]]] = []
+
+        query_plan = self._build_gathered_query_plan(gathered_filters)
+
+        for switch_ip, (switch_id, expressions) in query_plan.items():
+            switch_candidates = []
+
+            for expression in sorted(expressions):
+                switch_candidates.extend(
+                    self._query_interfaces_with_lucene(
+                        switch_id=switch_id,
+                        expression=expression,
+                    )
+                )
+
+            candidates_by_switch.append((switch_ip, switch_candidates))
+
+        return self._collect_managed_loopbacks(candidates_by_switch)
+
+    def _collect_managed_loopbacks(
+        self,
+        candidates_by_switch: list[tuple[str, list[dict]]],
+    ) -> list[dict]:
+        """Validate, enrich, and deduplicate responses."""
+        all_loopbacks = []
+        seen_identifiers: set[tuple[str, str]] = set()
+
+        for switch_ip, candidates in candidates_by_switch:
+            for interface in candidates:
+                if not self._is_managed_loopback(interface):
+                    continue
+
+                interface_name = interface.get("interfaceName")
+                if not interface_name:
+                    continue
+
+                identifier = (switch_ip, interface_name)
+
+                if identifier in seen_identifiers:
+                    continue
+
+                enriched = dict(interface)
+                enriched["switchIp"] = switch_ip
+
+                seen_identifiers.add(identifier)
+                all_loopbacks.append(enriched)
+
+        return all_loopbacks
