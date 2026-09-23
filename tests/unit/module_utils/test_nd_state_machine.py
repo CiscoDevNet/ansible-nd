@@ -40,6 +40,9 @@ import pytest
 import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
@@ -1226,3 +1229,51 @@ def test_nd_state_machine_00380(monkeypatch) -> None:
 
     assert machine.state == "gathered"
     assert orchestrator.query_calls == [{}]
+
+
+@pytest.mark.parametrize(
+    "model_class, filter_item",
+    [
+        (
+            EthernetAccessInterfaceModel,
+            {"config_data": {"network_os": {"policy": {"access_vlan": 0}}}},
+        ),
+        (
+            EthernetTrunkHostInterfaceModel,
+            {"config_data": {"network_os": {"policy": {"native_vlan": 4095}}}},
+        ),
+        (
+            EthernetTrunkHostInterfaceModel,
+            {"config_data": {"network_os": {"policy": {"allowed_vlans": "4095"}}}},
+        ),
+        (
+            FabricUpdateGroupModel,
+            {"execution": "invalid"},
+        ),
+    ],
+    ids=[
+        "access-vlan-out-of-range",
+        "native-vlan-out-of-range",
+        "allowed-vlans-out-of-range",
+        "fabric-update-execution-invalid",
+    ],
+)
+def test_nd_state_machine_00390(monkeypatch, model_class, filter_item) -> None:
+    """Verify invalid child-branch filters fail before the resource query."""
+    monkeypatch.setattr(state_machine_module, "NDBaseOrchestrator", _FakeOrchestratorBase)
+    monkeypatch.setattr(state_machine_module, "RestSend", _FakeRestSend)
+    monkeypatch.setattr(state_machine_module, "Sender", _FakeSender)
+
+    orchestrator = _FakeOrchestratorBase(model_class, response_data=[])
+    orchestrator.supports_gathered_server_filtering = True
+
+    with pytest.raises(ValueError):
+        NDStateMachine(
+            module=_FakeModule(
+                state="gathered",
+                config=[filter_item],
+            ),
+            model_orchestrator=orchestrator,
+        )
+
+    assert orchestrator.query_calls == []

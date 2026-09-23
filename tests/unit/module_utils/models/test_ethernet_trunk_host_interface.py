@@ -2562,9 +2562,7 @@ def test_ethernet_trunk_host_interface_02080():
     - EthernetTrunkHostInterfaceOrchestrator.supports_gathered_server_filtering
     - EthernetTrunkHostInterfaceOrchestrator.gathered_lucene_spec
     """
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
-        EthernetTrunkHostInterfaceOrchestrator,
-    )
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 
     assert EthernetTrunkHostInterfaceOrchestrator.supports_gathered_server_filtering is True
 

@@ -21,6 +21,7 @@ import yaml
 from ansible_collections.cisco.nd.plugins.modules import nd_interface_ethernet_access
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_access import (
     expand_config,
+    expand_gathered_filters,
     validate_across_item_duplicates,
     validate_interface_names,
     validate_within_item_duplicates,
@@ -354,11 +355,12 @@ def test_validate_interface_names_00000_all_strings():
         ([None], "null", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is null"),
         (["Ethernet1/1", None], "null", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is null"),
         ([""], "empty", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
+        (["   "], "whitespace_only", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
         (["Ethernet1/1", ""], "empty", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is empty"),
         ([5], "non_string", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
         (["Ethernet1/1", 5], "non_string", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
     ],
-    ids=["null_only", "null_after_valid", "empty_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
+    ids=["null_only", "null_after_valid", "empty_only", "whitespace_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
 )
 def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interface_names, offender, expected_match):
     """
@@ -418,6 +420,28 @@ def test_expand_config_00102_null_entry_raises_value_error_via_expand():
     config = [{"switch_ip": "1.1.1.1", "interface_names": ["Ethernet1/1", None]}]
     with pytest.raises(ValueError, match=r"interface_names\[1\].*is null"):
         expand_config(config)
+
+
+@pytest.mark.parametrize("invalid_name", [None, "", "   ", 5], ids=["null", "empty", "whitespace_only", "non_string"])
+def test_expand_gathered_filters_00100_rejects_invalid_interface_names(invalid_name):
+    """
+    # Summary
+
+    Verify gathered-filter expansion rejects invalid interface names before the state machine and
+    controller-query paths are entered.
+
+    ## Test
+
+    - A null, empty, or non-string gathered interface name raises ValueError
+
+    ## Classes and Methods
+
+    - expand_gathered_filters()
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": [invalid_name]}]
+    with pytest.raises(ValueError, match=r"interface_names\[0\]"):
+        expand_gathered_filters(config)
 
 
 # --- config_actions.deploy default ---
