@@ -1088,45 +1088,35 @@ def test_fabric_update_group_00950() -> None:
     assert len(result) == 0
 
 
-def test_fabric_update_group_00960() -> None:
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"report_selection": "advanced"},
+        {"reports": "usePreExistingReports"},
+    ],
+    ids=["report_selection", "reports"],
+)
+def test_fabric_update_group_00960(filter_item) -> None:
     """
     # Summary
 
-    Verify `report_selection` and `reports` enum-valued gathered filters.
+    Verify `report_selection` and `reports` remain outside the gathered-filter contract.
 
     ## Test
 
-    - Filter `report_selection: advanced` matches (sample has advanced)
-    - Filter `reports: usePreExistingReports` matches
-    - Filter `report_selection: noReport` does not match
+    - `report_selection` is rejected as unsupported
+    - `reports` is rejected as unsupported
 
     ## Classes and Methods
 
-    - filter_gathered_response()
+    - validate_gathered_filters()
     """
-    result = filter_gathered_response(
-        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
-        filters=[{"report_selection": "advanced"}],
-        model_class=FabricUpdateGroupModel,
-        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
-    )
-    assert len(result) == 1
-
-    result = filter_gathered_response(
-        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
-        filters=[{"reports": "usePreExistingReports"}],
-        model_class=FabricUpdateGroupModel,
-        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
-    )
-    assert len(result) == 1
-
-    result = filter_gathered_response(
-        response_data=[deepcopy(SAMPLE_API_RESPONSE)],
-        filters=[{"report_selection": "noReport"}],
-        model_class=FabricUpdateGroupModel,
-        normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
-    )
-    assert len(result) == 0
+    with pytest.raises(ValueError, match="unsupported properties"):
+        validate_gathered_filters(
+            filters=[filter_item],
+            normalize_filter=FabricUpdateGroupModel.normalize_gathered_filter,
+            supported_properties=FabricUpdateGroupModel.gathered_filter_properties,
+        )
 
 
 @pytest.mark.parametrize(

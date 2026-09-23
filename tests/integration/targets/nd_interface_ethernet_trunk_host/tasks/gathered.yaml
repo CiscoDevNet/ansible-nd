@@ -17,8 +17,8 @@
       - nm_gathered_all is not changed
       - nm_gathered_all.gathered is defined
       - nm_gathered_all.gathered | type_debug == "list"
-      - nm_gathered_all.before is not defined
-      - nm_gathered_all.after is not defined
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
       - nm_gathered_all.diff is not defined
       - nm_gathered_all.proposed is not defined
 
@@ -116,7 +116,7 @@
         config_data:
           network_os:
             policy:
-              description: "Ansible integration test Ethernet1/41"
+              allowed_vlans: "100-200"
   register: nm_gathered_mixed_and
 
 - name: "GATHERED: Verify server and local criteria use AND semantics"
@@ -158,7 +158,7 @@
       - config_data:
           network_os:
             policy:
-              description: "Ansible integration test Ethernet1/41"
+              allowed_vlans: "100-200"
   register: nm_gathered_deduplicated
 
 - name: "GATHERED: Verify overlapping filters do not duplicate results"
@@ -204,6 +204,94 @@
     that:
       - nm_gathered_unsupported is failed
       - "'speed' in nm_gathered_unsupported.msg"
+
+- name: "GATHERED: Reject an empty filter item"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - {}
+  register: nm_gathered_empty_filter
+  ignore_errors: true
+
+- name: "GATHERED: Verify empty filter is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_filter is failed
+      - "'at least one filtering criterion' in nm_gathered_empty_filter.msg"
+
+- name: "GATHERED: Reject a switch outside the fabric"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "192.0.2.250"
+  register: nm_gathered_unknown_switch
+  ignore_errors: true
+
+- name: "GATHERED: Verify unknown switch is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_unknown_switch is failed
+      - "'does not exist in fabric' in nm_gathered_unknown_switch.msg"
+
+- name: "GATHERED: Reject an out-of-range native VLAN filter"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              native_vlan: 0
+  register: nm_gathered_invalid_native_vlan
+  ignore_errors: true
+
+- name: "GATHERED: Verify invalid native VLAN is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_invalid_native_vlan is failed
+      - "'native_vlan' in nm_gathered_invalid_native_vlan.msg"
+
+- name: "GATHERED: Reject an out-of-range allowed VLAN filter"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              allowed_vlans: "4095"
+  register: nm_gathered_invalid_allowed_vlan
+  ignore_errors: true
+
+- name: "GATHERED: Verify invalid allowed VLAN is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_invalid_allowed_vlan is failed
+      - "'allowed_vlans' in nm_gathered_invalid_allowed_vlan.msg"
+
+- name: "GATHERED: Reject an empty interface-name filter"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - ""
+  register: nm_gathered_invalid_interface_name
+  ignore_errors: true
+
+- name: "GATHERED: Verify empty interface name is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_invalid_interface_name is failed
+      - "'interface_names[0]' in nm_gathered_invalid_interface_name.msg"
 
 - name: "GATHERED: Verify abbreviated interface name normalizes correctly"
   cisco.nd.nd_interface_ethernet_trunk_host:

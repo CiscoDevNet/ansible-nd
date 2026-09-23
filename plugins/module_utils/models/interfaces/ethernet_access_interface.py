@@ -277,6 +277,13 @@ class EthernetAccessPolicyModel(StormControlMutexMixin):
         return result
 
 
+class EthernetAccessGatheredPolicyFilterModel(NDNestedModel):
+    """Validate policy fields supported by partial gathered filters."""
+
+    admin_state: bool | None = Field(default=None, alias="adminState")
+    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094)
+
+
 class EthernetAccessNetworkOSModel(NDNestedModel):
     """
     # Summary
@@ -386,14 +393,29 @@ class EthernetAccessInterfaceModel(NDBaseModel):
     @classmethod
     def normalize_gathered_filter(cls, filter_item: dict) -> dict:
         """
-        Normalize a partial gathered-state filter.
+        Validate and normalize a partial gathered-state filter.
 
         Gathered filters are not complete EthernetAccessInterfaceModel instances,
-        so the normal Pydantic interface_name validator does not run against them.
+        so their values do not automatically pass through the complete resource
+        model. Apply the relevant partial-policy validation and preserve the
+        interface-name normalization used by complete resources.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If a supported nested policy criterion fails its normal field
+          validation.
         """
         normalized = deepcopy(filter_item)
+
+        switch_ip = normalized.get("switch_ip")
+        if isinstance(switch_ip, str):
+            normalized["switch_ip"] = switch_ip.strip()
+
         interface_name = normalized.get("interface_name")
-        if isinstance(interface_name, str) and interface_name:
+        if isinstance(interface_name, str):
+            interface_name = interface_name.strip()
             match = _INTERFACE_NAME_PREFIX_RE.match(interface_name)
             if match:
                 prefix, rest = match.groups()
@@ -401,6 +423,30 @@ class EthernetAccessInterfaceModel(NDBaseModel):
                     normalized["interface_name"] = _CANONICAL_INTERFACE_TYPE + rest
                 else:
                     normalized["interface_name"] = prefix[0].upper() + prefix[1:].lower() + rest
+
+        config_data = normalized.get("config_data")
+        if not isinstance(config_data, dict):
+            return normalized
+
+        network_os = config_data.get("network_os")
+        if not isinstance(network_os, dict):
+            return normalized
+
+        policy = network_os.get("policy")
+        if not isinstance(policy, dict):
+            return normalized
+
+        validated_policy = EthernetAccessGatheredPolicyFilterModel.model_validate(
+            policy,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        network_os["policy"] = validated_policy.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
+
         return normalized
 
     def to_gathered_config(self, **kwargs: Any) -> dict[str, Any]:

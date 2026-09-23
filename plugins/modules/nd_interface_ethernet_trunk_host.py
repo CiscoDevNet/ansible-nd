@@ -34,8 +34,10 @@ options:
     - The structure mirrors the ND Manage Interfaces API payload.
     - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
     - Not required for O(state=gathered).
-    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
-      while multiple list items use OR semantics.
+    - For O(state=gathered), supported supplied fields are filter criteria. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics. Supported properties are O(config.switch_ip), O(config.interface_names),
+      O(config.config_data.network_os.policy.admin_state), O(config.config_data.network_os.policy.allowed_vlans), and
+      O(config.config_data.network_os.policy.native_vlan). Other configuration properties are rejected when used as gathered filters.
     type: list
     elements: dict
     required: false
@@ -630,7 +632,7 @@ def validate_interface_names(config_list: list[dict]) -> None:
     """
     # Summary
 
-    Raise `ValueError` if any element of any `interface_names` list is `None`, an empty string, or not a
+    Raise `ValueError` if any element of any `interface_names` list is `None`, empty/whitespace-only, or not a
     string. Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
     with null/empty entries, and a templated value may arrive as a non-string), and downstream `name.lower()`
     would otherwise raise `AttributeError` / silently insert a blank interface — neither of which is the
@@ -640,13 +642,13 @@ def validate_interface_names(config_list: list[dict]) -> None:
 
     ### ValueError
 
-    - If any element of `interface_names` is `None`, an empty string, or not a string.
+    - If any element of `interface_names` is `None`, empty/whitespace-only, or not a string.
     """
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
         for entry_index, name in enumerate(interface_names):
-            if not isinstance(name, str) or not name:
+            if not isinstance(name, str) or not name.strip():
                 if name is None:
                     reason = "null"
                 elif not isinstance(name, str):
@@ -761,9 +763,13 @@ def expand_gathered_filters(config_list):
     the same name-flattening for mutation states. Both exist because the user-facing
     argspec uses interface_names (list) while the internal model uses interface_name
     (singular).
+
+    Raises ValueError when an interface_names entry is null, empty/whitespace-only, or not a string,
+    so invalid partial filters fail before the state machine can issue an API request.
     """
     if not config_list:
         return config_list
+    validate_interface_names(config_list)
     expanded = []
     for item in config_list:
         names = item.get("interface_names", None) or []
