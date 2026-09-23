@@ -150,11 +150,83 @@ class NetworkAttachmentMode(str, Enum):
     PROMISCUOUS = "promiscuous"
     TRUNK_PROMISCUOUS = "trunkPromiscuous"
     HOST = "host"
+    PVLAN_HOST = "pvlanHost"
     TRUNK_SECONDARY = "trunkSecondary"
 
     @classmethod
     def choices(cls) -> list[str]:
         return [e.value for e in cls]
+
+
+class PublicNetworkAttachmentMode(str, Enum):
+    """Playbook-facing network attachment interface mode values."""
+
+    ACCESS = "access"
+    DOT1Q_TUNNEL = "dot1q_tunnel"
+    TRUNK = "trunk"
+    PROMISCUOUS = "promiscuous"
+    TRUNK_PROMISCUOUS = "trunk_promiscuous"
+    PVLAN_HOST = "pvlan_host"
+    TRUNK_SECONDARY = "trunk_secondary"
+
+    @classmethod
+    def choices(cls) -> list[str]:
+        return [e.value for e in cls]
+
+
+PUBLIC_NETWORK_ATTACHMENT_MODE_TO_API = {
+    PublicNetworkAttachmentMode.ACCESS.value: NetworkAttachmentMode.ACCESS.value,
+    PublicNetworkAttachmentMode.DOT1Q_TUNNEL.value: NetworkAttachmentMode.DOT1Q_TUNNEL.value,
+    PublicNetworkAttachmentMode.TRUNK.value: NetworkAttachmentMode.TRUNK.value,
+    PublicNetworkAttachmentMode.PROMISCUOUS.value: NetworkAttachmentMode.PROMISCUOUS.value,
+    PublicNetworkAttachmentMode.TRUNK_PROMISCUOUS.value: NetworkAttachmentMode.TRUNK_PROMISCUOUS.value,
+    PublicNetworkAttachmentMode.PVLAN_HOST.value: NetworkAttachmentMode.HOST.value,
+    PublicNetworkAttachmentMode.TRUNK_SECONDARY.value: NetworkAttachmentMode.TRUNK_SECONDARY.value,
+}
+API_NETWORK_ATTACHMENT_MODE_TO_PUBLIC = {
+    NetworkAttachmentMode.ACCESS.value: PublicNetworkAttachmentMode.ACCESS.value,
+    NetworkAttachmentMode.DOT1Q_TUNNEL.value: PublicNetworkAttachmentMode.DOT1Q_TUNNEL.value,
+    NetworkAttachmentMode.TRUNK.value: PublicNetworkAttachmentMode.TRUNK.value,
+    NetworkAttachmentMode.PROMISCUOUS.value: PublicNetworkAttachmentMode.PROMISCUOUS.value,
+    NetworkAttachmentMode.TRUNK_PROMISCUOUS.value: PublicNetworkAttachmentMode.TRUNK_PROMISCUOUS.value,
+    NetworkAttachmentMode.HOST.value: PublicNetworkAttachmentMode.PVLAN_HOST.value,
+    NetworkAttachmentMode.PVLAN_HOST.value: PublicNetworkAttachmentMode.PVLAN_HOST.value,
+    NetworkAttachmentMode.TRUNK_SECONDARY.value: PublicNetworkAttachmentMode.TRUNK_SECONDARY.value,
+}
+
+
+def public_network_attachment_mode_choices() -> list[str]:
+    """Return playbook-facing Network attachment interface mode choices."""
+    return PublicNetworkAttachmentMode.choices()
+
+
+def public_network_attachment_mode(value: str | NetworkAttachmentMode | PublicNetworkAttachmentMode | None) -> str | None:
+    """Return the canonical playbook-facing Network attachment interface mode."""
+    if value is None:
+        return None
+    raw = value.value if isinstance(value, (NetworkAttachmentMode, PublicNetworkAttachmentMode)) else str(value)
+    return API_NETWORK_ATTACHMENT_MODE_TO_PUBLIC.get(raw, raw)
+
+
+def api_network_attachment_mode(value: str | NetworkAttachmentMode | PublicNetworkAttachmentMode | None, controller_version: str | None = None) -> str | None:
+    """Return the Network attachment interface mode spelling expected by the controller API."""
+    public_value = public_network_attachment_mode(value)
+    if public_value is None:
+        return None
+    if public_value == PublicNetworkAttachmentMode.PVLAN_HOST.value and _controller_version_at_least(controller_version, 4, 3):
+        return NetworkAttachmentMode.PVLAN_HOST.value
+    return PUBLIC_NETWORK_ATTACHMENT_MODE_TO_API.get(public_value, public_value)
+
+
+def _controller_version_at_least(version: str | None, major: int, minor: int) -> bool:
+    """Return True when a controller build string is at least the given major/minor release."""
+    if not version:
+        return False
+    try:
+        parts = str(version).split(".")
+        return (int(parts[0]), int(parts[1])) >= (major, minor)
+    except (IndexError, TypeError, ValueError):
+        return False
 
 
 class SwitchRole(str, Enum):

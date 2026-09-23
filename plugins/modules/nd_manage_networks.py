@@ -160,12 +160,13 @@ options:
               mode:
                 description:
                   - Interface mode.
-                  - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk).
-                  - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous).
-                  - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary).
+                  - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk).
+                  - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous).
+                  - C(community) and C(isolated) Networks allow C(pvlan_host) and C(trunk_secondary).
+                  - C(pvlan_host) is translated to the controller-specific PVLAN host value.
                 type: str
                 required: true
-                choices: [ access, dot1qTunnel, trunk, promiscuous, trunkPromiscuous, host, trunkSecondary ]
+                choices: [ access, dot1q_tunnel, trunk, promiscuous, trunk_promiscuous, pvlan_host, trunk_secondary ]
               interface_range:
                 description: Interface or interface range.
                 type: str
@@ -238,9 +239,9 @@ options:
           - C(primary) is mapped to the ND private primary Network type.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
-          - C(normal) Networks allow C(access), C(dot1qTunnel), and C(trunk) attachment interface modes.
-          - C(primary) Networks allow C(promiscuous) and C(trunkPromiscuous) attachment interface modes.
-          - C(community) and C(isolated) Networks allow C(host) and C(trunkSecondary) attachment interface modes.
+          - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
+          - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous) attachment interface modes.
+          - C(community) and C(isolated) Networks allow C(pvlan_host) and C(trunk_secondary) attachment interface modes.
         type: str
         choices: [ normal, primary, community, isolated ]
       primary_network_id:

@@ -21,10 +21,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     DpuAffinity,
     MappingType,
-    NetworkAttachmentMode,
     NetworkLayer,
     NetworkType,
+    PublicNetworkAttachmentMode,
     VlanNetworkType,
+    public_network_attachment_mode_choices,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
@@ -50,27 +51,27 @@ _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES = frozenset({"privateSecondaryCommunity", 
 
 _NORMAL_NETWORK_INTERFACE_MODES = frozenset(
     {
-        NetworkAttachmentMode.ACCESS.value,
-        NetworkAttachmentMode.DOT1Q_TUNNEL.value,
-        NetworkAttachmentMode.TRUNK.value,
+        PublicNetworkAttachmentMode.ACCESS.value,
+        PublicNetworkAttachmentMode.DOT1Q_TUNNEL.value,
+        PublicNetworkAttachmentMode.TRUNK.value,
     }
 )
 _PRIVATE_PRIMARY_INTERFACE_MODES = frozenset(
     {
-        NetworkAttachmentMode.PROMISCUOUS.value,
-        NetworkAttachmentMode.TRUNK_PROMISCUOUS.value,
+        PublicNetworkAttachmentMode.PROMISCUOUS.value,
+        PublicNetworkAttachmentMode.TRUNK_PROMISCUOUS.value,
     }
 )
 _PRIVATE_SECONDARY_INTERFACE_MODES = frozenset(
     {
-        NetworkAttachmentMode.HOST.value,
-        NetworkAttachmentMode.TRUNK_SECONDARY.value,
+        PublicNetworkAttachmentMode.PVLAN_HOST.value,
+        PublicNetworkAttachmentMode.TRUNK_SECONDARY.value,
     }
 )
 _INTERFACE_MODES_WITH_INTERFACE_GROUP = frozenset(
     {
-        NetworkAttachmentMode.ACCESS.value,
-        NetworkAttachmentMode.TRUNK.value,
+        PublicNetworkAttachmentMode.ACCESS.value,
+        PublicNetworkAttachmentMode.TRUNK.value,
     }
 )
 
@@ -92,8 +93,9 @@ class NetworkInterfaceConfigModel(NDNestedModel):
     @field_validator("mode", mode="before")
     @classmethod
     def _validate_mode(cls, v: str | None) -> str | None:
-        if v not in NetworkAttachmentMode.choices():
-            raise ValueError("mode must be one of: " + ", ".join(NetworkAttachmentMode.choices()))
+        choices = public_network_attachment_mode_choices()
+        if v not in choices:
+            raise ValueError("mode must be one of: " + ", ".join(choices))
         return v
 
     @field_validator("mapping_type", mode="before")
@@ -115,11 +117,11 @@ class NetworkInterfaceConfigModel(NDNestedModel):
 
     @model_validator(mode="after")
     def _check_interface_target(self):
-        if self.native_vlan and self.mode != NetworkAttachmentMode.TRUNK.value:
+        if self.native_vlan and self.mode != PublicNetworkAttachmentMode.TRUNK.value:
             raise ValueError("native_vlan can only be used when mode=trunk")
         if self.interface_group_name is not None and self.mode not in _INTERFACE_MODES_WITH_INTERFACE_GROUP:
             raise ValueError("interface_group_name can only be used when mode is access or trunk")
-        if self.mapping_type is not None and self.mode != NetworkAttachmentMode.TRUNK.value:
+        if self.mapping_type is not None and self.mode != PublicNetworkAttachmentMode.TRUNK.value:
             raise ValueError("mapping_type can only be used when mode=trunk")
         if self.customer_vlan is not None and self.mapping_type != MappingType.SINGLE.value:
             raise ValueError("customer_vlan can only be used when mapping_type=single")

@@ -1972,6 +1972,110 @@ def test_empty_attachment_interfaces_are_preserved_in_payload():
     assert desired[("EMPTY_ATTACH", "FDO123")]["interfaces"] == []
 
 
+def test_attachment_interface_modes_remain_canonical_until_controller_payload():
+    model = NetworkConfigModel.from_config(
+        {
+            "network_name": "PVLAN_SECONDARY",
+            "layer": "layer2",
+            "vlan_network_type": "community",
+            "primary_network_id": 30000,
+            "attach": [
+                {
+                    "ip_address": "10.1.1.11",
+                    "interfaces": [
+                        {
+                            "mode": "pvlan_host",
+                            "interface_range": "Ethernet1/1",
+                        },
+                        {
+                            "mode": "trunk_secondary",
+                            "interface_range": "Ethernet1/2",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    manager = NetworkAttachmentManager(coordinator=None)
+    manager.resolve_switch_ids = lambda *_args: {"10.1.1.11": "FDO123"}
+
+    desired = manager.desired_attachment_map({"config": [model.to_config()]}, _orchestrator().strategy)
+    interfaces = desired[("PVLAN_SECONDARY", "FDO123")]["interfaces"]
+
+    assert interfaces == [
+        {"mode": "pvlan_host", "interfaceRange": "Ethernet1/1"},
+        {"mode": "trunk_secondary", "interfaceRange": "Ethernet1/2"},
+    ]
+
+
+def test_attachment_interface_modes_map_to_controller_version_payloads():
+    payloads = [
+        {
+            "networkName": "PVLAN_SECONDARY",
+            "switchId": "FDO123",
+            "attach": True,
+            "interfaces": [
+                {"mode": "pvlan_host", "interfaceRange": "Ethernet1/1"},
+                {"mode": "trunk_secondary", "interfaceRange": "Ethernet1/2"},
+                {"mode": "dot1q_tunnel", "interfaceRange": "Ethernet1/3"},
+                {"mode": "trunk_promiscuous", "interfaceRange": "Ethernet1/4"},
+            ],
+        }
+    ]
+
+    nd42_payload = NetworkAttachmentManager._payloads_for_controller(payloads, "4.2.1.10")
+    nd43_payload = NetworkAttachmentManager._payloads_for_controller(payloads, "4.3.1.10")
+
+    assert [item["mode"] for item in nd42_payload[0]["interfaces"]] == ["host", "trunkSecondary", "dot1qTunnel", "trunkPromiscuous"]
+    assert [item["mode"] for item in nd43_payload[0]["interfaces"]] == ["pvlanHost", "trunkSecondary", "dot1qTunnel", "trunkPromiscuous"]
+    assert payloads[0]["interfaces"][0]["mode"] == "pvlan_host"
+
+
+def test_planned_attach_payloads_treat_pvlan_host_api_spellings_as_idempotent():
+    current_nd42 = {
+        ("PVLAN_SECONDARY", "FDO123"): {
+            "networkName": "PVLAN_SECONDARY",
+            "switchId": "FDO123",
+            "attach": True,
+            "interfaces": [
+                {
+                    "mode": "host",
+                    "interfaceRange": "Ethernet1/1",
+                }
+            ],
+        }
+    }
+    current_nd43 = {
+        ("PVLAN_SECONDARY", "FDO123"): {
+            "networkName": "PVLAN_SECONDARY",
+            "switchId": "FDO123",
+            "attach": True,
+            "interfaces": [
+                {
+                    "mode": "pvlanHost",
+                    "interfaceRange": "Ethernet1/1",
+                }
+            ],
+        }
+    }
+    desired = {
+        ("PVLAN_SECONDARY", "FDO123"): {
+            "networkName": "PVLAN_SECONDARY",
+            "switchId": "FDO123",
+            "attach": True,
+            "interfaces": [
+                {
+                    "mode": "pvlan_host",
+                    "interfaceRange": "Ethernet1/1",
+                }
+            ],
+        }
+    }
+
+    assert NetworkAttachmentManager.planned_attach_payloads(current_nd42, desired) == []
+    assert NetworkAttachmentManager.planned_attach_payloads(current_nd43, desired) == []
+
+
 def test_attachment_config_rejects_camelcase_aliases():
     with pytest.raises(ValueError, match="ipAddress|interfaceRange|sviEnabled|Extra inputs"):
         NetworkConfigModel.from_config(

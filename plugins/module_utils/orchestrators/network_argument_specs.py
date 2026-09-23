@@ -6,8 +6,8 @@
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     DpuAffinity,
     MappingType,
-    NetworkAttachmentMode,
     NetworkLayer,
+    public_network_attachment_mode_choices,
 )
 
 _VLAN_NETWORK_TYPE_CHOICES = [
@@ -27,7 +27,7 @@ def _dhcp_server_spec():
 
 def _network_interface_spec():
     return dict(
-        mode=dict(type="str", required=True, choices=NetworkAttachmentMode.choices()),
+        mode=dict(type="str", required=True, choices=public_network_attachment_mode_choices()),
         interface_range=dict(type="str", required=True),
         interface_group_name=dict(type="str"),
         native_vlan=dict(type="bool", default=False),

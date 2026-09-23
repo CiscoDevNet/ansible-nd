@@ -26,7 +26,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
-    NetworkAttachmentMode,
+    PublicNetworkAttachmentMode,
+    api_network_attachment_mode,
+    public_network_attachment_mode,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
     NetworkSwitchesListModel,
@@ -266,13 +268,13 @@ class NetworkAttachmentManager:
         payloads = []
         for interface in interfaces:
             mapping_type = interface.get("mapping_type")
-            mode = interface.get("mode") or NetworkAttachmentMode.ACCESS.value
+            mode = interface.get("mode") or PublicNetworkAttachmentMode.ACCESS.value
             payload = {
                 "mode": mode,
                 "interfaceRange": interface.get("interface_range"),
                 "interfaceGroupName": interface.get("interface_group_name"),
             }
-            if mode == NetworkAttachmentMode.TRUNK.value:
+            if mode == PublicNetworkAttachmentMode.TRUNK.value:
                 payload["nativeVlan"] = interface.get("native_vlan")
             if mapping_type:
                 mapping = {"mappingType": mapping_type}
@@ -499,7 +501,7 @@ class NetworkAttachmentManager:
         for interface in interfaces or []:
             mapping = interface.get("mapping") or {}
             normalized_interface = {
-                "mode": NetworkAttachmentManager._status_value(interface.get("mode")).lower(),
+                "mode": public_network_attachment_mode(NetworkAttachmentManager._status_value(interface.get("mode"))),
                 "interfaceRange": interface.get("interfaceRange") or interface.get("interface_range"),
                 "interfaceGroupName": interface.get("interfaceGroupName") or interface.get("interface_group_name"),
                 "nativeVlan": bool(interface.get("nativeVlan") if "nativeVlan" in interface else interface.get("native_vlan", False)),
@@ -578,9 +580,11 @@ class NetworkAttachmentManager:
                 "payloads": payloads,
                 "check_mode_attachment_payloads": payloads,
             }
-        payloads = self._prepare_attachment_payloads(strategy, payloads)
-        request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        controller_version = getattr(getattr(orchestrator, "rest_send", None), "controller_version", None)
+        payloads = self._prepare_attachment_payloads(strategy, payloads)
+        payloads = self._payloads_for_controller(payloads, controller_version)
+        request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         self.validate_attachment_interfaces(orchestrator, strategy, payloads)
         endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
         response = orchestrator._request(
@@ -627,6 +631,31 @@ class NetworkAttachmentManager:
             item.setdefault("extraConfig", "")
             prepared.append(item)
         return prepared
+
+    @staticmethod
+    def _payloads_for_controller(payloads: list[dict[str, Any]], controller_version: str | None) -> list[dict[str, Any]]:
+        """Return attachment payload copies with interface modes converted to controller API spelling."""
+        converted = []
+        for payload in payloads:
+            item = dict(payload)
+            if "interfaces" in item:
+                item["interfaces"] = NetworkAttachmentManager._interfaces_for_controller(item.get("interfaces"), controller_version)
+            converted.append(item)
+        return converted
+
+    @staticmethod
+    def _interfaces_for_controller(interfaces: Any, controller_version: str | None) -> Any:
+        if not isinstance(interfaces, list):
+            return interfaces
+        converted = []
+        for interface in interfaces:
+            if not isinstance(interface, dict):
+                converted.append(interface)
+                continue
+            item = dict(interface)
+            item["mode"] = api_network_attachment_mode(item.get("mode"), controller_version)
+            converted.append(item)
+        return converted
 
     @staticmethod
     def _validation_payload(payload: dict[str, Any]) -> dict[str, Any]:
