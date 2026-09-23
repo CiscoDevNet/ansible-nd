@@ -649,21 +649,73 @@ changed:
   description: Whether the module changed VRF, attachment, or deployment state.
   returned: always
   type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
 before:
-  description: VRF configuration present on ND before the operation.
+  description:
+    - VRF configuration present on ND before the operation.
+    - Structured in the same user-facing form as O(config) where possible.
   returned: always
   type: list
   elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
 after:
-  description: VRF configuration present on ND after the operation.
+  description:
+    - VRF configuration present on ND after the operation.
+    - In check mode, the configuration that would result had the module run outside check mode.
   returned: always
   type: list
   elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
 diff:
   description: Configuration diff calculated by the module.
   returned: always
   type: list
   elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vlan_id: 2001
+proposed:
+  description: VRF configuration proposed by the module before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug), and on selected check-mode or failure paths.
+  type: list
+  elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
+gathered:
+  description: VRF configuration returned by the controller in user-facing format.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
+logs:
+  description: Internal diagnostic log or workflow trace entries collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: dict
+  sample:
+    - event: vrf_state_machine_start
+      state: merged
+msg:
+  description: Human-readable status or failure message.
+  returned: on failure and on selected no-op or child-fabric failure paths
+  type: str
+  sample: "Unexpected error: controller rejected VRF payload"
 fabric_type:
   description:
     - Resolved fabric topology used by the workflow.
@@ -683,6 +735,11 @@ parent_fabric:
       result.
   returned: when a parent workflow processes one or more child fabrics
   type: dict
+  sample:
+    fabric_name: MSD_FABRIC
+    changed: true
+    before: []
+    after: []
 child_fabrics:
   description:
     - Per-child-fabric results for MSD or MCFG parent workflows.
@@ -691,41 +748,65 @@ child_fabrics:
   returned: when a parent workflow processes one or more child fabrics
   type: list
   elements: dict
+  sample:
+    - fabric_name: child_fabric_1
+      changed: true
+      before: []
+      after: []
 api_paths:
   description: REST API paths called by the module.
   returned: with verbosity C(-vv) or C(output_level=debug)
   type: list
   elements: str
+  sample:
+    - /api/v1/manage/fabrics/fab1/vrfs
 api_verbs:
   description: REST API verbs called by the module.
   returned: with verbosity C(-vv) or C(output_level=debug)
   type: list
   elements: str
+  sample:
+    - POST
 api_payload:
   description: REST request payloads sent to ND.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - vrfs:
+        - vrfName: VRF_BLUE
+          vrfId: 50010
 api_response:
   description: Raw normalized REST responses returned by ND.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - RETURN_CODE: 200
+      MESSAGE: OK
 api_result:
   description: Response-handler result for each REST call.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - success: true
+      changed: true
 api_diff:
   description: Per-REST-call diff data recorded by the result infrastructure.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - vrfName: VRF_BLUE
 api_metadata:
   description: Per-REST-call metadata recorded by the result infrastructure.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - action: create
+      state: merged
 """
 
 import logging
