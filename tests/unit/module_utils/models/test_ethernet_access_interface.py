@@ -1997,9 +1997,7 @@ def test_ethernet_access_interface_02070():
     - EthernetAccessInterfaceOrchestrator.supports_gathered_server_filtering
     - EthernetAccessInterfaceOrchestrator.gathered_lucene_spec
     """
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import (
-        EthernetAccessInterfaceOrchestrator,
-    )
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
 
     assert EthernetAccessInterfaceOrchestrator.supports_gathered_server_filtering is True
 
