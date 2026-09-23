@@ -11,12 +11,8 @@ __metaclass__ = type
 from urllib.parse import unquote
 
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import (
-    ManageAiEbgpVxlanFabricOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import (
-    ManageAiIbgpVxlanFabricOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import ManageAiEbgpVxlanFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import ManageAiIbgpVxlanFabricOrchestrator
 
 
 def test_manage_fabric_ai_vxlan_00010(monkeypatch) -> None:
