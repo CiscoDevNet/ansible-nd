@@ -37,6 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ConfigDict,
     Field,
     SecretStr,
+    field_validator,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -51,6 +52,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     LocationModel,
     TelemetrySettingsModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
 def _is_single_literal(annotation) -> bool:
@@ -234,6 +236,35 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
     return options
 
 
+class _FabricNameGatheredFilterModel(NDNestedModel):
+    """Validate the shared fabric-name type without requiring a complete fabric."""
+
+    fabric_name: NdFabricName
+
+
+class FabricGatheredFilterModel(NDNestedModel):
+    """Validate scalar properties supported by partial fabric filters."""
+
+    fabric_name: str | None = Field(default=None)
+    license_tier: LicenseTierEnum | None = Field(default=None)
+    security_domain: str | None = Field(default=None)
+    alert_suspend: AlertSuspendEnum | None = Field(default=None)
+    telemetry_collection: bool | None = Field(default=None)
+
+    @field_validator("fabric_name")
+    @classmethod
+    def validate_fabric_name(cls, value: str | None) -> str | None:
+        """Apply the canonical `NdFabricName` constraints to partial filters."""
+        if value is None:
+            return value
+        validated = _FabricNameGatheredFilterModel.model_validate(
+            {"fabric_name": value},
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.fabric_name
+
+
 class FabricBaseModel(NDBaseModel):
     """
     # Summary
@@ -282,6 +313,20 @@ class FabricBaseModel(NDBaseModel):
         "alert_suspend",
         "telemetry_collection",
     )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state fabric filter."""
+        validated = FabricGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # ── Basic Fabric Properties ──
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")

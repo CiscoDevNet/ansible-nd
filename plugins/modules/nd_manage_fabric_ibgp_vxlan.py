@@ -1908,15 +1908,22 @@ after:
     type: list
     returned: always
     sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
+gathered:
+    description:
+    - iBGP VXLAN fabric configurations matching the supplied O(config) filters.
+    - Returned in reusable Ansible configuration format.
+    type: list
+    elements: dict
+    returned: when O(state=gathered)
 diff:
     description: Configuration differences between before and after states.
     type: list
-    returned: always
+    returned: when O(state) is not V(gathered)
     sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
-    returned: info or debug output_level
+    returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
     sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]
 output_level:
     description: The output level set for the module.

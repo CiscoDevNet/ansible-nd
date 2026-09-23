@@ -14,21 +14,11 @@ from urllib.parse import unquote
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import (
-    ManageAiEbgpVxlanFabricOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import (
-    ManageAiIbgpVxlanFabricOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import (
-    ManageEbgpFabricOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import (
-    ManageExternalFabricOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import (
-    ManageIbgpFabricOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import ManageAiEbgpVxlanFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import ManageAiIbgpVxlanFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import ManageExternalFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
@@ -127,6 +117,27 @@ def test_pagination_collects_multiple_pages(
     assert call_count == 2
     assert len(result) == page_size + 1
     assert result[-1]["name"] == "fabric-last"
+
+
+def test_pagination_limit_rejects_incomplete_results(monkeypatch) -> None:
+    """Verify a controller that never terminates pagination cannot loop indefinitely."""
+    instance = ManageEbgpFabricOrchestrator(rest_send=RestSend({"check_mode": False, "state": "gathered"}))
+    call_count = 0
+
+    def fake_request(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "fabrics": [{"name": f"fabric-{call_count}", "management": {"type": "vxlanEbgp"}}],
+            "meta": {"counts": {"remaining": 1}},
+        }
+
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    with pytest.raises(RuntimeError, match="pagination exceeded 100 pages"):
+        instance._fetch_fabrics_paginated("type:vxlanEbgp")
+
+    assert call_count == 100
 
 
 @pytest.mark.parametrize(
@@ -258,3 +269,39 @@ def test_mixed_exact_and_lucene_filters(
     assert len(result) == 2
     assert exact_fabric in result
     assert lucene_fabric in result
+
+
+@pytest.mark.parametrize(
+    ("orchestrator_class", "fabric_type"),
+    [
+        (ManageExternalFabricOrchestrator, "externalConnectivity"),
+        (ManageEbgpFabricOrchestrator, "vxlanEbgp"),
+        (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
+        (ManageAiEbgpVxlanFabricOrchestrator, "aimlVxlanEbgp"),
+        (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
+    ],
+    ids=["external", "ebgp", "ibgp", "ai_ebgp", "ai_ibgp"],
+)
+def test_exact_name_fanout_uses_one_type_scoped_query(monkeypatch, orchestrator_class, fabric_type) -> None:
+    """Verify excessive exact-name filters cannot cause unbounded controller GETs."""
+    instance = orchestrator_class(rest_send=RestSend({"check_mode": False, "state": "gathered"}))
+    requested_paths = []
+    expected_fabric = {"name": "fabric-1", "management": {"type": fabric_type}}
+
+    def fake_request(*args, **kwargs):
+        requested_paths.append(unquote(kwargs["path"]))
+        return {"fabrics": [expected_fabric], "meta": {"counts": {"remaining": 0}}}
+
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    result = instance.query_all(
+        gathered_filters=[
+            {"fabric_name": "fabric-1"},
+            {"fabric_name": "fabric-2"},
+            {"fabric_name": "fabric-3"},
+            {"fabric_name": "fabric-4"},
+        ]
+    )
+
+    assert requested_paths == [f"/api/v1/manage/fabrics?filter=type:{fabric_type}&max=500&offset=0"]
+    assert result == [expected_fabric]

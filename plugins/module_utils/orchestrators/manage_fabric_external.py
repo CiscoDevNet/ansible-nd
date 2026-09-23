@@ -42,7 +42,7 @@ class ManageExternalFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
     )
 
     _FABRIC_TYPE_FILTER: ClassVar[str] = "externalConnectivity"
-    _MAX_LUCENE_EXPRESSIONS: ClassVar[int] = 3
+    _MAX_GATHERED_QUERIES: ClassVar[int] = 3
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut
@@ -128,26 +128,29 @@ class ManageExternalFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
         all_fabrics = []
         seen_names: set[str] = set()
 
+        exact_names: list[str] = []
         lucene_filters = []
         for filter_item in gathered_filters or [{}]:
             fabric_name = filter_item.get("fabric_name")
             other_keys = {k for k, v in filter_item.items() if v not in (None, "") and k != "fabric_name"}
             if fabric_name and not other_keys:
-                for fabric in self._query_one_by_name(fabric_name):
-                    name = fabric.get("name")
-                    if name and name not in seen_names:
-                        seen_names.add(name)
-                        all_fabrics.append(fabric)
+                if fabric_name not in exact_names:
+                    exact_names.append(fabric_name)
             else:
                 lucene_filters.append(filter_item)
 
-        if not lucene_filters:
-            return all_fabrics
+        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec) if lucene_filters else []
 
-        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec)
-
-        if not expressions or len(expressions) > self._MAX_LUCENE_EXPRESSIONS or any('"' in expr for expr in expressions):
+        if len(exact_names) + len(expressions) > self._MAX_GATHERED_QUERIES or any('"' in expression for expression in expressions):
+            exact_names = []
             expressions = build_lucene_expressions(filters=[], spec=self.gathered_lucene_spec)
+
+        for fabric_name in exact_names:
+            for fabric in self._query_one_by_name(fabric_name):
+                name = fabric.get("name")
+                if name and name not in seen_names:
+                    seen_names.add(name)
+                    all_fabrics.append(fabric)
 
         for expression in expressions:
             fabrics = self._fetch_fabrics_paginated(expression)
