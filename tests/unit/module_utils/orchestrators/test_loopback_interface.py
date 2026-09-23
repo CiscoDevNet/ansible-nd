@@ -9,8 +9,8 @@ Unit tests for `LoopbackInterfaceOrchestrator`.
 
 Verifies that the orchestrator drives `RestSend` correctly for loopback CRUD operations,
 injects `switchId` into payloads, wraps create payloads in the `interfaces` array, defers
-deploys for bulk execution, and filters `query_all` results to user-managed loopbacks only
-(`interfaceType: loopback` AND `policyType: loopback`).
+deploys for bulk execution, and filters `query_all` results to loopback interfaces whose
+policy type belongs to the module-managed NX-OS or IOS-XE policy set.
 
 Scope: methods defined in `loopback_interface.py` only. Inherited `deploy_pending` and
 `remove_pending` belong in a separate `test_base_interface.py`.
@@ -24,6 +24,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -82,7 +83,11 @@ def _build_rest_send(
     return rest_send
 
 
-def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback10", include_config: bool = True) -> LoopbackInterfaceModel:
+def _build_loopback_model(
+    switch_ip: str = "192.168.12.151",
+    interface_name: str = "loopback10",
+    include_config: bool = True,
+) -> LoopbackInterfaceModel:
     """Build a minimal `LoopbackInterfaceModel` instance for tests."""
     kwargs: dict = {"switch_ip": switch_ip, "interface_name": interface_name}
     if include_config:
@@ -876,8 +881,16 @@ def test_loopback_interface_00500() -> None:
     rest_send = _build_rest_send(gen_responses)
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     models = [
-        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10", include_config=False),
-        _build_loopback_model(switch_ip="192.168.12.152", interface_name="loopback20", include_config=False),
+        _build_loopback_model(
+            switch_ip="192.168.12.151",
+            interface_name="loopback10",
+            include_config=False,
+        ),
+        _build_loopback_model(
+            switch_ip="192.168.12.152",
+            interface_name="loopback20",
+            include_config=False,
+        ),
     ]
 
     with does_not_raise():
@@ -972,7 +985,8 @@ def test_loopback_interface_00700() -> None:
     # Summary
 
     Verify `query_all` validates prerequisites, iterates all switches in the fabric (`state: overridden` is fabric-wide
-    per `_switches_to_query`), filters interfaces to `policyType: loopback`, and enriches each result with `switchIp`.
+    per `_switches_to_query`), filters interfaces to module-managed loopback policy types, and enriches each result with
+    `switchIp`.
 
     ## Test
 
@@ -1051,7 +1065,8 @@ def test_loopback_interface_00720() -> None:
     """
     # Summary
 
-    Verify `query_all` excludes loopback interfaces whose `policyType` is not `loopback` (e.g. `underlayLoopback`).
+    Verify `query_all` excludes loopback interfaces whose `policyType` is outside the module-managed NX-OS and IOS-XE
+    policy sets, such as the system-provisioned `underlayLoopback` policy.
 
     ## Test
 
@@ -1263,6 +1278,89 @@ def test_loopback_interface_00770() -> None:
     assert all(item["switchIp"] == "192.168.12.150" for item in result)
 
 
+def test_loopback_interface_00780(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify management-state queries reuse the shared per-switch interface
+    inventory cache instead of requesting the same switch inventory again.
+
+    ## Test
+
+    - The orchestrator targets one switch in overridden state
+    - `query_all()` is called twice on the same orchestrator instance
+    - The interface-list endpoint is requested only once
+    - Both calls return the same managed loopback
+    - Enriching the returned result does not modify the cached interface
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    - LoopbackInterfaceOrchestrator._query_all_for_management_states()
+    - NDBaseInterfaceOrchestrator._switch_interfaces()
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(
+        ResponseGenerator(responses()),
+        state="overridden",
+    )
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={"192.0.2.10": "SERIAL-A"},
+    )
+
+    candidate = {
+        "interfaceName": "loopback10",
+        "interfaceType": "loopback",
+        "configData": {
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": "loopback",
+                },
+            },
+        },
+    }
+
+    request_paths = []
+
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "validate_prerequisites",
+        lambda self: None,
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        request_paths.append(path)
+        return {
+            "interfaces": [candidate],
+        }
+
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "_request",
+        fake_request,
+    )
+
+    first_result = instance.query_all()
+    second_result = instance.query_all()
+
+    assert first_result == second_result
+    assert len(first_result) == 1
+    assert first_result[0]["interfaceName"] == "loopback10"
+
+    # The controller interface-list endpoint was requested only once.
+    assert len(request_paths) == 1
+
+    # Result enrichment must not mutate the shared cached response.
+    cached = instance._switch_interfaces_cache["SERIAL-A"]["loopback10"]
+    assert "switchIp" not in cached
+
+
 # =============================================================================
 # Test: deploy queue de-duplication
 # =============================================================================
@@ -1302,3 +1400,628 @@ def test_loopback_interface_00800() -> None:
         instance.create(model)
 
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        (
+            [],
+            {
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback"},
+                ),
+                "192.0.2.11": (
+                    "SERIAL-B",
+                    {"interfaceType:loopback"},
+                ),
+            },
+        ),
+        (
+            [{"switch_ip": "192.0.2.10"}],
+            {
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback"},
+                )
+            },
+        ),
+        (
+            [{"interface_name": "loopback101"}],
+            {
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback AND interfaceName:loopback101"},
+                ),
+                "192.0.2.11": (
+                    "SERIAL-B",
+                    {"interfaceType:loopback AND interfaceName:loopback101"},
+                ),
+            },
+        ),
+        (
+            [{"switch_ip": "192.0.2.10", "interface_name": "loopback101"}],
+            {
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback AND interfaceName:loopback101"},
+                )
+            },
+        ),
+        (
+            [{"switch_ip": "192.0.2.10"}, {"interface_name": "loopback101"}],
+            {
+                # The broad switch filter supersedes the narrower name query.
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback"},
+                ),
+                "192.0.2.11": (
+                    "SERIAL-B",
+                    {"interfaceType:loopback AND interfaceName:loopback101"},
+                ),
+            },
+        ),
+        (
+            [{"config_data": {"network_os": {"policy": {"ip": "10.100.201.1"}}}}],
+            {
+                "192.0.2.10": (
+                    "SERIAL-A",
+                    {"interfaceType:loopback"},
+                ),
+                "192.0.2.11": (
+                    "SERIAL-B",
+                    {"interfaceType:loopback"},
+                ),
+            },
+        ),
+    ],
+)
+def test_loopback_interface_00810(filters, expected) -> None:
+    """Verify gathered query planning routes switches and builds safe Lucene expressions."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(  # pylint: disable=protected-access
+        fabric_name="test_fabric",
+        switch_map={
+            "192.0.2.10": "SERIAL-A",
+            "192.0.2.11": "SERIAL-B",
+        },
+    )
+
+    assert instance._build_gathered_query_plan(filters) == expected
+
+
+def test_loopback_interface_00815() -> None:
+    """Verify unknown switch_ip in a gathered filter raises ValueError."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(  # pylint: disable=protected-access
+        fabric_name="test_fabric",
+        switch_map={
+            "192.0.2.10": "SERIAL-A",
+            "192.0.2.11": "SERIAL-B",
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not exist in fabric"):
+        instance._build_gathered_query_plan([{"switch_ip": "192.0.2.99", "interface_name": "loopback101"}])
+
+
+def test_loopback_interface_00817() -> None:
+    """Verify total request budget collapses fabric-wide expressions on large fabrics."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    large_switch_map = {f"192.0.2.{i}": f"SERIAL-{i}" for i in range(150)}
+    instance._fabric_context = SimpleNamespace(
+        fabric_name="large_fabric",
+        switch_map=large_switch_map,
+    )
+
+    filters = [
+        {"interface_name": "loopback100"},
+        {"interface_name": "loopback101"},
+        {"interface_name": "loopback102"},
+    ]
+    plan = instance._build_gathered_query_plan(filters)
+
+    base = "interfaceType:loopback"
+    for switch_ip in large_switch_map:
+        assert plan[switch_ip][1] == {base}
+
+
+def test_loopback_interface_00818() -> None:
+    """Reject a gathered plan whose irreducible switch count exceeds the total request limit."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    switch_map = {f"10.0.{index // 250}.{index % 250 + 1}": f"SERIAL-{index}" for index in range(301)}
+
+    instance._fabric_context = SimpleNamespace(
+        fabric_name="large_fabric",
+        switch_map=switch_map,
+    )
+
+    filters = [
+        {
+            "switch_ip": switch_ip,
+            "interface_name": "loopback100",
+        }
+        for switch_ip in switch_map
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="301 switch requests, exceeding the supported limit of 300",
+    ):
+        instance._build_gathered_query_plan(filters)
+
+
+def test_loopback_interface_00820(monkeypatch) -> None:
+    """Verify an exact gathered filter uses the list endpoint with encoded Lucene parameters."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(fabric_name="test_fabric", switch_map={"192.0.2.10": "SERIAL-A"})
+    requested_paths = []
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback101",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback",
+                            }
+                        }
+                    },
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_request", fake_request)
+
+    assert instance.query_all(gathered_filters=[{"switch_ip": "192.0.2.10", "interface_name": "loopback101"}]) == [
+        {
+            "switchIp": "192.0.2.10",
+            "interfaceName": "loopback101",
+            "interfaceType": "loopback",
+            "configData": {
+                "networkOS": {
+                    "policy": {
+                        "policyType": "loopback",
+                    }
+                }
+            },
+        }
+    ]
+    path, query = requested_paths[0].split("?", 1)
+    assert path == "/api/v1/manage/fabrics/fabric_1/switches/SERIAL-A/interfaces"
+    assert set(query.split("&")) == {
+        "configOnly=false",
+        "filter=interfaceType:loopback%20AND%20interfaceName:loopback101",
+        "max=500",
+        "offset=0",
+    }
+
+
+def test_loopback_interface_00830(monkeypatch) -> None:
+    """Verify Lucene candidates outside this module's policy scope are still excluded locally."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(fabric_name="test_fabric", switch_map={"192.0.2.10": "SERIAL-A"})
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "_request",
+        lambda self, path, verb, **kwargs: {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback0",
+                    "interfaceType": "loopback",
+                    "configData": {"networkOS": {"policy": {"policyType": "underlayLoopback"}}},
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        },
+    )
+
+    assert instance.query_all(gathered_filters=[{"interface_name": "loopback0"}]) == []
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        None,
+        [],
+        {},
+        {"interfaceType": "loopback", "configData": None},
+        {"interfaceType": "loopback", "configData": {"networkOS": None}},
+        {
+            "interfaceType": "loopback",
+            "configData": {"networkOS": {"policy": None}},
+        },
+    ],
+)
+def test_loopback_interface_00832(candidate) -> None:
+    """Malformed or incomplete controller records are not managed loopbacks."""
+    assert LoopbackInterfaceOrchestrator._is_managed_loopback(candidate) is False
+
+
+def test_loopback_interface_00835(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the gathered query retains every managed NX-OS and IOS-XE loopback policy type while local ownership
+    filtering excludes unsupported policy types and non-loopback interfaces.
+
+    ## Test
+
+    - The server-side Lucene expression contains `interfaceType:loopback` without a `policyType` restriction
+    - All three managed NX-OS policy types are retained
+    - All six managed IOS-XE policy types are retained
+    - `underlayLoopback`, `userDefined`, and an ethernet candidate are excluded locally
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    - LoopbackInterfaceOrchestrator._is_managed_loopback()
+    - LoopbackInterfaceOrchestrator._collect_managed_loopbacks()
+    """
+    managed_policy_types = [
+        ("loopback10", "nx-os", "loopback"),
+        ("loopback11", "nx-os", "ipfmLoopback"),
+        ("loopback12", "nx-os", "mplsLoopback"),
+        ("loopback20", "ios-xe", "iosXeLoopback"),
+        ("loopback21", "ios-xe", "iosXeLoopbackShutNoshut"),
+        ("loopback22", "ios-xe", "iosXeUnderlayLoopback"),
+        ("loopback23", "ios-xe", "iosXeInternalLoopback"),
+        ("loopback24", "ios-xe", "csrLoopback"),
+        ("loopback25", "ios-xe", "csr1kvLoopback"),
+    ]
+
+    candidates = [
+        {
+            "interfaceName": interface_name,
+            "interfaceType": "loopback",
+            "configData": {
+                "networkOS": {
+                    "networkOSType": network_os_type,
+                    "policy": {
+                        "policyType": policy_type,
+                    },
+                },
+            },
+        }
+        for interface_name, network_os_type, policy_type in managed_policy_types
+    ]
+
+    candidates.extend(
+        [
+            {
+                "interfaceName": "loopback0",
+                "interfaceType": "loopback",
+                "configData": {
+                    "networkOS": {
+                        "networkOSType": "nx-os",
+                        "policy": {
+                            "policyType": "underlayLoopback",
+                        },
+                    },
+                },
+            },
+            {
+                "interfaceName": "loopback99",
+                "interfaceType": "loopback",
+                "configData": {
+                    "networkOS": {
+                        "networkOSType": "nx-os",
+                        "policy": {
+                            "policyType": "userDefined",
+                        },
+                    },
+                },
+            },
+            {
+                "interfaceName": "ethernet1/1",
+                "interfaceType": "ethernet",
+                "configData": {
+                    "networkOS": {
+                        "networkOSType": "nx-os",
+                        "policy": {
+                            "policyType": "loopback",
+                        },
+                    },
+                },
+            },
+        ]
+    )
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._fabric_context = SimpleNamespace(
+        fabric_name="test_fabric",
+        switch_map={"192.0.2.10": "SERIAL-A"},
+    )
+    requested_paths = []
+
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "validate_prerequisites",
+        lambda self: None,
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return {
+            "interfaces": candidates,
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "_request",
+        fake_request,
+    )
+
+    result = instance.query_all(gathered_filters=[])
+
+    returned_policy_types = {item["configData"]["networkOS"]["policy"]["policyType"] for item in result}
+
+    assert returned_policy_types == {
+        "loopback",
+        "ipfmLoopback",
+        "mplsLoopback",
+        "iosXeLoopback",
+        "iosXeLoopbackShutNoshut",
+        "iosXeUnderlayLoopback",
+        "iosXeInternalLoopback",
+        "csrLoopback",
+        "csr1kvLoopback",
+    }
+    assert len(result) == 9
+    assert len(requested_paths) == 1
+    assert "filter=interfaceType:loopback" in requested_paths[0]
+    assert "policyType" not in requested_paths[0]
+
+
+def test_loopback_interface_00840(monkeypatch) -> None:
+    """Verify responses from separate OR expressions are unioned and deduplicated."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    duplicate = {
+        "interfaceName": "loopback101",
+        "interfaceType": "loopback",
+        "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+    }
+    requested_paths = []
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "_build_gathered_query_plan",
+        lambda self, filters: {
+            "192.0.2.10": ("SERIAL-A", {"expression-one", "expression-two"}),
+        },
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return {"interfaces": [duplicate], "meta": {"counts": {"remaining": 0}}}
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_request", fake_request)
+
+    result = instance.query_all(gathered_filters=[{"interface_name": "loopback101"}])
+
+    assert len(requested_paths) == 2
+    assert result == [{"switchIp": "192.0.2.10", **duplicate}]
+
+
+def test_loopback_interface_00850(monkeypatch) -> None:
+    """Verify Lucene list pagination advances offsets and collects all pages."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    requested_paths = []
+    pages = iter(
+        [
+            {
+                "interfaces": [
+                    {
+                        "interfaceName": "loopback101",
+                        "interfaceType": "loopback",
+                        "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+                    }
+                ],
+                "meta": {"counts": {"remaining": "1"}},
+            },
+            {
+                "interfaces": [
+                    {
+                        "interfaceName": "loopback102",
+                        "interfaceType": "loopback",
+                        "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+                    }
+                ],
+                "meta": {"counts": {"remaining": 0}},
+            },
+        ]
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return next(pages)
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_request", fake_request)
+
+    result = instance._query_interfaces_with_lucene("SERIAL-A", "interfaceType:loopback")
+
+    assert [item["interfaceName"] for item in result] == ["loopback101", "loopback102"]
+    assert "offset=0" in requested_paths[0]
+    assert "offset=1" in requested_paths[1]
+
+
+@pytest.mark.parametrize(
+    "first_page_meta",
+    [
+        {},
+        {"counts": {}},
+        {"counts": {"remaining": "invalid"}},
+    ],
+)
+def test_loopback_interface_00860(monkeypatch, first_page_meta) -> None:
+    """Verify missing or invalid remaining metadata falls back to page size."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    requested_paths = []
+    full_page = [{"interfaceName": f"loopback{index}"} for index in range(500)]
+    pages = iter(
+        [
+            {
+                "interfaces": full_page,
+                "meta": first_page_meta,
+            },
+            {
+                "interfaces": [],
+                "meta": {"counts": {"remaining": 0}},
+            },
+        ]
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return next(pages)
+
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "_request",
+        fake_request,
+    )
+
+    result = instance._query_interfaces_with_lucene(
+        "SERIAL-A",
+        "interfaceType:loopback",
+    )
+
+    assert len(result) == 500
+    assert len(requested_paths) == 2
+    assert "offset=0" in requested_paths[0]
+    assert "offset=500" in requested_paths[1]
+
+
+def test_loopback_interface_00870(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a gathered query is allowed to read loopback interfaces while the
+    fabric is in deployment freeze mode, while mutation states remain blocked.
+
+    ## Test
+
+    - Configure the orchestrator with `state: gathered`
+    - Model the fabric context so read validation succeeds during deployment
+      freeze and mutation validation rejects the operation
+    - Verify the gathered workflow performs the interface GET
+    - Change the state to `merged`
+    - Verify mutation prerequisite validation rejects deployment freeze
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator.validate_prerequisites()
+    - NDBaseOrchestrator.is_read_only_operation
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(
+        ResponseGenerator(responses()),
+        state="gathered",
+    )
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    read_checks = []
+    requested_paths = []
+
+    def validate_for_read():
+        read_checks.append(True)
+
+    def validate_for_mutation():
+        raise RuntimeError("Fabric 'fabric_1' is in deployment freeze mode.")
+
+    instance._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={"192.0.2.10": "SERIAL-A"},
+        validate_for_read=validate_for_read,
+        validate_for_mutation=validate_for_mutation,
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return {
+            "interfaces": [],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(
+        LoopbackInterfaceOrchestrator,
+        "_request",
+        fake_request,
+    )
+
+    assert instance.query_all(gathered_filters=[]) == []
+    assert read_checks == [True]
+    assert len(requested_paths) == 1
+
+    rest_send.params["state"] = "merged"
+
+    with pytest.raises(RuntimeError, match="deployment freeze"):
+        instance.validate_prerequisites()

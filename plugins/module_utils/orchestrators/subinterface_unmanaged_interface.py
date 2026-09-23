@@ -223,7 +223,7 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         unmanaged_policy_types = {e.value for e in SubinterfaceUnmanagedPolicyTypeEnum}
