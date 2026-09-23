@@ -186,3 +186,184 @@
       - "{{ interface_group_pc_two_members }}"
     mode: exact
   when: not ansible_check_mode
+
+- name: Preserve omitted Ethernet policy attributes during sparse merged updates
+  tags:
+    - interface_groups_sparse_merge
+  block:
+    - name: Establish the sparse-merge Ethernet policy baseline
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_interface_group
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+            type: resource
+        config:
+          - >-
+            {{
+              interface_group_ethernet_with_policy_sparse_merge_baseline
+            }}
+        check_mode: false
+        idempotency: false
+        expected:
+          apply:
+            changed: true
+            failed: false
+
+    - name: Add Network-B with omitted policy and member fields while staged
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_interface_group
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+            type: resource
+        config:
+          - >-
+            {{ interface_group_ethernet_with_policy_sparse_merge_input }}
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        nd_queries:
+          - name: Fetch the staged sparse-merge result
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+              interface_group_names.ethernet_with_policy }}
+            method: get
+            expected_status: 200
+      register: interface_group_sparse_merge_staged
+
+    - name: Validate the staged sparse merge preserved existing fields
+      cisco.nd.tests.integration.nd_interface_group_validate:
+        nd_data: >-
+          {{
+            interface_group_sparse_merge_staged.nd_query_results[0].result
+          }}
+        test_data:
+          - >-
+            {{
+              interface_group_ethernet_with_policy_sparse_merge_expected
+            }}
+        mode: exact
+      when: not ansible_check_mode
+
+    - name: Reset the Ethernet policy baseline before resource deployment
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_interface_group
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+            type: resource
+        config:
+          - >-
+            {{
+              interface_group_ethernet_with_policy_sparse_merge_baseline
+            }}
+        check_mode: false
+        idempotency: false
+        expected:
+          apply:
+            changed: true
+            failed: false
+
+    - name: Add Network-B with omitted policy and member fields and deploy
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_interface_group
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+            type: resource
+        config:
+          - >-
+            {{ interface_group_ethernet_with_policy_sparse_merge_input }}
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        nd_queries:
+          - name: Fetch the resource-deployed sparse-merge result
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+              interface_group_names.ethernet_with_policy }}
+            method: get
+            expected_status: 200
+      register: interface_group_sparse_merge_deployed
+
+    - name: Validate the deployed sparse merge preserved existing fields
+      cisco.nd.tests.integration.nd_interface_group_validate:
+        nd_data: >-
+          {{
+            interface_group_sparse_merge_deployed.nd_query_results[0].result
+          }}
+        test_data:
+          - >-
+            {{
+              interface_group_ethernet_with_policy_sparse_merge_expected
+            }}
+        mode: exact
+      when: not ansible_check_mode
+  always:
+    - name: Restore the canonical Ethernet policy group state
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_interface_group
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+            type: resource
+        config:
+          - >-
+            {{ interface_group_ethernet_with_policy_canonical_state }}
+        check_mode: false
+        idempotency: false
+        expected:
+          apply:
+            failed: false
+        nd_queries:
+          - name: Fetch the restored Ethernet policy group
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+              interface_group_names.ethernet_with_policy }}
+            method: get
+            expected_status: 200
+      register: interface_group_sparse_merge_restore
+
+    - name: Validate the canonical Ethernet policy group was restored
+      cisco.nd.tests.integration.nd_interface_group_validate:
+        nd_data: >-
+          {{ interface_group_sparse_merge_restore.nd_query_results[0].result }}
+        test_data:
+          - "{{ interface_group_ethernet_with_policy_canonical_state }}"
+        mode: exact
+      when: not ansible_check_mode

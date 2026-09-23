@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -22,6 +23,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.config_models import (
     InterfaceGroupConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.validators import (
+    InterfaceGroupValidators,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
@@ -282,6 +286,209 @@ def test_nd_manage_interface_group_00010() -> None:
             "deploy": True,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("config_update", "expected_update"),
+    [
+        ({}, {}),
+        (
+            {"ethernet_attributes": {"cdp": False}},
+            {"ethernet_attributes": {"cdp": False}},
+        ),
+        (
+            {"ethernet_attributes": {}},
+            {"ethernet_attributes": {}},
+        ),
+    ],
+)
+def test_nd_manage_interface_group_00011(
+    config_update: dict[str, Any],
+    expected_update: dict[str, Any],
+) -> None:
+    """Preserve sparse Ethernet policy input across merged normalization."""
+    module = SimpleNamespace(
+        params={
+            "fabric_name": "fabric-1",
+            "state": "merged",
+            "config_actions": {"type": "resource", "deploy": False},
+            "config": [
+                {
+                    "interface_group_name": "ethernet-policy-group",
+                    "type": "ethernetWithPolicy",
+                    "networks": ["network-b"],
+                    **config_update,
+                }
+            ],
+        }
+    )
+
+    nd_manage_interface_group._normalize_module_params(module)
+
+    assert module.params["config"] == [
+        {
+            "interface_group_name": "ethernet-policy-group",
+            "type": "ethernetWithPolicy",
+            "networks": ["network-b"],
+            **expected_update,
+        }
+    ]
+
+
+def test_nd_manage_interface_group_00012() -> None:
+    """Materialize controller-required Ethernet defaults after a sparse create handoff."""
+    module = SimpleNamespace(
+        params={
+            "fabric_name": "fabric-1",
+            "state": "merged",
+            "config_actions": {"type": "resource", "deploy": False},
+            "config": [
+                {
+                    "interface_group_name": "new-ethernet-policy-group",
+                    "type": "ethernetWithPolicy",
+                }
+            ],
+        }
+    )
+
+    nd_manage_interface_group._normalize_module_params(module)
+
+    assert "ethernet_attributes" not in module.params["config"][0]
+    reparsed = InterfaceGroupConfigModel.from_config(module.params["config"][0])
+    assert reparsed.to_payload()["ethernetAttributes"] == InterfaceGroupValidators.ethernet_with_policy_defaults()
+
+
+@pytest.mark.parametrize("deploy_enabled", [False, True])
+def test_nd_manage_interface_group_00013(
+    monkeypatch: pytest.MonkeyPatch,
+    deploy_enabled: bool,
+) -> None:
+    """Keep existing policy and associations through sparse check, apply, and replay."""
+    existing_attributes = {
+        "admin_state": False,
+        "allowed_vlans": "10-20",
+        "cdp": False,
+        "mtu": "default",
+        "speed": "1Gb",
+    }
+    controller_state = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "ethernet-policy-group",
+            "type": "ethernetWithPolicy",
+            "networks": ["network-a"],
+            "switch_interfaces": [
+                {
+                    "switch_id": "SN1",
+                    "interface_names": ["Ethernet1/10"],
+                }
+            ],
+            "ethernet_attributes": existing_attributes,
+        }
+    )
+    put_models: list[InterfaceGroupConfigModel] = []
+    deploy_calls: list[set[tuple[str, str]]] = []
+
+    def fake_query_all(self, model_instance=None, **kwargs):
+        del model_instance, kwargs
+        response = InterfaceGroupValidators.to_wire_group(
+            controller_state.to_payload(),
+            include_empty_associations=True,
+        )
+        observed = InterfaceGroupConfigModel.from_response(response)
+        self._existing_groups = {
+            observed.interface_group_name: deepcopy(observed),
+        }
+        return [response]
+
+    def fake_network_names(self):
+        del self
+        return {"network-a", "network-b"}
+
+    def fake_put_group(self, model_instance):
+        nonlocal controller_state
+        del self
+        put_models.append(deepcopy(model_instance))
+        controller_state = deepcopy(model_instance)
+        return {}
+
+    def fake_deploy_interfaces(self, interfaces):
+        del self
+        deploy_calls.append(set(interfaces))
+        return {}
+
+    orchestrator_class = nd_manage_interface_group.ManageInterfaceGroupOrchestrator
+    monkeypatch.setattr(orchestrator_class, "query_all", fake_query_all)
+    monkeypatch.setattr(
+        orchestrator_class,
+        "_fetch_fabric_network_names",
+        fake_network_names,
+    )
+    monkeypatch.setattr(orchestrator_class, "_put_group", fake_put_group)
+    monkeypatch.setattr(
+        orchestrator_class,
+        "_deploy_interfaces",
+        fake_deploy_interfaces,
+    )
+
+    def run_state_machine(check_mode: bool):
+        module = SimpleNamespace(
+            params={
+                "fabric_name": "fabric-1",
+                "state": "merged",
+                "config_actions": {
+                    "type": "resource",
+                    "deploy": deploy_enabled,
+                },
+                "config": [
+                    {
+                        "interface_group_name": "ethernet-policy-group",
+                        "type": "ethernetWithPolicy",
+                        "networks": ["network-b"],
+                    }
+                ],
+                "output_level": "normal",
+            },
+            check_mode=check_mode,
+            no_log_values=set(),
+            warn=lambda message: None,
+        )
+        nd_manage_interface_group._normalize_module_params(module)
+        assert "ethernet_attributes" not in module.params["config"][0]
+        state_machine = nd_manage_interface_group.NDStateMachine(
+            module=module,
+            model_orchestrator=orchestrator_class,
+        )
+        state_machine.manage_state()
+        state_machine.model_orchestrator.deploy_pending()
+        return state_machine
+
+    def assert_nondefault_attributes_preserved(group):
+        actual = group.ethernet_attributes.to_config()
+        assert {key: actual[key] for key in existing_attributes} == existing_attributes
+
+    check_mode_state = run_state_machine(check_mode=True)
+    predicted = check_mode_state.existing.get("ethernet-policy-group")
+    assert predicted.networks == ["network-a", "network-b"]
+    assert predicted.switch_interfaces[0].interface_names == ["Ethernet1/10"]
+    assert_nondefault_attributes_preserved(predicted)
+    assert controller_state.networks == ["network-a"]
+    assert put_models == []
+    assert deploy_calls == []
+
+    applied_state = run_state_machine(check_mode=False)
+    applied = applied_state.existing.get("ethernet-policy-group")
+    assert applied.networks == ["network-a", "network-b"]
+    assert applied.switch_interfaces[0].interface_names == ["Ethernet1/10"]
+    assert_nondefault_attributes_preserved(applied)
+    assert len(put_models) == 1
+    assert_nondefault_attributes_preserved(put_models[0])
+    assert deploy_calls == ([{("SN1", "Ethernet1/10")}] if deploy_enabled else [])
+
+    replay_state = run_state_machine(check_mode=False)
+    replayed = replay_state.existing.get("ethernet-policy-group")
+    assert replayed.to_config() == controller_state.to_config()
+    assert len(put_models) == 1
+    assert deploy_calls == ([{("SN1", "Ethernet1/10")}] if deploy_enabled else [])
 
 
 @pytest.mark.parametrize(

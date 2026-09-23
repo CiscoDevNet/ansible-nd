@@ -340,6 +340,8 @@
 
     - name: Validate additive merged behavior and config actions
       ansible.builtin.include_tasks: merged.yaml
+      tags:
+        - interface_groups_sparse_merge
 
     - name: Validate input, reference, move, and atomic preflight failures
       ansible.builtin.include_tasks: failures.yaml

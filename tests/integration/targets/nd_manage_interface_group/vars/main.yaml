@@ -579,6 +579,40 @@ interface_group_ethernet_with_policy_member: >-
       )
   }}
 
+interface_group_ethernet_with_policy_canonical_state: >-
+  {{
+    interface_group_ethernet_with_policy_member
+    | combine({'networks': [test_network_1]}, recursive=true)
+  }}
+
+interface_group_ethernet_with_policy_sparse_merge_baseline: >-
+  {{
+    interface_group_ethernet_with_policy_canonical_state
+    | combine(
+        {'ethernet_attributes': {'cdp': false}},
+        recursive=true
+      )
+  }}
+
+interface_group_ethernet_with_policy_sparse_merge_input:
+  interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+  type: ethernetWithPolicy
+  networks:
+    - "{{ test_network_2 }}"
+
+interface_group_ethernet_with_policy_sparse_merge_expected:
+  interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+  type: ethernetWithPolicy
+  networks:
+    - "{{ test_network_1 }}"
+    - "{{ test_network_2 }}"
+  switch_interfaces:
+    - switch_id: "{{ test_switch_id }}"
+      interface_names:
+        - "{{ test_ethernet_policy }}"
+  ethernet_attributes:
+    cdp: false
+
 interface_group_ethernet_without_policy_member: >-
   {{
     interface_group_ethernet_without_policy_type

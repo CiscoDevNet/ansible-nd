@@ -555,7 +555,9 @@ def _normalize_module_params(
         module.params["config"] = []
         return filters
 
-    module.params["config"] = [item.to_config() for item in validated.config]
+    # Preserve sparse user intent for additive merges across the state-machine
+    # model reparse; validator-injected defaults must not become explicit input.
+    module.params["config"] = [item.to_config(exclude_unset=validated.state == "merged") for item in validated.config]
     return []
 
 
