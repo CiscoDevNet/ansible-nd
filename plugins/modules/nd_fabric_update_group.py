@@ -34,11 +34,11 @@ options:
     - The list of fabric update groups to configure.
     - Required for O(state=merged) (when O(auto_assign) is not used), O(state=replaced), O(state=overridden), and O(state=deleted).
     - When provided with O(state=gathered), each item acts as a filter criterion.
-    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
+    - For O(state=gathered), supported supplied fields are filter criteria. Criteria within one list item use AND semantics,
       while multiple list items use OR semantics.
     - "Supported gathered filter properties: O(config.update_group_name), O(config.execution), O(config.contingency),
-      O(config.analysis), O(config.is_maintenance), O(config.is_disruptive_update), O(config.report_selection),
-      O(config.reports)."
+      O(config.analysis), O(config.is_maintenance), and O(config.is_disruptive_update). Other configuration properties
+      are rejected when used as gathered filters."
     type: list
     elements: dict
     suboptions:

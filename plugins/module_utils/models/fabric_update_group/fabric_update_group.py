@@ -88,6 +88,17 @@ ReportsLiteral = Literal[
 ]
 
 
+class FabricUpdateGroupGatheredFilterModel(NDNestedModel):
+    """Validate scalar fields supported by partial gathered filters."""
+
+    update_group_name: str | None = Field(default=None)
+    execution: ExecutionLiteral | None = Field(default=None)
+    contingency: ContingencyLiteral | None = Field(default=None)
+    analysis: AnalysisLiteral | None = Field(default=None)
+    is_maintenance: bool | None = Field(default=None)
+    is_disruptive_update: bool | None = Field(default=None)
+
+
 class FabricUpdateGroupModel(NDBaseModel):
     """
     # Summary
@@ -163,6 +174,20 @@ class FabricUpdateGroupModel(NDBaseModel):
             for key in ("fabricName", "createTime", "modifyTime"):
                 data.pop(key, None)
         return data
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state filter."""
+        validated = FabricUpdateGroupGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # --- Argument Spec ---
 
