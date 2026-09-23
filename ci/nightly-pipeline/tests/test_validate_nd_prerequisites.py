@@ -13,8 +13,10 @@ from validate_nd_prerequisites import (
     expand_profile_executions,
     jenkins_targets,
     load_registry,
+    main,
     normalized_equal,
     sanitize_interface_payload,
+    validate_effective_module_profile_coverage,
     validate_fabric_delete_guards,
     validate_playbook_profile_coverage,
     validate_registry,
@@ -246,7 +248,79 @@ def test_jenkins_target_parser_ignores_commented_entries():
     targets = jenkins_targets(jenkins_text)
     assert targets["PLAYBOOK_FILES"] == []
     assert "nd_manage_policy" in targets["INTEGRATION_MODULES"]
+    assert targets["INTERFACE_INTEGRATION_MODULES"] == [
+        "nd_interface_loopback",
+        "nd_interface_svi",
+        "nd_interface_ethernet_access",
+        "nd_interface_ethernet_trunk_host",
+        "nd_interface_ethernet_routed",
+        "nd_interface_port_channel_access",
+        "nd_interface_port_channel_trunk_host",
+        "nd_interface_subinterface_managed",
+        "nd_interface_subinterface_unmanaged",
+    ]
+    assert {
+        *targets["INTEGRATION_MODULES"],
+        *targets["INTERFACE_INTEGRATION_MODULES"],
+        "nd_manage_links",
+        "nd_resource_manager",
+        "nd_manage_fabric",
+        "nd_manage_switches",
+    } == set(targets["EFFECTIVE_INTEGRATION_MODULES"])
     assert targets["STANDALONE_INTEGRATION_MODULES"] == []
+
+
+def test_effective_module_profile_coverage_reports_all_missing_profiles_once():
+    profiles = {"integration.present": {}}
+    assert validate_effective_module_profile_coverage(["present"], profiles) == []
+    assert validate_effective_module_profile_coverage(
+        ["present", "missing_one", "missing_two", "missing_one"],
+        profiles,
+    ) == [
+        "integration.missing_one: effective Jenkins module has no profile",
+        "integration.missing_two: effective Jenkins module has no profile",
+    ]
+    assert validate_effective_module_profile_coverage([], profiles) == [
+        "effective Jenkins module list is empty"
+    ]
+
+
+def test_profile_coverage_command_passes_and_fails_closed(capsys):
+    registry_path = str(ROOT / "tests/nd_prerequisite_profiles.yaml")
+    assert main([
+        "coverage",
+        "--registry",
+        registry_path,
+        "--modules",
+        "nd_manage_policy,nd_manage_switches",
+    ]) == 0
+    assert "NDP_PROFILE_COVERAGE_OK: 2 effective module(s) have profiles" in capsys.readouterr().out
+
+    assert main([
+        "coverage",
+        "--registry",
+        registry_path,
+        "--modules",
+        "nd_manage_policy,nd_interface_loopback",
+    ]) == 1
+    assert (
+        "integration.nd_interface_loopback: effective Jenkins module has no profile"
+        in capsys.readouterr().err
+    )
+
+
+def test_jenkins_runs_profile_coverage_gate_before_the_module_loop():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    stale_output_cleanup = "for target in ${INTEGRATION_LIST} ${STANDALONE_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do"
+    coverage_call = 'python "${PROFILE_VALIDATOR}" coverage'
+    module_loop = "for m in ${INTEGRATION_LIST}; do"
+    assert '"NDP_EFFECTIVE_MODULES=${profileCoverageForShell}"' in jenkins_text
+    assert coverage_call in jenkins_text
+    assert (
+        jenkins_text.index(stale_output_cleanup)
+        < jenkins_text.index(coverage_call)
+        < jenkins_text.index(module_loop)
+    )
 
 
 def test_jenkins_derives_every_switch_alias_from_canonical_names(registry):

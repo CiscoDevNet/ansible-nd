@@ -372,12 +372,69 @@ def validate_registry(registry):
 
 def jenkins_targets(text):
     result = {}
-    for name in ("PLAYBOOK_FILES", "INTEGRATION_MODULES", "STANDALONE_INTEGRATION_MODULES"):
+    for name in (
+        "PLAYBOOK_FILES",
+        "INTEGRATION_MODULES",
+        "INTERFACE_INTEGRATION_MODULES",
+        "STANDALONE_INTEGRATION_MODULES",
+    ):
         match = re.search(rf"def\s+{name}\s*=\s*\[(.*?)\]", text, re.S)
         if not match:
             raise ValidationError(f"missing Jenkins target array: {name}")
         result[name] = [item for line in match.group(1).splitlines() for item in re.findall(r"'([A-Za-z0-9_.-]+)'", line.split("//", 1)[0])]
+
+    effective_match = re.search(
+        r"def\s+effectiveIntegrationModules\s*=\s*(.*?)"
+        r"(?=\n\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*=)",
+        text,
+        re.S,
+    )
+    if not effective_match:
+        raise ValidationError("missing Jenkins effective integration module assignment")
+    effective_expression = "\n".join(
+        line.split("//", 1)[0]
+        for line in effective_match.group(1).splitlines()
+    )
+    if not (
+        re.search(r"\bINTEGRATION_MODULES\b", effective_expression)
+        or "enabledStaticIntegrationModules" in effective_expression
+    ):
+        raise ValidationError("effective Jenkins modules omit static integration modules")
+    if "INTERFACE_INTEGRATION_MODULES" not in effective_expression:
+        raise ValidationError("effective Jenkins modules omit interface modules")
+
+    # Literal modules added while the effective list is assembled are not present
+    # in any @Field array, so capture them from the assignment as well. The live
+    # Jenkins gate receives the already evaluated list and remains the final
+    # authority if the Groovy assembly becomes more dynamic in the future.
+    appended = re.findall(r"'([A-Za-z0-9_.-]+)'", effective_expression)
+    effective = (
+        result["INTEGRATION_MODULES"]
+        + result["INTERFACE_INTEGRATION_MODULES"]
+        + appended
+    )
+    result["EFFECTIVE_INTEGRATION_MODULES"] = list(dict.fromkeys(effective))
     return result
+
+
+def validate_effective_module_profile_coverage(modules, profiles):
+    """Require one integration profile for every evaluated Jenkins module."""
+    errors = []
+    seen = set()
+    for raw_module in modules:
+        module = str(raw_module).strip()
+        if not module or module in seen:
+            continue
+        seen.add(module)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", module):
+            errors.append(f"{module}: invalid effective Jenkins module name")
+            continue
+        profile_id = f"integration.{module}"
+        if profile_id not in profiles:
+            errors.append(f"{profile_id}: effective Jenkins module has no profile")
+    if not seen:
+        errors.append("effective Jenkins module list is empty")
+    return errors
 
 
 def validate_playbook_summary(path, profile):
@@ -621,7 +678,7 @@ def validate_tree(
         return errors + [str(exc)]
 
     selected = [f"smoke.{pathlib.Path(name).stem}" for name in targets["PLAYBOOK_FILES"]]
-    selected.extend(f"integration.{name}" for name in targets["INTEGRATION_MODULES"])
+    selected.extend(f"integration.{name}" for name in targets["EFFECTIVE_INTEGRATION_MODULES"])
     selected.extend(f"integration.{name}" for name in targets["STANDALONE_INTEGRATION_MODULES"])
     missing = [profile_id for profile_id in selected if profile_id not in registry.get("profiles", {})]
     errors.extend(f"{profile_id}: Jenkins target has no profile" for profile_id in missing)
@@ -674,6 +731,13 @@ def main(argv=None):
     checkpoint.add_argument("--root", required=True)
     checkpoint.add_argument("--label", required=True)
     checkpoint.add_argument("--output", required=True)
+    coverage = sub.add_parser("coverage")
+    coverage.add_argument("--registry", required=True)
+    coverage.add_argument(
+        "--modules",
+        required=True,
+        help="comma-separated effective Jenkins integration modules",
+    )
     args = parser.parse_args(argv)
     if args.command == "validate":
         errors = validate_tree(
@@ -698,6 +762,25 @@ def main(argv=None):
         return 1 if errors else 0
     if args.command == "checkpoint":
         write_checkpoint(args.root, args.label, args.output)
+        return 0
+    if args.command == "coverage":
+        try:
+            registry = load_registry(args.registry)
+        except (OSError, ValidationError, yaml.YAMLError) as exc:
+            print(f"unable to load prerequisite profile registry: {exc}", file=sys.stderr)
+            return 1
+        errors = validate_registry(registry)
+        if not errors:
+            errors = validate_effective_module_profile_coverage(
+                args.modules.split(","),
+                registry.get("profiles", {}),
+            )
+        for error in errors:
+            print(error, file=sys.stderr)
+        if errors:
+            return 1
+        module_count = len({item.strip() for item in args.modules.split(",") if item.strip()})
+        print(f"NDP_PROFILE_COVERAGE_OK: {module_count} effective module(s) have profiles")
         return 0
     return 2
 

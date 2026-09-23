@@ -2515,6 +2515,7 @@ def runFabricTest(ndfcConfig) {
             def effectiveIntegrationModules = INTEGRATION_MODULES + ['nd_manage_links'] + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_switches']
             def integrationForShell = effectiveIntegrationModules.join(' ')
             def standaloneIntegrationForShell = STANDALONE_INTEGRATION_MODULES.join(' ')
+            def profileCoverageForShell = (effectiveIntegrationModules + STANDALONE_INTEGRATION_MODULES).join(',')
             def vpcPairSwitch1Serial = "${ndfcConfig.vpc_pair_switch1_serial ?: ''}".trim()
             def vpcPairSwitch2Serial = "${ndfcConfig.vpc_pair_switch2_serial ?: ''}".trim()
             def vpcPairFabricType = "${ndfcConfig.vpc_pair_fabric_type ?: ''}".trim()
@@ -2555,6 +2556,7 @@ def runFabricTest(ndfcConfig) {
                         withEnv(["PLAYBOOK_LIST=${playbooksForShell}",
                                  "INTEGRATION_LIST=${integrationForShell}",
                                  "STANDALONE_INTEGRATION_LIST=${standaloneIntegrationForShell}",
+                                 "NDP_EFFECTIVE_MODULES=${profileCoverageForShell}",
                                  "VPC_PAIR_SWITCH1_SERIAL=${vpcPairSwitch1Serial}",
                                  "VPC_PAIR_SWITCH2_SERIAL=${vpcPairSwitch2Serial}",
                                  "VPC_PAIR_FABRIC_TYPE=${vpcPairFabricType}",
@@ -2589,6 +2591,21 @@ def runFabricTest(ndfcConfig) {
 
                                 cd \${COLLECTIONS_DIRECTORY}
                                 source \$HOME/ansible/venv/bin/activate
+
+                                PROFILE_VALIDATOR="${COLLECTIONS_DIRECTORY}/validate_nd_prerequisites.py"
+                                PROFILE_REGISTRY="${COLLECTIONS_DIRECTORY}/nd_prerequisite_profiles.yaml"
+                                for required_file in "${PROFILE_VALIDATOR}" "${PROFILE_REGISTRY}"; do
+                                    if [ ! -f "${required_file}" ] || [ -L "${required_file}" ] || [ ! -s "${required_file}" ]; then
+                                        echo "❌ Jenkins profile coverage gate input is missing or unsafe: ${required_file}"
+                                        exit 1
+                                    fi
+                                done
+                                echo "🔎 Checking prerequisite-profile coverage for effective Jenkins modules"
+                                python "${PROFILE_VALIDATOR}" coverage \
+                                    --registry "${PROFILE_REGISTRY}" \
+                                    --modules "${NDP_EFFECTIVE_MODULES}"
+                                echo "✅ Jenkins prerequisite-profile coverage gate passed"
+
                                 if ! command -v ansible-playbook &> /dev/null; then
                                     echo 'Error: ansible-playbook is not installed or not in PATH. Exiting.'
                                     exit 1
