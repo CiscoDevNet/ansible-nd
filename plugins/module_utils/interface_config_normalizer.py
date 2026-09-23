@@ -10,19 +10,25 @@ from copy import deepcopy
 from typing import Any
 
 
-def validate_ethernet_interface_names(config_list: list[dict[str, Any]]) -> None:
-    """Require an explicit list; only an actual empty list means reset-all."""
+def validate_ethernet_interface_names(
+    config_list: list[dict[str, Any]],
+    *,
+    require_interface_names: bool = True,
+) -> None:
+    """Validate grouped Ethernet names, optionally allowing gathered filters to omit them."""
     for item_index, group in enumerate(config_list):
         if not isinstance(group, dict):
             raise ValueError(f"Ethernet config item {item_index} must be a mapping.")
         switch_ip = group.get("switch_ip")
         if "interface_names" not in group:
-            raise ValueError(f"interface_names is required for Ethernet config item {item_index} on switch '{switch_ip}'.")
+            if require_interface_names:
+                raise ValueError(f"interface_names is required for Ethernet config item {item_index} on switch '{switch_ip}'.")
+            continue
         interface_names = group["interface_names"]
         if not isinstance(interface_names, list):
             raise ValueError(f"interface_names for Ethernet config item {item_index} on switch '{switch_ip}' must be a list.")
         for entry_index, name in enumerate(interface_names):
-            if isinstance(name, str) and name:
+            if isinstance(name, str) and name.strip():
                 continue
             if name is None:
                 reason = "null"
