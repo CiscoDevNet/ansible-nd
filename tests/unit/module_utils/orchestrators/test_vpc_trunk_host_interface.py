@@ -36,14 +36,10 @@ from typing import Any
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
-    TrunkVpcHostInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import TrunkVpcHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import (
-    TrunkVpcHostInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import TrunkVpcHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -834,6 +830,7 @@ def test_vpc_trunk_host_orchestrator_00710_gathered_query_routes_and_injects_swi
                         "networkOS": {
                             "policy": {
                                 "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOZZZZZZZ",
                                 "adminState": True,
                                 "allowedVlans": "100-200",
                                 "nativeVlan": 99,
@@ -890,7 +887,7 @@ def test_vpc_trunk_host_orchestrator_00720_gathered_excludes_access_vpc_policy(m
                 {
                     "interfaceName": "vpc200",
                     "interfaceType": "vpc",
-                    "configData": {"networkOS": {"policy": {"policyType": "trunkVpcHost"}}},
+                    "configData": {"networkOS": {"policy": {"policyType": "trunkVpcHost", "peerSwitchId": "FDOZZZZZZZ"}}},
                 },
                 {
                     "interfaceName": "vpc100",
@@ -947,7 +944,14 @@ def test_vpc_trunk_host_orchestrator_00730_gathered_dedup_prefers_lower_switch_i
                 {
                     "interfaceName": "vpc200",
                     "interfaceType": "vpc",
-                    "configData": {"networkOS": {"policy": {"policyType": "trunkVpcHost"}}},
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "trunkVpcHost",
+                                "peerSwitchId": "FDOZZZZZZZ" if "FDOAAAAAAAA" in path else "FDOAAAAAAAA",
+                            }
+                        }
+                    },
                 }
             ],
             "meta": {"counts": {"remaining": 0}},

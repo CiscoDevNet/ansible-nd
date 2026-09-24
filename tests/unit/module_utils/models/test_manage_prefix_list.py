@@ -855,3 +855,10 @@ def test_manage_prefix_list_00340_normalize_gathered_filter_passthrough() -> Non
     assert PrefixListModel.normalize_gathered_filter({"ip_version": "ipv4", "name": "PL1"}) == {"ip_version": "ipv4", "name": "PL1"}
     assert PrefixListModel.normalize_gathered_filter({"ip_version": "ipv6"}) == {"ip_version": "ipv6"}
     assert PrefixListModel.normalize_gathered_filter({}) == {}
+
+
+@pytest.mark.parametrize("filter_item", [{"name": "invalid/name"}, {"ip_version": "invalid"}])
+def test_manage_prefix_list_00350_invalid_gathered_filter_values(filter_item) -> None:
+    """Verify invalid supported values fail during filter normalization."""
+    with pytest.raises(ValidationError):
+        PrefixListModel.normalize_gathered_filter(filter_item)

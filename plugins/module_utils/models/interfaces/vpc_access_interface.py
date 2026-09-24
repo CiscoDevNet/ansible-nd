@@ -340,6 +340,15 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
         return prefix[0].upper() + prefix[1:].lower() + rest
 
 
+class AccessVpcHostGatheredPolicyFilterModel(NDNestedModel):
+    """Validate policy fields supported by partial gathered filters."""
+
+    admin_state: bool | None = Field(default=None, alias="adminState")
+    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094)
+    peer1_port_channel_id: int | None = Field(default=None, alias="peer1PortChannelId", ge=1, le=4096)
+    peer2_port_channel_id: int | None = Field(default=None, alias="peer2PortChannelId", ge=1, le=4096)
+
+
 class AccessVpcHostNetworkOSModel(NDNestedModel):
     """
     # Summary
@@ -454,9 +463,37 @@ class AccessVpcHostInterfaceModel(NDBaseModel):
         None
         """
         normalized = deepcopy(filter_item)
+
+        switch_ip = normalized.get("switch_ip")
+        if isinstance(switch_ip, str):
+            normalized["switch_ip"] = switch_ip.strip()
+
         interface_name = normalized.get("interface_name")
         if isinstance(interface_name, str):
-            normalized["interface_name"] = interface_name.lower()
+            normalized["interface_name"] = interface_name.strip().lower()
+
+        config_data = normalized.get("config_data")
+        if not isinstance(config_data, dict):
+            return normalized
+
+        network_os = config_data.get("network_os")
+        if not isinstance(network_os, dict):
+            return normalized
+
+        policy = network_os.get("policy")
+        if not isinstance(policy, dict):
+            return normalized
+
+        validated_policy = AccessVpcHostGatheredPolicyFilterModel.model_validate(
+            policy,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        network_os["policy"] = validated_policy.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
         return normalized
 
     # --- Argument Spec ---

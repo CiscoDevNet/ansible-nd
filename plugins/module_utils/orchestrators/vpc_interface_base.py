@@ -460,9 +460,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the interface-list request fails (propagated to `query_all`'s wrapper).
         """
-        api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-        interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
+        interfaces = list(self._switch_interfaces(switch_id).values())
         managed = [iface for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
         for iface in managed:
             iface["switchIp"] = switch_ip
@@ -519,24 +517,24 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             # canonicalized (lowercase) on both sides so a mixed-case config still matches its echo. Without this
             # dedupe, `_manage_override_deletions` would see the peer-side copy as "not in proposed" and queue a
             # spurious delete.
-            interfaces_by_key: dict[tuple[str, frozenset[str]], tuple[str, dict]] = {}
+            interfaces_by_name: dict[tuple[str, frozenset[str]], tuple[str, dict]] = {}
             for switch_ip, switch_id in self._switches_to_query().items():
                 for iface in self._managed_vpc_interfaces(switch_ip, switch_id, managed_types):
-                    raw_name = iface.get("interfaceName")
-                    if raw_name is None:
+                    name = iface.get("interfaceName")
+                    if name is None:
                         continue
-                    name = self._canonical_interface_name(raw_name)
-                    key = (name, self._pair_key(iface, switch_ip, switch_id))
-                    existing = interfaces_by_key.get(key)
+                    name = self._canonical_interface_name(name)
+                    interface_key = (name, self._pair_key(iface, switch_ip, switch_id))
+                    existing = interfaces_by_name.get(interface_key)
                     if self._prefers_candidate(name, switch_id, switch_ip, existing, configured_ips_by_name):
-                        interfaces_by_key[key] = (switch_id, iface)
-            return [entry[1] for entry in interfaces_by_key.values()]
+                        interfaces_by_name[interface_key] = (switch_id, iface)
+            return [entry[1] for entry in interfaces_by_name.values()]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
 
     def _query_all_for_gathered(self, gathered_filters: list[dict], managed_types: set[str]) -> list[dict]:
         """Query gathered candidates through Lucene, then keep one stable vPC peer representative per interface."""
-        interfaces_by_name: dict[str, tuple[str, dict]] = {}
+        interfaces_by_name: dict[tuple[str, frozenset[str]], tuple[str, dict]] = {}
         for switch_ip, (switch_id, expressions) in self._build_gathered_query_plan(gathered_filters).items():
             for expression in expressions:
                 for interface in self._query_interfaces_with_lucene(switch_id, expression):
@@ -546,9 +544,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     if name is None:
                         continue
                     interface["switchIp"] = switch_ip
-                    existing = interfaces_by_name.get(name)
+                    name = self._canonical_interface_name(name)
+                    interface_key = (name, self._pair_key(interface, switch_ip, switch_id))
+                    existing = interfaces_by_name.get(interface_key)
                     if self._prefers_candidate(name, switch_id, switch_ip, existing, {}):
-                        interfaces_by_name[name] = (switch_id, interface)
+                        interfaces_by_name[interface_key] = (switch_id, interface)
         return [entry[1] for entry in interfaces_by_name.values()]
 
     @staticmethod
