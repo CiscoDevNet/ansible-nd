@@ -593,7 +593,38 @@ def test_manage_route_map_model_00200() -> None:
     rule_options = config_options["entries"]["options"]["rule_entries"]["options"]
 
     assert spec["cluster_name"]["type"] == "str"
-    assert config_options["name"]["required"] is True
+    assert config_options["name"]["required"] is False
     assert config_options["entries"].get("required") is not True
     assert config_options["tenant_name"]["aliases"] == ["tenantName"]
     assert set(rule_options["rule_type"]["choices"]) == set(RULE_TYPE_CHOICES)
+
+
+def test_manage_route_map_model_00210_gathered_contract() -> None:
+    """Verify the route-map model opts into name-only gathered filtering."""
+    spec = RouteMapModel.get_argument_spec()
+
+    assert RouteMapModel.supports_gathered_filtering is True
+    assert RouteMapModel.gathered_filter_properties == ("name",)
+    assert spec["config"]["required"] is False
+    assert spec["config"]["options"]["name"]["required"] is False
+    assert "gathered" in spec["state"]["choices"]
+
+
+def test_manage_route_map_gathered_filter_validation() -> None:
+    """Verify valid names pass and invalid partial filter names fail locally."""
+    assert RouteMapModel.normalize_gathered_filter({"name": "tenantA~RM_EXPORT"}) == {"name": "tenantA~RM_EXPORT"}
+
+    with pytest.raises(ValueError):
+        RouteMapModel.normalize_gathered_filter({"name": "invalid/name"})
+
+    with pytest.raises(ValueError):
+        RouteMapModel.normalize_gathered_filter({"name": "R" * 116})
+
+
+def test_manage_route_map_gathered_name_matching() -> None:
+    """Verify bare and tenant-qualified names match normalized gathered output."""
+    candidate = {"name": "RM_EXPORT", "tenant_name": "tenantA"}
+
+    assert RouteMapModel.matches_gathered_filter({"name": "RM_EXPORT"}, candidate) is True
+    assert RouteMapModel.matches_gathered_filter({"name": "tenantA~RM_EXPORT"}, candidate) is True
+    assert RouteMapModel.matches_gathered_filter({"name": "tenantB~RM_EXPORT"}, candidate) is False

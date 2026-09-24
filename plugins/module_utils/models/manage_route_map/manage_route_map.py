@@ -479,6 +479,17 @@ class RouteMapEntryModel(NDNestedModel):
     )
 
 
+class RouteMapGatheredFilterModel(NDNestedModel):
+    """Validate fields supported by partial route-map gathered filters."""
+
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=TENANT_ROUTE_MAP_API_NAME_MAX_LENGTH,
+        pattern=r"^[a-zA-Z0-9~_-]+$",
+    )
+
+
 class RouteMapModel(NDBaseModel):
     """
     # Summary
@@ -508,6 +519,43 @@ class RouteMapModel(NDBaseModel):
     exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
     payload_exclude_fields: ClassVar[set[str]] = {"last_update_timestamp"}
     unwanted_keys: ClassVar[list] = []
+
+    # --- Gathered State Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = ("name",)
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial route-map gathered filter."""
+        validated = RouteMapGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
+
+    @classmethod
+    def matches_gathered_filter(cls, criteria: dict, candidate: dict) -> bool:
+        """Match bare or tenant-qualified route-map names exactly."""
+        expected_name = criteria.get("name")
+        if expected_name is None:
+            return super().matches_gathered_filter(criteria, candidate)
+
+        candidate_name = candidate.get("name")
+        tenant_name = candidate.get("tenant_name")
+        qualified_candidate = candidate_name
+        if tenant_name and candidate_name and "~" not in candidate_name:
+            qualified_candidate = f"{tenant_name}~{candidate_name}"
+        bare_candidate = candidate_name.split("~", 1)[-1] if isinstance(candidate_name, str) else candidate_name
+
+        if "~" in expected_name:
+            return expected_name == qualified_candidate
+        return expected_name == bare_candidate
 
     # --- Fields ---
 
@@ -596,11 +644,11 @@ class RouteMapModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
                     name=dict(
                         type="str",
-                        required=True,
+                        required=False,
                     ),
                     entries=dict(
                         type="list",
@@ -741,6 +789,6 @@ class RouteMapModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

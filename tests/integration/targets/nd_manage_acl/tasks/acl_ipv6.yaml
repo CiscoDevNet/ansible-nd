@@ -71,6 +71,37 @@
     success_msg: "TEST 1 PASSED: IPv6 ACL created and merged state is idempotent"
 
 #############################################################################
+# GATHERED: IPv6 ACL
+#############################################################################
+- name: "GATHERED IPv6: Filter by IPv6 type"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+    config:
+      - type: ipv6
+  register: gathered_ipv6
+
+- name: "GATHERED IPv6: Verify type filtering and normalized output"
+  vars:
+    gathered_ipv6_test_acl: >-
+      {{ gathered_ipv6.gathered
+         | selectattr('name', 'equalto', acl_ipv6_name)
+         | list
+         | first }}
+  ansible.builtin.assert:
+    that:
+      - gathered_ipv6 is not changed
+      - gathered_ipv6.gathered | length >= 1
+      - gathered_ipv6.gathered | rejectattr('type', 'equalto', 'ipv6') | list | length == 0
+      - gathered_ipv6_test_acl.name == acl_ipv6_name
+      - gathered_ipv6_test_acl.type == "ipv6"
+      - gathered_ipv6_test_acl.entries | length == 2
+      - gathered_ipv6_test_acl.entries[0].dst_port_action == "port_range"
+      - gathered_ipv6_test_acl.entries[0].dst_port_range_start | int == 80
+      - gathered_ipv6_test_acl.entries[0].dst_port_range_end | int == 443
+
+#############################################################################
 # VALIDATION: query the IPv6 ACL directly from ND and assert the wire payload
 #############################################################################
 - name: "VALIDATION: Authenticate with ND to get a token"
