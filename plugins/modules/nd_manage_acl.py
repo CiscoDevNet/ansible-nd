@@ -28,23 +28,35 @@ options:
   config:
     description:
     - The list of ACLs to configure.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden),
+      and O(state=deleted).
+    - Optional for O(state=gathered). Omit it or provide an empty list to
+      gather every ACL in the fabric.
+    - For O(state=gathered), each item is a filter. The supported filtering
+      properties are O(config.name) and O(config.type).
+    - Properties within one filter item use AND semantics. Separate filter
+      items use OR semantics.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       name:
         description:
         - The name of the ACL.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden),
+          and O(state=deleted).
+        - Optional for O(state=gathered), where it performs an exact name match.
         - Allowed characters are C([a-zA-Z0-9_~-]).
         - Tenant-qualified names in the form C(<tenant>~<name>) (for example C(tenant1~acl3)) are supported.
         - Maximum length is 115 characters.
         type: str
-        required: true
+        required: false
       type:
         description:
         - The IP address family of the ACL.
         - Required for O(state=merged), O(state=replaced), and O(state=overridden).
         - Optional for O(state=deleted), where identifier-only items (O(config.name)) are accepted.
+        - For O(state=gathered), filters the result to C(ipv4) or C(ipv6) ACLs.
         type: str
         choices: [ ipv4, ipv6 ]
       description:
@@ -182,9 +194,14 @@ options:
     - Use O(state=overridden) to make the ACLs on the fabric exactly match the configuration,
       removing any ACL not present in the configuration.
     - Use O(state=deleted) to remove the ACLs specified in the configuration.
+    - Use O(state=gathered) to read ACL configurations without making changes.
+      Omit O(config), or provide an empty list, to gather all ACLs. When O(config)
+      is provided, only O(config.name) and O(config.type) are supported as exact
+      filtering properties. Properties within one item use AND semantics and
+      separate items use OR semantics. Results are returned under C(gathered).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -200,7 +217,8 @@ notes:
 - O(config.entries.icmp_option) is only valid when O(config.entries.protocol) is C(icmp);
   O(config.entries.tcp_option) is only valid when O(config.entries.protocol) is C(tcp).
 - Port operators (O(config.entries.src_port_action) and O(config.entries.dst_port_action))
-  are accepted in snake_case and stored/returned in the controller's native form.
+  are accepted in snake_case. Nexus Dashboard uses camelCase values internally, and gathered
+  output normalizes those values back to snake_case.
 - The RV(after) return value reflects the module's predicted post-write state (the intended
   configuration merged into the existing state), not a re-read from the controller after the
   write. See the RETURN documentation for RV(after).
@@ -307,6 +325,21 @@ EXAMPLES = r"""
     state: deleted
     config:
       - name: ACL-IPV4-1
+
+- name: Gather all ACLs from the fabric
+  cisco.nd.nd_manage_acl:
+    fabric_name: my-fabric
+    state: gathered
+  register: gathered_acls
+
+- name: Gather one ACL and verify its address family
+  cisco.nd.nd_manage_acl:
+    fabric_name: my-fabric
+    state: gathered
+    config:
+      - name: GATHERED_IPV6
+        type: ipv6
+  register: gathered_ipv6_acl
 """
 
 RETURN = r"""
@@ -369,7 +402,7 @@ after:
       dst: any
 diff:
   description: The per-ACL difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -383,7 +416,7 @@ diff:
       dst: any
 proposed:
   description: The ACL configuration the module proposed to apply, before reconciliation with the existing state.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -395,6 +428,13 @@ proposed:
       protocol: ip
       src: any
       dst: any
+gathered:
+  description:
+  - ACLs matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format with snake_case port operators.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)
@@ -443,6 +483,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)

@@ -40,6 +40,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import pytest
 import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as state_machine_module
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.models.acl.acl import AclModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
@@ -51,6 +52,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_u
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_route_map.manage_route_map import RouteMapModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -2285,6 +2287,8 @@ def test_nd_state_machine_00580(monkeypatch) -> None:
         (CommunityListModel, {"type": "invalid"}),
         (ExtendedCommunityListModel, {"name": "invalid/name"}),
         (PrefixListModel, {"ip_version": "invalid"}),
+        (AclModel, {"name": "invalid/name"}),
+        (RouteMapModel, {"name": "invalid/name"}),
     ],
     ids=[
         "access-vlan-out-of-range",
@@ -2296,6 +2300,8 @@ def test_nd_state_machine_00580(monkeypatch) -> None:
         "community-list-type-invalid",
         "extended-community-list-name-invalid",
         "prefix-list-ip-version-invalid",
+        "acl-name-invalid",
+        "route-map-name-invalid",
     ],
 )
 def test_nd_state_machine_00590(monkeypatch, model_class, filter_item) -> None:

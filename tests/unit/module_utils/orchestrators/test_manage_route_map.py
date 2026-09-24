@@ -536,3 +536,155 @@ def test_manage_route_map_orchestrator_00500() -> None:
 
     instance.delete_bulk([model])
     assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMapActions/remove?clusterName=CLUSTER-1"
+
+
+# =============================================================================
+# Gathered-state filtering
+# =============================================================================
+
+
+def test_manage_route_map_orchestrator_00600() -> None:
+    """Verify route-map name matching remains local for tenant safety."""
+    assert ManageRouteMapOrchestrator.supports_gathered_server_filtering is False
+
+
+def test_manage_route_map_orchestrator_00610() -> None:
+    """Verify gathered kwargs cannot narrow the tenant-qualified collection."""
+    route_map = _route_map_model("Test").to_payload()
+
+    def responses():
+        yield _response({"routeMaps": [route_map]})
+
+    rest_send = _build_rest_send(
+        ResponseGenerator(responses()),
+        cluster_name="CLUSTER-1",
+    )
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    result = instance.query_all(gathered_filters=[{"name": "Test"}])
+
+    assert result == [route_map]
+    assert rest_send.path == "/api/v1/manage/fabrics/SITE1/routeMaps?clusterName=CLUSTER-1&max=100&offset=0"
+
+
+def test_manage_route_map_orchestrator_00620(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify multiple gathered names still use one complete collection scan."""
+    first = _route_map_model("Test").to_payload()
+    second = _route_map_model("Other").to_payload()
+    expressions = []
+
+    def responses():
+        yield _response()
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    def fake_query(
+        self,
+        expression: str | None = None,
+    ) -> list[dict]:
+        expressions.append(expression)
+        return [first, second]
+
+    monkeypatch.setattr(
+        ManageRouteMapOrchestrator,
+        "_query_all_for_management_states",
+        fake_query,
+    )
+
+    result = instance.query_all(
+        gathered_filters=[
+            {"name": "Test"},
+            {"name": "Other"},
+        ]
+    )
+
+    assert expressions == [None]
+    assert result == [first, second]
+
+
+def test_manage_route_map_orchestrator_00630(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify gathered with omitted/empty config uses an unfiltered query."""
+    route_map = _route_map_model("Test").to_payload()
+    expressions = []
+
+    def responses():
+        yield _response()
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    def fake_query(
+        self,
+        expression: str | None = None,
+    ) -> list[dict]:
+        expressions.append(expression)
+        return [route_map]
+
+    monkeypatch.setattr(
+        ManageRouteMapOrchestrator,
+        "_query_all_for_management_states",
+        fake_query,
+    )
+
+    result = instance.query_all(gathered_filters=[])
+
+    assert expressions == [None]
+    assert result == [route_map]
+
+
+def test_manage_route_map_orchestrator_00640(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify one unsafe expression collapses the request set to one full scan."""
+    first = _route_map_model("Test").to_payload()
+    second = _route_map_model("RM-Gathered-Test").to_payload()
+    expressions = []
+
+    def responses():
+        yield _response()
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageRouteMapOrchestrator(rest_send=rest_send)
+
+    def fake_query(
+        self,
+        expression: str | None = None,
+    ) -> list[dict]:
+        expressions.append(expression)
+        return [first, second]
+
+    monkeypatch.setattr(
+        ManageRouteMapOrchestrator,
+        "_query_all_for_management_states",
+        fake_query,
+    )
+
+    result = instance.query_all(
+        gathered_filters=[
+            {"name": "Test"},
+            {"name": "RM-Gathered-Test"},
+        ]
+    )
+
+    assert expressions == [None]
+    assert result == [first, second]
+
+
+def test_manage_route_map_pagination_limit_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify reaching the page cap cannot return an incomplete route-map inventory."""
+    monkeypatch.setattr(ManageRouteMapOrchestrator, "query_all_page_size", 1)
+    monkeypatch.setattr(ManageRouteMapOrchestrator, "query_all_max_pages", 1)
+    route_map = _route_map_model("Test").to_payload()
+
+    def responses():
+        yield _response({"routeMaps": [route_map]})
+
+    instance = ManageRouteMapOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+
+    with pytest.raises(Exception, match="Pagination limit reached"):
+        instance.query_all()
