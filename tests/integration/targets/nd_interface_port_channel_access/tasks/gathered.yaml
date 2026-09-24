@@ -1,0 +1,60 @@
+---
+- name: "GATHERED: Gather all accessPoHost port-channels"
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: "{{ nd_test_fabric_name }}"
+    state: gathered
+  register: pc_access_gathered_all
+
+- name: "GATHERED: Verify gather-all is read-only"
+  ansible.builtin.assert:
+    that:
+      - pc_access_gathered_all is not changed
+      - pc_access_gathered_all.gathered is defined
+      - pc_access_gathered_all.gathered | type_debug == "list"
+      - pc_access_gathered_all.gathered | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 1
+      - pc_access_gathered_all.before == []
+      - pc_access_gathered_all.after == []
+      - pc_access_gathered_all.diff is not defined
+      - pc_access_gathered_all.proposed is not defined
+
+- name: "GATHERED: Gather all with an explicit empty config"
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: "{{ nd_test_fabric_name }}"
+    config: []
+    state: gathered
+  register: pc_access_gathered_empty
+
+- name: "GATHERED: Verify empty config is equivalent to omitted config"
+  ansible.builtin.assert:
+    that:
+      - pc_access_gathered_empty is not changed
+      - pc_access_gathered_empty.gathered == pc_access_gathered_all.gathered
+
+- name: "GATHERED: Gather all in check mode"
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: "{{ nd_test_fabric_name }}"
+    state: gathered
+  check_mode: true
+  register: pc_access_gathered_check
+
+- name: "GATHERED: Verify check mode is identical and read-only"
+  ansible.builtin.assert:
+    that:
+      - pc_access_gathered_check is not changed
+      - pc_access_gathered_check.gathered == pc_access_gathered_all.gathered
+
+- name: "GATHERED: Reject non-empty config because filtering is unsupported"
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: "{{ nd_test_fabric_name }}"
+    config:
+      - switch_ip: "{{ nd_test_switch_ip }}"
+        interface_name: port-channel501
+    state: gathered
+  register: pc_access_gathered_with_config
+  ignore_errors: true
+
+- name: "GATHERED: Verify non-empty config is rejected before querying"
+  ansible.builtin.assert:
+    that:
+      - pc_access_gathered_with_config is failed
+      - "'currently supports gather-all only' in pc_access_gathered_with_config.msg"
