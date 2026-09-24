@@ -28,7 +28,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec, build_lucene_expressions
 
 _QUERY_PAGE_SIZE = 100
 _SCOPED_QUERY_MAX_IDENTIFIERS = 8
@@ -100,6 +99,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    query_all_max_pages: ClassVar[int] = 100
 
     # Required by NDBaseOrchestrator, but every operation is overridden below to route by
     # ``ip_version`` via ``_VERSION_CONFIG``. These defaults only satisfy the base contract;
@@ -114,12 +114,6 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageIpv4PrefixListsBulkDelete
 
     supports_gathered_server_filtering: ClassVar[bool] = True
-    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
-        base_terms=(),
-        field_map={
-            ("name",): "name",
-        },
-    )
 
     @property
     def fabric_name(self) -> str:
@@ -268,7 +262,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         config = self._config_for_version(version)
         results: list[dict[str, Any]] = []
         offset = 0
-        while True:
+        for _page_number in range(self.query_all_max_pages):
             api_endpoint = self._configure_endpoint(config["list"](), max_records=_QUERY_PAGE_SIZE, offset=offset)
             if expression is not None:
                 lucene_params = getattr(api_endpoint, "lucene_params", None)
@@ -284,6 +278,10 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             if not self._has_next_page(raw, len(page), offset):
                 break
             offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({self.query_all_max_pages} pages, " f"{len(results)} {version} prefix lists collected). Results may be incomplete."
+            )
         return results
 
     def _bulk_create_for_version(self, version: str, items: list[PrefixListModel]) -> ResponseType:
@@ -376,60 +374,29 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         """
         Fetch prefix lists for gathered state, optionally filtered by ip_version and name.
 
-        Filters by ip_version skip querying the unneeded address family entirely.
-        Filters by name use exact GET (faster) or server-side Lucene.
+        Filters by ip_version skip querying an unneeded address family when every
+        filter item is explicitly scoped. Name matching remains local because a
+        tenant-scoped API name is qualified as ``tenant~name`` on the wire but is
+        normalized to a bare name in gathered output.
         """
         filter_items = gathered_filters or [{}]
         versions_to_query = self._gathered_versions(filter_items)
 
         results = []
         seen: set[tuple[str, str | None, str]] = set()
-        lucene_filters = []
-
-        for filter_item in filter_items:
-            name = filter_item.get("name")
-            ip_version = filter_item.get("ip_version")
-            other_keys = {k for k, v in filter_item.items() if v not in (None, "") and k not in ("name", "ip_version")}
-
-            if name and not other_keys:
-                versions = [ip_version] if ip_version else list(versions_to_query)
-                for version in versions:
-                    if version not in versions_to_query:
-                        continue
-                    item = self._query_one_existing(version, None, name)
-                    if item is not None:
-                        self._append_unique(item, version, seen, results)
-            else:
-                lucene_filters.append(filter_item)
-
-        if not lucene_filters and filter_items != [{}]:
-            return results
-
-        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec) if lucene_filters else []
-
-        # Endpoint rejects quoted Lucene values — fall back to full scan with client-side filtering.
-        if expressions and any('"' in expr for expr in expressions):
-            expressions = []
 
         for version in versions_to_query:
-            if expressions:
-                for expression in expressions:
-                    for item in self._query_all_for_version(version, expression):
-                        self._append_unique(item, version, seen, results)
-            else:
-                for item in self._query_all_for_version(version):
-                    self._append_unique(item, version, seen, results)
+            for item in self._query_all_for_version(version):
+                self._append_unique(item, version, seen, results)
 
         return results
 
-    def _gathered_versions(self, filter_items: list[dict]) -> set[str]:
+    def _gathered_versions(self, filter_items: list[dict]) -> tuple[str, ...]:
         """Determine which address families to query based on ip_version filters."""
-        versions = set()
-        for item in filter_items:
-            v = item.get("ip_version")
-            if v:
-                versions.add(v)
-        return versions if versions else set(_VERSION_CONFIG.keys())
+        if any(not item.get("ip_version") for item in filter_items):
+            return tuple(_VERSION_CONFIG)
+        versions = {item["ip_version"] for item in filter_items}
+        return tuple(v for v in _VERSION_CONFIG if v in versions)
 
     @staticmethod
     def _append_unique(item: dict, version: str, seen: set, results: list) -> None:

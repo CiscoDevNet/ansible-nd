@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
 
 STANDARD_API_RESPONSE = {
@@ -462,3 +463,10 @@ def test_manage_extended_community_list_00240_normalize_gathered_filter_passthro
     assert ExtendedCommunityListModel.normalize_gathered_filter({"name": "ECL1"}) == {"name": "ECL1"}
     assert ExtendedCommunityListModel.normalize_gathered_filter({"type": "standard"}) == {"type": "standard"}
     assert ExtendedCommunityListModel.normalize_gathered_filter({}) == {}
+
+
+@pytest.mark.parametrize("filter_item", [{"name": "invalid/name"}, {"type": "invalid"}])
+def test_manage_extended_community_list_00250_invalid_gathered_filter_values(filter_item) -> None:
+    """Verify invalid supported values fail during filter normalization."""
+    with pytest.raises(ValidationError):
+        ExtendedCommunityListModel.normalize_gathered_filter(filter_item)

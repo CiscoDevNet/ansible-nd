@@ -38,7 +38,7 @@ options:
     - Optional for O(state=gathered), where it may be omitted to gather all prefix lists.
     type: list
     elements: dict
-    required: False
+    required: false
     suboptions:
       ip_version:
         description:
@@ -294,7 +294,7 @@ after:
       prefix: 0.0.0.0/0
 diff:
   description: The per-prefix-list difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -307,7 +307,7 @@ diff:
       prefix: 0.0.0.0/0
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -318,6 +318,13 @@ proposed:
     - sequence_number: 10
       action: permit
       prefix: 2001:db8::/32
+gathered:
+  description:
+  - Prefix lists matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)
