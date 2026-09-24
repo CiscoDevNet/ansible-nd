@@ -17,6 +17,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageAclsPost,
     EpManageAclsPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
+    GatheredLuceneSpec,
+    build_lucene_expressions,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.acl.acl import AclModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
@@ -25,6 +29,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 # camelCase wrapper keys used in ACL request/response bodies.
 _LIST_KEY = "accessControlLists"
 _NAMES_KEY = "accessControlListNames"
+
+_GATHERED_QUERY_MAX_EXPRESSIONS = 3
 
 
 class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
@@ -57,6 +63,14 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     supports_bulk_delete: ClassVar[bool] = True
     query_all_page_size: ClassVar[int] = 100
     query_all_max_pages: ClassVar[int] = 10000
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(),
+        field_map={
+            ("name",): "name",
+        },
+    )
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageAclsPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageAclsPut
@@ -113,7 +127,31 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: AclModel = None, **kwargs) -> ResponseType:
+    def query_all(
+        self,
+        model_instance: AclModel | None = None,
+        gathered_filters=None,
+        **kwargs,
+    ) -> ResponseType:
+        """
+        Query ACLs from the fabric.
+
+        Management states retain the existing unfiltered paginated query.
+        Gathered state may use safe server-side name filters before the complete
+        filter is applied locally by NDStateMachine.
+        """
+        try:
+            if gathered_filters is not None:
+                return self._query_all_for_gathered(gathered_filters)
+
+            return self._query_all_for_management_states()
+        except Exception as e:
+            raise Exception(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(
+        self,
+        expression: str | None = None,
+    ) -> list[dict]:
         """
         Fetch all ACLs for the fabric and return them as a list of API dicts.
 
@@ -123,41 +161,114 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         ignores cannot loop forever, and ``query_all_max_pages`` bounds the walk
         as a final safety net.
         """
-        try:
-            page_size = self.query_all_page_size
-            collected: list[dict] = []
-            seen: set = set()
-            offset = 0
-            pages_fetched = 0
-            while pages_fetched < self.query_all_max_pages:
-                pages_fetched += 1
-                api_endpoint = self.query_all_endpoint()
-                api_endpoint.fabric_name = self.fabric_name
-                api_endpoint.endpoint_params.max = page_size
-                api_endpoint.endpoint_params.offset = offset
-                raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                page = raw.get(_LIST_KEY, []) or [] if isinstance(raw, dict) else (raw or [])
-                if not page:
-                    break
+        page_size = self.query_all_page_size
+        collected: list[dict] = []
+        seen: set = set()
+        offset = 0
+        pages_fetched = 0
+        while pages_fetched < self.query_all_max_pages:
+            pages_fetched += 1
+            api_endpoint = self.query_all_endpoint()
+            api_endpoint.fabric_name = self.fabric_name
+            api_endpoint.endpoint_params.max = page_size
+            api_endpoint.endpoint_params.offset = offset
+            if expression is not None:
+                api_endpoint.endpoint_params.filter = expression
+            raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            page = raw.get(_LIST_KEY, []) or [] if isinstance(raw, dict) else (raw or [])
+            if not page:
+                break
 
-                new_rows = 0
-                for row in page:
-                    name = row.get("name") if isinstance(row, dict) else None
-                    if name is not None:
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                    collected.append(row)
-                    new_rows += 1
+            new_rows = 0
+            for row in page:
+                name = row.get("name") if isinstance(row, dict) else None
+                if name is not None:
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                collected.append(row)
+                new_rows += 1
 
-                # A short page is the last page; a full page of only duplicates
-                # means the controller is not honoring ``offset`` -- stop either way.
-                if len(page) < page_size or new_rows == 0:
-                    break
-                offset += page_size
-            return collected
-        except Exception as e:
-            raise Exception(f"Query all failed: {e}") from e
+            if not self._has_next_page(raw, len(page), offset, page_size):
+                break
+            if new_rows == 0:
+                raise RuntimeError("Pagination did not advance while the controller reported additional ACLs.")
+            offset += len(page)
+        else:
+            raise RuntimeError(f"Pagination limit reached ({self.query_all_max_pages} pages, " f"{len(collected)} ACLs collected). Results may be incomplete.")
+        return collected
+
+    @staticmethod
+    def _has_next_page(result: object, page_count: int, offset: int, page_size: int) -> bool:
+        """Return whether controller metadata or page size indicates another page."""
+        if page_count == 0:
+            return False
+        if isinstance(result, dict):
+            counts = (result.get("meta") or {}).get("counts") or {}
+            try:
+                total = int(counts["total"])
+            except (KeyError, TypeError, ValueError):
+                total = None
+            if total is not None:
+                return offset + page_count < total
+            try:
+                remaining = int(counts["remaining"])
+            except (KeyError, TypeError, ValueError):
+                remaining = None
+            if remaining is not None:
+                return remaining > 0
+        return page_count == page_size
+
+    def _query_all_for_gathered(
+        self,
+        gathered_filters: list[dict] | None = None,
+    ) -> list[dict]:
+        """
+        Fetch candidate ACLs for gathered-state filtering.
+
+        Only safe, unquoted names are sent to the controller. Type-only filters,
+        unsafe names, and unfiltered gathered requests use a complete collection
+        scan. NDStateMachine always applies the full exact filter locally.
+        """
+        filter_items = gathered_filters or [{}]
+
+        # Multiple filter items have OR semantics. If any item has no name, that
+        # item can potentially match ACLs anywhere in the collection. Restricting
+        # the server query to names from the other items would lose valid results.
+        if any(not filter_item.get("name") for filter_item in filter_items):
+            return self._query_all_for_management_states()
+
+        expressions = build_lucene_expressions(
+            filter_items,
+            spec=self.gathered_lucene_spec,
+        )
+
+        # The ACL endpoint returns no results for quoted filter values. Names
+        # containing '-' or '~' are quoted by the generic safe formatter, so use a
+        # complete scan and exact local filtering for those names.
+        if not expressions or any('"' in expression for expression in expressions):
+            return self._query_all_for_management_states()
+
+        if len(expressions) > _GATHERED_QUERY_MAX_EXPRESSIONS:
+            return self._query_all_for_management_states()
+
+        collected: list[dict] = []
+        seen: set[str] = set()
+
+        # One request per expression provides OR semantics without relying on the
+        # endpoint's unsupported Lucene OR operator.
+        for expression in expressions:
+            for row in self._query_all_for_management_states(expression):
+                name = row.get("name") if isinstance(row, dict) else None
+
+                if name is not None:
+                    if name in seen:
+                        continue
+                    seen.add(name)
+
+                collected.append(row)
+
+        return collected
 
     def create_bulk(self, model_instances: list[AclModel], **kwargs) -> ResponseType:
         """Bulk-create ACLs in a single request."""
