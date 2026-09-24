@@ -49,6 +49,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.acl.enums import (
     AclTypeEnum,
     PortActionEnum,
     PORT_ACTION_SNAKE_TO_WIRE,
+    PORT_ACTION_WIRE_TO_SNAKE,
 )
 
 # Allowed characters for ACL names (from OpenAPI pattern). The ``~`` separates
@@ -252,6 +253,21 @@ class AclEntryModel(NDNestedModel):
         return errors
 
 
+class AclGatheredFilterModel(NDNestedModel):
+    """Validate fields supported by partial ACL gathered filters."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=_NAME_MAX_LENGTH)
+    type: AclTypeEnum | None = Field(default=None)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        """Enforce the ACL API name pattern for partial filters."""
+        if value is not None and not _NAME_RE.fullmatch(value):
+            raise ValueError(f"ACL name '{value}' is invalid. Only alphanumeric characters, '_', '-', and '~' are allowed.")
+        return value
+
+
 class AclModel(NDBaseModel):
     """
     Access Control List configuration for a Nexus Dashboard fabric.
@@ -283,6 +299,28 @@ class AclModel(NDBaseModel):
     payload_exclude_fields: ClassVar[set[str]] = {"last_update_timestamp"}
     unwanted_keys: ClassVar[list] = []
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "name",
+        "type",
+    )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial ACL gathered filter."""
+        validated = AclGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
+
     # --- Fields ---
 
     name: str = Field(
@@ -295,7 +333,7 @@ class AclModel(NDBaseModel):
     type: AclTypeEnum | None = Field(
         default=None,
         alias="type",
-        description="IP address family of the ACL: 'ipv4' or 'ipv6'. Required for all states except 'deleted'.",
+        description="IP address family of the ACL: 'ipv4' or 'ipv6'. Required for all states except 'deleted' and 'gathered'.",
     )
 
     description: str | None = Field(
@@ -377,6 +415,16 @@ class AclModel(NDBaseModel):
 
         return entries
 
+    def to_gathered_config(self, **kwargs) -> dict[str, Any]:
+        """Return replay-safe ACL config with Ansible-facing port operators."""
+        data = super().to_gathered_config(**kwargs)
+        for entry in data.get("entries") or []:
+            for field_name in ("src_port_action", "dst_port_action"):
+                value = entry.get(field_name)
+                if value in PORT_ACTION_WIRE_TO_SNAKE:
+                    entry[field_name] = PORT_ACTION_WIRE_TO_SNAKE[value]
+        return data
+
     # --- Argument Spec ---
 
     @classmethod
@@ -402,7 +450,7 @@ class AclModel(NDBaseModel):
         )
 
         acl_spec = dict(
-            name=dict(type="str", required=True),
+            name=dict(type="str", required=False),
             type=dict(type="str", choices=["ipv4", "ipv6"]),
             description=dict(type="str"),
             entries=dict(type="list", elements="dict", required=False, options=entry_spec),
@@ -410,10 +458,10 @@ class AclModel(NDBaseModel):
 
         return dict(
             fabric_name=dict(type="str", required=True),
-            config=dict(type="list", elements="dict", required=True, options=acl_spec),
+            config=dict(type="list", elements="dict", required=False, options=acl_spec),
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )
