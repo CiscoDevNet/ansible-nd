@@ -263,8 +263,8 @@ def test_manage_acl_00036(monkeypatch) -> None:
 
     - With a page size of 2, page 1 is full; page 2 is also full but its rows
       duplicate page 1 (no new names).
-    - The de-duplication guard detects zero new rows and stops after page 2.
-    - Only the two unique ACLs are returned (duplicates dropped).
+    - The de-duplication guard detects zero new rows and fails closed rather
+      than returning an incomplete collection.
 
     ## Classes and Methods
 
@@ -280,10 +280,8 @@ def test_manage_acl_00036(monkeypatch) -> None:
     rest_send = _build_rest_send(gen_responses)
     instance = ManageAclOrchestrator(rest_send=rest_send)
 
-    with does_not_raise():
-        result = instance.query_all()
-
-    assert [row["name"] for row in result] == ["ACL-PAGE-1", "ACL-PAGE-2"]
+    with pytest.raises(Exception, match="Pagination did not advance"):
+        instance.query_all()
 
 
 def test_manage_acl_00050() -> None:
@@ -524,3 +522,218 @@ def test_manage_acl_00120() -> None:
 
     assert rest_send.path.endswith("/accessControlListActions/remove")
     assert rest_send.committed_payload == {"accessControlListNames": ["ACL-IPV4-WEB"]}
+
+
+# =============================================================================
+# Gathered-state filtering
+# =============================================================================
+
+
+def _gathered_acl(name: str, acl_type: str = "ipv4") -> dict:
+    """Return a minimal ACL collection response item."""
+    return {
+        "name": name,
+        "type": acl_type,
+        "entries": [
+            {
+                "sequenceNumber": 10,
+                "action": "permit",
+                "protocol": "ip" if acl_type == "ipv4" else "ipv6",
+                "src": "any",
+                "dst": "any",
+            }
+        ],
+    }
+
+
+def test_manage_acl_00200() -> None:
+    """Verify only ACL name is sent to the server."""
+    assert ManageAclOrchestrator.supports_gathered_server_filtering is True
+
+    spec = ManageAclOrchestrator.gathered_lucene_spec
+    assert spec.base_terms == ()
+    assert spec.field_map == {("name",): "name"}
+
+
+def test_manage_acl_00220(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify safe ACL names use the filtered collection endpoint."""
+
+    def responses():
+        yield {}
+
+    row = _gathered_acl("ACL_IPV4")
+    paths = []
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageAclOrchestrator(rest_send=rest_send)
+
+    def fake_request(*args, **kwargs):
+        paths.append(kwargs["path"])
+        return {"accessControlLists": [row]}
+
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    result = instance.query_all(
+        gathered_filters=[
+            {
+                "name": "ACL_IPV4",
+                "type": "ipv4",
+            }
+        ]
+    )
+
+    assert result == [row]
+    assert paths == ["/api/v1/manage/fabrics/SITE1/accessControlLists?filter=name%3AACL_IPV4&max=100&offset=0"]
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        [],
+        [{"type": "ipv6"}],
+        [{"name": "ACL_IPV4"}, {"type": "ipv6"}],
+        [{"name": "ACL-WITH-HYPHENS"}],
+        [{"name": "tenant1~ACL_IPV4"}],
+    ],
+)
+def test_manage_acl_00230(
+    monkeypatch: pytest.MonkeyPatch,
+    filters: list[dict],
+) -> None:
+    """Verify filters unsafe for this endpoint use one complete collection scan."""
+
+    def responses():
+        yield {}
+
+    calls = []
+    rows = [
+        _gathered_acl("ACL_IPV4"),
+        _gathered_acl("ACL_IPV6", "ipv6"),
+    ]
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageAclOrchestrator(rest_send=rest_send)
+
+    def fake_query(self, expression=None):
+        calls.append(expression)
+        return rows
+
+    monkeypatch.setattr(
+        ManageAclOrchestrator,
+        "_query_all_for_management_states",
+        fake_query,
+    )
+
+    result = instance.query_all(gathered_filters=filters)
+
+    assert result == rows
+    assert calls == [None]
+
+
+def test_manage_acl_00240(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify separate name filters preserve OR semantics."""
+
+    def responses():
+        yield {}
+
+    ipv4 = _gathered_acl("ACL_IPV4")
+    ipv6 = _gathered_acl("ACL_IPV6", "ipv6")
+    expressions = []
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageAclOrchestrator(rest_send=rest_send)
+
+    def fake_query(self, expression=None):
+        expressions.append(expression)
+        if expression == "name:ACL_IPV4":
+            return [ipv4]
+        if expression == "name:ACL_IPV6":
+            return [ipv4, ipv6]
+        return []
+
+    monkeypatch.setattr(
+        ManageAclOrchestrator,
+        "_query_all_for_management_states",
+        fake_query,
+    )
+
+    result = instance.query_all(
+        gathered_filters=[
+            {"name": "ACL_IPV4"},
+            {"name": "ACL_IPV6"},
+        ]
+    )
+
+    assert expressions == ["name:ACL_IPV4", "name:ACL_IPV6"]
+    assert result == [ipv4, ipv6]
+
+
+def test_manage_acl_gathered_query_fanout_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify more than three name expressions collapse to one full scan."""
+    calls = []
+    rows = [_gathered_acl("ACL_IPV4")]
+
+    def responses():
+        yield {}
+
+    instance = ManageAclOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+
+    def fake_query(self, expression=None):
+        calls.append(expression)
+        return rows
+
+    monkeypatch.setattr(ManageAclOrchestrator, "_query_all_for_management_states", fake_query)
+
+    result = instance.query_all(gathered_filters=[{"name": f"ACL_{index}"} for index in range(4)])
+
+    assert result == rows
+    assert calls == [None]
+
+
+def test_manage_acl_pagination_limit_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify reaching the page cap cannot return an incomplete ACL inventory."""
+    monkeypatch.setattr(ManageAclOrchestrator, "query_all_page_size", 1)
+    monkeypatch.setattr(ManageAclOrchestrator, "query_all_max_pages", 1)
+
+    def responses():
+        yield {}
+
+    instance = ManageAclOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    monkeypatch.setattr(instance, "_request", lambda **kwargs: {"accessControlLists": [_gathered_acl("ACL_IPV4")]})
+
+    with pytest.raises(Exception, match="Pagination limit reached"):
+        instance.query_all()
+
+
+def test_manage_acl_00250(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify merged/replaced/overridden/deleted retain their query path."""
+
+    def responses():
+        yield {}
+
+    calls = []
+    expected = [_gathered_acl("ACL_IPV4")]
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = ManageAclOrchestrator(rest_send=rest_send)
+
+    def fake_query(self, expression=None):
+        calls.append(expression)
+        return expected
+
+    monkeypatch.setattr(
+        ManageAclOrchestrator,
+        "_query_all_for_management_states",
+        fake_query,
+    )
+
+    result = instance.query_all()
+
+    assert result == expected
+    assert calls == [None]
