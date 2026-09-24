@@ -632,13 +632,13 @@ diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
   - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -648,6 +648,13 @@ proposed:
       network_os:
         policy:
           allowed_vlans: "100-200,300,400"
+gathered:
+  description:
+  - vPC trunkVpcHost interfaces matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description:
   - Reserved for internal diagnostic log messages collected during the run.
