@@ -24,8 +24,8 @@
       - nm_gathered_all.gathered is defined
       - nm_gathered_all.gathered | type_debug == "list"
       - nm_gathered_all.gathered | length >= 1
-      - nm_gathered_all.before is not defined
-      - nm_gathered_all.after is not defined
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
       - nm_gathered_all.diff is not defined
       - nm_gathered_all.proposed is not defined
 
@@ -230,7 +230,7 @@
         config_data:
           network_os:
             policy:
-              native_vlan: 9999
+              native_vlan: 4094
   register: nm_gathered_and_mismatch
 
 - name: "GATHERED: Verify AND mismatch returns empty"
@@ -336,3 +336,54 @@
     that:
       - nm_gathered_unsupported is failed
       - "'lacp_rate' in nm_gathered_unsupported.msg"
+
+- name: "GATHERED: Reject an empty filter item"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - {}
+  register: nm_gathered_empty_item
+  ignore_errors: true
+
+- name: "GATHERED: Verify empty filter item is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_item is failed
+      - "'at least one filtering criterion' in nm_gathered_empty_item.msg"
+
+- name: "GATHERED: Reject invalid allowed VLAN range before querying interfaces"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              allowed_vlans: "200-100"
+  register: nm_gathered_invalid_vlans
+  ignore_errors: true
+
+- name: "GATHERED: Verify invalid allowed VLAN range is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_invalid_vlans is failed
+      - "'allowed_vlans' in nm_gathered_invalid_vlans.msg"
+
+- name: "GATHERED: Reject a switch IP outside the fabric"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: 192.0.2.254
+  register: nm_gathered_unknown_switch
+  ignore_errors: true
+
+- name: "GATHERED: Verify unknown switch is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_unknown_switch is failed
+      - "'does not exist in fabric' in nm_gathered_unknown_switch.msg"
