@@ -1,0 +1,201 @@
+---
+# Gathered-state tests for nd_manage_route_map.
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Precondition: merged.yaml created test_route_map_primary_name.
+
+- name: "GATHERED: Read all route maps"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify gather-all output"
+  vars:
+    gathered_names: >-
+      {{ nm_gathered_all.gathered
+         | map(attribute='name')
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - test_route_map_primary_name in gathered_names
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+- name: "GATHERED: Read all with explicit empty config"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config: []
+  register: nm_gathered_empty
+
+- name: "GATHERED: Verify empty config is gather-all"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty is not changed
+      - nm_gathered_empty.gathered == nm_gathered_all.gathered
+
+- name: "GATHERED: Filter by exact route-map name"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+  register: nm_gathered_exact
+
+- name: "GATHERED: Verify exact-name result"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_exact is not changed
+      - nm_gathered_exact.gathered | length == 1
+      - nm_gathered_exact.gathered[0].name == test_route_map_primary_name
+      - nm_gathered_exact.gathered[0].entries is defined
+      - nm_gathered_exact.gathered[0].entries | length > 0
+
+- name: "GATHERED: Filter by duplicate names"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+      - name: "{{ test_route_map_primary_name }}"
+  register: nm_gathered_duplicate
+
+- name: "GATHERED: Verify duplicate filters are deduplicated"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_duplicate is not changed
+      - nm_gathered_duplicate.gathered == nm_gathered_exact.gathered
+
+- name: "GATHERED: Filter with existing and missing names"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+      - name: ANSIBLE_RM_DOES_NOT_EXIST
+  register: nm_gathered_partial_success
+
+- name: "GATHERED: Verify only the existing OR branch is returned"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_partial_success is not changed
+      - nm_gathered_partial_success.gathered == nm_gathered_exact.gathered
+
+- name: "GATHERED: Filter by a missing name"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: ANSIBLE_RM_DOES_NOT_EXIST
+  register: nm_gathered_missing
+
+- name: "GATHERED: Verify missing name returns an empty list"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_missing is not changed
+      - nm_gathered_missing.gathered == []
+
+- name: "GATHERED: Run exact filtering in check mode"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+  check_mode: true
+  register: cm_gathered_exact
+
+- name: "GATHERED: Verify check-mode output"
+  ansible.builtin.assert:
+    that:
+      - cm_gathered_exact is not changed
+      - cm_gathered_exact.gathered == nm_gathered_exact.gathered
+
+- name: "GATHERED VALIDATION: Reject tenant_name"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+        tenant_name: tenantSales
+  register: nm_gathered_tenant
+  ignore_errors: true
+
+- name: "GATHERED VALIDATION: Verify tenant_name rejection"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_tenant is failed
+      - nm_gathered_tenant.msg is search("unsupported properties")
+      - nm_gathered_tenant.msg is search("tenant_name")
+
+- name: "GATHERED VALIDATION: Reject an invalid supported name"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: INVALID/ROUTE-MAP
+  register: nm_gathered_invalid_name
+  ignore_errors: true
+
+- name: "GATHERED VALIDATION: Verify invalid-name rejection"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_invalid_name is failed
+      - nm_gathered_invalid_name.msg is search("pattern|invalid")
+
+- name: "GATHERED VALIDATION: Reject entries"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "{{ test_route_map_primary_name }}"
+        entries:
+          - sequence_number: 10
+            action: permit
+            rule_entries:
+              - rule_type: setLocalPreference
+                value: 100
+  register: nm_gathered_entries
+  ignore_errors: true
+
+- name: "GATHERED VALIDATION: Verify entries rejection"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_entries is failed
+      - nm_gathered_entries.msg is search("unsupported properties")
+      - nm_gathered_entries.msg is search("entries")
+
+- name: "GATHERED VALIDATION: Reject an empty filter item"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - {}
+  register: nm_gathered_empty_item
+  ignore_errors: true
+
+- name: "GATHERED VALIDATION: Verify empty-item rejection"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_item is failed
+      - nm_gathered_empty_item.msg is search(
+          "at least one filtering criterion"
+        )
