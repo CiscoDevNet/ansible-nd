@@ -25,6 +25,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.acl.acl import (
     AclEntryModel,
     AclModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 SAMPLE_IPV4_CONFIG = {
@@ -760,8 +761,9 @@ def test_manage_acl_00220() -> None:
     ## Test
 
     - fabric_name is a top-level required str
-    - config is a required list of dicts
-    - name is required; type is optional with ipv4/ipv6 choices
+    - config is optional so gathered state can omit it
+    - name is optional at argument-spec level and required by validation for management states
+    - gathered filtering supports name and type
     - entries is required=false (semantic enforcement)
     - state choices match the supported states
 
@@ -776,11 +778,11 @@ def test_manage_acl_00220() -> None:
     config = spec["config"]
     assert config["type"] == "list"
     assert config["elements"] == "dict"
-    assert config["required"] is True
+    assert config["required"] is False
 
     opts = config["options"]
     assert opts["name"]["type"] == "str"
-    assert opts["name"]["required"] is True
+    assert opts["name"]["required"] is False
     assert opts["type"]["choices"] == ["ipv4", "ipv6"]
     assert opts["type"].get("required") in (None, False)
 
@@ -789,7 +791,7 @@ def test_manage_acl_00220() -> None:
     assert entries["elements"] == "dict"
     assert entries["required"] is False
 
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
 
 
 def test_manage_acl_00230() -> None:
@@ -852,3 +854,55 @@ def test_manage_acl_00240() -> None:
     message = str(exc_info.value)
     assert "remark_comment" in message
     assert "required for permit/deny" in message
+
+
+# =============================================================================
+# Gathered state and filtering
+# =============================================================================
+
+
+def test_manage_acl_00250_supports_gathered_filtering() -> None:
+    """Verify gathered filtering is enabled only by the ACL model."""
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert AclModel.supports_gathered_filtering is True
+
+
+def test_manage_acl_00260_gathered_filter_properties() -> None:
+    """Verify ACL gathered state accepts only name and type filters."""
+    assert AclModel.gathered_filter_properties == ("name", "type")
+
+
+def test_manage_acl_00270_normalize_gathered_filter() -> None:
+    """Verify valid partial ACL filters are validated and normalized."""
+    assert AclModel.normalize_gathered_filter({"name": "ACL_IPV4"}) == {"name": "ACL_IPV4"}
+    assert AclModel.normalize_gathered_filter({"type": "ipv6"}) == {"type": "ipv6"}
+    assert AclModel.normalize_gathered_filter({}) == {}
+
+
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"name": "invalid/name"},
+        {"name": "A" * 116},
+        {"type": "invalid"},
+    ],
+)
+def test_manage_acl_invalid_gathered_filters_are_rejected(filter_item: dict) -> None:
+    """Verify invalid supported values fail during partial-filter validation."""
+    with pytest.raises(ValidationError):
+        AclModel.normalize_gathered_filter(filter_item)
+
+
+def test_manage_acl_to_gathered_config_uses_ansible_port_actions() -> None:
+    """Verify gathered ACL output uses replay-safe snake_case port operators."""
+    response = copy.deepcopy(SAMPLE_IPV4_API_RESPONSE)
+    response["entries"][0]["srcPortAction"] = "equalTo"
+    response["entries"][0]["srcPort"] = "80"
+    response["entries"][0]["dstPortAction"] = "portRange"
+    response["entries"][0]["dstPortRangeStart"] = "443"
+    response["entries"][0]["dstPortRangeEnd"] = "8443"
+
+    gathered = AclModel.from_response(response).to_gathered_config()
+
+    assert gathered["entries"][0]["src_port_action"] == "equal_to"
+    assert gathered["entries"][0]["dst_port_action"] == "port_range"

@@ -25,8 +25,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import build_lucene_expressions
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    ModelType,
+    NDBaseOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
@@ -47,7 +51,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist or is owned by
+      another controller.
+    - For mutation states, also if the fabric is in deployment-freeze mode.
+    - Read-only gathered operations remain permitted during deployment freeze.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `deploy_pending` if the bulk deploy API request fails.
     - Via `deploy_accepted_mutations` if the failure-path deploy API request fails.
@@ -61,6 +68,14 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+
+    # Subclasses opt in to server-side gathered filtering by setting gathered_lucene_spec.
+    # _MAX_EXPRESSIONS_PER_SWITCH caps per-switch fan-out and _MAX_TOTAL_REQUESTS caps fabric-wide
+    # fan-out: beyond these thresholds a single broad query is cheaper than N targeted ones;
+    # the local post-filter guarantees correctness.
+    gathered_lucene_spec: ClassVar[Any] = None
+    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
+    _MAX_TOTAL_REQUESTS: ClassVar[int] = 300
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -190,6 +205,43 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         config_items = self.rest_send.params.get("config") or []
         config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
         return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
+
+    def _enforce_gathered_query_limits(
+        self,
+        query_plan: dict[str, tuple[str, set[str]]],
+        base_expression: str,
+    ) -> None:
+        """
+        Limit gathered-state REST fan-out without silently omitting switches.
+
+        Per-switch expression sets that exceed the configured threshold are replaced
+        with the broad base expression. If the complete plan still exceeds the total
+        request budget, every switch is reduced to one base request.
+
+        Broadening the server query is safe because the generic local gathered filter
+        remains the final correctness layer.
+
+        Raises:
+            ValueError: If the number of distinct switches alone exceeds the total
+                request limit, because one request per switch is the irreducible
+                minimum.
+        """
+        for _switch_id, expressions in query_plan.values():
+            if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
+                expressions.clear()
+                expressions.add(base_expression)
+
+        total_requests = sum(len(expressions) for _switch_id, expressions in query_plan.values())
+
+        if total_requests > self._MAX_TOTAL_REQUESTS:
+            for _switch_id, expressions in query_plan.values():
+                expressions.clear()
+                expressions.add(base_expression)
+
+            total_requests = len(query_plan)
+
+        if total_requests > self._MAX_TOTAL_REQUESTS:
+            raise ValueError(f"Gathered query requires {total_requests} switch requests, exceeding the supported limit of {self._MAX_TOTAL_REQUESTS}.")
 
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:
@@ -347,15 +399,29 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         # Summary
 
-        Run pre-flight validation before any CRUD operations. Checks that the fabric exists and is modifiable.
+        Run pre-flight validation before any CRUD operation.
+
+        Read-only states require that the fabric exists and is accessible through
+        the targeted controller. Mutation states additionally require that the
+        fabric is not in deployment-freeze mode.
+
+        `query_all()` is the common inventory entry point for every state, so the
+        read-versus-mutation decision is derived from the current module state here
+        instead of being duplicated in individual interface orchestrators.
 
         ## Raises
 
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is owned by a different controller in the cluster.
+        - If the fabric is in deployment-freeze mode and the current state is not
+        read-only.
         """
+        if self.is_read_only_operation:
+            self.fabric_context.validate_for_read()
+            return
+
         self.fabric_context.validate_for_mutation()
 
     def _configure_endpoint(self, api_endpoint, switch_sn: str):
@@ -371,6 +437,163 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint.fabric_name = self.fabric_name
         api_endpoint.switch_sn = switch_sn
         return api_endpoint
+
+    def _build_gathered_query_plan(self, gathered_filters: list[dict]) -> dict[str, tuple[str, set[str]]]:
+        """
+        # Summary
+
+        Build one or more Lucene expressions for each target switch from gathered filters.
+
+        Uses the orchestrator's ``gathered_lucene_spec`` ClassVar to map Ansible filter fields to Lucene
+        fields names. Each filter item produces a separate expression (the interface endpoint does not
+        reliably support Lucene OR). If a filter item includes ``switch_ip``, only that switch is targeted;
+        otherwise all switches in the fabric are queried.
+
+        Per-switch fan-out capping: if more than ``_MAX_EXPRESSIONS_PER_SWITCH`` expressions accumulate
+        for one switch, they collapse to the base expression. Fabric-wide filters are additionally budgeted
+        against ``_MAX_TOTAL_REQUESTS`` before being expanded across switches. The local post-filter
+        guarantees correctness; the server filter only reduces candidate volume.
+
+        ## Raises
+
+        ### ValueError
+
+        - If a filter references a ``switch_ip`` that does not exist in the fabric.
+        """
+        # TODO(4.2.1) interface-lucene-or-silently-empty
+        switch_map = self.fabric_context.switch_map
+        query_plan: dict[str, tuple[str, set[str]]] = {}
+        base_expression = build_lucene_expressions(filters=[], spec=self.gathered_lucene_spec)[0]
+
+        filter_items = gathered_filters or [{}]
+
+        fabric_wide_filters: list[dict] = []
+        switch_scoped_filters: list[tuple[str, str, dict]] = []
+
+        for filter_item in filter_items:
+            requested_switch_ip = filter_item.get("switch_ip")
+            if requested_switch_ip:
+                switch_id = switch_map.get(requested_switch_ip)
+                if switch_id is None:
+                    raise ValueError(
+                        f"Gathered filter references switch_ip '{requested_switch_ip}' " f"which does not exist in fabric '{self.fabric_context.fabric_name}'."
+                    )
+                switch_scoped_filters.append((requested_switch_ip, switch_id, filter_item))
+            else:
+                fabric_wide_filters.append(filter_item)
+
+        if fabric_wide_filters:
+            fabric_wide_expressions: set[str] | None = set()
+            for expression in build_lucene_expressions(fabric_wide_filters, self.gathered_lucene_spec):
+                if expression == base_expression:
+                    fabric_wide_expressions = {base_expression}
+                    break
+                fabric_wide_expressions.add(expression)
+
+            # Budget the fabric-wide fan-out before expanding it across every switch.
+            if len(switch_map) * len(fabric_wide_expressions) > self._MAX_TOTAL_REQUESTS:
+                fabric_wide_expressions = {base_expression}
+        else:
+            fabric_wide_expressions = None
+
+        if fabric_wide_expressions is not None:
+            for switch_ip, switch_id in switch_map.items():
+                query_plan[switch_ip] = (switch_id, set(fabric_wide_expressions))
+
+        for switch_ip, switch_id, filter_item in switch_scoped_filters:
+            if switch_ip not in query_plan:
+                query_plan[switch_ip] = (switch_id, set())
+            planned_expressions = query_plan[switch_ip][1]
+            for expression in build_lucene_expressions([filter_item], self.gathered_lucene_spec):
+                if expression == base_expression:
+                    planned_expressions.clear()
+                    planned_expressions.add(base_expression)
+                elif base_expression not in planned_expressions:
+                    planned_expressions.add(expression)
+
+        self._enforce_gathered_query_limits(
+            query_plan=query_plan,
+            base_expression=base_expression,
+        )
+        return query_plan
+
+    def _configure_lucene_endpoint(self, api_endpoint) -> None:
+        """
+        Hook for subclasses to set endpoint-specific params before a Lucene query.
+
+        The default implementation is a no-op. Loopback overrides this to set
+        ``config_only = False`` because the full config is needed for local filtering.
+        """
+        pass
+
+    def _query_interfaces_with_lucene(self, switch_id: str, expression: str) -> list[dict]:
+        """
+        # Summary
+
+        Execute one paginated Lucene query against the interfaces endpoint for a single switch.
+
+        Pages through results using ``meta.counts.remaining``. Returns raw API dicts (not yet
+        enriched with ``switchIp`` or filtered by ``policyType``).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If pagination exceeds 100 pages (50,000 interfaces), indicating a possible runaway query.
+        """
+        page_size = 500
+        max_pages = 100
+        offset = 0
+        candidates: list[dict] = []
+
+        for _page_number in range(max_pages):
+            api_endpoint = self._configure_endpoint(
+                self.query_all_endpoint(),
+                switch_sn=switch_id,
+            )
+            self._configure_lucene_endpoint(api_endpoint)
+            api_endpoint.lucene_params.filter = expression
+            api_endpoint.lucene_params.max = page_size
+            api_endpoint.lucene_params.offset = offset
+
+            result = self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                not_found_ok=True,
+            )
+            if not isinstance(result, dict):
+                break
+
+            page = result.get("interfaces", []) or []
+            candidates.extend(page)
+
+            if not page:
+                break
+
+            meta = result.get("meta") or {}
+            counts = meta.get("counts") or {}
+            remaining_raw = counts.get("remaining")
+
+            if remaining_raw is not None:
+                try:
+                    remaining = int(remaining_raw)
+                except (TypeError, ValueError):
+                    remaining = None
+            else:
+                remaining = None
+
+            if remaining is not None and remaining <= 0:
+                break
+            if remaining is None and len(page) < page_size:
+                break
+
+            offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({max_pages} pages, {len(candidates)} candidates collected) "
+                f"for switch '{switch_id}'. Results may be incomplete."
+            )
+        return candidates
 
     def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
         """

@@ -17,7 +17,7 @@ version_added: "2.0.0"
 short_description: Manage AI/ML eBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
 - Manage AI/ML eBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, and deleting AI/ML eBGP VXLAN fabrics.
+- It supports creating, updating, replacing, deleting and gathering AI/ML eBGP VXLAN fabrics.
 - AI/ML eBGP VXLAN fabrics are optimized for AI and machine learning workloads using eBGP underlay with VXLAN overlay.
 - The AI/ML eBGP VXLAN fabric type (C(aimlVxlanEbgp)) shares the same management properties as the standard eBGP VXLAN
   fabric type (C(vxlanEbgp)), but is specifically designated for AI/ML workloads.
@@ -27,16 +27,25 @@ options:
   config:
     description:
     - The list of AI/ML eBGP VXLAN fabrics to configure.
+    - For O(state=gathered), O(config) may be omitted to return all AI/ML eBGP VXLAN fabrics.
+    - When O(config) is provided with O(state=gathered), every supplied supported property acts as a filter criterion.
+      Criteria within one list item use AND semantics, while multiple list items use OR semantics.
+    - Omitted properties are not used as gathered filter criteria, even when those properties have documented defaults.
+    - "Supported gathered filter properties: O(config.fabric_name), O(config.license_tier),
+      O(config.security_domain), O(config.alert_suspend), and O(config.telemetry_collection)."
+    - Other properties, including properties under O(config.management), are not supported as gathered filter criteria.
     type: list
     elements: dict
+    required: false
     suboptions:
       fabric_name:
         description:
         - The name of the fabric.
         - Only letters, numbers, underscores, and hyphens are allowed.
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       location:
         description:
         - The geographic location of the fabric.
@@ -55,18 +64,21 @@ options:
       license_tier:
         description:
         - The License Tier for fabric.
+        - Optional filter for O(state=gathered).
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
         - The Alert Suspend state configured on the fabric.
+        - Optional filter for O(state=gathered).
         type: str
         default: disabled
         choices: [ enabled, disabled ]
       telemetry_collection:
         description:
         - Enable telemetry collection.
+        - Optional filter for O(state=gathered).
         type: bool
         default: false
       telemetry_collection_type:
@@ -94,6 +106,7 @@ options:
       security_domain:
         description:
         - The Security Domain associated with the fabric.
+        - Optional filter for O(state=gathered).
         type: str
         default: all
       management:
@@ -1362,14 +1375,18 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       Any fabric existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
+    - Use O(state=gathered) to read AI/ML eBGP VXLAN fabric configurations from Nexus Dashboard without making changes.
+      Omit O(config) to gather all AI/ML eBGP VXLAN fabrics, or provide O(config) to return matching fabrics.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
   config_actions:
     description:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Must not enable O(config_actions.save) or O(config_actions.deploy) when O(state=gathered).
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -1652,6 +1669,22 @@ EXAMPLES = r"""
       - fabric_name: fabric_west
       - fabric_name: fabric_old
   register: result
+
+- name: Gather all AI/ML eBGP VXLAN fabrics
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    state: gathered
+  register: result
+
+- name: Gather selected AI/ML eBGP VXLAN fabrics
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    state: gathered
+    config:
+      - fabric_name: ai_fabric_east
+      - license_tier: premier
+        security_domain: production
+        alert_suspend: disabled
+        telemetry_collection: true
+  register: filtered_result
 """
 
 RETURN = r"""
@@ -1674,15 +1707,22 @@ after:
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+gathered:
+    description:
+    - AI/ML eBGP VXLAN fabric configurations matching the supplied O(config) filters.
+    - Returned in reusable Ansible configuration format.
+    type: list
+    elements: dict
+    returned: when O(state=gathered)
 diff:
     description: Configuration differences between before and after states.
     type: list
-    returned: always
+    returned: when O(state) is not V(gathered)
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
-    returned: info or debug output_level
+    returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
 output_level:
     description: The output level set for the module.
@@ -1747,6 +1787,7 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=FabricAiEbgpVxlanModel.get_required_if(),
     )
 
     require_pydantic(module)

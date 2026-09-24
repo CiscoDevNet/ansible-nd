@@ -8,6 +8,10 @@ from __future__ import absolute_import, annotations, division, print_function
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import (
+    filter_gathered_response,
+    validate_gathered_filters,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
@@ -90,11 +94,40 @@ class NDStateMachine:
             for config_item in self.module.params.get("config") or []:
                 self.module.no_log_values |= self.model_class.collect_secret_values(config_item)
 
-        # Initialize collections
+        # Validate user input and build proposed — fail fast on bad config
+        # before spending time on network queries. Filter validation errors
+        # are user-input errors, not initialization failures.
+        raw_config = config if config is not None else (self.module.params.get("config") or [])
+        self.gathered_filtering_enabled = self.state == "gathered" and self.model_class.supports_gathered_filtering
+
+        if self.gathered_filtering_enabled and raw_config:
+            raw_config = validate_gathered_filters(
+                filters=raw_config,
+                normalize_filter=self.model_class.normalize_gathered_filter,
+                supported_properties=self.model_class.gathered_filter_properties,
+            )
+
+        # ``prepare_config_data`` remains the caller's responsibility. Workflow
+        # coordinators already prepare configuration before invoking the state
+        # machine, and running it here could double-transform non-idempotent
+        # configuration.
+        proposed_config = [] if self.gathered_filtering_enabled else raw_config
+        self.proposed = NDConfigCollection.from_ansible_config(
+            data=proposed_config,
+            model_class=self.model_class,
+            context={"state": self.state},
+        )
+
+        # Query ND and build state collections.
+
         try:
-            response_data = self.model_orchestrator.query_all()
+            response_data = self._query_existing(raw_config)
             # State of configuration objects in ND before change execution
-            self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
+            if self.gathered_filtering_enabled:
+                # Models already built and filtered — use directly.
+                self.before = NDConfigCollection(model_class=self.model_class, items=response_data)
+            else:
+                self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
             # Surface controller objects whose type this module does not model. They
             # are preserved as opaque read-only records (see the links tolerant read
             # path) and are protected from implicit/explicit modification below.
@@ -108,33 +141,47 @@ class NDStateMachine:
             # some modules must still save/deploy, while others must not treat a
             # deleted object as a save/deploy target.
             self.removed = NDConfigCollection(model_class=self.model_class)
-            # Collection of configuration objects given by user. Coalesce None to
-            # an empty list so read-only states (e.g. gathered) with no config work.
-            # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
-            # state-aware validation (e.g. require certain fields for write states while accepting
-            # identifier-only items for ``deleted``). Models that do not read the context ignore it.
-            #
-            # ``prepare_config_data`` (switch-id backfill, payload transforms) is
-            # the caller's responsibility. Workflow coordinators already run it and
-            # write the result back to ``module.params["config"]``; ``nd_manage_links``
-            # passes its prepared copy via ``config=``. Running it here as well would
-            # double-transform non-idempotent orchestrators (e.g. nd_vrf/nd_network),
-            # reverting user-supplied fields to their hardcoded defaults.
-            raw_config = config if config is not None else (self.module.params.get("config") or [])
-            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class, context={"state": self.state})
 
             # Argument-spec ``config.options`` drives pruning of gathered output
             # so it round-trips cleanly as ``config``. Derived from the model,
             # so it is generic across modules and needs no per-module wiring.
-            gathered_spec = {}
-            get_argument_spec = getattr(self.model_class, "get_argument_spec", None)
-            if callable(get_argument_spec):
-                gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
+            gathered_spec = self.model_class.get_argument_spec().get("config", {}).get("options", {}) or {}
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
+            self.output.assign(
+                after=self.existing,
+                before=self.before,
+                proposed=self.proposed,
+                gathered_spec=gathered_spec,
+            )
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
+
+    def _query_existing(self, raw_config: list) -> list[dict[str, Any]] | list[NDBaseModel]:
+        """
+        Query existing resources from ND.
+
+        When gathered filtering is active, returns pre-built model instances
+        (already validated and deduplicated). When inactive, returns raw API
+        response dicts for NDConfigCollection.from_api_response().
+        """
+        server_filtering_enabled = self.gathered_filtering_enabled and self.model_orchestrator.supports_gathered_server_filtering
+
+        query_kwargs = {}
+        if server_filtering_enabled:
+            query_kwargs["gathered_filters"] = raw_config
+
+        response_data = self.model_orchestrator.query_all(**query_kwargs)
+
+        if self.gathered_filtering_enabled:
+            response_data = filter_gathered_response(
+                response_data=response_data,
+                filters=raw_config,
+                model_class=self.model_class,
+                normalize_filter=None,
+            )
+
+        return response_data
 
     # State Management (core function)
     def manage_state(self) -> None:
@@ -267,15 +314,27 @@ class NDStateMachine:
 
         # Execute updates (always individual)
         for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+            self._execute_operation(
+                self.model_orchestrator.update,
+                item,
+                error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+            )
 
         # Execute creates (bulk or individual)
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                self._execute_operation(
+                    self.model_orchestrator.create_bulk,
+                    items_to_create,
+                    error_msg_prefix="Failed to create in bulk",
+                )
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                    self._execute_operation(
+                        self.model_orchestrator.create,
+                        item,
+                        error_msg_prefix=f"Failed to create {item.get_identifier_value()}",
+                    )
 
         # Mark as sent only after successful API operations
         successfully_sent = items_to_update + items_to_create
@@ -337,10 +396,18 @@ class NDStateMachine:
 
         # Execute deletes (bulk or individual)
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            self._execute_operation(
+                self.model_orchestrator.delete_bulk,
+                items,
+                error_msg_prefix="Failed to delete in bulk",
+            )
         else:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                self._execute_operation(
+                    self.model_orchestrator.delete,
+                    item,
+                    error_msg_prefix=f"Failed to delete {item.get_identifier_value()}",
+                )
 
         # Mark as removed only after successful API operations, mirroring ``sent``.
         self.removed.add_many(items)

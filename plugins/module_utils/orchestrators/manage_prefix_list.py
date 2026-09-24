@@ -99,6 +99,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
 
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    query_all_max_pages: ClassVar[int] = 100
 
     # Required by NDBaseOrchestrator, but every operation is overridden below to route by
     # ``ip_version`` via ``_VERSION_CONFIG``. These defaults only satisfy the base contract;
@@ -111,6 +112,8 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
 
     create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageIpv4PrefixListsPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageIpv4PrefixListsBulkDelete
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
 
     @property
     def fabric_name(self) -> str:
@@ -254,13 +257,17 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             return remaining > 0
         return page_count == _QUERY_PAGE_SIZE
 
-    def _query_all_for_version(self, version: str) -> list[dict[str, Any]]:
-        """Fetch all prefix lists for one address family using explicit offset/max pagination."""
+    def _query_all_for_version(self, version: str, expression: str | None = None) -> list[dict[str, Any]]:
+        """Fetch all prefix lists for one address family, optionally filtered by Lucene expression."""
         config = self._config_for_version(version)
         results: list[dict[str, Any]] = []
         offset = 0
-        while True:
+        for _page_number in range(self.query_all_max_pages):
             api_endpoint = self._configure_endpoint(config["list"](), max_records=_QUERY_PAGE_SIZE, offset=offset)
+            if expression is not None:
+                lucene_params = getattr(api_endpoint, "lucene_params", None)
+                if lucene_params is not None:
+                    lucene_params.filter = expression
             raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             if not raw:
                 break
@@ -271,6 +278,10 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             if not self._has_next_page(raw, len(page), offset):
                 break
             offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({self.query_all_max_pages} pages, " f"{len(results)} {version} prefix lists collected). Results may be incomplete."
+            )
         return results
 
     def _bulk_create_for_version(self, version: str, items: list[PrefixListModel]) -> ResponseType:
@@ -331,14 +342,21 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self) -> ResponseType:
+    def query_all(self, model_instance=None, gathered_filters=None, **kwargs) -> ResponseType:
         """
         Fetch all IPv4 and IPv6 prefix lists and combine them into a single list.
 
         The ``ipVersion`` key is injected into each raw response dict so that
         ``PrefixListModel.from_response()`` can populate the ``ip_version`` field.
+
+        When ``gathered_filters`` is not None (gathered state), skips config
+        validation and scoped-query optimization, fetching all prefix lists
+        unconditionally for read-only consumption.
         """
         try:
+            if gathered_filters is not None:
+                return self._query_all_for_gathered(gathered_filters)
+
             PrefixListModel.validate_config_for_state(self._raw_items_from_params(self.rest_send.params), self.rest_send.params.get("state", ""))
 
             proposed_identifiers = self._proposed_identifiers()
@@ -351,6 +369,42 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             return results
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def _query_all_for_gathered(self, gathered_filters=None) -> ResponseType:
+        """
+        Fetch prefix lists for gathered state, optionally filtered by ip_version and name.
+
+        Filters by ip_version skip querying an unneeded address family when every
+        filter item is explicitly scoped. Name matching remains local because a
+        tenant-scoped API name is qualified as ``tenant~name`` on the wire but is
+        normalized to a bare name in gathered output.
+        """
+        filter_items = gathered_filters or [{}]
+        versions_to_query = self._gathered_versions(filter_items)
+
+        results = []
+        seen: set[tuple[str, str | None, str]] = set()
+
+        for version in versions_to_query:
+            for item in self._query_all_for_version(version):
+                self._append_unique(item, version, seen, results)
+
+        return results
+
+    def _gathered_versions(self, filter_items: list[dict]) -> tuple[str, ...]:
+        """Determine which address families to query based on ip_version filters."""
+        if any(not item.get("ip_version") for item in filter_items):
+            return tuple(_VERSION_CONFIG)
+        versions = {item["ip_version"] for item in filter_items}
+        return tuple(v for v in _VERSION_CONFIG if v in versions)
+
+    @staticmethod
+    def _append_unique(item: dict, version: str, seen: set, results: list) -> None:
+        """Deduplicate gathered results by (version, tenantName, name)."""
+        ident = (version, item.get("tenantName"), item.get("name"))
+        if ident not in seen:
+            seen.add(ident)
+            results.append(item)
 
     def create_bulk(self, model_instances: list[PrefixListModel], **kwargs) -> ResponseType:
         """

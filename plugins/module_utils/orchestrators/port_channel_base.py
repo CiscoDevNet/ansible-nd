@@ -68,7 +68,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `preflight` if a proposed member ethernet is already owned by a different port-channel.
     - Via `create` if the create API request fails.
@@ -396,10 +397,11 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Validate the fabric context and query interfaces, filtering for port-channel interfaces with policy types
         managed by this orchestrator (as defined by `_managed_policy_types()`).
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
+        The query is fabric-wide for `state: overridden` and `state: gathered`. Other states remain limited to switches
+        named in the user configuration.
 
-        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
+        Runs `validate_prerequisites` on first call. Read-only gathered operations remain allowed during deployment freeze,
+        while mutation states retain their existing validation.
 
         Each switch's interface list is read through the shared `_switch_interfaces` cache, so the unfiltered inventory
         (including member ethernets and port-channels of other policy types) stays available to `preflight` without a
@@ -413,14 +415,18 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
             all_port_channels = []
-            for switch_ip, switch_id in self._switches_to_query().items():
+            if self.rest_send.params.get("state") == "gathered":
+                switches_to_query = self.fabric_context.switch_map
+            else:
+                switches_to_query = self._switches_to_query()
+            for switch_ip, switch_id in switches_to_query.items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 port_channels = [iface for iface in interfaces if iface.get("interfaceType") == "portChannel"]
                 managed = [

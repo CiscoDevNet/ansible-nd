@@ -137,6 +137,27 @@
       - (nm_xe_overridden_xe_only is skipped) or (nm_xe_overridden_xe_only is changed)
       - not (nm_xe_overridden_mixed is skipped and nm_xe_overridden_xe_only is skipped)
 
+# --- XE GATHERED ---
+
+- name: "XE GATHERED: Read IOS-XE loopback205"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    state: gathered
+    config:
+      - switch_ip: "{{ xe_loopback_205.switch_ip }}"
+        interface_name: "{{ xe_loopback_205.interface_name }}"
+  register: nm_xe_gathered_205
+
+- name: "XE GATHERED: Verify IOS-XE managed loopback is returned"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_gathered_205 is not changed
+      - nm_xe_gathered_205.gathered | length == 1
+      - nm_xe_gathered_205.gathered.0.interface_name == "loopback205"
+      - nm_xe_gathered_205.gathered.0.config_data.network_os.network_os_type == "ios-xe"
+      - nm_xe_gathered_205.gathered.0.config_data.network_os.policy.policy_type == "iosXeLoopback"
+
 # --- XE DELETED ---
 
 - name: "XE DELETED: Delete loopback205 and loopback206 (check mode)"
