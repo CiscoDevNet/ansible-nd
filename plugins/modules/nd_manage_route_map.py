@@ -33,17 +33,25 @@ options:
   config:
     description:
     - The list of route maps to configure.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Optional for O(state=gathered), where omitting it gathers all route maps.
+    - For O(state=gathered), only O(config.name) is supported as a filtering property.
+    - Each gathered filter item performs an exact name match. Multiple items use OR semantics.
+    - Raw Lucene expressions and wildcard matching are not exposed through O(config.name).
+    - O(config.tenant_name), O(config.entries), and other properties are rejected as gathered filters.
     type: list
     elements: dict
-    required: True
+    required: false
     suboptions:
       name:
         description:
         - The name of the route map.
         - Allowed characters are C([a-zA-Z0-9~_-]).
         - Maximum length is 115 characters (63 for the default tenant).
+        - Required for merged, replaced, overridden, and deleted states.
+        - Used as the gathered-state filtering criterion when state is gathered.
         type: str
-        required: true
+        required: false
       tenant_name:
         description:
         - Optional tenant name for tenant-specific route maps.
@@ -261,9 +269,11 @@ options:
       Route maps on ND that are not in the configuration will be deleted. Use with caution.
     - Use O(state=deleted) to remove the route maps specified in the configuration
       from Cisco Nexus Dashboard.
+    - Use O(state=gathered) to read all route maps from the fabric without making changes.
+      The result is returned under C(gathered) in reusable Ansible configuration format.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -355,6 +365,21 @@ EXAMPLES = r"""
               - rule_type: setLocalPreference
                 value: 100
     state: overridden
+
+- name: Gather all route maps
+  cisco.nd.nd_manage_route_map:
+    fabric_name: my-fabric
+    state: gathered
+  register: gathered_route_maps
+
+- name: Gather selected route maps by exact name
+  cisco.nd.nd_manage_route_map:
+    fabric_name: my-fabric
+    state: gathered
+    config:
+      - name: RM-EXPORT
+      - name: RM-IMPORT
+  register: gathered_selected_route_maps
 """
 
 RETURN = r"""
@@ -404,7 +429,7 @@ after:
         value: 200
 diff:
   description: The per-route-map difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -418,7 +443,7 @@ diff:
         value: 200
 proposed:
   description: The route map configuration the module proposed to apply before reconciliation with existing state.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -430,6 +455,13 @@ proposed:
       rule_entries:
       - rule_type: setLocalPreference
         value: 200
+gathered:
+  description:
+  - Route maps matching the supplied O(config) name filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)
@@ -458,7 +490,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_rout
 
 def _validate_route_map_config(module: AnsibleModule) -> None:
     """Reject write-state config entries that cannot produce a RouteMap payload."""
-    if module.params.get("state") == "deleted":
+    state = module.params.get("state")
+
+    if state not in {"merged", "replaced", "overridden"}:
         return
     for item in module.params.get("config") or []:
         if not isinstance(item, dict):
@@ -474,6 +508,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
