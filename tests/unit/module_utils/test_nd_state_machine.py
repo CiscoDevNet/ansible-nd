@@ -44,6 +44,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_grou
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import AccessVpcHostInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import TrunkVpcHostInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -1250,12 +1255,28 @@ def test_nd_state_machine_00380(monkeypatch) -> None:
             FabricUpdateGroupModel,
             {"execution": "invalid"},
         ),
+        (
+            AccessVpcHostInterfaceModel,
+            {"config_data": {"network_os": {"policy": {"access_vlan": 4095}}}},
+        ),
+        (
+            TrunkVpcHostInterfaceModel,
+            {"config_data": {"network_os": {"policy": {"allowed_vlans": "4095"}}}},
+        ),
+        (CommunityListModel, {"type": "invalid"}),
+        (ExtendedCommunityListModel, {"name": "invalid/name"}),
+        (PrefixListModel, {"ip_version": "invalid"}),
     ],
     ids=[
         "access-vlan-out-of-range",
         "native-vlan-out-of-range",
         "allowed-vlans-out-of-range",
         "fabric-update-execution-invalid",
+        "vpc-access-vlan-out-of-range",
+        "vpc-trunk-allowed-vlans-out-of-range",
+        "community-list-type-invalid",
+        "extended-community-list-name-invalid",
+        "prefix-list-ip-version-invalid",
     ],
 )
 def test_nd_state_machine_00390(monkeypatch, model_class, filter_item) -> None:

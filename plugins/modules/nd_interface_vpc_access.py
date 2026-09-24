@@ -313,7 +313,7 @@ options:
       The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted, gathered]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -457,8 +457,8 @@ EXAMPLES = r"""
     state: gathered
   register: gathered_vpc_access
 
-- name: Gather one vPC trunk interface by name from a specific switch
-  cisco.nd.nd_interface_vpc_trunk_host:
+- name: Gather one vPC access interface by name from a specific switch
+  cisco.nd.nd_interface_vpc_access:
     fabric_name: my_fabric
     state: gathered
     config:
@@ -524,7 +524,7 @@ after:
           port_channel_mode: active
 diff:
   description: The per-interface difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -536,7 +536,7 @@ diff:
           access_vlan: 20
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -546,6 +546,13 @@ proposed:
       network_os:
         policy:
           access_vlan: 20
+gathered:
+  description:
+  - vPC accessVpcHost interfaces matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)

@@ -847,3 +847,25 @@ def test_vpc_access_interface_00770_normalize_gathered_filter_edge_cases():
     assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": ""}) == {"interface_name": ""}
 
     assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"interface_name": 123}) == {"interface_name": 123}
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"access_vlan": 4095},
+        {"peer1_port_channel_id": 0},
+        {"peer2_port_channel_id": 4097},
+    ],
+)
+def test_vpc_access_interface_00780_invalid_gathered_policy_filter(policy):
+    """Verify invalid supported policy values fail during filter normalization."""
+    with pytest.raises(ValidationError):
+        AccessVpcHostInterfaceModel.normalize_gathered_filter({"config_data": {"network_os": {"policy": policy}}})
+
+
+def test_vpc_access_interface_00790_gathered_filter_trims_identifiers():
+    """Verify gathered routing identifiers are normalized before query planning."""
+    assert AccessVpcHostInterfaceModel.normalize_gathered_filter({"switch_ip": " 192.0.2.10 ", "interface_name": " VPC100 "}) == {
+        "switch_ip": "192.0.2.10",
+        "interface_name": "vpc100",
+    }

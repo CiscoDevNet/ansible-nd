@@ -34,14 +34,10 @@ from typing import Any
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import (
-    AccessVpcHostInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import AccessVpcHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import (
-    AccessVpcHostInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import AccessVpcHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -836,6 +832,7 @@ def test_vpc_access_orchestrator_00710_gathered_query_routes_and_injects_switch_
                         "networkOS": {
                             "policy": {
                                 "policyType": "accessVpcHost",
+                                "peerSwitchId": "FDOZZZZZZZ",
                                 "adminState": True,
                                 "accessVlan": 10,
                             }
@@ -891,7 +888,7 @@ def test_vpc_access_orchestrator_00720_gathered_excludes_trunk_vpc_policy(monkey
                 {
                     "interfaceName": "vpc100",
                     "interfaceType": "vpc",
-                    "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost"}}},
+                    "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "peerSwitchId": "FDOZZZZZZZ"}}},
                 },
                 {
                     "interfaceName": "vpc200",
@@ -948,7 +945,14 @@ def test_vpc_access_orchestrator_00730_gathered_dedup_prefers_lower_switch_id(mo
                 {
                     "interfaceName": "vpc100",
                     "interfaceType": "vpc",
-                    "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost"}}},
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "accessVpcHost",
+                                "peerSwitchId": "FDOZZZZZZZ" if "FDOAAAAAAAA" in path else "FDOAAAAAAAA",
+                            }
+                        }
+                    },
                 }
             ],
             "meta": {"counts": {"remaining": 0}},
@@ -960,3 +964,79 @@ def test_vpc_access_orchestrator_00730_gathered_dedup_prefers_lower_switch_id(mo
     assert len(result) == 1
     assert result[0]["interfaceName"] == "vpc100"
     assert result[0]["switchIp"] == "192.168.1.1"
+
+
+def test_vpc_access_orchestrator_00740_gathered_preserves_same_name_on_different_pairs(monkeypatch) -> None:
+    """Verify gathered deduplication preserves same-name vPCs belonging to different switch pairs."""
+    from types import SimpleNamespace
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="gathered")
+    switch_map = {
+        "192.168.1.1": "SERIAL-A",
+        "192.168.1.2": "SERIAL-B",
+        "192.168.2.1": "SERIAL-C",
+        "192.168.2.2": "SERIAL-D",
+    }
+    peers = {"SERIAL-A": "SERIAL-B", "SERIAL-B": "SERIAL-A", "SERIAL-C": "SERIAL-D", "SERIAL-D": "SERIAL-C"}
+    orchestrator._fabric_context = SimpleNamespace(fabric_name="fabric_1", switch_map=switch_map)
+    monkeypatch.setattr(AccessVpcHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    def fake_request(self, path, verb, **kwargs):
+        switch_id = next(serial for serial in peers if serial in path)
+        return {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc100",
+                    "interfaceType": "vpc",
+                    "configData": {"networkOS": {"policy": {"policyType": "accessVpcHost", "peerSwitchId": peers[switch_id]}}},
+                }
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(AccessVpcHostInterfaceOrchestrator, "_request", fake_request)
+
+    result = orchestrator.query_all(gathered_filters=[])
+    assert len(result) == 2
+    assert {item["switchIp"] for item in result} == {"192.168.1.1", "192.168.2.1"}
+
+
+def test_vpc_access_orchestrator_00750_unknown_switch_fails_before_interface_query(monkeypatch) -> None:
+    """Verify an unknown gathered switch filter is rejected before an interface-list request."""
+    from types import SimpleNamespace
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="gathered")
+    orchestrator._fabric_context = SimpleNamespace(fabric_name="fabric_1", switch_map={"192.168.1.1": "SERIAL-A"})
+    monkeypatch.setattr(AccessVpcHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    request_calls = []
+    monkeypatch.setattr(orchestrator, "_request", lambda *args, **kwargs: request_calls.append((args, kwargs)))
+
+    with pytest.raises(RuntimeError, match="does not exist in fabric"):
+        orchestrator.query_all(gathered_filters=[{"switch_ip": "192.0.2.99"}])
+    assert request_calls == []
+
+
+def test_vpc_access_orchestrator_00760_management_query_reuses_interface_cache(monkeypatch) -> None:
+    """Verify management-state reads share the base per-switch interface cache."""
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="merged")
+    request_calls = []
+
+    def fake_request(*args, **kwargs):
+        request_calls.append(kwargs["path"])
+        return {"interfaces": []}
+
+    monkeypatch.setattr(orchestrator, "_request", fake_request)
+
+    assert orchestrator._managed_vpc_interfaces("192.168.1.1", "SERIAL-A", {"accessVpcHost"}) == []
+    assert orchestrator._managed_vpc_interfaces("192.168.1.1", "SERIAL-A", {"accessVpcHost"}) == []
+    assert len(request_calls) == 1

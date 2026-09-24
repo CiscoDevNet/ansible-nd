@@ -400,7 +400,7 @@ def test_manage_community_list_00500_gathered_server_filtering_classvars() -> No
 
     - supports_gathered_server_filtering is True
     - gathered_lucene_spec.base_terms is empty (no fixed policy type filter)
-    - gathered_lucene_spec.field_map maps name to name and type to type
+    - gathered_lucene_spec.field_map contains only the server-safe type mapping
 
     ## Classes and Methods
 
@@ -412,7 +412,7 @@ def test_manage_community_list_00500_gathered_server_filtering_classvars() -> No
     spec = ManageCommunityListOrchestrator.gathered_lucene_spec
     assert spec is not None
     assert spec.base_terms == ()
-    assert spec.field_map == {("name",): "name", ("type",): "type"}
+    assert spec.field_map == {("type",): "type"}
 
 
 def test_manage_community_list_00510_query_all_routes_gathered(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -500,3 +500,79 @@ def test_manage_community_list_00520_query_all_routes_management(monkeypatch: py
     assert mgmt_called["value"] is True
     assert gathered_called["value"] is False
     assert len(result) == 1
+
+
+def test_manage_community_list_00530_name_filter_uses_safe_full_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify bare-name filters do not omit tenant-qualified resources through an exact GET."""
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    calls = []
+    monkeypatch.setattr(instance, "_query_all_for_management_states", lambda expression=None: calls.append(expression) or [])
+
+    assert instance._query_all_for_gathered([{"name": "CL1"}]) == []
+    assert calls == [None]
+
+
+def test_manage_community_list_00540_type_filter_is_server_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify safe type criteria reduce candidates without changing local matching semantics."""
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    calls = []
+    monkeypatch.setattr(instance, "_query_all_for_management_states", lambda expression=None: calls.append(expression) or [])
+
+    assert instance._query_all_for_gathered([{"type": "standard"}]) == []
+    assert calls == ["type:standard"]
+
+
+def test_manage_community_list_00550_pagination_limit_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify a controller that never terminates pagination raises instead of returning partial data."""
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    call_count = 0
+
+    def fake_request(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {"communityLists": [{"name": f"CL{call_count}"}]}
+
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "query_all_page_size", 1)
+    monkeypatch.setattr(ManageCommunityListOrchestrator, "query_all_max_pages", 2)
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    with pytest.raises(RuntimeError, match="Pagination limit reached"):
+        instance._query_all_for_management_states()
+    assert call_count == 2
+
+
+def test_manage_community_list_00560_remaining_metadata_advances_short_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify explicit remaining metadata takes precedence over a short page."""
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    pages = [
+        {"communityLists": [{"name": "CL1"}], "meta": {"counts": {"remaining": 1}}},
+        {"communityLists": [{"name": "CL2"}], "meta": {"counts": {"remaining": 0}}},
+    ]
+    paths = []
+
+    def fake_request(*args, **kwargs):
+        paths.append(kwargs["path"])
+        return pages.pop(0)
+
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    result = instance._query_all_for_management_states()
+
+    assert [item["name"] for item in result] == ["CL1", "CL2"]
+    assert paths[1].endswith("offset=1")
