@@ -229,6 +229,20 @@ class ExtendedCommunityListEntryModel(NDNestedModel):
         return v
 
 
+class ExtendedCommunityListGatheredFilterModel(NDNestedModel):
+    """Validate scalar fields supported by partial gathered filters."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=115)
+    type: ExtendedCommunityListTypeEnum | None = Field(default=None)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[a-zA-Z0-9~_-]+", value):
+            raise ValueError(f"name '{value}' contains invalid characters. Allowed: [a-zA-Z0-9~_-].")
+        return value
+
+
 class ExtendedCommunityListModel(NDBaseModel):
     """
     Model for a Nexus Dashboard extended community list resource.
@@ -260,6 +274,20 @@ class ExtendedCommunityListModel(NDBaseModel):
         "name",
         "type",
     )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state filter."""
+        validated = ExtendedCommunityListGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # --- Top-level fields ---
     name: str = Field(

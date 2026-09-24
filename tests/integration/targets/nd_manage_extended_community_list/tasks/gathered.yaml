@@ -23,8 +23,8 @@
       - nm_gathered_all.gathered is defined
       - nm_gathered_all.gathered | type_debug == "list"
       - nm_gathered_all.gathered | length >= 2
-      - nm_gathered_all.before is not defined
-      - nm_gathered_all.after is not defined
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
       - nm_gathered_all.diff is not defined
       - nm_gathered_all.proposed is not defined
 
@@ -168,3 +168,51 @@
     that:
       - nm_gathered_no_match is not changed
       - nm_gathered_no_match.gathered == []
+
+- name: "GATHERED: Reject an empty filter item"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - {}
+  register: nm_gathered_empty_item
+  ignore_errors: true
+
+- name: "GATHERED: Verify empty filter item is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_item is failed
+      - "'at least one filtering criterion' in nm_gathered_empty_item.msg"
+
+- name: "GATHERED: Reject invalid supported name value"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - name: "INVALID NAME WITH SPACES"
+  register: nm_gathered_invalid_name
+  ignore_errors: true
+
+- name: "GATHERED: Verify invalid name is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_invalid_name is failed
+      - "'name' in nm_gathered_invalid_name.msg"
+
+- name: "GATHERED: Reject unsupported tenant name criterion"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - tenant_name: TENANT1
+  register: nm_gathered_unsupported
+  ignore_errors: true
+
+- name: "GATHERED: Verify unsupported tenant name is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_unsupported is failed
+      - "'tenant_name' in nm_gathered_unsupported.msg"

@@ -292,7 +292,7 @@ after:
       - "65000:200"
 diff:
   description: The per-community-list difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -306,7 +306,7 @@ diff:
       - "65000:200"
 proposed:
   description: The community list configuration proposed before reconciliation with existing state.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -318,6 +318,13 @@ proposed:
       action: permit
       community_numbers:
       - "65000:200"
+gathered:
+  description:
+  - Community lists matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)
