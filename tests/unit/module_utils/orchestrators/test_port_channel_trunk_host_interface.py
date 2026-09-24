@@ -36,9 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
     PortChannelTrunkHostNetworkOSModel,
     PortChannelTrunkHostPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_trunk_host_interface import (
-    PortChannelTrunkHostInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_trunk_host_interface import PortChannelTrunkHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -250,6 +248,49 @@ def test_port_channel_trunk_host_orchestrator_00400() -> None:
 
     # method_name is used for clearer pytest failure messages; keep as a sanity reference
     assert method_name.endswith("00400")
+
+
+def test_port_channel_trunk_host_orchestrator_00405() -> None:
+    """
+    # Summary
+
+    Verify `query_all` scans every switch for `state: gathered`, returns only trunkPoHost port-channels,
+    and injects `switchIp` onto each retained interface.
+
+    ## Test
+
+    - Gathered state queries both switches without user configuration
+    - Trunk and access port-channels plus a physical ethernet are returned by the controller fixtures
+    - Only trunkPoHost port-channels are retained
+    - Each retained item includes the fabric management IP for its switch
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceOrchestrator._managed_policy_types()
+    - PortChannelBaseOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_pc_trunk_host("test_query_all_happy_path_00400a")
+        yield responses_pc_trunk_host("test_query_all_happy_path_00400b")
+        yield responses_pc_trunk_host("test_query_all_happy_path_00400c")
+        yield responses_pc_trunk_host("test_query_all_happy_path_00400d")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses, state="gathered")
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+
+    by_name = {iface["interfaceName"]: iface for iface in result}
+    assert set(by_name) == {"port-channel501", "port-channel601"}
+    assert by_name["port-channel501"]["switchIp"] == "192.168.1.1"
+    assert by_name["port-channel601"]["switchIp"] == "192.168.1.2"
+    assert "port-channel502" not in by_name
+    assert "Ethernet1/1" not in by_name
 
 
 def test_port_channel_trunk_host_orchestrator_00410() -> None:

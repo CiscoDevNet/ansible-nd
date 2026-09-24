@@ -1356,8 +1356,11 @@ def test_port_channel_access_interface_01100():
     assert "switch_ip" in spec["config"]["options"]
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
     assert spec["state"]["default"] == "merged"
+    assert spec["config"]["required"] is False
+    assert spec["config"]["options"]["switch_ip"]["required"] is True
+    assert spec["config"]["options"]["interface_name"]["required"] is True
     # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
     # and intentionally absent from the user-facing argument spec.
     config_options = spec["config"]["options"]

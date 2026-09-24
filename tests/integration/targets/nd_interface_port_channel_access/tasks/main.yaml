@@ -53,6 +53,9 @@
     - name: Run nd_interface_port_channel_access merged state tests
       ansible.builtin.include_tasks: merged.yaml
 
+    - name: Run nd_interface_port_channel_access gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run nd_interface_port_channel_access replaced state tests
       ansible.builtin.include_tasks: replaced.yaml
 
