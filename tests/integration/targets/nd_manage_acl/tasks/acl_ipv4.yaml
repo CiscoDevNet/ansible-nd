@@ -141,6 +141,109 @@
     success_msg: "TEST 2 PASSED: merge replaced the entry list as expected"
 
 #############################################################################
+# GATHERED: IPv4 ACL
+#############################################################################
+- name: "GATHERED IPv4: Read all ACLs"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+  register: gathered_all
+
+- name: "GATHERED IPv4: Filter by exact name"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+    config:
+      - name: "{{ acl_ipv4_name }}"
+  register: gathered_ipv4
+
+- name: "GATHERED IPv4: Verify gathered output"
+  ansible.builtin.assert:
+    that:
+      - gathered_all is not changed
+      - gathered_all.gathered is defined
+      - gathered_all.before == []
+      - gathered_all.after == []
+      - gathered_all.diff is not defined
+      - gathered_all.proposed is not defined
+      - gathered_all.gathered | selectattr('name', 'equalto', acl_ipv4_name) | list | length == 1
+      - gathered_ipv4 is not changed
+      - gathered_ipv4.gathered | length == 1
+      - gathered_ipv4.gathered[0].name == acl_ipv4_name
+      - gathered_ipv4.gathered[0].type == "ipv4"
+      - gathered_ipv4.gathered[0].entries | length == 1
+      - gathered_ipv4.gathered[0].entries[0].sequence_number == 30
+      - gathered_ipv4.gathered[0].entries[0].dst_port_action == "equal_to"
+      - gathered_ipv4.gathered[0].entries[0].dst_port | int == 443
+
+- name: "GATHERED IPv4: Reject an invalid supported name before querying"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+    config:
+      - name: INVALID/ACL
+  register: gathered_invalid_name
+  ignore_errors: true
+
+- name: "GATHERED IPv4: Verify invalid-name rejection"
+  ansible.builtin.assert:
+    that:
+      - gathered_invalid_name is failed
+      - gathered_invalid_name.msg is search("invalid")
+
+- name: "GATHERED IPv4: Reject an invalid supported type before querying"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+    config:
+      - type: invalid
+  register: gathered_invalid_type
+  ignore_errors: true
+
+- name: "GATHERED IPv4: Verify invalid-type rejection"
+  ansible.builtin.assert:
+    that:
+      - gathered_invalid_type is failed
+      - gathered_invalid_type.msg is search("ipv4|ipv6")
+
+- name: "GATHERED IPv4: Reject unsupported filter properties"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+    config:
+      - description: unsupported-filter
+  register: gathered_unsupported_property
+  ignore_errors: true
+
+- name: "GATHERED IPv4: Verify unsupported-property rejection"
+  ansible.builtin.assert:
+    that:
+      - gathered_unsupported_property is failed
+      - gathered_unsupported_property.msg is search("unsupported properties")
+      - gathered_unsupported_property.msg is search("description")
+
+- name: "GATHERED IPv4: Reject an empty filter item"
+  cisco.nd.nd_manage_acl:
+    <<: *nd_info
+    fabric_name: "{{ acl_fabric }}"
+    state: gathered
+    config:
+      - {}
+  register: gathered_empty_item
+  ignore_errors: true
+
+- name: "GATHERED IPv4: Verify empty-filter rejection"
+  ansible.builtin.assert:
+    that:
+      - gathered_empty_item is failed
+      - gathered_empty_item.msg is search("at least one filtering criterion")
+
+#############################################################################
 # TEST 3: STATE REPLACED - completely replace the ACL entries
 #############################################################################
 - name: "TEST 3a: Replace IPv4 ACL (check mode)"
