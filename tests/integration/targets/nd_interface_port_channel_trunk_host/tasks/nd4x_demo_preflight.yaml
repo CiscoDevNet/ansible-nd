@@ -1,0 +1,140 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: "{{ nd4x_version.current.platformVersion is version(nd4x_port_channel_minimum_version, '>=') }}"
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping the port-channel trunk-host harness because controller version
+      {{ nd4x_version.current.platformVersion }} is older than
+      {{ nd4x_port_channel_minimum_version }}.
+  when: not nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require reserved port-channel resources"
+  ansible.builtin.assert:
+    that:
+      - nd4x_port_channel_reserved_resources_confirmed | bool
+    fail_msg: >-
+      Port-channels 501 through 504 and member ports
+      {{ nd4x_port_channel_member_interfaces | join(', ') }} must be dedicated
+      integration-test resources. Set
+      nd_port_channel_reserved_resources_confirmed=true in inventory.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify switch inventory"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_inventory.current.switches | default([]) | length > 0
+      - nd4x_switch_inventory.current.switches | selectattr('switchId', 'defined') | list | length == nd4x_switch_inventory.current.switches | length
+      - nd4x_switch_inventory.current.switches | selectattr('fabricManagementIp', 'defined') | list | length == nd4x_switch_inventory.current.switches | length
+    fail_msg: "Fabric {{ test_fabric_name }} returned no complete switch inventory."
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Initialize complete-fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: []
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Build one snapshot query per fabric switch"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: >-
+      {{ nd4x_fabric_check_mode_queries + [
+        {
+          'name': 'Snapshot port-channel scope on ' ~ item.fabricManagementIp,
+          'path': '/api/v1/manage/fabrics/' ~ test_fabric_name ~ '/switches/' ~ item.switchId ~ '/interfaces',
+          'expected_status': 200,
+          'unordered': true,
+          'ignore_keys': ['operData']
+        }
+      ] }}
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require complete snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_check_mode_queries | length == nd4x_switch_inventory.current.switches | length
+      - nd4x_fabric_check_mode_queries | length > 0
+    fail_msg: "Could not build a complete fabric-wide predictive snapshot."
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Select test switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_switch_matches: >-
+      {{ nd4x_switch_inventory.current.switches | default([])
+         | selectattr('fabricManagementIp', 'equalto', test_switch_ip) | list }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require exactly one test switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_matches | length == 1
+      - nd4x_switch_matches[0].switchId | string | length > 0
+    fail_msg: >-
+      Expected exactly one switch with fabricManagementIp {{ test_switch_ip }};
+      found {{ nd4x_switch_matches | length }}.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record discovered test switch ID"
+  ansible.builtin.set_fact:
+    test_switch_id: "{{ nd4x_switch_matches[0].switchId }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query test-switch interfaces"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+    method: get
+  register: nd4x_test_switch_interface_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require every reserved member interface"
+  vars:
+    matching_member: >-
+      {{ nd4x_test_switch_interface_inventory.current.interfaces | default([])
+         | selectattr('interfaceName', 'equalto', item) | list }}
+  ansible.builtin.assert:
+    that:
+      - matching_member | length == 1
+      - matching_member[0].interfaceType | default('') == 'ethernet'
+    fail_msg: >-
+      Reserved member {{ item }} must exist exactly once and be an Ethernet
+      interface on {{ test_switch_ip }}.
+  loop: "{{ nd4x_port_channel_member_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Reject members belonging to unrelated port-channels"
+  vars:
+    matching_member: >-
+      {{ nd4x_test_switch_interface_inventory.current.interfaces | default([])
+         | selectattr('interfaceName', 'equalto', item) | first }}
+    member_port_channel_id: "{{ matching_member.get('operData', {}).get('portChannelId', -1) | int }}"
+  ansible.builtin.assert:
+    that:
+      - member_port_channel_id | int < 1 or member_port_channel_id | int in nd4x_port_channel_reserved_ids
+    fail_msg: >-
+      Reserved member {{ item }} belongs to unrelated port-channel
+      {{ member_port_channel_id }}. Remove that membership before running the
+      harness.
+  loop: "{{ nd4x_port_channel_member_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool

@@ -34,16 +34,30 @@
 #   Identifies the testbed platform. When "9000v", the vlan_mapping test block
 #   is skipped because virtual switches reject `switchport vlan mapping ... dot1q-tunnel`
 #   (ND surfaces this as HTTP 400 from the trunkPoHost validator).
+#
+# nd_port_channel_reserved_resources_confirmed (bool, default: false)
+#   Required by the opt-in ND4X harness. Confirms that port-channels 501-504
+#   and the four configured member Ethernet ports are dedicated test resources.
+#
+# nd_port_channel_destructive_tests_enabled (bool, default: false)
+#   Required by the separately tagged ND4X state:overridden workflow.
+#
+# supports_vlan_mapping (bool, default: false on 9000v)
+#   Enables the ND4X VLAN-mapping harness workflow on a capable testbed.
 
 - name: Test that we have a Nexus Dashboard host, username and password
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info:
       output_level: '{{ api_key_output_level | default("debug") }}'
+  tags:
+    - always
 
 - name: Run nd_interface_port_channel_trunk_host state tests with optional logging env
   # 300s gives the switch enough time to build the PC bundle, pull members,
@@ -70,5 +84,88 @@
     - name: Run nd_interface_port_channel_trunk_host vlan_mapping tests (non-9000v only)
       ansible.builtin.include_tasks: vlan_mapping.yaml
       when: nd_test_platform | default('9000v') != '9000v'
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
+
+- name: Run nd_interface_port_channel_trunk_host ND 4.x harness tests
+  vars:
+    ansible_command_timeout: 300
+  block:
+    - name: Run ND 4.x port-channel trunk-host harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_negative
+            - nd4x_demo_vlan_mapping
+            - nd4x_demo_overridden
+            - nd4x_demo_destructive
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_negative
+        - nd4x_demo_vlan_mapping
+        - nd4x_demo_overridden
+        - nd4x_demo_destructive
+
+    - name: Run port-channel merged harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_merged]
+      tags: [never, nd4x_demo, nd4x_demo_merged]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run port-channel replaced harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_replaced]
+      tags: [never, nd4x_demo, nd4x_demo_replaced]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run port-channel deleted harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_deleted]
+      tags: [never, nd4x_demo, nd4x_demo_deleted]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run port-channel negative harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_negative]
+      tags: [never, nd4x_demo, nd4x_demo_negative]
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run port-channel VLAN-mapping harness scenario
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_vlan_mapping.yaml
+        apply:
+          tags: [never, nd4x_demo, nd4x_demo_vlan_mapping]
+      tags: [never, nd4x_demo, nd4x_demo_vlan_mapping]
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd4x_port_channel_vlan_mapping_supported | bool
+
+    - name: Run port-channel overridden harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags: [never, nd4x_demo_overridden, nd4x_demo_destructive]
+      tags: [never, nd4x_demo_overridden, nd4x_demo_destructive]
+      when: nd4x_supported | default(false) | bool
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

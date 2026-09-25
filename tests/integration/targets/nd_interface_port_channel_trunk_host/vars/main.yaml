@@ -130,3 +130,108 @@ test_pc_501_with_vlan_mapping:
           - customer_vlan_id: ["100"]
             provider_vlan_id: 1100
             dot1q_tunnel: true
+
+# ND 4.x harness safety and discovery inputs.
+# The harness is opt-in and must run only against a dedicated set of
+# port-channels and member Ethernet ports.
+nd4x_port_channel_minimum_version: "4.0.0"
+
+nd4x_port_channel_reserved_interfaces:
+  - port-channel501
+  - port-channel502
+  - port-channel503
+  - port-channel504
+
+nd4x_port_channel_reserved_ids:
+  - 501
+  - 502
+  - 503
+  - 504
+
+nd4x_port_channel_member_interfaces:
+  - "{{ test_pc_member_a }}"
+  - "{{ test_pc_member_b }}"
+  - "{{ test_pc_member_c }}"
+  - "{{ test_pc_member_d }}"
+
+nd4x_port_channel_cleanup_config:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: port-channel501
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: port-channel502
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: port-channel503
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: port-channel504
+
+nd4x_port_channel_reserved_resources_confirmed: >-
+  {{ nd_port_channel_reserved_resources_confirmed | default(false) | bool }}
+
+nd4x_port_channel_destructive_tests_enabled: >-
+  {{ nd_port_channel_destructive_tests_enabled | default(false) | bool }}
+
+nd4x_port_channel_vlan_mapping_supported: >-
+  {{ supports_vlan_mapping | default(nd_test_platform | default('9000v') != '9000v') | bool }}
+
+test_pc_501_overridden:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "175"
+        native_vlan: 17
+        ports:
+          - "{{ test_pc_member_a }}"
+        description: "Overridden port-channel501"
+
+test_pc_501_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel501
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "250"
+        native_vlan: 50
+        ports:
+          - "{{ test_pc_member_a }}"
+        description: "Replaced port-channel501"
+
+test_pc_502_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel502
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "222"
+        native_vlan: 22
+        ports:
+          - "{{ test_pc_member_c }}"
+        description: "Replaced port-channel502"
+
+test_pc_503_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel503
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        allowed_vlans: "333,444"
+        native_vlan: 33
+        ports:
+          - "{{ test_pc_member_d }}"
+        description: "Replaced port-channel503"
+
+test_pc_504_no_deploy:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel504
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: all
+        ports: []
+        description: "No-deploy test port-channel504"
