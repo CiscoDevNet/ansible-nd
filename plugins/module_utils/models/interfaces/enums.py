@@ -82,6 +82,31 @@ class XeTrunkPoHostPolicyTypeEnum(str, Enum):
     IOS_XE_TRUNK_PO_HOST = "iosXeTrunkPoHost"
 
 
+class PortChannelRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    NX-OS policy type managed by `nd_interface_port_channel_routed` (issue #549): `l3Po` (`int_l3_port_channel` template). The
+    template's other discriminator values are not managed: `l3PoInternal` and `mplsUplinkPo` are system-provisioned, `l3PoMember` is
+    the member type ND provisions on the port-channel's ethernet members, and `freeform` / `userDefined` are intentionally excluded so
+    `overridden` can never touch fabric underlay intent.
+    """
+
+    L3_PO = "l3Po"
+
+
+class XePortChannelRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_routed` (issue #549): `iosXeL3PortChannel`
+    (`ios_xe_int_l3_port_channel` template). `iosXeL3PoMember` is the member type ND provisions on the port-channel's ethernet members
+    and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_L3_PORT_CHANNEL = "iosXeL3PortChannel"
+
+
 class AccessVpcHostPolicyTypeEnum(str, Enum):
     """
     # Summary

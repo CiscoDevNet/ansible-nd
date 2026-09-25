@@ -1,0 +1,79 @@
+---
+# Overridden state tests for nd_interface_port_channel_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Entry state (from replaced.yaml): port-channel520, port-channel521 and port-channel522 exist.
+#
+# overridden is FABRIC-WIDE: every routed port-channel this module manages (l3Po / iosXeL3PortChannel) that is absent from the
+# config is removed. A testbed can carry routed port-channels that are not part of this target (e.g. a subinterface parent on
+# another switch), so the scenario first reads them with a check-mode run and replays them verbatim in the overridden config.
+# They must come through unchanged, which also proves the module's `before` output replays as input.
+
+- name: "OVERRIDDEN SETUP: Read the fabric's routed port-channels (check mode, nothing is changed)"
+  cisco.nd.nd_interface_port_channel_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520_replaced }}"
+    state: overridden
+  check_mode: true
+  register: cm_overridden_probe
+
+# `before` items also carry the frozen `interface_type` and `config_data.mode`, which are not module options, so only the
+# identifier and the `network_os` container are replayed.
+- name: "OVERRIDDEN SETUP: Collect the routed port-channels outside the reserved 520-523 range"
+  ansible.builtin.set_fact:
+    routed_pc_bystanders: >-
+      {%- set collected = [] -%}
+      {%- for item in cm_overridden_probe.before
+            if item.interface_name not in ['port-channel520', 'port-channel521', 'port-channel522', 'port-channel523'] -%}
+      {%- set appended = collected.append({
+            'switch_ip': item.switch_ip,
+            'interface_name': item.interface_name,
+            'config_data': {'network_os': item.config_data.network_os}}) -%}
+      {%- endfor -%}
+      {{ collected }}
+
+- name: "OVERRIDDEN: Keep only port-channel520 of the test port-channels (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &override_pc520
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ [test_pc_520_replaced] + routed_pc_bystanders }}"
+    state: overridden
+  check_mode: true
+  register: cm_overridden
+
+- name: "OVERRIDDEN: Keep only port-channel520 of the test port-channels (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *override_pc520
+  register: nm_overridden
+
+- name: "OVERRIDDEN: Verify 521 and 522 were removed, 520 kept, and every bystander retained"
+  vars:
+    after_names: "{{ nm_overridden.after | map(attribute='interface_name') | list }}"
+    bystander_names: "{{ routed_pc_bystanders | map(attribute='interface_name') | list }}"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden is changed
+      - nm_overridden is changed
+      - "'port-channel520' in after_names"
+      - "'port-channel521' not in after_names"
+      - "'port-channel522' not in after_names"
+      - bystander_names | difference(after_names) | length == 0
+      - nm_overridden.after | length == 1 + (routed_pc_bystanders | length)
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: *override_pc520
+  check_mode: true
+  register: cm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *override_pc520
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_idem is not changed
+      - nm_overridden_idem is not changed
