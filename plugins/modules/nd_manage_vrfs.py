@@ -76,44 +76,25 @@ options:
       vrf_id:
         description: L3 VNI (VRF segment ID), 1-16777214.
         type: int
-      vrf_type:
-        description:
-          - VRF schema type.
-          - Leave unset to derive the value from the fabric C(management.type).
-          - Set to V(userDefined) to use custom VRF template fields.
-        type: str
-        choices:
-          - userDefined
-          - vxlan
-          - vxlanIbgp
-          - vxlanEbgp
-          - vxlanCampus
-          - aimlVxlanIbgp
-          - aimlVxlanEbgp
-          - classicLanEnhanced
-          - vxlanAci
-          - aci
-          - externalConnectivity
-          - vxlanExternal
       vrf_template_name:
         description:
           - Custom VRF template name.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
         type: str
       vrf_extension_template_name:
         description:
           - Custom VRF extension template name.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
         type: str
       service_vrf_template_name:
         description:
           - Custom service VRF template name.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
         type: str
       vrf_template_config:
         description:
           - Custom VRF template parameters.
-          - Supported only when C(vrf_type=userDefined).
+          - Supplying custom template fields makes the module use the user-defined VRF schema.
           - Values must be strings as required by the ND schema.
         type: dict
       default_security_action:
@@ -332,8 +313,8 @@ options:
       attach:
         description:
           - Parent/standalone switch attachment entries for this VRF.
-          - Switches are identified by management IP address and resolved to
-            ND C(switchId) values before the attachment payload is sent.
+          - Switches are identified by management IP address and resolved before
+            attachment changes are applied.
           - If C(attach) entries are present, the module attaches the VRF to
             those switches.
           - In C(state=replaced), omitting C(attach) deattaches existing
@@ -355,15 +336,11 @@ options:
           attachment_options:
             description:
               - Attachment-specific options for this switch.
-              - These fields are translated to the Manage API
-                C(instanceValues) payload internally.
             type: dict
             suboptions:
               dpu_secure:
                 description:
                   - Enable DPU secure mode for this attachment.
-                  - Translated to C(instanceValues.dpuSecure) in the Manage API
-                    payload.
                 type: bool
               dpu_affinity:
                 description:
@@ -481,7 +458,7 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-# ── Standalone fabric — create a VRF and attach it to a switch ───────────────
+# Standalone fabric - create a VRF and attach it to a switch
 - name: Create VRF on standalone fabric and deploy by switch
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -522,7 +499,7 @@ EXAMPLES = r"""
         deploy: true
         deploy_type: switch
 
-# ── Standalone fabric — create VRF with TRM ──────────────────────────────────
+# Standalone fabric - create VRF with TRM
 - name: Create VRF with Tenant Routed Multicast enabled
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -537,14 +514,13 @@ EXAMPLES = r"""
         underlay_mcast_ip: 239.1.1.1
         overlay_mcast_group: 239.1.1.2
 
-# ── Standalone fabric — create user-defined VRF template payload ─────────────
+# Standalone fabric - create user-defined VRF
 - name: Create user-defined VRF
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
     state: merged
     config:
       - vrf_name: VRF_CUSTOM
-        vrf_type: userDefined
         vrf_template_name: Custom_VRF_Template
         vrf_extension_template_name: Custom_VRF_Extension_Template
         service_vrf_template_name: Custom_Service_VRF_Template
@@ -552,7 +528,7 @@ EXAMPLES = r"""
           VRF_NAME: VRF_CUSTOM
           VRF_ID: "50030"
 
-# ── MSD parent fabric — create VRF with child fabric-instance overrides ──────
+# MSD parent fabric - create VRF with child fabric-instance overrides
 - name: Create VRF on MSD parent with per-child fabric-instance overrides
   cisco.nd.nd_manage_vrfs:
     fabric_name: msd_parent
@@ -585,7 +561,7 @@ EXAMPLES = r"""
             bgp_password: abcdef12
             bgp_passwd_encrypt: 3
 
-# ── MCFG parent fabric — create VRF with child fabric-instance overrides ─────
+# MCFG parent fabric - create VRF with child fabric-instance overrides
 - name: Create VRF on MCFG parent with child fabric overrides
   cisco.nd.nd_manage_vrfs:
     fabric_name: mcfg_parent
@@ -609,14 +585,14 @@ EXAMPLES = r"""
             netflow_enable: true
             nf_monitor: MON1
 
-# ── Child fabric — gathered only ────────────────────────────────────────────────
+# Child fabric - gathered only
 - name: Gathered VRFs on a child fabric (write ops must go through parent)
   cisco.nd.nd_manage_vrfs:
     fabric_name: child_fabric_1
     state: gathered
     config: []
 
-# ── Delete VRFs ──────────────────────────────────────────────────────────────
+# Delete VRFs
 - name: Delete a VRF
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -624,7 +600,7 @@ EXAMPLES = r"""
     config:
       - vrf_name: VRF_BLUE
 
-# ── Replace VRF configuration ───────────────────────────────────────────────
+# Replace VRF configuration
 - name: Replace VRF configuration (full replace)
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -636,6 +612,16 @@ EXAMPLES = r"""
         vrf_description: "Updated Blue VRF"
         max_bgp_paths: 4
         max_ibgp_paths: 4
+
+# Override VRF configuration
+- name: Override VRF configuration
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: overridden
+    config:
+      - vrf_name: VRF_BLUE
+        vrf_id: 50010
+        vlan_id: 2001
 
 # ── Stage complete desired VRF attachments without deployment ───────────────
 - name: Stage complete desired VRF attachments without deployment
@@ -663,21 +649,73 @@ changed:
   description: Whether the module changed VRF, attachment, or deployment state.
   returned: always
   type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
 before:
-  description: VRF configuration present on ND before the operation.
+  description:
+    - VRF configuration present on ND before the operation.
+    - Structured in the same user-facing form as O(config) where possible.
   returned: always
   type: list
   elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
 after:
-  description: VRF configuration present on ND after the operation.
+  description:
+    - VRF configuration present on ND after the operation.
+    - In check mode, the configuration that would result had the module run outside check mode.
   returned: always
   type: list
   elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
 diff:
   description: Configuration diff calculated by the module.
   returned: always
   type: list
   elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vlan_id: 2001
+proposed:
+  description: VRF configuration proposed by the module before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug), and on selected check-mode or failure paths.
+  type: list
+  elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
+gathered:
+  description: VRF configuration returned by the controller in user-facing format.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+    - vrf_name: VRF_BLUE
+      vrf_id: 50010
+      vlan_id: 2001
+logs:
+  description: Internal diagnostic log or workflow trace entries collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: dict
+  sample:
+    - event: vrf_state_machine_start
+      state: merged
+msg:
+  description: Human-readable status or failure message.
+  returned: on failure and on selected no-op or child-fabric failure paths
+  type: str
+  sample: "Unexpected error: controller rejected VRF payload"
 fabric_type:
   description:
     - Resolved fabric topology used by the workflow.
@@ -697,6 +735,11 @@ parent_fabric:
       result.
   returned: when a parent workflow processes one or more child fabrics
   type: dict
+  sample:
+    fabric_name: MSD_FABRIC
+    changed: true
+    before: []
+    after: []
 child_fabrics:
   description:
     - Per-child-fabric results for MSD or MCFG parent workflows.
@@ -705,46 +748,73 @@ child_fabrics:
   returned: when a parent workflow processes one or more child fabrics
   type: list
   elements: dict
+  sample:
+    - fabric_name: child_fabric_1
+      changed: true
+      before: []
+      after: []
 api_paths:
   description: REST API paths called by the module.
   returned: with verbosity C(-vv) or C(output_level=debug)
   type: list
   elements: str
+  sample:
+    - /api/v1/manage/fabrics/fab1/vrfs
 api_verbs:
   description: REST API verbs called by the module.
   returned: with verbosity C(-vv) or C(output_level=debug)
   type: list
   elements: str
+  sample:
+    - POST
 api_payload:
   description: REST request payloads sent to ND.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - vrfs:
+        - vrfName: VRF_BLUE
+          vrfId: 50010
 api_response:
   description: Raw normalized REST responses returned by ND.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - RETURN_CODE: 200
+      MESSAGE: OK
 api_result:
   description: Response-handler result for each REST call.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - success: true
+      changed: true
 api_diff:
   description: Per-REST-call diff data recorded by the result infrastructure.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - vrfName: VRF_BLUE
 api_metadata:
   description: Per-REST-call metadata recorded by the result infrastructure.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
+  sample:
+    - action: create
+      state: merged
 """
+
+import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
@@ -780,11 +850,15 @@ def main():
         supports_check_mode=True,
     )
     require_pydantic(module)
+    setup_logging(module)
+    module_log = logging.getLogger("nd.nd_manage_vrfs")
 
     try:
+        module_log.debug("main: starting VRF workflow")
         coordinator = VrfWorkflowCoordinator(module=module)
         result = coordinator.run()
 
+        module_log.debug("main: completed VRF workflow changed=%s failed=%s", result.get("changed"), result.get("failed"))
         module.exit_json(**result)
 
     except NDStateMachineError as e:

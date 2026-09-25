@@ -15,12 +15,12 @@
     target_fabric: "{{ nd_network_msd_parent_fabric }}"
     target_network_delete_config:
       - network_name: ansible-nd-net-msd-over-seed
-        is_l2only: true
+        layer: layer2
       - network_name: ansible-nd-net-msd-over-keep
-        is_l2only: true
+        layer: layer2
     nd_network_msd_over_seed:
       - network_name: ansible-nd-net-msd-over-seed
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 221 }}"
         vlan_id: "{{ nd_network_base_vlan + 221 }}"
         vlan_name: ansible_nd_net_msd_over_seed
@@ -28,7 +28,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ansible-nd-net-msd-over-keep
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 222 }}"
         vlan_id: "{{ nd_network_base_vlan + 222 }}"
         vlan_name: ansible_nd_net_msd_over_keep
@@ -37,11 +37,10 @@
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_over_config:
       - network_name: ansible-nd-net-msd-over-keep
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 222 }}"
         vlan_id: "{{ nd_network_base_vlan + 222 }}"
         vlan_name: ans_nd_net_msd_over_upd
-        rt_auto: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
