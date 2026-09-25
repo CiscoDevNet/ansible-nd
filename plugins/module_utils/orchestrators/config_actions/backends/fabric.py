@@ -14,7 +14,7 @@ covers the fabric modules, fabric groups, fabric group members and ToR.
 
 from __future__ import annotations
 
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsContext
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import NOT_ISSUED, ConfigActionsContext, NotIssued
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.base import FabricConfigActionsOwner
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -70,17 +70,19 @@ class FabricConfigActionsBackend:
         """
         # Summary
 
-        Deploy the entire fabric `fabric_name`.
+        Deploy the entire fabric `fabric_name`, then confirm the deploy landed.
 
         ## Raises
 
         ### Exception
 
-        - Via the owner when the deploy API request fails.
+        - Via the owner when the deploy API request fails, or when a switch reports `failed` afterwards.
         """
-        return self.owner.deploy_global(fabric_name)
+        response = self.owner.deploy_global(fabric_name)
+        self.owner.verify_deploy(fabric_name)
+        return response
 
-    def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> ResponseType:
+    def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> ResponseType | NotIssued:
         """
         # Summary
 
@@ -96,11 +98,16 @@ class FabricConfigActionsBackend:
 
         ### Exception
 
-        - Via the owner when the switch query or deploy API request fails.
+        - Via the owner when the switch query or deploy API request fails, or when a deployed
+          switch reports `failed` afterwards.
         """
         candidates = set(switch_ids)
         targets = [switch_id for switch_id in self.owner.resolve_switch_deploy_targets(fabric_name) if switch_id in candidates]
-        return self.owner.deploy_switch_ids(fabric_name, targets)
+        if not targets:
+            return NOT_ISSUED
+        response = self.owner.deploy_switch_ids(fabric_name, targets)
+        self.owner.verify_deploy(fabric_name, targets)
+        return response
 
     def deploy_resources(self, context: ConfigActionsContext, fabric_name: str, resources: tuple[str, ...]) -> ResponseType:
         """

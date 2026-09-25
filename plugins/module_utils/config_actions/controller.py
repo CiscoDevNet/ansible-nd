@@ -15,6 +15,7 @@ from dataclasses import replace
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
+    NOT_ISSUED,
     ConfigActionStepResult,
     ConfigActions,
     ConfigActionsContext,
@@ -141,11 +142,15 @@ class ConfigActionsController:
             if not context.switch_ids:
                 return ConfigActionStepResult(action="deploy", scope="switch", status="skipped", target=fabric_name, error="no_targets")
             response = self.backend.deploy_switches(context, fabric_name, context.switch_ids)
+            if response is NOT_ISSUED:
+                return ConfigActionStepResult(action="deploy", scope="switch", status="skipped", target=fabric_name, error="no_targets")
             return ConfigActionStepResult(action="deploy", scope="switch", status="completed", target=fabric_name, response=response)
         if actions.type == "resource":
             if not context.resources:
                 return ConfigActionStepResult(action="deploy", scope="resource", status="skipped", target=fabric_name, error="no_targets")
             response = self.backend.deploy_resources(context, fabric_name, context.resources)
+            if response is NOT_ISSUED:
+                return ConfigActionStepResult(action="deploy", scope="resource", status="skipped", target=fabric_name, error="no_targets")
             return ConfigActionStepResult(action="deploy", scope="resource", status="completed", target=fabric_name, response=response)
 
         return ConfigActionStepResult(action="deploy", scope=actions.type, status="skipped", target=fabric_name, error="unsupported_type")

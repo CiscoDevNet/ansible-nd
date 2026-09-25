@@ -496,11 +496,9 @@ def main():
             only_switch_ids: set = set()
             for pair in changed_pairs:
                 only_switch_ids |= pair.affected_switch_ids()
-            nd_state_machine.model_orchestrator.run_config_actions(
+            nd_state_machine.run_config_actions(
                 actions=config_actions,
                 fabric_names=[fabric_name],
-                state=state,
-                check_mode=module.check_mode,
                 only_switch_ids=only_switch_ids or None,
             )
 
