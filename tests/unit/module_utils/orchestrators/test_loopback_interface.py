@@ -28,12 +28,14 @@ import inspect
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    IpfmLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
     NexusLoopbackPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -104,6 +106,20 @@ def _build_mpls_loopback_model(switch_ip: str = "192.168.12.151", interface_name
             network_os=NexusLoopbackNetworkOSModel(
                 network_os_type="nx-os",
                 policy=MplsLoopbackPolicyModel(policy_type="mplsLoopback", admin_state=True, ip="10.3.3.1/32"),
+            ),
+        ),
+    )
+
+
+def _build_ipfm_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback201") -> LoopbackInterfaceModel:
+    """Build a minimal `LoopbackInterfaceModel` instance with an `ipfmLoopback` policy, for policy-type-grouping tests."""
+    return LoopbackInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=LoopbackConfigDataModel(
+            network_os=NexusLoopbackNetworkOSModel(
+                network_os_type="nx-os",
+                policy=IpfmLoopbackPolicyModel(policy_type="ipfmLoopback", admin_state=True, ip="10.2.2.1/32"),
             ),
         ),
     )
@@ -793,24 +809,27 @@ def test_loopback_interface_00460() -> None:
     """
     # Summary
 
-    Verify the failure-path finalizer with a mixed-result 207 as the failing group (PR #403 review): the first group's POST
-    succeeds, the second group's POST returns HTTP 207 whose `DATA.results[]` mixes a success item and a failed item, and
-    `create_bulk` raises. `deploy_accepted_mutations` then deploys only the accepted first group.
+    Verify the failure-path finalizer with a mixed-result 207 as the failing group: the first group's POST succeeds, the second
+    group's POST returns HTTP 207 whose `DATA.results[]` mixes a success item and a failed item, and `create_bulk` raises.
+    `deploy_accepted_mutations` then deploys the accepted first group AND the item the failing 207 reported as an exact `success`.
 
-    Within-group recovery of the 207's reported-success item is deliberately NOT attempted: whether ND actually creates the
-    reported-success subset of a mixed-result 207 is not lab-characterized, and the per-item `status` field is known to be
-    inconsistent (bug-tracker vault: `multi-status-207-status-field-inconsistent`), so nothing from the failed group is queued.
+    Within-group recovery was originally not attempted here (PR #403 review). It now follows the rule the ethernet orchestrators
+    adopted in the PR #550 review and that `_post_bulk_create_group` shares: an exact `success` item IS on the controller, so stranding
+    it staged would hide it from a retry (PR #570 review). Every other status stays unqueued (bug-tracker vault:
+    `multi-status-207-status-field-inconsistent`).
 
     ## Test
 
     - loopback10 (`policyType: loopback`) POST succeeds
-    - The mplsLoopback group (loopback30, loopback31) POST returns 207 with `results[]` mixing success and failed items
-    - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
-    - `deploy_accepted_mutations` deploys only loopback10; nothing from the failed group is deployed or queued
+    - The mplsLoopback group (loopback30, loopback31) POST returns 207: loopback30 `success`, loopback31 failed
+    - `create_bulk` raises `RuntimeError` matching `Bulk create failed` and names loopback30 as accepted
+    - `_pending_deploys` holds loopback10 and loopback30; loopback31 is never queued
+    - `deploy_accepted_mutations` deploys exactly those two
 
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
     - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
     - NdV1Strategy.is_success()
     """
@@ -831,17 +850,18 @@ def test_loopback_interface_00460() -> None:
         _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback31"),
     ]
 
-    match = r"Bulk create failed"
+    match = r"Bulk create failed.*accepted \['loopback30'\] from the same request"
     with pytest.raises(RuntimeError, match=match):
         instance.create_bulk(models)
 
-    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+    accepted = [("loopback10", "FDO12345ABC"), ("loopback30", "FDO12345ABC")]
+    assert instance._pending_deploys == accepted
 
     with does_not_raise():
         deployed = instance.deploy_accepted_mutations()
 
-    assert deployed == [("loopback10", "FDO12345ABC")]
-    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback10", "switchId": "FDO12345ABC"}]}
+    assert deployed == accepted
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in accepted]}
     assert instance._pending_deploys == []
 
 
@@ -1302,3 +1322,52 @@ def test_loopback_interface_00800() -> None:
         instance.create(model)
 
     assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: bulk_create_groups (hoisted to NDBaseInterfaceOrchestrator, issue #409)
+# =============================================================================
+
+
+def test_loopback_interface_01500() -> None:
+    """
+    # Summary
+
+    Verify `bulk_create_groups` (hoisted to `NDBaseInterfaceOrchestrator`, issue #409) groups by `(switch_id, policy_type)` using the
+    shared `BulkCreateGroupKey` / `BulkCreateItem` types and keeps first-seen group order.
+
+    ## Test
+
+    - Two `loopback` models and one `ipfmLoopback` model on the same switch
+    - `bulk_create_groups` returns two groups keyed by `BulkCreateGroupKey`
+    - Items carry the interface name and a payload with `switchId` injected
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    - NDBaseInterfaceOrchestrator._desired_policy_type()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback200"),
+        _build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback201"),
+        _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback202"),
+    ]
+
+    groups = instance.bulk_create_groups(models)
+
+    keys = list(groups)
+    assert keys == [
+        BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback"),
+        BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="ipfmLoopback"),
+    ]
+    assert [item.interface_name for item in groups[keys[0]]] == ["loopback200", "loopback202"]
+    assert groups[keys[1]][0].payload["switchId"] == "FDO12345ABC"
+    assert isinstance(groups[keys[1]][0], BulkCreateItem)

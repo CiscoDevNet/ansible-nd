@@ -675,5 +675,385 @@
                 }
             ]
         }
+    },
+    "test_port_channel_trunk_host_orchestrator_01010a": {
+        "TEST_NOTES": [
+            "create_bulk grouped (issue #409): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01010b": {
+        "TEST_NOTES": [
+            "POST create, NX group accepted"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "port-channel501",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01010c": {
+        "TEST_NOTES": [
+            "POST create, XE group accepted (ND echoes the canonical name it was sent)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "Port-channel103",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01020a": {
+        "TEST_NOTES": [
+            "create_bulk partial failure (issue #409): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01020b": {
+        "TEST_NOTES": [
+            "POST create, NX group accepted (before the XE group fails)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "port-channel501",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01020c": {
+        "TEST_NOTES": [
+            "POST create, XE group rejected with the flat 500 ND 4.2.1 returns for a member-mode mismatch"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "description": "",
+            "message": "Switch [C1_LE1/FDO11111AAA]: Member interface GigabitEthernet1/0/2 is a trunk host which can not be a member interface of iosXeTrunkPoHost. Change GigabitEthernet1/0/2 to layer 2 trunk host using iosXeTrunk policy first"
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01100a": {
+        "TEST_NOTES": ["IOS-XE member-mode preflight (issues #536/#537): switches list (1 switch) for the single trunk preflight test test_port_channel_trunk_host_orchestrator_01100."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
+    },
+    "test_port_channel_trunk_host_orchestrator_01100b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight (issues #536/#537) inventory for FDO11111AAA: GigabitEthernet1/0/3 carries iosXeAccess, the member the iosXeTrunkPoHost negative case in test_port_channel_trunk_host_orchestrator_01100 names. The remaining records (GigabitEthernet1/0/2 iosXeTrunkHost, GigabitEthernet1/0/4 and GigabitEthernet1/0/5 iosXeAccessPoMember, port-channel101/port-channel102, and the unrelated NX-OS Ethernet1/1 trunkHost) are unused context."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [
+          {"interfaceName": "GigabitEthernet1/0/2", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "allowedVlans": "none", "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeTrunkHost", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/3", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "mtu": 1500, "policyType": "iosXeAccess", "speed": "auto"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/4", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel101", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "GigabitEthernet1/0/5", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"adminState": true, "policyType": "iosXeAccessPoMember", "portChannelId": "Port-channel102", "portChannelMode": "active"}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel101", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel101", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/4"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "port-channel102", "interfaceType": "portChannel", "switchId": "FDO11111AAA", "configData": {"mode": "access", "networkOS": {"networkOSType": "ios-xe", "policy": {"accessVlan": 100, "adminState": true, "bpduGuard": "default", "policyType": "iosXeAccessPoHost", "portChannelId": "Port-channel102", "portChannelMode": "active", "ports": ["GigabitEthernet1/0/5"]}}}, "operData": {"portChannelId": -1}},
+          {"interfaceName": "Ethernet1/1", "interfaceType": "ethernet", "switchId": "FDO11111AAA", "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os", "policy": {"adminState": true, "policyType": "trunkHost"}}}, "operData": {"portChannelId": -1}}
+        ]}
+    },
+    "test_port_channel_trunk_host_orchestrator_01200a": {
+        "TEST_NOTES": ["delete IOS-XE: switches list (canonical Port-channel<N> queued)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}]}
+    },
+    "test_port_channel_trunk_host_orchestrator_01210a": {
+        "TEST_NOTES": ["delete_bulk mixed NX-OS + IOS-XE: switches list (2 switches)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}, {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}]}
+    },
+    "test_port_channel_trunk_host_orchestrator_01030a": {
+        "TEST_NOTES": [
+            "create_bulk mixed 207 inside one group (PR #570 review): switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01030b": {
+        "TEST_NOTES": [
+            "POST create, one iosXeTrunkPoHost group: ND echoes the canonical Port-channel103 as success and rejects Port-channel104"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Port-channel103",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                },
+                {
+                    "name": "Port-channel104",
+                    "status": "failed",
+                    "message": "Member GigabitEthernet1/0/3 is already in use"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01400a": {
+        "TEST_NOTES": [
+            "capability preflight (PR #570 review): switches list, two switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01400b": {
+        "TEST_NOTES": [
+            "capableSwitches for portChannel/trunk: [('FDO11111AAA', 'S1_BG1'), ('CAT9KV1701', 'C1_LE1')]"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=trunk",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "S1_BG1"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01410a": {
+        "TEST_NOTES": [
+            "capability preflight: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01410b": {
+        "TEST_NOTES": [
+            "capableSwitches for portChannel/trunk: [('FDO11111AAA', 'S1_BG1')]"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=trunk",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "S1_BG1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_capable_switches_shared": {
+        "TEST_NOTES": [
+            "SHARED fixture (PR #570 review): capableSwitches?interfaceType=portChannel&mode=trunk listing every switch the preflight tests target.",
+            "Shared because the orchestrator now opts in to the capability preflight, which inserts one capableSwitches GET between the switches list and the interface list in every preflight test; the answer is the same for all of them and carries no test-specific data."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=trunk",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "SW-A"
+                },
+                {
+                    "switchId": "FDO22222BBB",
+                    "switchName": "SW-B"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01400c": {
+        "TEST_NOTES": [
+            "capability preflight scale test: interface list for FDO11111AAA (members free, XE members on their host policy)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_trunk_host_orchestrator_01400d": {
+        "TEST_NOTES": [
+            "capability preflight scale test: interface list for CAT9KV1701 (members free, XE members on their host policy)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
     }
 }

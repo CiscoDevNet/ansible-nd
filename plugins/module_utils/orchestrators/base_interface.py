@@ -17,9 +17,14 @@ with interface-type-specific payload construction and query filtering.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
+    EpManageFabricsSwitchesDeploymentHistoryGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
@@ -28,6 +33,39 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import Fab
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+
+@dataclass(frozen=True, slots=True)
+class BulkCreateGroupKey:
+    """
+    # Summary
+
+    Grouping key for bulk create: one POST is sent per `(switch_id, policy_type)` group. `policy_type` is `None` for identifier-only
+    items with no policy configured.
+
+    ## Raises
+
+    None
+    """
+
+    switch_id: str
+    policy_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BulkCreateItem:
+    """
+    # Summary
+
+    A single interface within a bulk-create group: the interface name (for deploy queueing) and its ready-to-send payload.
+
+    ## Raises
+
+    None
+    """
+
+    interface_name: str
+    payload: dict
 
 
 class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
@@ -61,6 +99,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+    # Subclasses whose delete side removes IOS-XE logical interfaces (`interfaceActions/remove` + deploy) set this so `state: deleted`
+    # and `state: overridden` refuse a removal ND cannot complete yet (see `_check_xe_removal_discovered`).
+    xe_removal_requires_discovery: ClassVar[bool] = False
+    # Newest deployment-history records read per undiscovered IOS-XE removal candidate (see `_xe_interface_deployed`).
+    XE_HISTORY_MAX: ClassVar[int] = 10
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -191,6 +234,162 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
         return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
 
+    @staticmethod
+    def _desired_policy_type(model_instance: ModelType) -> str | None:
+        """
+        # Summary
+
+        Return the wire `policyType` a proposed model carries at `config_data.network_os.policy.policy_type`, as a plain string, or
+        `None` when any level is absent (an identifier-only item). Tolerates an `Enum`-typed field by reading its `.value`.
+
+        ## Raises
+
+        None
+        """
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+        policy = getattr(network_os, "policy", None) if network_os is not None else None
+        policy_type = getattr(policy, "policy_type", None) if policy is not None else None
+        if not policy_type:
+            return None
+        return str(getattr(policy_type, "value", policy_type))
+
+    def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook run by `bulk_create_groups` for each model after its switch is resolved and before its payload is built. The base
+        implementation does nothing; an orchestrator with per-item write guards (fabric ownership, member restrictions) overrides it.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def bulk_create_groups(self, model_instances: Sequence[ModelType], **kwargs) -> dict[BulkCreateGroupKey, list[BulkCreateItem]]:
+        """
+        # Summary
+
+        Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, run `_prepare_bulk_item`, inject the `switchId`
+        into the payload, and group the resulting items by `(switch_id, policy_type)`. Group insertion order follows the first model of
+        each group. Shared by every orchestrator that posts `interfaces[]` bodies (issue #409).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Propagated from a subclass `_prepare_bulk_item`.
+        """
+        # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
+        # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is created), even though
+        # the create schema allows mixed arrays. One POST per (switch, policyType).
+        groups: dict[BulkCreateGroupKey, list[BulkCreateItem]] = defaultdict(list)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._prepare_bulk_item(model_instance, switch_id, **kwargs)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type=self._desired_policy_type(model_instance))
+            groups[group_key].append(BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
+        return dict(groups)
+
+    def _post_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> ResponseType:
+        """
+        # Summary
+
+        Send one bulk-create POST for a `(switch_id, policy_type)` group and queue a deploy for every item the controller accepted.
+        On success that is the whole group, in request order.
+
+        The endpoint answers HTTP 207 with an independent `results[]` status per interface, so one create can be accepted while a
+        sibling in the same request is rejected. On a failed request, the items the response reports as an exact `success`
+        (`_accepted_multistatus_names`, keyed by `name`) are queued before the error propagates, so the module's failure-path finalizer
+        (`deploy_accepted_mutations`) ships them rather than stranding them staged, where a retry would classify them as unchanged and
+        never deploy them. Names are matched case-insensitively and the queued pair keeps the module's identifier: ND echoes the
+        switch-canonical spelling for some interface families (`Port-channel101` for a submitted `port-channel101`). The response is
+        consulted only when the request recorded a new one: a sender exception leaves the previous response in place (issue #554), which
+        must not be mistaken for this request's result.
+
+        A failure that is not a 207 can still have committed part of the group: ND 4.2.1 answers a flat HTTP 500 naming only the failing
+        item and creates the valid ones ahead of it. For that shape the items are recovered from the switch inventory instead
+        (`_created_despite_failure`): one GET, on the failure path only.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the orchestrator defines no `create_bulk_endpoint`.
+        - If the create request fails but the controller accepted (207) or created (any other failure) part of the group. The message
+          names those items.
+
+        ### Exception
+
+        - Propagated unchanged from `_request` for every other failure.
+        """
+        endpoint_class = self.create_bulk_endpoint
+        if endpoint_class is None:
+            raise RuntimeError(f"'{self.__class__.__name__}' cannot bulk create: 'create_bulk_endpoint' is not defined.")
+        api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
+        request_body = {"interfaces": [item.payload for item in items]}
+        recorded = self.rest_send.response_count
+        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        names_before = set(cached_before) if cached_before is not None else None
+        try:
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+        except Exception as e:
+            accepted: list[str] = []
+            verb = "accepted"
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted_names = self._accepted_multistatus_names()
+                accepted = [item.interface_name for item in items if item.interface_name.strip().lower() in accepted_names]
+            else:
+                accepted = self._created_despite_failure(group_key.switch_id, items, names_before)
+                verb = "created"
+            for interface_name in accepted:
+                self._queue_deploy(interface_name, group_key.switch_id)
+            if accepted:
+                raise RuntimeError(f"{e}. The controller {verb} {accepted} from the same request; their deploy stays queued.") from e
+            raise
+        for item in items:
+            self._queue_deploy(item.interface_name, group_key.switch_id)
+        return result
+
+    def _created_despite_failure(self, switch_id: str, items: list[BulkCreateItem], names_before: set[str] | None) -> list[str]:
+        """
+        # Summary
+
+        After a bulk create that failed WITHOUT an HTTP 207, return the submitted interface names the controller created anyway, in
+        request order. The switch inventory is dropped from the cache and read once; a name counts only when it exists now and was
+        absent from `names_before`, the lower-cased names of the inventory cached before the request. Presence alone proves nothing
+        for an interface that already existed (e.g. a system-provisioned one the user merely named, which ND refuses as "already in
+        use"), so with no cached "before" (`names_before is None`) the recovery is skipped and no request is made.
+
+        The re-read never masks the create failure: if it fails, an empty list is returned and the cache entry stays dropped, so a
+        later reader fetches fresh data (the request may have changed the switch either way).
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) bulk-interface-create-500-partial-commit
+        # ND 4.2.1 answers a bulk create whose array holds one failing item with a flat HTTP 500 that names only that item, and still
+        # commits the valid items ahead of it; there is no `results[]` to read. ND 4.3.1 answers the same request with a 207. Without
+        # this recovery the committed items stay staged and a retry reads them as unchanged (lab-verified 2026-09-21, 4.2.1.10).
+        if names_before is None:
+            return []
+        self._switch_interfaces_cache.pop(switch_id, None)
+        try:
+            names_now = self._switch_interfaces(switch_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+        created = []
+        for item in items:
+            name = item.interface_name.strip().lower()
+            if name in names_now and name not in names_before:
+                created.append(item.interface_name)
+        return created
+
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:
         """
@@ -217,7 +416,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Pre-mutation validation for the proposed interfaces. Invoked by `NDStateMachine.manage_state` before create/update
         operations — which are skipped in `--check` mode — so a dry run fails on the same input errors a normal run would hit
-        inside `create`/`update`. Two steps:
+        inside `create`/`update`. Four steps:
 
         1. Resolve every `switch_ip` to a `switchId` via `_require_resolvable_switches`. This runs for every interface
            orchestrator, including those that opt out of the capability preflight, so an unknown switch is reported in check
@@ -226,6 +425,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
            switch reports in the inventory fetched by step 1, so a mismatch fails in check mode too (PR #558 review).
         3. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
            `interface_type`/`interface_mode` ClassVars.
+        4. For `state: overridden`, the IOS-XE discovery prerequisite on the interfaces the override would remove, via
+           `_check_overridden_removals_discovered` (a no-op unless the orchestrator sets `xe_removal_requires_discovery`).
 
         ## Raises
 
@@ -234,10 +435,162 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
         - Propagated from `_check_platform_match` (requested `network_os_type` differs from the switch's `platformType`).
         - Propagated from `validate_switches_capable` (see its docstring).
+        - Propagated from `_check_overridden_removals_discovered` (an override would remove an undiscovered IOS-XE interface).
         """
         self._require_resolvable_switches(model_instances)
         self._check_platform_match(model_instances)
         self.validate_switches_capable(model_instances)
+        self._check_overridden_removals_discovered(model_instances)
+
+    def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-mutation validation for `state: deleted`, invoked by `NDStateMachine` with the existing interfaces about to be removed,
+        in check mode too. A no-op unless the orchestrator sets `xe_removal_requires_discovery`; then every interface must pass
+        `_check_xe_removal_discovered` before anything is queued.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Propagated from `_check_xe_removal_discovered`.
+        """
+        if not self.xe_removal_requires_discovery:
+            return
+        self._check_xe_removal_discovered([(model.interface_name, self._resolve_switch_id(model.switch_ip)) for model in model_instances])
+
+    def _check_overridden_removals_discovered(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Apply `_check_xe_removal_discovered` to the interfaces a `state: overridden` run would remove: the managed interfaces
+        `query_all` returns that the proposed config does not name. `NDStateMachine` runs no delete preflight for the fabric-wide
+        override set and removes only after its creates and updates, so the check belongs here, ahead of every mutation. A no-op for
+        every other state and unless the orchestrator sets `xe_removal_requires_discovery`. `query_all` reads the inventory the state
+        machine already cached, so this adds no request of its own.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `query_all` and `_check_xe_removal_discovered`.
+        """
+        if not self.xe_removal_requires_discovery or self.rest_send.params.get("state") != "overridden":
+            return
+        proposed = {(model.switch_ip, model.interface_name.strip().lower()) for model in model_instances}
+        switch_map = self.fabric_context.switch_map
+        pairs = []
+        for iface in self.query_all() or []:
+            if not isinstance(iface, dict):
+                continue
+            switch_ip = iface.get("switchIp")
+            name = str(iface.get("interfaceName") or "")
+            if switch_ip in switch_map and (switch_ip, name.strip().lower()) not in proposed:
+                pairs.append((name, switch_map[switch_ip]))
+        self._check_xe_removal_discovered(pairs)
+
+    def _check_xe_removal_discovered(self, pairs: Sequence[tuple[str, str]]) -> None:
+        """
+        # Summary
+
+        Fail before any mutation when an IOS-XE interface about to be removed is deployed but not yet discovered by the controller.
+        `pairs` are the `(interface_name, switch_id)` removal candidates; names are matched case-insensitively against the cached
+        per-switch inventory (`_switch_interfaces`), so the common case costs no request.
+
+        A candidate is discovered when its `operData.operationalStatus` is `up` or `down` (the spec enum is `up` / `down` / `unknown`;
+        a missing or unrecognized value counts as not discovered). An undiscovered candidate is one of two things the interface record
+        cannot tell apart, so `_xe_interface_deployed` asks the switch's deployment history, one GET per such candidate:
+
+        - Its configuration was never pushed, or its last push was a successful `no interface <name>`: nothing is on the switch and the
+          removal is safe (e.g. intent created with `config_actions.deploy: false`).
+        - Its last push was a create or update, or a removal that did not succeed: the intent is on the switch and discovery has not
+          caught up. The removal is refused; the module neither polls nor retries, so the caller decides how to wait.
+
+        Unlike the interface diff or the switch's pending configuration, the history is not rewritten by a later staged edit, so a
+        deployed, undiscovered interface that was then edited without a deploy is still refused.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any candidate is an undiscovered IOS-XE interface whose deployment history shows it on the switch. The message names
+          every such interface with its `operationalStatus`.
+        - Via `_request` if a deployment-history query fails.
+        """
+        # TODO(4.2.1) xe-interface-removal-requires-discovery
+        # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface) only once it has
+        # discovered the deployed interface, seconds to minutes after the create deploy. A remove inside that window drops the
+        # intent record, the deploy pushes nothing, and the interface stays on the switch (lab-verified 2026-09-21 on 4.2.1.10 and
+        # 4.3.1.175). NX-OS is unaffected. The record reads `unknown` / `Not discovered` whether the intent was deployed or not, the
+        # per-interface diff reads all-`insert` for both staged intent and a deployed-undiscovered interface with a staged edit, and
+        # the pending configuration lists both; only the per-switch deployment history separates them (lab-verified 2026-09-22).
+        blocked: list[str] = []
+        for interface_name, switch_id in pairs:
+            record = self._switch_interfaces(switch_id).get(interface_name.strip().lower())
+            if record is None:
+                continue
+            network_os = (record.get("configData") or {}).get("networkOS") or {}
+            if network_os.get("networkOSType") != "ios-xe":
+                continue
+            status = str((record.get("operData") or {}).get("operationalStatus") or "").strip().lower()
+            if status in ("up", "down"):
+                continue
+            if self._xe_interface_deployed(interface_name, switch_id):
+                blocked.append(f"{interface_name} on {switch_id} (operationalStatus={status or 'missing'})")
+        if blocked:
+            raise RuntimeError(
+                f"Cannot remove IOS-XE interface(s) {blocked} because Nexus Dashboard has not finished discovering them. "
+                "Retry after operationalStatus becomes up or down."
+            )
+
+    def _xe_interface_deployed(self, interface_name: str, switch_id: str) -> bool:
+        """
+        # Summary
+
+        Return whether the switch's deployment history says `interface_name`'s configuration is on the switch. One GET of the
+        per-switch `deploymentHistory`, filtered to the interface's records (`entityName:<name>`, matched case-insensitively by the
+        controller), newest first, at most `XE_HISTORY_MAX` records. Only records whose first pushed line is `interface <name>` or
+        `no interface <name>` count; ND files companion pushes under the same entity (an SVI's `vlan <id>` / `no vlan <id>`), which are
+        skipped. The newest counted record decides, by its own `completeTimestamp` rather than the response order:
+
+        - none: never deployed -> `False`
+        - a successful `no interface <name>`: removed from the switch -> `False`
+        - anything else (a create or update push, or a removal that did not succeed): on the switch -> `True`
+
+        A response without `deploymentRecords` counts as no history.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_request` if the deployment-history query fails.
+        """
+        name = interface_name.strip().lower()
+        api_endpoint = self._configure_endpoint(EpManageFabricsSwitchesDeploymentHistoryGet(), switch_sn=switch_id)
+        api_endpoint.endpoint_params.filter = f"entityName:{name}"
+        api_endpoint.endpoint_params.sort = "completeTimestamp:desc"
+        api_endpoint.endpoint_params.max = self.XE_HISTORY_MAX
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+        records = result.get("deploymentRecords") if isinstance(result, dict) else None
+        newest: tuple[str, bool] | None = None  # (timestamp, removed_from_switch)
+        for record in records if isinstance(records, list) else []:
+            if not isinstance(record, dict):
+                continue
+            commands = record.get("configCommandResponses") or []
+            first = commands[0] if commands and isinstance(commands[0], dict) else {}
+            first_line = " ".join(str(first.get("command") or "").split()).lower()
+            if first_line == f"interface {name}":
+                removed = False
+            elif first_line == f"no interface {name}":
+                removed = str(record.get("status") or "").strip().lower() == "success"
+            else:
+                continue
+            stamp = str(record.get("completeTimestamp") or record.get("startTimestamp") or "")
+            if newest is None or stamp > newest[0]:
+                newest = (stamp, removed)
+        return newest is not None and not newest[1]
 
     def _check_platform_match(self, model_instances: Sequence[ModelType]) -> None:
         """
