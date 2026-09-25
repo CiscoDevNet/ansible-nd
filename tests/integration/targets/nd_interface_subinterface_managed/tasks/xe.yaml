@@ -1,0 +1,407 @@
+---
+# IOS-XE tests for nd_interface_subinterface_managed (issue #541)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Requires nd_test_xe_switch_ip; gated in tasks/main.yaml. Exercises the iosXeSubinterface template (VLAN tag, L3 addressing) and the
+# admin-state-only iosXeSubinterfaceShutNoshut template through every state, plus the cross-platform rejection. ND creates a
+# subinterface only on a parent whose DISCOVERED mode is routed, so the scenario first converts the parent port to an IOS-XE routed
+# host with nd_interface_ethernet_routed, deploys it and waits for rediscovery; the teardown resets the parent to the fabric-default
+# trunk host. Lab-verified on CAMPUS1 Catalyst 9000v leaves against ND 4.2.1.10 and 4.3.1.175 (see the PR body).
+
+# --- XE SETUP ---
+
+- name: "XE SETUP: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: xe_switches
+
+- name: "XE SETUP: Resolve the Catalyst switch id from its management IP"
+  vars:
+    matches: "{{ xe_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip) | map(attribute='switchId') | list }}"
+  ansible.builtin.set_fact:
+    xe_switch_id: "{{ matches | first | default('') }}"
+
+- name: "XE SETUP: Verify the Catalyst switch is in the fabric"
+  ansible.builtin.assert:
+    that:
+      - xe_switch_id | length > 0
+    fail_msg: "No switch with fabricManagementIp {{ test_xe_switch_ip }} in fabric {{ test_xe_fabric_name }}"
+
+- name: "XE SETUP: Remove any leftover XE test subinterfaces"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config: "{{ xe_cleanup_config }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: xe_setup_cleanup
+
+- name: "DEBUG: Show XE cleanup result"
+  ansible.builtin.debug:
+    var: xe_setup_cleanup
+
+- name: "XE SETUP: Convert the parent port to an IOS-XE routed host and deploy it"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_parent_routed }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: xe_parent_setup
+
+- name: "XE SETUP: Wait until ND has discovered the parent as routed"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_parent_discovery
+  until: >-
+    xe_parent_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'equalto', xe_parent)
+    | selectattr('operData.mode', 'defined')
+    | selectattr('operData.mode', 'equalto', 'routed')
+    | list | length == 1
+  retries: 18
+  delay: 10
+
+# --- XE NEGATIVE: NX-OS-only field on the IOS-XE branch ---
+
+- name: "XE NEGATIVE: mtu on an IOS-XE subinterface is refused before any controller call (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &xe_bad_mtu
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_subif_bad_mtu }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_bad_mtu
+  ignore_errors: true
+
+- name: "XE NEGATIVE: mtu on an IOS-XE subinterface is refused before any controller call (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_bad_mtu
+  register: nm_xe_bad_mtu
+  ignore_errors: true
+
+- name: "XE NEGATIVE: Verify the refusal names the offending field"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_bad_mtu is failed
+      - nm_xe_bad_mtu is failed
+      - "'mtu' in nm_xe_bad_mtu.msg"
+
+# --- XE MERGED CREATE: both IOS-XE policy types in one task (one POST per policy type) ---
+
+- name: "XE MERGED CREATE: Create .100 (iosXeSubinterface) and .101 (iosXeSubinterfaceShutNoshut) in one task (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &xe_merge
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_subif_100 }}"
+      - "{{ xe_subif_101_shut }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_xe_merged
+
+- name: "XE MERGED CREATE: Create .100 (iosXeSubinterface) and .101 (iosXeSubinterfaceShutNoshut) in one task (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_merge
+  register: nm_xe_merged
+
+- name: "DEBUG: Show XE merged create result"
+  ansible.builtin.debug:
+    var: nm_xe_merged
+
+- name: "XE MERGED CREATE: Verify both subinterfaces and the echoed discriminators"
+  vars:
+    subif100: "{{ nm_xe_merged.after | selectattr('interface_name', 'equalto', xe_parent ~ '.100') | first }}"
+    subif101: "{{ nm_xe_merged.after | selectattr('interface_name', 'equalto', xe_parent ~ '.101') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged is changed
+      - nm_xe_merged is changed
+      - subif100.config_data.network_os.network_os_type == "ios-xe"
+      - subif100.config_data.network_os.policy.policy_type == "iosXeSubinterface"
+      - subif100.config_data.network_os.policy.vlan_id == 100
+      - subif100.config_data.network_os.policy.ip == "10.99.100.1"
+      - subif100.config_data.network_os.policy.prefix == 24
+      - subif100.config_data.network_os.policy.ipv6_prefix == 64
+      - subif101.config_data.network_os.policy.policy_type == "iosXeSubinterfaceShutNoshut"
+      - subif101.config_data.network_os.policy.admin_state == false
+
+- name: "XE MERGED IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_merge
+  check_mode: true
+  register: cm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_merge
+  register: nm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_idem is not changed
+      - nm_xe_merged_idem is not changed
+
+# --- XE MERGED UPDATE ---
+
+- name: "XE MERGED UPDATE: Change the description and IPv4 address on .100 (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &xe_merge_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_subif_100_updated }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_xe_update
+
+- name: "XE MERGED UPDATE: Change the description and IPv4 address on .100 (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_merge_updated
+  register: nm_xe_update
+
+- name: "XE MERGED UPDATE: Verify"
+  vars:
+    subif100: "{{ nm_xe_update.after | selectattr('interface_name', 'equalto', xe_parent ~ '.100') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_update is changed
+      - nm_xe_update is changed
+      - subif100.config_data.network_os.policy.description == "Updated XE subif 100"
+      - subif100.config_data.network_os.policy.ip == "10.99.100.2"
+
+- name: "XE MERGED UPDATE IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_subinterface_managed: *xe_merge_updated
+  register: nm_xe_update_idem
+
+- name: "XE MERGED UPDATE IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_update_idem is not changed
+
+# --- XE REPLACED ---
+
+- name: "XE REPLACED: Replace .100 back to the base config (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &xe_replace
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_subif_100 }}"
+    config_actions:
+      deploy: true
+    state: replaced
+  check_mode: true
+  register: cm_xe_replaced
+
+- name: "XE REPLACED: Replace .100 back to the base config (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_replace
+  register: nm_xe_replaced
+
+- name: "XE REPLACED: Verify the base config is restored"
+  vars:
+    subif100: "{{ nm_xe_replaced.after | selectattr('interface_name', 'equalto', xe_parent ~ '.100') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_replaced is changed
+      - nm_xe_replaced is changed
+      - subif100.config_data.network_os.policy.description == "Ansible integration test XE subif 100"
+      - subif100.config_data.network_os.policy.ip == "10.99.100.1"
+
+- name: "XE REPLACED IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_subinterface_managed: *xe_replace
+  register: nm_xe_replaced_idem
+
+- name: "XE REPLACED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_replaced_idem is not changed
+
+# --- XE MERGED CREATE: explicit policy_type ---
+
+- name: "XE MERGED CREATE: Create .102 (explicit policy_type iosXeSubinterface)"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_subif_102 }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_xe_merged_102
+
+- name: "XE MERGED CREATE: Verify .102"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_merged_102 is changed
+      - nm_xe_merged_102.after | selectattr('interface_name', 'equalto', xe_parent ~ '.102') | list | length == 1
+
+# --- XE DISCOVERY WAIT (before overridden) ---
+# TODO(4.3.1) xe-interface-removal-requires-discovery
+# ND generates the switch-side removal of an IOS-XE interface only once it has discovered the deployed interface, and the module refuses
+# a removal before that. Discovery is load-dependent, not release-specific: 5-30 s on either release when idle, about two and a half
+# minutes on 4.3.1.175 while two integration chains ran in parallel (2026-09-21). Real playbooks delete long after creating; this
+# scenario does both in one run, so wait here, for up to ten minutes so a loaded controller cannot fail the run.
+
+- name: "XE DISCOVERY WAIT: Wait until ND has discovered .100, .101 and .102 on the Catalyst"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_discovery
+  until: >-
+    xe_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', [xe_parent ~ '.100', xe_parent ~ '.101', xe_parent ~ '.102'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 3
+  retries: 60
+  delay: 10
+
+# --- XE OVERRIDDEN ---
+
+- name: "XE OVERRIDDEN: Keep only .100 and .101 (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &xe_override
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_subif_100 }}"
+      - "{{ xe_subif_101_shut }}"
+    config_actions:
+      deploy: true
+    state: overridden
+  check_mode: true
+  register: cm_xe_overridden
+
+- name: "XE OVERRIDDEN: Keep only .100 and .101 (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_override
+  register: nm_xe_overridden
+
+- name: "XE OVERRIDDEN: Verify .102 was removed and the others kept"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_overridden is changed
+      - nm_xe_overridden is changed
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', xe_parent ~ '.102') | list | length == 0
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', xe_parent ~ '.100') | list | length == 1
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', xe_parent ~ '.101') | list | length == 1
+
+- name: "XE OVERRIDDEN IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_subinterface_managed: *xe_override
+  register: nm_xe_overridden_idem
+
+- name: "XE OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_overridden_idem is not changed
+
+# --- XE DELETED (abbreviated names: the model canonicalizes them, which is what ND needs to remove the interface from the switch) ---
+
+- name: "XE DELETED: Delete .100 and .101 (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &xe_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: "{{ (xe_parent ~ '.100') | lower }}"
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: "{{ (xe_parent ~ '.101') | lower }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  check_mode: true
+  register: cm_xe_deleted
+
+- name: "XE DELETED: Delete .100 and .101 (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *xe_delete
+  register: nm_xe_deleted
+
+- name: "XE DELETED: Verify"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_deleted is changed
+      - nm_xe_deleted is changed
+      - nm_xe_deleted.after | selectattr('interface_name', 'in', [xe_parent ~ '.100', xe_parent ~ '.101']) | list | length == 0
+
+- name: "XE DELETED IDEMPOTENT: Re-delete"
+  cisco.nd.nd_interface_subinterface_managed: *xe_delete
+  register: nm_xe_deleted_idem
+
+- name: "XE DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_deleted_idem is not changed
+
+# --- XE VERIFY: nothing left on the Catalyst ---
+
+- name: "XE VERIFY: Wait until no test subinterface remains in the Catalyst running config"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/diff"
+    method: get
+  register: xe_diff
+  vars:
+    running: "{{ xe_diff.jsondata.diffConfigs | default([]) | map(attribute='runningConfig') | select('defined') | join('\n') }}"
+  until: >-
+    ('interface ' ~ xe_parent ~ '.100') not in running
+    and ('interface ' ~ xe_parent ~ '.101') not in running
+    and ('interface ' ~ xe_parent ~ '.102') not in running
+  retries: 12
+  delay: 10
+
+# --- XE TEARDOWN: reset the parent to the fabric-default trunk host ---
+
+# The trunk-host module manages only interfaces that already carry a trunk-host policy, so the routed parent is first converged back
+# into an IOS-XE trunk host (replaced) and then reset to the defaults-only fabric default (deleted), both deployed.
+
+- name: "XE TEARDOWN: Convert the parent port back to an IOS-XE trunk host and deploy it"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_names:
+          - "{{ xe_parent }}"
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              admin_state: true
+    config_actions:
+      deploy: true
+    state: replaced
+  register: xe_parent_teardown
+
+- name: "XE TEARDOWN: Reset the parent port to the fabric-default IOS-XE trunk host and deploy it"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_names:
+          - "{{ xe_parent }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: xe_parent_reset
+# TODO(4.3.1) xe-interface-removal-requires-discovery
+# ND's discovered mode of the parent lags the trunk-host reset deploy; on 2026-09-21 it read `routed` for more than three minutes after
+# the deploy on an otherwise idle controller, on both releases. Wait for up to ten minutes so the next target starts from a discovered
+# trunk parent.
+- name: "XE TEARDOWN: Wait until ND has discovered the parent as a trunk again"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_parent_rediscovery
+  until: >-
+    xe_parent_rediscovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'equalto', xe_parent)
+    | selectattr('operData.mode', 'defined')
+    | selectattr('operData.mode', 'equalto', 'trunk')
+    | list | length == 1
+  retries: 60
+  delay: 10
