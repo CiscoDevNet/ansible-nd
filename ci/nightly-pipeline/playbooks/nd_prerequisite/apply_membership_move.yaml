@@ -1,0 +1,28 @@
+---
+# membership_move: cross-fabric relocation (only external_edge_1 external -> advanced is
+# ever planned). Remove from the source fabric, then re-onboard into the
+# destination with the confirmed role. Switch credentials come from the runner
+# environment; they are never stored in the registry or serialized.
+- name: "membership_move remove {{ _ndp_operation.switch_ref }} from {{ _ndp_operation.source_fabric_ref }}"
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ _ndp_fabric_name_by_ref[_ndp_operation.source_fabric_ref] }}"
+    state: deleted
+    config:
+      - seed_ip: "{{ _ndp_switch_seed_ip[_ndp_operation.switch_ref] }}"
+  run_once: true
+
+- name: "membership_move add {{ _ndp_operation.switch_ref }} to {{ _ndp_operation.destination_fabric_ref }} as {{ _ndp_operation.desired_role }}"
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ _ndp_fabric_name_by_ref[_ndp_operation.destination_fabric_ref] }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+    config:
+      - seed_ip: "{{ _ndp_switch_seed_ip[_ndp_operation.switch_ref] }}"
+        role: "{{ _ndp_operation.desired_role }}"
+        username: "{{ nd_switch_username | default(omit) }}"
+        password: "{{ nd_switch_password | default(omit) }}"
+        preserve_config: true
+  run_once: true
+  no_log: true

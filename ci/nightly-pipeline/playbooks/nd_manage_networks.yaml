@@ -1,0 +1,70 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_networks.
+# Self-contained managed-fabric coverage: creates a namespaced L2-only network,
+# gathers it, then deletes it.
+- name: cisco.nd nightly - nd_manage_networks
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_networks
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    nd_net_name: ANSIBLE_NIGHTLY_NET
+    nd_net_id: 51901
+    nd_net_vlan: 2301
+  pre_tasks:
+    - name: Read the managed fabric network VLAN range
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ nd_fabric_name }}"
+        method: get
+      register: nd_network_fabric_state
+      no_log: true
+
+    - name: Validate the nightly network VLAN is inside the fabric range
+      ansible.builtin.assert:
+        that:
+          - nd_network_fabric_state.current.management.networkVlanRange is defined
+          - nd_net_vlan | int >= (nd_network_fabric_state.current.management.networkVlanRange.split('-')[0] | int)
+          - nd_net_vlan | int <= (nd_network_fabric_state.current.management.networkVlanRange.split('-')[1] | int)
+        fail_msg: >-
+          Nightly network VLAN {{ nd_net_vlan }} is outside {{ nd_fabric_name }}
+          network VLAN range {{ nd_network_fabric_state.current.management.networkVlanRange }}.
+
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Gather existing networks
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+        config: []
+
+    - name: Create an L2-only network (definition only, no deploy)
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - network_name: "{{ nd_net_name }}"
+            is_l2only: true
+            network_id: "{{ nd_net_id }}"
+            vlan_id: "{{ nd_net_vlan }}"
+            vlan_name: "{{ nd_net_name }}_VLAN"
+            deploy: true
+
+    - name: Gather networks after create
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+        config: []
+
+    - name: Delete the test network
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: "{{ nd_net_name }}"
+            is_l2only: true
