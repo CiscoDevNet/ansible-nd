@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies i
     FABRIC_CONFIG_ACTIONS,
     INTERFACE_CONFIG_ACTIONS,
     RESOURCE_CONFIG_ACTIONS,
+    SECURITY_CONFIG_ACTIONS,
     SWITCH_CONFIG_ACTIONS,
 )
 
@@ -110,3 +111,12 @@ def test_config_actions_argument_spec_00040() -> None:
     }
     with pytest.raises(ValueError, match="Unknown option name"):
         config_actions_spec(SWITCH_CONFIG_ACTIONS, include=("bogus",))
+
+
+def test_config_actions_argument_spec_00050() -> None:
+    """Verify security config actions are opt-in and support switch/global deploy."""
+    options = config_actions_spec(SECURITY_CONFIG_ACTIONS)["config_actions"]["options"]
+
+    assert options["save"] == {"type": "bool", "default": False}
+    assert options["deploy"] == {"type": "bool", "default": False}
+    assert options["type"] == {"type": "str", "default": "switch", "choices": ["switch", "global"]}

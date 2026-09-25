@@ -18,6 +18,7 @@ and switches list endpoints, surfaces 404s as "fabric not found", parses the
 from __future__ import annotations
 
 import inspect
+from unittest.mock import patch
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
@@ -798,3 +799,25 @@ def test_fabric_context_00330() -> None:
     match = r"Fabric 'fabric_1' is owned by a different controller"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_for_mutation()
+
+
+def test_fabric_context_00340() -> None:
+    """Verify summary and switch inventory queries preserve the requested cluster."""
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1", cluster_name="cluster-a")
+
+    with patch.object(
+        instance,
+        "_query_get",
+        side_effect=[{"name": "fabric_1"}, {"switches": []}],
+    ) as query_get:
+        assert instance.fabric_summary == {"name": "fabric_1"}
+        assert instance.switches == []
+
+    assert instance.cluster_name == "cluster-a"
+    assert query_get.call_args_list[0].args[0] == "/api/v1/manage/fabrics/fabric_1/summary?clusterName=cluster-a"
+    assert query_get.call_args_list[1].args[0] == "/api/v1/manage/fabrics/fabric_1/switches?clusterName=cluster-a"

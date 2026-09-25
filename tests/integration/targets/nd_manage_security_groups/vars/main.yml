@@ -1,0 +1,24 @@
+---
+security_group:
+  name: "GWEB_{{ nd_test_security_run_id }}"
+  id: "{{ nd_test_security_group_id | int }}"
+  description: Ansible security group
+  attach: false
+  vrf_names:
+    - "{{ nd_test_security_vrf_name }}"
+  selectors:
+    - type: externalSubnet
+      vrf_name: "{{ nd_test_security_vrf_name }}"
+      ip: "{{ nd_test_security_selector_prefix }}"
+
+security_group_replaced:
+  name: "GWEB_{{ nd_test_security_run_id }}"
+  id: "{{ nd_test_security_group_id | int }}"
+  description: Ansible security group updated
+  attach: false
+  vrf_names:
+    - "{{ nd_test_security_vrf_name }}"
+  selectors:
+    - type: externalSubnet
+      vrf_name: "{{ nd_test_security_vrf_name }}"
+      ip: "{{ nd_test_security_selector_prefix_replaced }}"

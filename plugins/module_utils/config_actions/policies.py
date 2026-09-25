@@ -33,6 +33,15 @@ FABRIC_CONFIG_ACTIONS = ConfigActionsPolicy(
     resource_interaction="none",
 )
 
+SECURITY_CONFIG_ACTIONS = ConfigActionsPolicy(
+    name="security",
+    supported=frozenset({"save", "deploy", "type"}),
+    defaults=ConfigActionsDefaults(save=False, deploy=False, type="switch"),
+    allowed_types=frozenset({"switch", "global"}),
+    deploy_requires_save=True,
+    resource_interaction="none",
+)
+
 SWITCH_CONFIG_ACTIONS = ConfigActionsPolicy(
     name="switch",
     supported=frozenset({"save", "deploy", "type"}),

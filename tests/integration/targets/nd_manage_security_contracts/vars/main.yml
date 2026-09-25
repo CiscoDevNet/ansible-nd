@@ -1,0 +1,30 @@
+---
+security_contract_protocol:
+  name: "PCTR_{{ nd_test_security_run_id }}"
+  match_type: any
+  match_items:
+    - match_name: HTTPS
+      type: IPv4
+      protocol_options: TCP
+      dst_port_range: "443"
+
+security_contract:
+  name: "CWEB_{{ nd_test_security_run_id }}"
+  description: Ansible security contract
+  # Keep the live fixture portable across the version-specific scope defaults.
+  direction: custom
+  rules:
+    - rule_direction: bidirectional
+      action: permit
+      protocol_definition_name: >-
+        PCTR_{{ nd_test_security_run_id }}
+
+security_contract_replaced:
+  name: "CWEB_{{ nd_test_security_run_id }}"
+  description: Ansible security contract updated
+  direction: custom
+  rules:
+    - rule_direction: bidirectional
+      action: permitLog
+      protocol_definition_name: >-
+        PCTR_{{ nd_test_security_run_id }}

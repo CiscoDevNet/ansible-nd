@@ -66,11 +66,11 @@ class FabricContext:
     - Via the `switches` / `switch_map` accessors if the fabric does not exist.
     """
 
-    def __init__(self, rest_send: RestSend, fabric_name: str):
+    def __init__(self, rest_send: RestSend, fabric_name: str, cluster_name: str | None = None):
         """
         # Summary
 
-        Initialize `FabricContext` with a `RestSend` instance and fabric name. Metadata is not fetched until needed.
+        Initialize `FabricContext` with a `RestSend` instance, fabric name, and optional target cluster. Metadata is not fetched until needed.
 
         ## Raises
 
@@ -78,6 +78,7 @@ class FabricContext:
         """
         self._rest_send = rest_send
         self._fabric_name = fabric_name
+        self._cluster_name = cluster_name
         # `_Sentinel.UNSET` distinguishes "not yet fetched" from "fetched but the fabric does not exist" (None).
         self._fabric_summary: dict | None | Literal[_Sentinel.UNSET] = _Sentinel.UNSET
         self._switches: list[dict] | None = None
@@ -133,6 +134,11 @@ class FabricContext:
         return self._fabric_name
 
     @property
+    def cluster_name(self) -> str | None:
+        """Return the optional cluster used for fabric and switch queries."""
+        return self._cluster_name
+
+    @property
     def fabric_summary(self) -> dict | None:
         """
         # Summary
@@ -154,6 +160,7 @@ class FabricContext:
         if self._fabric_summary is _Sentinel.UNSET:
             ep = EpManageFabricsSummaryGet()
             ep.fabric_name = self._fabric_name
+            ep.endpoint_params.cluster_name = self._cluster_name
             result = self._query_get(ep.path)
             if result and "code" in result:
                 raise RuntimeError(f"GET {ep.path} returned an embedded error instead of a fabric summary: {result.get('message', result)}")
@@ -262,6 +269,7 @@ class FabricContext:
             return
         ep = EpManageSwitchesListGet()
         ep.fabric_name = self._fabric_name
+        ep.endpoint_params.cluster_name = self._cluster_name
         result = self._query_get(ep.path)
         # Not an ND deviation (no TODO/vault note): ND correctly returns 404 for a missing fabric. `_query_get` swallows
         # that 404 into `{}`, so we confirm against `fabric_summary` and raise the fabric-level error here rather than

@@ -1,0 +1,22 @@
+---
+security_protocol_definition:
+  name: "PWEB_{{ nd_test_security_run_id }}"
+  description: Ansible security protocol definition
+  match_type: any
+  match_items:
+    - match_name: HTTPS
+      type: IPv4
+      protocol_options: TCP
+      dst_port_range: "443"
+      tcp_flags: "{{ nd_test_security_tcp_flags | default('syn') }}"
+
+security_protocol_definition_replaced:
+  name: "PWEB_{{ nd_test_security_run_id }}"
+  description: Ansible security protocol definition updated
+  match_type: any
+  match_items:
+    - match_name: WEB
+      type: IPv4
+      protocol_options: TCP
+      dst_port_range: "80-443"
+      tcp_flags: "{{ nd_test_security_tcp_flags_replaced | default('ack') }}"
