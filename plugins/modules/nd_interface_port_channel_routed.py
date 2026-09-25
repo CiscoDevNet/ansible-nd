@@ -81,7 +81,8 @@ options:
                 description:
                 - The policy configuration for the port-channel.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
-                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted.
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -146,7 +147,8 @@ options:
                   mtu:
                     description:
                     - The MTU of the port-channel.
-                    - Valid range is 576-9216 for C(l3Po), where the ND default is V(9216), and 1500-9216 for C(iosXeL3PortChannel).
+                    - Valid range is 576-9216 for C(l3Po) and 1500-9216 for C(iosXeL3PortChannel).
+                    - The ND default is V(9216) for C(l3Po); C(iosXeL3PortChannel) has none.
                     - Applies to all policy_type values.
                     type: int
                   netflow:
@@ -174,7 +176,8 @@ options:
                   pim_dr_priority:
                     description:
                     - The priority for PIM designated-router election on the port-channel.
-                    - Valid range is 1-4294967295. The ND default is V(1).
+                    - Valid range is 1-4294967295.
+                    - The ND default is V(1).
                     - Applies when policy_type is C(l3Po).
                     type: int
                   pim_sparse:

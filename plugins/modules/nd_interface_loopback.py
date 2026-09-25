@@ -69,6 +69,8 @@ options:
                 description:
                 - The policy configuration for the loopback interface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -91,7 +93,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the loopback interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   ip:
@@ -116,6 +118,7 @@ options:
                     description:
                     - The VRF to which the loopback interface belongs.
                     - Maximum 32 characters.
+                    - The ND default is V(default) for C(ipfmLoopback); the other policy types have none.
                     - Applies when policy_type is C(loopback), C(ipfmLoopback), C(iosXeLoopback), C(iosXeInternalLoopback), or C(csrLoopback).
                     type: str
                   ipv6:
@@ -128,16 +131,19 @@ options:
                   route_map_tag:
                     description:
                     - The route-map tag associated with the interface IP address.
+                    - The ND default is V(12345).
                     - Applies when policy_type is C(loopback).
                     type: str
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(ipfmLoopback).
                     type: bool
                   is_service_reflect:
                     description:
                     - Whether to use this loopback as the service-reflect source address.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(ipfmLoopback).
                     type: bool
                   routing_tag:
@@ -171,17 +177,20 @@ options:
                   enable_pim:
                     description:
                     - Enable PIM on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(iosXeInternalLoopback).
                     type: bool
                   dci_routing_protocol:
                     description:
                     - The DCI (Data Center Interconnect) link-state routing protocol.
+                    - The ND default is V(isis).
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                     choices: [ ospf, isis ]
                   dci_routing_tag:
                     description:
                     - The DCI (Data Center Interconnect) routing tag.
+                    - The ND default is V(MPLS_UNDERLAY).
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                   ospf_area_id:
