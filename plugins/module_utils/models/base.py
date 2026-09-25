@@ -205,10 +205,7 @@ class NDBaseModel(BaseModel, ABC):
         replacement fields are declared on the nested management model.
         """
         values: set[str] = set()
-        fields_by_wire_key = {
-            field_info.alias or field_name: field_name
-            for field_name, field_info in type(self).model_fields.items()
-        }
+        fields_by_wire_key = {field_info.alias or field_name: field_name for field_name, field_info in type(self).model_fields.items()}
 
         for wire_key in self.replacement_preserve_secret_fields:
             field_name = fields_by_wire_key.get(wire_key)
@@ -236,17 +233,9 @@ class NDBaseModel(BaseModel, ABC):
         if isinstance(value, str):
             return {value} if value else set()
         if isinstance(value, dict):
-            return {
-                secret
-                for child in value.values()
-                for secret in NDBaseModel._secret_strings(child)  # pylint: disable=protected-access
-            }
+            return {secret for child in value.values() for secret in NDBaseModel._secret_strings(child)}  # pylint: disable=protected-access
         if isinstance(value, (list, tuple, set)):
-            return {
-                secret
-                for child in value
-                for secret in NDBaseModel._secret_strings(child)  # pylint: disable=protected-access
-            }
+            return {secret for child in value for secret in NDBaseModel._secret_strings(child)}  # pylint: disable=protected-access
         return set()
 
     def to_payload(self, **kwargs) -> Dict[str, Any]:
@@ -451,10 +440,7 @@ class NDBaseModel(BaseModel, ABC):
         proposed values always win.
         """
         if not isinstance(existing, type(self)):
-            raise TypeError(
-                f"Cannot prepare {type(self).__name__} from {type(existing).__name__}. "
-                "Both must be the same type."
-            )
+            raise TypeError(f"Cannot prepare {type(self).__name__} from {type(existing).__name__}. " "Both must be the same type.")
 
         candidate = self.model_copy(deep=True)
         if candidate._preserve_replacement_fields(existing):  # pylint: disable=protected-access

@@ -219,9 +219,7 @@ def test_nd_state_machine_fabric_replacement_00020(
     del case_name
     response = _existing_response(fabric_type, opaque_key, opaque_value)
     spy = _replacement_spy(orchestrator_class, response)(rest_send=_rest_send())
-    instance = NDStateMachine(
-        module=_module(state, license_tier="premier"), model_orchestrator=spy
-    )
+    instance = NDStateMachine(module=_module(state, license_tier="premier"), model_orchestrator=spy)
 
     instance.manage_state()
 
@@ -254,9 +252,7 @@ def test_nd_state_machine_fabric_replacement_00030() -> None:
     - NDStateMachine._execute_operation()
     """
     response = _existing_response("vxlanEbgp", "borderCount", 0)
-    spy = _replacement_spy(ManageEbgpFabricOrchestrator, response)(
-        rest_send=_rest_send()
-    )
+    spy = _replacement_spy(ManageEbgpFabricOrchestrator, response)(rest_send=_rest_send())
     instance = NDStateMachine(
         module=_module("replaced", license_tier="premier", check_mode=True),
         model_orchestrator=spy,

@@ -55,9 +55,7 @@ def _fabric_config(fabric_name: str = "fabric1", **management) -> dict:
     }
 
 
-def _fabric_response(
-    fabric_type: str, fabric_name: str = "fabric1", **management
-) -> dict:
+def _fabric_response(fabric_type: str, fabric_name: str = "fabric1", **management) -> dict:
     return {
         "name": fabric_name,
         "category": "fabric",
@@ -66,12 +64,8 @@ def _fabric_response(
     }
 
 
-@pytest.mark.parametrize(
-    "model_class,fabric_type,opaque_key,opaque_value", FABRIC_CASES
-)
-def test_manage_fabric_replacement_00010(
-    model_class, fabric_type, opaque_key, opaque_value
-) -> None:
+@pytest.mark.parametrize("model_class,fabric_type,opaque_key,opaque_value", FABRIC_CASES)
+def test_manage_fabric_replacement_00010(model_class, fabric_type, opaque_key, opaque_value) -> None:
     """
     # Summary
 
@@ -106,9 +100,7 @@ def test_manage_fabric_replacement_00010(
     existing = model_class.from_response(_fabric_response(fabric_type, **management))
     proposed = model_class.from_config(_fabric_config())
     candidate = proposed.prepare_for_replacement(existing)
-    management_spec = model_class.get_argument_spec()["config"]["options"][
-        "management"
-    ]["options"]
+    management_spec = model_class.get_argument_spec()["config"]["options"]["management"]["options"]
 
     assert existing.get_diff(candidate, exclude_unset=False) is True
     assert candidate.to_payload()["management"][opaque_key] == opaque_value
@@ -134,12 +126,7 @@ def test_manage_fabric_replacement_00020() -> None:
     existing = FabricExternalConnectivityModel.from_response(response)
     proposed = FabricExternalConnectivityModel.from_config(_fabric_config())
 
-    assert (
-        existing.get_diff(
-            proposed.prepare_for_replacement(existing), exclude_unset=False
-        )
-        is False
-    )
+    assert existing.get_diff(proposed.prepare_for_replacement(existing), exclude_unset=False) is False
 
 
 def test_manage_fabric_replacement_00025() -> None:
@@ -162,9 +149,7 @@ def test_manage_fabric_replacement_00025() -> None:
         responseStatus="READY",
     )
     existing = FabricIbgpModel.from_response(response)
-    candidate = FabricIbgpModel.from_config(_fabric_config()).prepare_for_replacement(
-        existing
-    )
+    candidate = FabricIbgpModel.from_config(_fabric_config()).prepare_for_replacement(existing)
 
     management_payload = candidate.to_payload()["management"]
     assert management_payload["ntpAuthKey"] == "encrypted-ntp-secret"
@@ -190,9 +175,7 @@ def test_manage_fabric_replacement_00030(model_class, fabric_type) -> None:
     - NDBaseModel.prepare_for_replacement()
     - VxlanEbgpManagementModel.replacement_preserve_fields
     """
-    existing = model_class.from_response(
-        _fabric_response(fabric_type, bgpAsnRange="3001-4000")
-    )
+    existing = model_class.from_response(_fabric_response(fabric_type, bgpAsnRange="3001-4000"))
 
     omitted = model_class.from_config(_fabric_config())
     assert "bgpAsnRange" not in omitted.to_payload()["management"]
@@ -221,9 +204,7 @@ def test_manage_fabric_replacement_00040(model_class, fabric_type) -> None:
     - FabricBaseModel.get_argument_spec()
     - NDBaseModel.get_diff()
     """
-    management_spec = model_class.get_argument_spec()["config"]["options"][
-        "management"
-    ]["options"]
+    management_spec = model_class.get_argument_spec()["config"]["options"]["management"]["options"]
     assert management_spec["vrf_lite_ipv6_subnet_range"] == {"type": "str"}
     assert management_spec["vrf_lite_ipv6_subnet_target_mask"] == {"type": "int"}
 
@@ -239,12 +220,7 @@ def test_manage_fabric_replacement_00040(model_class, fabric_type) -> None:
             vrfLiteIpv6SubnetTargetMask=126,
         )
     )
-    assert (
-        existing_default.get_diff(
-            proposed.prepare_for_replacement(existing_default), exclude_unset=False
-        )
-        is True
-    )
+    assert existing_default.get_diff(proposed.prepare_for_replacement(existing_default), exclude_unset=False) is True
 
     existing_custom = model_class.from_response(
         _fabric_response(
@@ -253,12 +229,7 @@ def test_manage_fabric_replacement_00040(model_class, fabric_type) -> None:
             vrfLiteIpv6SubnetTargetMask=124,
         )
     )
-    assert (
-        existing_custom.get_diff(
-            proposed.prepare_for_replacement(existing_custom), exclude_unset=False
-        )
-        is False
-    )
+    assert existing_custom.get_diff(proposed.prepare_for_replacement(existing_custom), exclude_unset=False) is False
 
     explicit = model_class.from_config(
         _fabric_config(
@@ -271,8 +242,6 @@ def test_manage_fabric_replacement_00040(model_class, fabric_type) -> None:
     assert explicit_payload["vrfLiteIpv6SubnetTargetMask"] == 124
 
     with pytest.raises(ValidationError):
-        model_class.from_config(
-            _fabric_config(vrf_lite_ipv6_subnet_range="10.0.0.0/24")
-        )
+        model_class.from_config(_fabric_config(vrf_lite_ipv6_subnet_range="10.0.0.0/24"))
     with pytest.raises(ValidationError):
         model_class.from_config(_fabric_config(vrf_lite_ipv6_subnet_target_mask=128))
