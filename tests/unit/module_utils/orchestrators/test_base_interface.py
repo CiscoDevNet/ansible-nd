@@ -26,6 +26,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import inspect
 import logging
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -361,6 +362,48 @@ def test_base_interface_00320() -> None:
     match = r"Fabric 'fabric_1' is in deployment freeze mode"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_prerequisites()
+
+
+@pytest.mark.parametrize(
+    "state, expected_method",
+    [
+        ("gathered", "read"),
+        ("merged", "mutation"),
+        ("replaced", "mutation"),
+        ("overridden", "mutation"),
+        ("deleted", "mutation"),
+    ],
+)
+def test_base_interface_00330(
+    state,
+    expected_method,
+) -> None:
+    """
+    Verify only gathered state uses read validation; all write states use
+    mutation validation.
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.params["state"] = state
+
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    fabric_context = SimpleNamespace(
+        validate_for_read=Mock(),
+        validate_for_mutation=Mock(),
+    )
+    instance._fabric_context = fabric_context
+
+    instance.validate_prerequisites()
+
+    if expected_method == "read":
+        fabric_context.validate_for_read.assert_called_once_with()
+        fabric_context.validate_for_mutation.assert_not_called()
+    else:
+        fabric_context.validate_for_read.assert_not_called()
+        fabric_context.validate_for_mutation.assert_called_once_with()
 
 
 # =============================================================================

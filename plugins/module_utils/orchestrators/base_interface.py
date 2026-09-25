@@ -26,7 +26,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    ModelType,
+    NDBaseOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
@@ -47,7 +50,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist or is owned by
+      another controller.
+    - For mutation states, also if the fabric is in deployment-freeze mode.
+    - Read-only gathered operations remain permitted during deployment freeze.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `deploy_pending` if the bulk deploy API request fails.
     - Via `deploy_accepted_mutations` if the failure-path deploy API request fails.
@@ -64,6 +70,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
+
+    # Maximum Lucene expressions per switch before collapsing to the base query
+    # Beyond this threshold, a single broad query is cheaper than N targeted ones.
+    _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
+    _MAX_TOTAL_REQUESTS: ClassVar[int] = 300
 
     def model_post_init(self, __context) -> None:
         """
@@ -190,6 +201,43 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         config_items = self.rest_send.params.get("config") or []
         config_ips = {item.get("switch_ip") for item in config_items if item.get("switch_ip")}
         return {ip: sid for ip, sid in switch_map.items() if ip in config_ips}
+
+    def _enforce_gathered_query_limits(
+        self,
+        query_plan: dict[str, tuple[str, set[str]]],
+        base_expression: str,
+    ) -> None:
+        """
+        Limit gathered-state REST fan-out without silently omitting switches.
+
+        Per-switch expression sets that exceed the configured threshold are replaced
+        with the broad base expression. If the complete plan still exceeds the total
+        request budget, every switch is reduced to one base request.
+
+        Broadening the server query is safe because the generic local gathered filter
+        remains the final correctness layer.
+
+        Raises:
+            ValueError: If the number of distinct switches alone exceeds the total
+                request limit, because one request per switch is the irreducible
+                minimum.
+        """
+        for _switch_id, expressions in query_plan.values():
+            if len(expressions) > self._MAX_EXPRESSIONS_PER_SWITCH:
+                expressions.clear()
+                expressions.add(base_expression)
+
+        total_requests = sum(len(expressions) for _switch_id, expressions in query_plan.values())
+
+        if total_requests > self._MAX_TOTAL_REQUESTS:
+            for _switch_id, expressions in query_plan.values():
+                expressions.clear()
+                expressions.add(base_expression)
+
+            total_requests = len(query_plan)
+
+        if total_requests > self._MAX_TOTAL_REQUESTS:
+            raise ValueError(f"Gathered query requires {total_requests} switch requests, exceeding the supported limit of {self._MAX_TOTAL_REQUESTS}.")
 
     @property
     def capability_preflight(self) -> InterfaceCapabilityPreflight:
@@ -347,15 +395,29 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         # Summary
 
-        Run pre-flight validation before any CRUD operations. Checks that the fabric exists and is modifiable.
+        Run pre-flight validation before any CRUD operation.
+
+        Read-only states require that the fabric exists and is accessible through
+        the targeted controller. Mutation states additionally require that the
+        fabric is not in deployment-freeze mode.
+
+        `query_all()` is the common inventory entry point for every state, so the
+        read-versus-mutation decision is derived from the current module state here
+        instead of being duplicated in individual interface orchestrators.
 
         ## Raises
 
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is owned by a different controller in the cluster.
+        - If the fabric is in deployment-freeze mode and the current state is not
+        read-only.
         """
+        if self.is_read_only_operation:
+            self.fabric_context.validate_for_read()
+            return
+
         self.fabric_context.validate_for_mutation()
 
     def _configure_endpoint(self, api_endpoint, switch_sn: str):

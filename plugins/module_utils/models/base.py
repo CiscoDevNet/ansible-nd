@@ -57,6 +57,40 @@ class NDBaseModel(BaseModel, ABC):
     identifiers: ClassVar[Optional[List[str]]] = None
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = False
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        Normalize one gathered-state filter item.
+
+        The base implementation makes no changes. Models can override this
+        when filter values require module-specific normalization.
+        """
+        return filter_item
+
+    @classmethod
+    def matches_gathered_filter(
+        cls,
+        criteria: dict,
+        candidate: dict,
+    ) -> bool:
+        """Return whether a gathered candidate matches one filter item."""
+        return issubset(criteria, candidate)
+
+    @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for this model's module.
+
+        Used by the state machine to derive gathered output pruning. Models
+        that support gathered state should override this to return the full
+        module argument spec including ``config.options``.
+        """
+        return {}
+
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[Set[str]] = set()
