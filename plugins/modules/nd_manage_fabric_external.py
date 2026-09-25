@@ -755,15 +755,15 @@ changed:
     sample: true
 before:
     description:
-    - External fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported External fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65501"}}]
 after:
     description:
-    - External fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported External fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65502"}}]

@@ -119,6 +119,7 @@ options:
             description:
             - The BGP ASN range to use for automatic ASN allocation (e.g. C(65000-65535)).
             - Required when O(config.management.bgp_asn_auto_allocation) is C(true).
+            - For an existing fabric, omitting this option preserves the range allocated by Nexus Dashboard.
             type: str
           bgp_as_mode:
             description:
@@ -1662,15 +1663,15 @@ changed:
     sample: true
 before:
     description:
-    - AI/ML eBGP VXLAN fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported AI/ML eBGP VXLAN fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - AI/ML eBGP VXLAN fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported AI/ML eBGP VXLAN fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]

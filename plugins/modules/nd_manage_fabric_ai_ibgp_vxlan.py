@@ -1164,6 +1164,16 @@ options:
             - The VRF lite subnet target mask.
             type: int
             default: 30
+          vrf_lite_ipv6_subnet_range:
+            description:
+            - The IPv6 address range for VRF Lite point-to-point connections.
+            - When omitted, Nexus Dashboard owns the default.
+            type: str
+          vrf_lite_ipv6_subnet_target_mask:
+            description:
+            - The IPv6 VRF Lite subnet mask length (112-127).
+            - When omitted, Nexus Dashboard owns the default.
+            type: int
           auto_unique_vrf_lite_ip_prefix:
             description:
             - Enable auto unique VRF lite IP prefix.
@@ -1685,15 +1695,15 @@ changed:
     sample: true
 before:
     description:
-    - AI/ML iBGP VXLAN fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported AI/ML iBGP VXLAN fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ibgp_fabric", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - AI/ML iBGP VXLAN fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported AI/ML iBGP VXLAN fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ibgp_fabric", "management": {"bgp_asn": "65002"}}]

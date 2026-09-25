@@ -11,6 +11,7 @@ import re
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import IPv6CIDR
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
@@ -100,6 +101,65 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
+    reverse_diff_defaults: ClassVar[dict[str, object]] = {
+        "vrfLiteIpv6SubnetRange": "fd00::a33:0/112",
+        "vrfLiteIpv6SubnetTargetMask": 126,
+    }
+
+    # Fabric Designer and newer controller settings remain intentionally
+    # unsupported as module parameters. They are writable state, so preserve
+    # them across full replacement and omit them from normal module output.
+    _opaque_replacement_fields: ClassVar[set[str]] = {
+        "aiLoadSharingOpcode",
+        "aiLoadSharingPacketSequenceNumber",
+        "aiLoadSharingQueuepair",
+        "allowSmartSwitchHA",
+        "autoSmartSwitchVpcPairHA",
+        "bfdMinRxInterval",
+        "bfdMultiplier",
+        "bfdTxInterval",
+        "borderCount",
+        "breakoutSpineInterfaces",
+        "designerUseRobotPassword",
+        "dlbAllInterfaces",
+        "fabricDesignSettings",
+        "fabricDesigner",
+        "hypershieldHAPeerLinkSubnet",
+        "hypershieldHAPeerLinkSubnetGranularity",
+        "hypershieldHASourceIntf",
+        "hypershieldHASourceSubnet",
+        "hypershieldHAVlan",
+        "isisAuthUseKeyEntries",
+        "isisBorderLevel12",
+        "isisKeys",
+        "leafCount",
+        "ntpAuthAlgorithm",
+        "ntpAuthEnable",
+        "ntpAuthKey",
+        "ntpAuthKeyId",
+        "ntpAuthKeyType",
+        "ospfAuthKeychainName",
+        "ospfAuthUseKeychain",
+        "ospfAutoCostRefBw",
+        "ospfKeys",
+        "ospfLogAdjChanges",
+        "ospfMaxMetricStartupWait",
+        "pimAuthKeychainName",
+        "pimAuthUseKeychain",
+        "pimKeys",
+        "spineCount",
+        "systemQosClassification",
+        "useHypershieldSourceLoopbackForHA",
+    }
+    replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields
+    replacement_preserve_secret_fields: ClassVar[set[str]] = {
+        "isisKeys",
+        "ntpAuthKey",
+        "ospfKeys",
+        "pimKeys",
+    }
+    config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
+
     empty_string_means_unset: ClassVar[bool] = True
 
     # Fabric Type (required for discriminated union)
@@ -112,16 +172,20 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # Name under management section is optional — propagated from FabricIbgpModel.fabric_name during validation
     name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
-    # Fabric Designer Settings - unsupported at this time
-    # border_count: int | None = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
-    # breakout_spine_interfaces: bool | None = Field(alias="breakoutSpineInterfaces", description="Enable breakout spine interfaces", default=False)
-    # designer_use_robot_password: bool | None = Field(alias="designerUseRobotPassword", description="Use robot password for designer", default=False)
-    # leaf_count: int | None = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128, default=1)
-    # spine_count: int | None = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32, default=1)
-    # vrf_lite_ipv6_subnet_range: str | None = Field(alias="vrfLiteIpv6SubnetRange", description="VRF Lite IPv6 subnet range", default="fd00::a33:0/112")
-    # vrf_lite_ipv6_subnet_target_mask: int | None = Field(
-    #     alias="vrfLiteIpv6SubnetTargetMask",
-    #     description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
+    # Fabric Designer settings remain intentionally unsupported. VRF Lite IPv6
+    # addressing is regular fabric configuration and is user-manageable.
+    vrf_lite_ipv6_subnet_range: IPv6CIDR = Field(
+        alias="vrfLiteIpv6SubnetRange",
+        description="IPv6 address range for VRF Lite point-to-point connections",
+        default=None,
+    )
+    vrf_lite_ipv6_subnet_target_mask: int | None = Field(
+        alias="vrfLiteIpv6SubnetTargetMask",
+        description="IPv6 VRF Lite subnet mask length",
+        ge=112,
+        le=127,
+        default=None,
+    )
 
     # Protocols and Resources
     bgp_loopback_ip_range: str = Field(alias="bgpLoopbackIpRange", description="Typically Loopback0 IP Address Range", default="10.2.0.0/22")

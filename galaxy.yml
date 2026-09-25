@@ -40,3 +40,6 @@ repository: https://github.com/CiscoDevNet/ansible-nd
 documentation: https://galaxy.ansible.com/ui/repo/published/cisco/nd/docs/
 homepage: https://cisco.com/go/nexusdashboard
 issues: https://github.com/CiscoDevNet/ansible-nd/issues
+build_ignore:
+  - .agents
+  - .ansible

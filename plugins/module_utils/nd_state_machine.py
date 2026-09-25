@@ -95,6 +95,14 @@ class NDStateMachine:
             response_data = self.model_orchestrator.query_all()
             # State of configuration objects in ND before change execution
             self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
+            # Opaque authentication settings are discovered only in the
+            # controller response, so the argument specification cannot mark
+            # their values no_log. Register each model-declared value now so
+            # Ansible scrubs it from verbose API responses and replacement
+            # payloads as well as the ordinary module result.
+            if hasattr(self.module, "no_log_values"):
+                for existing_item in self.before:
+                    self.module.no_log_values |= existing_item.collect_replacement_secret_values()
             # Surface controller objects whose type this module does not model. They
             # are preserved as opaque read-only records (see the links tolerant read
             # path) and are protected from implicit/explicit modification below.
@@ -225,12 +233,23 @@ class NDStateMachine:
                 existing_match = self.existing.get(identifier)
                 if existing_match is not None and getattr(existing_match, "is_unsupported_policy", False):
                     raise NDStateMachineError(existing_match.describe_unsupported_policy() + "; this module cannot modify it.")
+
+                # Full replacement PUTs must retain only those existing values
+                # the model explicitly declares as dynamic or intentionally
+                # unsupported-but-writable. Prepare the same candidate for the
+                # diff and eventual update so an omitted controller-assigned
+                # value cannot cause a perpetual diff or an accidental reset.
+                # Merged state already starts from the existing object.
+                final_candidate = proposed_item
+                if self.state != "merged" and existing_match is not None:
+                    final_candidate = proposed_item.prepare_for_replacement(existing_match)
+
                 # Determine diff status
                 # For merged state, only compare fields explicitly provided by
                 # the user so that Pydantic default values do not trigger false
                 # diffs or overwrite existing configuration.
                 exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset)
+                diff_status = self.existing.get_diff_config(final_candidate, exclude_unset=exclude_unset)
 
                 # No changes needed
                 if diff_status == "no_diff":
@@ -243,10 +262,10 @@ class NDStateMachine:
                 else:
                     # Replace or creates
                     if diff_status == "changed":
-                        self.existing.replace(proposed_item)
+                        self.existing.replace(final_candidate)
                     else:
-                        self.existing.add(proposed_item)
-                    final_item = proposed_item
+                        self.existing.add(final_candidate)
+                    final_item = final_candidate
 
                 # Categorize by operation type
                 if diff_status == "changed":
