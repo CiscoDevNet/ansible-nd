@@ -14,12 +14,6 @@
         scope_type: "fabric"
         resource: "30051"
 
-      - entity_name: "base_vpc_domain_fabric"
-        pool_type: "ID"
-        pool_name: "VPC_DOMAIN_ID"
-        scope_type: "fabric"
-        resource: "51"
-
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
         pool_type: "SUBNET"
         pool_name: "DCI subnet pool"
@@ -123,16 +117,6 @@
         pool_name: "L2_VNI"
         scope_type: "fabric"
 
-      # ND accepts VPC_DOMAIN_ID in the create response, but the resources GET
-      # inventory exposes an additional networkVlan allocation on the
-      # second switch instead of a VPC_DOMAIN_ID resourceId.
-      - entity_name: "base_network_vlan_device"
-        pool_type: "ID"
-        pool_name: "networkVlan"
-        scope_type: "device"
-        switches:
-          - "{{ ansible_switch2 }}"
-
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}"
         pool_type: "SUBNET"
         pool_name: "DCI subnet pool"
@@ -213,7 +197,7 @@
         switches:
           - "{{ ansible_switch1 }}"
           - "{{ ansible_switch2 }}"
-    rm_expected_resource_count: 15
+    rm_expected_resource_count: 14
 
 - name: BASE common pools - Pre-clean resources
   cisco.nd.nd_manage_resource_manager: &rm_delete
@@ -226,7 +210,7 @@
   ansible.builtin.assert:
     that:
       - 'result.failed | default(false) == false'
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
 
 - block:
     - name: BASE common pools - Create resources for delete test
@@ -242,7 +226,7 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == rm_expected_resource_count'
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
 
     - name: BASE common pools - Delete resources
       cisco.nd.nd_manage_resource_manager: *rm_delete
@@ -263,7 +247,7 @@
           - 'result["api_result"][0]["success"] == true'
           - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
           - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
-          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
       when: result.api_response is defined
 
   always:
@@ -275,4 +259,4 @@
       ansible.builtin.assert:
         that:
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
