@@ -160,6 +160,8 @@ class VpcPairStateMachine(NDStateMachine):
         verify_attempts = get_verify_iterations(self.module)
         refresh_errors: list[str] = []
         for attempt in range(1, verify_attempts + 1):
+            if state == "deleted":
+                self.module.params["_post_apply_refresh"] = True
             try:
                 response_data = self.model_orchestrator.query_all()
                 self.existing = NDConfigCollection.from_api_response(
@@ -180,6 +182,9 @@ class VpcPairStateMachine(NDStateMachine):
                     retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
                     refresh_errors=refresh_errors,
                 )
+            finally:
+                if state == "deleted":
+                    self.module.params.pop("_post_apply_refresh", None)
 
     @staticmethod
     def _identifier_to_key(identifier: Any) -> str:
@@ -588,5 +593,10 @@ class VpcPairResourceService:
                 "deployment_needed",
                 self.needs_deployment_handler(result, nd_manage_vpc_pair),
             )
+            # A deploy that actually pushed config (e.g. deploying a previously
+            # staged pair) or a save with a declarative diff is a change. A bare
+            # configSave remains idempotent.
+            if deploy_result.get("changed"):
+                result["changed"] = True
 
         return result
