@@ -1,0 +1,117 @@
+---
+- name: "OPTIONAL: Validate routed + static L3Out schema coverage"
+  hosts: nd
+  gather_facts: false
+  connection: local
+  vars_files:
+    - "{{ playbook_dir }}/../tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+  vars:
+    nd_info:
+      output_level: '{{ api_key_output_level | default("debug") }}'
+    test_fabric_name: "jeet-fabric-ibgp"
+    test_fabric1_name: "jeet-fabric-ibgp"
+    test_fabric2_name: "jeet-fabric-ext"
+    test_vrf1_name: "vrf1"
+    test_vrf2_name: "vrf1"
+    test_tenant1_name: "{{ omit }}"
+    test_tenant2_name: "{{ omit }}"
+    test_switch1_id: "9LJHKH3VF1S"
+    test_switch2_id: "9W5HXHTY88P"
+    test_switch1_mgmt_ip: "192.168.10.122"
+    test_switch2_mgmt_ip: "192.168.10.124"
+    test_switch1_interface: "Ethernet1/1"
+    test_switch2_interface: "Ethernet1/2"
+    test_switch1_subif: "Ethernet1/1"
+    test_switch2_subif: "Ethernet1/2"
+    test_subinterface_vlan_id: 100
+    test_dci_link_ready: false
+
+  tasks:
+    - name: "OPTIONAL: Create routed + static L3Out (check mode)"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "ansible-test-l3out-routed-static"
+            fabric1_name: "{{ test_fabric1_name }}"
+            fabric2_name: "{{ test_fabric2_name }}"
+            vrf1_name: "{{ test_vrf1_name }}"
+            vrf2_name: "{{ test_vrf2_name }}"
+            tenant1_name: "{{ test_tenant1_name }}"
+            tenant2_name: "{{ test_tenant2_name }}"
+            configured_fabrics: both
+            ip_version: ipv4
+            connectivity_details:
+              routing_interface_type: routed
+              links:
+                - mtu: 9216
+                  ipv4_mask_length: 30
+                  switch1_details:
+                    switch_id: "{{ test_switch1_id }}"
+                    interface_name: "{{ test_switch1_interface }}"
+                    interface_ipv4_address: 10.10.0.1
+                  switch2_details:
+                    switch_id: "{{ test_switch2_id }}"
+                    interface_name: "{{ test_switch2_interface }}"
+                    interface_ipv4_address: 10.10.0.2
+            routing_details:
+              routing_protocol: static
+              static:
+                fabric1_static_routes:
+                  - ip_version: ipv4
+                    ip_prefix: 0.0.0.0/0
+                    next_hop: 192.168.200.254
+                    switch_ids:
+                      - "{{ test_switch1_id }}"
+                    route_preference: 1
+        state: merged
+      check_mode: true
+      register: cm_optional_routed_static
+
+    - name: "OPTIONAL: Create routed + static L3Out (normal mode)"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "ansible-test-l3out-routed-static"
+            fabric1_name: "{{ test_fabric1_name }}"
+            fabric2_name: "{{ test_fabric2_name }}"
+            vrf1_name: "{{ test_vrf1_name }}"
+            vrf2_name: "{{ test_vrf2_name }}"
+            tenant1_name: "{{ test_tenant1_name }}"
+            tenant2_name: "{{ test_tenant2_name }}"
+            configured_fabrics: both
+            ip_version: ipv4
+            connectivity_details:
+              routing_interface_type: routed
+              links:
+                - mtu: 9216
+                  ipv4_mask_length: 30
+                  switch1_details:
+                    switch_id: "{{ test_switch1_id }}"
+                    interface_name: "{{ test_switch1_interface }}"
+                    interface_ipv4_address: 10.10.0.1
+                  switch2_details:
+                    switch_id: "{{ test_switch2_id }}"
+                    interface_name: "{{ test_switch2_interface }}"
+                    interface_ipv4_address: 10.10.0.2
+            routing_details:
+              routing_protocol: static
+              static:
+                fabric1_static_routes:
+                  - ip_version: ipv4
+                    ip_prefix: 0.0.0.0/0
+                    next_hop: 192.168.200.254
+                    switch_ids:
+                      - "{{ test_switch1_id }}"
+                    route_preference: 1
+        state: merged
+      register: nm_optional_routed_static
+
+    - name: "OPTIONAL: Verify routed + static schema is accepted"
+      ansible.builtin.assert:
+        that:
+          - cm_optional_routed_static is changed
+          - nm_optional_routed_static is changed
+        fail_msg: "FAILED: routed + static validation did not succeed"
+        success_msg: "PASSED: routed + static schema was accepted"
