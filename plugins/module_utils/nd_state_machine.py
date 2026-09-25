@@ -121,7 +121,13 @@ class NDStateMachine:
             # double-transform non-idempotent orchestrators (e.g. nd_vrf/nd_network),
             # reverting user-supplied fields to their hardcoded defaults.
             raw_config = config if config is not None else (self.module.params.get("config") or [])
-            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class, context={"state": self.state})
+            validation_context = {"state": self.state}
+            validation_context.update(self.model_orchestrator.model_validation_context())
+            self.proposed = NDConfigCollection.from_ansible_config(
+                data=raw_config,
+                model_class=self.model_class,
+                context=validation_context,
+            )
 
             # Argument-spec ``config.options`` drives pruning of gathered output
             # so it round-trips cleanly as ``config``. Derived from the model,

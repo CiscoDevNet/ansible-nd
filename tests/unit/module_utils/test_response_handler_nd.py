@@ -3187,3 +3187,97 @@ def test_response_handler_nd_01730():
     assert isinstance(NdV1Strategy(), TerminalClientErrorPolicy)
     assert isinstance(LegacyStrategy(), ResponseValidationStrategy)
     assert not isinstance(LegacyStrategy(), TerminalClientErrorPolicy)
+
+
+@pytest.mark.parametrize(
+    "envelope_key",
+    [
+        "securityGroups",
+        "securityContracts",
+        "securityAssociations",
+        "securityProtocolDefinitions",
+        "protocols",
+    ],
+)
+def test_response_handler_nd_01740(envelope_key):
+    """Verify every security 207 envelope reports mixed per-item outcomes as failure with partial change."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            envelope_key: [
+                {"name": "created", "status": "success", "message": "created"},
+                {"name": "rejected", "status": "failed", "message": "invalid resource"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    instance.commit()
+
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is True
+    assert instance.result["retryable"] is False
+    assert instance.error_message == "ND Error: rejected: invalid resource"
+
+
+@pytest.mark.parametrize(
+    "envelope_key",
+    [
+        "securityGroups",
+        "securityContracts",
+        "securityAssociations",
+        "securityProtocolDefinitions",
+        "protocols",
+    ],
+)
+def test_response_handler_nd_01750(envelope_key):
+    """Verify every security 207 envelope accepts exact success items."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {envelope_key: [{"name": "created", "status": "success"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    instance.commit()
+
+    assert instance.result["success"] is True
+    assert instance.result["changed"] is True
+    assert instance.error_message is None
+
+
+def test_response_handler_nd_01760():
+    """Verify security envelopes retain failure detection on HTTP 200 responses."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {"securityGroups": [{"name": "rejected", "status": "failed", "message": "invalid resource"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    instance.commit()
+
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+    assert instance.error_message == "ND Error: rejected: invalid resource"
+
+
+def test_response_handler_nd_01770():
+    """Verify a status-less security item fails closed on HTTP 207."""
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {"securityProtocolDefinitions": [{"name": "rejected", "message": "missing status"}]},
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    instance.commit()
+
+    assert instance.result["success"] is False
+    assert instance.result["changed"] is False
+    assert instance.error_message == "ND Error: rejected: missing status"

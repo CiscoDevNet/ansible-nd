@@ -460,3 +460,13 @@ class EpManageSecurityFabricDeploy(_SecurityFabricActionEndpointBase):
     action_name: ClassVar[str] = "deploy"
     endpoint_params: SecurityDeployEndpointParams = Field(default_factory=SecurityDeployEndpointParams)
     class_name: Literal["EpManageSecurityFabricDeploy"] = Field(default="EpManageSecurityFabricDeploy", frozen=True)
+
+
+class EpManageSecurityFabricSwitchDeploy(_SecurityActionEndpointBase):
+    """POST /fabrics/{fabricName}/switchActions/deploy."""
+
+    action_path: ClassVar[str] = "switchActions/deploy"
+    class_name: Literal["EpManageSecurityFabricSwitchDeploy"] = Field(
+        default="EpManageSecurityFabricSwitchDeploy",
+        frozen=True,
+    )

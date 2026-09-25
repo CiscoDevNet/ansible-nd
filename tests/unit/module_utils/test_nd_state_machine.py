@@ -35,6 +35,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -91,6 +92,13 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
         self._calls.append(("delete_bulk", list(model_instances)))
 
 
+class _ValidationContextSpy(_SpyLoopbackOrchestrator):
+    """Supply a controller capability through the generic validation-context hook."""
+
+    def model_validation_context(self):
+        return {"controller_version": "4.3.1"}
+
+
 def _build_rest_send() -> RestSend:
     """Build a minimal `RestSend` for spy construction; the spy never exercises it."""
     sender = Sender()
@@ -127,6 +135,26 @@ def _build_state_machine(state: str, check_mode: bool, config: list[dict]) -> ND
 
 
 _CONFIG = [{"switch_ip": "192.168.12.151", "interface_name": "loopback10"}]
+
+
+def test_nd_state_machine_00090(monkeypatch) -> None:
+    """Verify orchestrator context is merged with state for proposed-model validation."""
+    captured = {}
+    original = NDConfigCollection.from_ansible_config
+
+    def capture_from_ansible_config(cls, **kwargs):
+        captured.update(kwargs["context"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(NDConfigCollection, "from_ansible_config", classmethod(capture_from_ansible_config))
+    spy = _ValidationContextSpy(rest_send=_build_rest_send())
+
+    NDStateMachine(
+        module=_build_module(state="merged", check_mode=True, config=_CONFIG),
+        model_orchestrator=spy,
+    )
+
+    assert captured == {"state": "merged", "controller_version": "4.3.1"}
 
 
 def test_nd_state_machine_00100() -> None:

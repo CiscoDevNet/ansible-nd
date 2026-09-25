@@ -14,9 +14,10 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.security import (
     EpManageSecurityAssociationsAttach,
     EpManageSecurityAssociationsGet,
-    EpManageSecurityAssociationsListGet,
     EpManageSecurityContractsGet,
+    EpManageSecurityFabricConfigSave,
     EpManageSecurityFabricDeploy,
+    EpManageSecurityFabricSwitchDeploy,
     EpManageSecurityGroupsGet,
     EpManageSecurityGroupsListGet,
     EpManageSecurityProtocolDefinitionsGet,
@@ -104,9 +105,25 @@ def test_security_endpoint_00070():
     instance.endpoint_params.cluster_name = "cluster-a"
     instance.endpoint_params.incl_all_fabric_groups_switches = True
 
-    assert instance.path == (
-        "/api/v1/manage/fabrics/SITE1/actions/deploy?"
-        "clusterName=cluster-a&forceShowRun=true&inclAllFabricGroupsSwitches=true"
-    )
+    assert instance.path == ("/api/v1/manage/fabrics/SITE1/actions/deploy?" "clusterName=cluster-a&forceShowRun=true&inclAllFabricGroupsSwitches=true")
     assert instance.verb == HttpVerbEnum.POST
 
+
+def test_security_endpoint_00080():
+    """Verify fabric config-save forwards the remote cluster parameter."""
+    instance = EpManageSecurityFabricConfigSave()
+    instance.fabric_name = "SITE1"
+    instance.endpoint_params.cluster_name = "cluster-a"
+
+    assert instance.path == "/api/v1/manage/fabrics/SITE1/actions/configSave?clusterName=cluster-a"
+    assert instance.verb == HttpVerbEnum.POST
+
+
+def test_security_endpoint_00090():
+    """Verify switch-scoped deploy uses the switch action endpoint and remote cluster."""
+    instance = EpManageSecurityFabricSwitchDeploy()
+    instance.fabric_name = "SITE1"
+    instance.endpoint_params.cluster_name = "cluster-a"
+
+    assert instance.path == "/api/v1/manage/fabrics/SITE1/switchActions/deploy?clusterName=cluster-a"
+    assert instance.verb == HttpVerbEnum.POST

@@ -241,7 +241,7 @@ class NDConfigCollection:
 
     def to_gathered_config(self, **kwargs) -> List[Dict]:
         """Export replay-safe configuration for ``state=gathered``."""
-        return [item.to_gathered_config(**kwargs) for item in self._items]
+        return [item.to_gathered_config(**kwargs) for item in self._items if not getattr(item, "exclude_from_gathered", False)]
 
     def to_payload_list(self, **kwargs) -> List[Dict[str, Any]]:
         """
