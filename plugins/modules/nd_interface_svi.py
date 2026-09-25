@@ -10,10 +10,12 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_svi
 version_added: "2.0.0"
-short_description: Manage SVI (switched virtual) interfaces on Cisco Nexus Dashboard
+short_description: Manage SVI (svi, iosXeSvi, iosXeSviShutNoShut) interfaces on Cisco Nexus Dashboard
 description:
-- Manage SVI interfaces on Cisco Nexus Dashboard.
+- Manage SVI (switched virtual) interfaces on Cisco Nexus Dashboard.
 - It supports creating, updating, and deleting SVI interface configurations on switches within a fabric.
+- Supports NX-OS (C(svi)) and IOS-XE (C(iosXeSvi), C(iosXeSviShutNoShut)) SVIs; select the platform with
+  O(config[].config_data.network_os.network_os_type).
 - Each config item targets a single SVI identified by O(config[].interface_name) (e.g. C(vlan333)).
 - Configure multiple SVIs in one task by listing multiple config items.
 author:
@@ -57,70 +59,104 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                type: str
+                default: nx-os
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
                 - The policy configuration for the SVI.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The SVI policy template to apply. This is a discriminator that determines which of the remaining
+                      C(policy) suboptions are applicable.
+                    - Optional. When omitted it is derived from O(config[].config_data.network_os.network_os_type),
+                      V(svi) for C(nx-os) and V(iosXeSvi) for C(ios-xe).
+                    - V(iosXeSviShutNoShut) is the IOS-XE admin-state-only template; it accepts only
+                      O(config[].config_data.network_os.policy.admin_state).
+                    type: str
+                    choices: [ svi, iosXeSvi, iosXeSviShutNoShut ]
                   admin_state:
                     description:
                     - The administrative state of the interface.
                     - It defaults to C(true) when unset during creation.
+                    - Applies to all policy_type values.
                     type: bool
                   description:
                     description:
                     - The description of the interface.
-                    - Maximum 254 characters.
+                    - Maximum 254 characters for C(svi), 1-200 characters for C(iosXeSvi).
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: str
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: str
                   mtu:
                     description:
                     - The MTU setting for the interface.
                     - Valid range is 68-9216.
+                    - Applies when policy_type is C(svi).
                     type: int
                   ip:
                     description:
                     - The IPv4 address of the SVI.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
+                    - For C(iosXeSvi), must be a bare IPv4 address without a prefix length.
                     type: str
                   prefix:
                     description:
                     - The IPv4 netmask length used with O(config[].config_data.network_os.policy.ip).
                     - Valid range is 1-31.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: int
                   ipv6:
                     description:
                     - The IPv6 address of the SVI.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
+                    - For C(iosXeSvi), must be a bare IPv6 address without a prefix length.
                     type: str
                   prefixv6:
                     description:
                     - The IPv6 netmask length used with O(config[].config_data.network_os.policy.ipv6).
                     - Valid range is 1-127.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: int
                   ip_redirects:
                     description:
                     - Disable both IPv4/IPv6 redirects on the interface.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: bool
                   vrf_interface:
                     description:
                     - The VRF the SVI is bound to.
                     - Use V(default) for the default VRF.
+                    - Applies when policy_type is C(svi) or C(iosXeSvi).
                     type: str
                   routing_tag:
                     description:
                     - Routing tag associated with the interface IP address.
+                    - Applies when policy_type is C(svi).
                     type: str
                   pim_sparse:
                     description:
                     - Enable PIM sparse-mode on the interface.
+                    - Applies when policy_type is C(svi).
                     type: bool
                   pim_dr_priority:
                     description:
                     - Priority for PIM DR election on the interface.
                     - Valid range is 1-4294967295.
                     - The controller applies a default of C(1) when unset.
+                    - Applies when policy_type is C(svi).
                     type: int
                   hsrp:
                     description:
@@ -128,90 +164,135 @@ options:
                     - When V(true), the other C(hsrp_*) and C(preempt)/C(mac) fields take effect.
                     - No HSRP sub-options are strictly required; the controller applies defaults for any
                       left unset (e.g. C(hsrp_group) and C(hsrp_version) default to C(1)).
+                    - Applies when policy_type is C(svi).
                     type: bool
                   hsrp_vip:
                     description:
                     - HSRP IPv4 virtual IP address; must match on active/standby devices.
+                    - Applies when policy_type is C(svi).
                     type: str
                   hsrp_vipv6:
                     description:
                     - HSRP IPv6 virtual IP address; must match on active/standby devices.
+                    - Applies when policy_type is C(svi).
                     type: str
                   hsrp_group:
                     description:
                     - HSRP group number.
                     - Valid range is 0-4095.
                     - The controller applies a default of C(1) when unset.
+                    - Applies when policy_type is C(svi).
                     type: int
                   hsrp_groupv6:
                     description:
                     - HSRP IPv6 group number.
                     - If unset, the IPv4 group number is reused for IPv6.
                     - Valid range is 0-4095.
+                    - Applies when policy_type is C(svi).
                     type: int
                   hsrp_version:
                     description:
                     - HSRP protocol version.
                     - The controller applies a default of C(1) when unset.
+                    - Applies when policy_type is C(svi).
                     type: int
                     choices: [1, 2]
                   hsrp_priority:
                     description:
                     - HSRP priority value used for active/standby election.
                     - Valid range is 0-255.
+                    - Applies when policy_type is C(svi).
                     type: int
                   preempt:
                     description:
                     - Enable HSRP preemption (overthrow lower-priority active routers).
+                    - Applies when policy_type is C(svi).
                     type: bool
                   mac:
                     description:
                     - HSRP virtual MAC address override.
+                    - Applies when policy_type is C(svi).
                     type: str
                   dhcp_server_address1:
                     description:
                     - Primary DHCP relay server IP address.
+                    - Applies when policy_type is C(svi).
                     type: str
                   dhcp_server_address2:
                     description:
                     - Secondary DHCP relay server IP address.
+                    - Applies when policy_type is C(svi).
                     type: str
                   dhcp_server_address3:
                     description:
                     - Tertiary DHCP relay server IP address.
+                    - Applies when policy_type is C(svi).
                     type: str
                   vrf_dhcp1:
                     description:
                     - VRF used to reach DHCP server 1.
                     - Use V(default) for the default VRF; leave blank to use the interface VRF.
+                    - Applies when policy_type is C(svi).
                     type: str
                   vrf_dhcp2:
                     description:
                     - VRF used to reach DHCP server 2.
                     - Use V(default) for the default VRF; leave blank to use the interface VRF.
+                    - Applies when policy_type is C(svi).
                     type: str
                   vrf_dhcp3:
                     description:
                     - VRF used to reach DHCP server 3.
                     - Use V(default) for the default VRF; leave blank to use the interface VRF.
+                    - Applies when policy_type is C(svi).
                     type: str
                   advertise_subnet_in_underlay:
                     description:
                     - Advertise the SVI subnet into the underlay routing protocol.
+                    - Applies when policy_type is C(svi).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
+                    - Applies when policy_type is C(svi).
                     type: bool
                   netflow_monitor:
                     description:
                     - Layer 3 netflow monitor name.
                     - Required when O(config[].config_data.network_os.policy.netflow=true).
+                    - Applies when policy_type is C(svi).
                     type: str
                   netflow_sampler:
                     description:
                     - Netflow sampler name (applicable to N7K only).
+                    - Applies when policy_type is C(svi).
                     type: str
+                  vlan_name:
+                    description:
+                    - The name of the VLAN.
+                    - Maximum 128 characters.
+                    - Applies when policy_type is C(iosXeSvi).
+                    type: str
+                  dhcp_servers:
+                    description:
+                    - DHCP relay servers for the SVI, one entry per server.
+                    - Replaces the C(dhcp_server_address1-3) and C(vrf_dhcp1-3) options of the NX-OS template.
+                    - Applies when policy_type is C(iosXeSvi).
+                    type: list
+                    elements: dict
+                    suboptions:
+                      server_ip_address:
+                        description:
+                        - The DHCP relay server IPv4 address, as a bare address without a prefix length.
+                        type: str
+                        required: true
+                      server_vrf:
+                        description:
+                        - The VRF used to reach the server.
+                        - Use V(default) or V(global) for the global routing table and V(Mgmt-Vrf) for the management VRF.
+                        - Must be 1 to 32 characters.
+                        type: str
+                        required: true
   config_actions:
     description:
     - Controls deploy behavior after interface mutations are complete.
@@ -248,9 +329,11 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS SVI interfaces only (interface_type C(svi), mode C(managed), network_os_type C(nx-os), policy_type C(svi)).
-  These values are hardcoded by the module and are not user-configurable.
-- Other SVI policy types (e.g. policyType C(vpcBackupSvi) for fabric/underlay SVIs with OSPF, ISIS, BFD, and
+- This module supports both NX-OS and IOS-XE managed SVI interfaces (interface_type C(svi), mode C(managed)), selected via
+  O(config[].config_data.network_os.network_os_type).
+- This module manages the C(svi) (NX-OS) and C(iosXeSvi) / C(iosXeSviShutNoShut) (IOS-XE) policy templates. SVIs carrying
+  any other policy type (e.g. the fabric-provisioned C(vpcBackupSvi) / C(underlaySvi)) are never read or modified by this module.
+- Other NX-OS SVI policy types (e.g. policyType C(vpcBackupSvi) for fabric/underlay SVIs with OSPF, ISIS, BFD, and
   replication-mode options) are not yet exposed and will be added as separate variants in a follow-up release.
 """
 
@@ -290,6 +373,38 @@ EXAMPLES = r"""
       deploy: true
     state: merged
   register: result
+
+- name: Create IOS-XE SVIs on a Catalyst leaf (a full iosXeSvi and an admin-state-only iosXeSviShutNoShut)
+  cisco.nd.nd_interface_svi:
+    fabric_name: CAMPUS1
+    config:
+      - switch_ip: 192.168.12.181
+        interface_name: vlan980
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              admin_state: true
+              description: Catalyst campus SVI 980
+              vlan_name: campus-980
+              ip: 10.99.80.1
+              prefix: 24
+              ipv6: 2001:db8:80::1
+              prefixv6: 64
+              dhcp_servers:
+                - server_ip_address: 10.10.10.10
+                  server_vrf: default
+      - switch_ip: 192.168.12.181
+        interface_name: vlan981
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              policy_type: iosXeSviShutNoShut
+              admin_state: false
+    config_actions:
+      deploy: true
+    state: merged
 
 - name: Create SVIs across multiple switches
   cisco.nd.nd_interface_svi:

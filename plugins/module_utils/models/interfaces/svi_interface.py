@@ -3,32 +3,42 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-SVI (switched virtual interface) Pydantic models for Nexus Dashboard.
+SVI (switched virtual interface) Pydantic models for Nexus Dashboard (NX-OS `svi`, IOS-XE `iosXeSvi` / `iosXeSviShutNoShut`; issue #540).
 
-This module defines nested Pydantic models that mirror the ND Manage Interfaces API payload structure for SVI
-interfaces (`interfaceType: "svi"`, `policyType: "svi"`, `mode: "managed"`). The playbook config uses the same
-nesting so that `to_payload()` and `from_response()` work via standard Pydantic serialization with no custom
-wrapping or flattening.
+This module defines nested Pydantic models that mirror the ND Manage Interfaces API payload structure for managed SVI interfaces
+(`interfaceType: "svi"`, `mode: "managed"`). The playbook config uses the same nesting so that `to_payload()` and `from_response()` work
+via standard Pydantic serialization with no custom wrapping or flattening.
 
 ## Model Hierarchy
 
 - `SviInterfaceModel` (top-level, `NDBaseModel`)
-    - `interface_name` (identifier, e.g. `vlan333`)
+    - `switch_ip` (composite identifier)
+    - `interface_name` (composite identifier, e.g. `vlan333`)
     - `interface_type` (hardcoded: "svi")
     - `config_data` -> `SviConfigDataModel`
         - `mode` (hardcoded: "managed")
-        - `network_os` -> `SviNetworkOSModel`
-            - `network_os_type` (hardcoded: "nx-os")
-            - `policy` -> `SviPolicyModel`
-                - `policy_type` (hardcoded: SviPolicyTypeEnum.SVI), `admin_state`, `ip`, `prefix`, HSRP block, DHCP relay, etc.
+        - `network_os` -> `SviNetworkOSModel | XeSviNetworkOSModel` (discriminated union on `network_os_type`; injected as `nx-os` when
+          omitted so pre-#540 playbooks are unchanged)
+            - `SviNetworkOSModel` (`network_os_type: "nx-os"`)
+                - `policy` -> `SviPolicyModel` (`policy_type: "svi"`, injected when omitted): admin state, L3 addressing, VRF, routing
+                  tag, PIM, the HSRP block, the flat three-server DHCP relay block, underlay advertisement, Netflow
+            - `XeSviNetworkOSModel` (`network_os_type: "ios-xe"`)
+                - `policy` -> `XeSviPolicyModel | XeSviShutNoShutPolicyModel` (discriminated union on `policy_type`; injected as
+                  `iosXeSvi` when omitted)
+                    - `XeSviPolicyModel` (`policy_type: "iosXeSvi"`): admin state, L3 addressing, VRF, VLAN name, `dhcp_servers` list
+                    - `XeSviShutNoShutPolicyModel` (`policy_type: "iosXeSviShutNoShut"`): admin state only
     - `oper_data` -> `SviOperDataModel` (read-only, returned on GET, excluded from payload)
 
-## Field set
+## Field sets
 
-Fields in `SviPolicyModel` mirror the `policyType: "svi"` schema in the ND Manage API (createInterfaceSviManagedNexusType
-oneOf -> int_vlan.template), covering the full set of HSRP, DHCP relay, VRF, route tag, PIM, and Netflow options the
-ND GUI exposes for managed SVIs on Nexus. OSPF / ISIS / BFD / replication-mode fields belong to other policy types
-(e.g. `policyType: "vpcBackupSvi"` / int_fabric_vlan_11_1) and would be modelled as separate variants.
+`SviPolicyModel` mirrors the `policyType: "svi"` schema (`intVlanTemplate`). `XeSviPolicyModel` mirrors `iosXeIntVlanTemplate`, a strict
+trim of the NX-OS template (no mtu, routing tag, PIM, HSRP, Netflow or underlay advertisement) plus two Catalyst-only fields (`vlanName`
+and the `dhcpServers` list, which replaces the NX-OS `dhcpServerAddress1-3` / `vrfDhcp1-3` block). `XeSviShutNoShutPolicyModel` mirrors
+`iosXeIntVlanAdminStateTemplate`. Both IOS-XE templates are identical on ND 4.2.1 and 4.3.1. The shared option name `prefixv6` is kept on
+the IOS-XE branch (wire key `ipv6Prefix`) so gathered output replays across platforms.
+
+OSPF / ISIS / BFD / replication-mode fields belong to other NX-OS policy types (e.g. `policyType: "vpcBackupSvi"` / int_fabric_vlan_11_1)
+and would be modelled as separate variants.
 """
 
 from __future__ import annotations
@@ -41,19 +51,46 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SviPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SviPolicyTypeEnum, XeSviPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    default_network_os_type,
+    default_policy_type,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
+    AsciiDescription,
+    IPv4HostStrict,
+    IPv6HostStrict,
+    validate_ipv4_host_strict,
+)
 
 
-class SviPolicyModel(NDNestedModel):
+def _coerce_numeric_string_to_int(value):
     """
     # Summary
 
-    Policy fields for an SVI interface. Maps directly to the `configData.networkOS.policy` object in the ND API.
+    Return `int(value)` for a numeric string, `value` unchanged otherwise (bools and non-numeric strings are left for the field's own
+    type validation to accept or reject).
 
-    `policy_type` is required by the API as a discriminator on both POST and PUT, so it carries a default of
-    `SviPolicyTypeEnum.SVI` and is always serialized.
+    ## Raises
+
+    None
+    """
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
+class SviPolicyModel(InterfacePolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the NX-OS `svi` template (`int_vlan`). Maps directly to the `configData.networkOS.policy` object in the ND API
+    where `policyType == "svi"`.
+
+    `policy_type` is required by the API as a discriminator on both POST and PUT; it is injected as `svi` when the input omits it, so it
+    is always serialized.
 
     ## Raises
 
@@ -63,9 +100,10 @@ class SviPolicyModel(NDNestedModel):
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_vlan` template defaults (schema-sourced via nd-openapi `intVlanTemplate`). ND echoes these
     # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
-    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes. ND 4.3.1 no longer
+    # echoes `hsrpGroup` and `pimDrPriority` for unset fields; the entries are harmless there.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
-        "adminState": True,
+        **InterfacePolicyStrictBase.reverse_diff_defaults,
         "advertiseSubnetInUnderlay": False,
         "hsrpGroup": 1,
         "hsrpVersion": 1,
@@ -76,10 +114,24 @@ class SviPolicyModel(NDNestedModel):
         "preempt": False,
     }
 
-    policy_type: SviPolicyTypeEnum = Field(
-        default=SviPolicyTypeEnum.SVI, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
+    policy_type: Literal["svi"] = Field(
+        alias="policyType", description="SVI policy template discriminator; injected as `svi` when omitted (see `default_policy_type`)"
     )
-    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: svi` when the input omits the discriminator (`ethernet_common.default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return default_policy_type(data, SviPolicyTypeEnum.SVI.value)
+
     description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     mtu: int | None = Field(default=None, alias="mtu", ge=68, le=9216, description="Interface MTU")
@@ -148,6 +200,25 @@ class SviPolicyModel(NDNestedModel):
             return str(value)
         return value
 
+    # TODO(4.3.1) svi-hsrpversion-string-echo-431
+    # ND 4.3.1 echoes the template default `hsrpVersion` as the STRING "1" on every GET (4.2.1 echoes the integer 1), and its PUT
+    # gateway rejects the string with HTTP 400 schema validation. Coerce on read so the field validates and always round-trips as
+    # the int both releases accept. Lab-verified 2026-09-16 on 4.2.1.10 and 4.3.1.175 (issue #380).
+    @field_validator("hsrp_version", mode="before")
+    @classmethod
+    def coerce_hsrp_version_to_int(cls, value):
+        """
+        # Summary
+
+        Accept `hsrp_version` as either an integer or a numeric string (the ND 4.3.1 GET echo) and normalize it to `int` so the
+        `Literal[1, 2]` field validates and payloads carry the integer form the API schema requires on both releases.
+
+        ## Raises
+
+        None
+        """
+        return _coerce_numeric_string_to_int(value)
+
     @model_validator(mode="after")
     def _validate_netflow_monitor_present(self) -> SviPolicyModel:
         """
@@ -190,19 +261,216 @@ class SviPolicyModel(NDNestedModel):
         return self
 
 
-class SviNetworkOSModel(NDNestedModel):
+class XeSviDhcpServerModel(NDNestedModel):
     """
     # Summary
 
-    Network OS container for an SVI interface. Maps to `configData.networkOS` in the ND API.
+    One DHCP relay server entry of the IOS-XE `iosXeSvi` template's `dhcpServers` list. Maps to `configData.networkOS.policy.dhcpServers[]`.
 
     ## Raises
 
     None
     """
 
-    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
+    server_ip_address: str = Field(alias="serverIpAddress", description="DHCP relay server IPv4 address (bare host form)")
+    # TODO(4.2.1) xe-svi-dhcpservers-servervrf-required
+    # The spec marks nothing in `dhcpServers[]` required and allows an empty `serverVrf`, but ND rejects an item without a non-empty
+    # VRF (omitted: HTTP 500 / 207 failed item; empty: HTTP 400) on both 4.2.1.10 and 4.3.1.175. Required with min_length 1 here so the
+    # omission fails before any controller call.
+    server_vrf: str = Field(
+        alias="serverVrf",
+        min_length=1,
+        max_length=32,
+        description="VRF used to reach the server; `default` (or `global`) for the global table, `Mgmt-Vrf` for management",
+    )
+
+    # TODO(4.2.1) xe-svi-dhcpservers-echo-keys
+    # ND 4.2.1 accepts `serverIpAddress` / `serverVrf` on POST/PUT but echoes the items on GET as `srvrAddr` / `srvrVrf`, and a PUT that
+    # carries the echoed spelling returns HTTP 500. Fixed on 4.3.1 (echoes the spec keys). Accept both spellings on read and serialize
+    # only the spec keys.
+    @model_validator(mode="before")
+    @classmethod
+    def accept_echo_keys(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Rename the ND 4.2.1 echo keys `srvrAddr` / `srvrVrf` to the spec keys `serverIpAddress` / `serverVrf` before validation, when the
+        spec key is not already present.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return data
+        renamed = dict(data)
+        for echo_key, spec_key, field_name in (("srvrAddr", "serverIpAddress", "server_ip_address"), ("srvrVrf", "serverVrf", "server_vrf")):
+            if echo_key in renamed:
+                value = renamed.pop(echo_key)
+                if spec_key not in renamed and field_name not in renamed:
+                    renamed[spec_key] = value
+        return renamed
+
+    @field_validator("server_ip_address", mode="before")
+    @classmethod
+    def validate_server_ip_address(cls, value: Any) -> Any:
+        """
+        # Summary
+
+        Require `server_ip_address` to be a bare IPv4 address, the format the ND template declares for `serverIpAddress`, so a malformed
+        value fails before any controller call.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `value` is not a valid bare IPv4 address (including any CIDR form).
+        """
+        return validate_ipv4_host_strict(value)
+
+
+class XeSviPolicyModel(InterfacePolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeSvi` template (`ios_xe_int_vlan`). Maps to `configData.networkOS.policy` where
+    `policyType == "iosXeSvi"`. A strict trim of the NX-OS branch (no mtu, routing tag, PIM, HSRP, Netflow or underlay advertisement) with
+    two Catalyst-only fields: `vlan_name` and the `dhcp_servers` list, which replaces the flat three-server NX-OS DHCP relay block. The
+    IPv6 mask keeps the shared option name `prefixv6` and maps to the wire key `ipv6Prefix`.
+
+    ## Raises
+
+    None
+    """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND `ios_xe_int_vlan` template defaults as ECHOED for fields the user never set (lab 2026-09-16, 4.2.1.10 and 4.3.1.175):
+    # `adminState: true` and `ipRedirects: true`.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **InterfacePolicyStrictBase.reverse_diff_defaults,
+        "ipRedirects": True,
+    }
+
+    policy_type: Literal["iosXeSvi"] = Field(alias="policyType", description="IOS-XE SVI policy template discriminator; injected as `iosXeSvi` when omitted")
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: iosXeSvi` when the input omits the discriminator (`ethernet_common.default_policy_type`). The union in
+        `XeSviNetworkOSModel` injects the same default before it dispatches; this copy keeps a directly constructed policy consistent.
+
+        ## Raises
+
+        None
+        """
+        return default_policy_type(data, XeSviPolicyTypeEnum.IOS_XE_SVI.value)
+
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    dhcp_servers: list[XeSviDhcpServerModel] | None = Field(default=None, alias="dhcpServers", description="DHCP relay servers (address + VRF per entry)")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    ip: IPv4HostStrict = Field(default=None, alias="ip", description="IPv4 address of the SVI (bare host form; the mask length is set via `prefix`)")
+    prefix: int | None = Field(default=None, alias="prefix", ge=1, le=31, description="IPv4 netmask length used with `ip`")
+    ipv6: IPv6HostStrict = Field(default=None, alias="ipv6", description="IPv6 address of the SVI (bare host form; the prefix length is set via `prefixv6`)")
+    prefixv6: int | None = Field(default=None, alias="ipv6Prefix", ge=1, le=127, description="IPv6 prefix length used with `ipv6` (wire key `ipv6Prefix`)")
+    ip_redirects: bool | None = Field(default=None, alias="ipRedirects", description="Disable both IPv4/IPv6 redirects on the interface")
+    vlan_name: str | None = Field(default=None, alias="vlanName", max_length=128, description="Name of the VLAN")
+    vrf_interface: str | None = Field(
+        default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name; use `default` for default VRF"
+    )
+
+    @model_validator(mode="after")
+    def _validate_ip_prefix_paired(self) -> XeSviPolicyModel:
+        """
+        # Summary
+
+        Reject supplying only one half of an address/mask pair. `ip` requires `prefix` (and `ipv6` requires `prefixv6`) and vice versa, so a
+        partial address is never serialized into a payload that ND would reject or apply ambiguously.
+
+        ## Raises
+
+        ### ValueError
+
+        - If exactly one of `ip` / `prefix` is set.
+        - If exactly one of `ipv6` / `prefixv6` is set.
+        """
+        if (self.ip is None) != (self.prefix is None):
+            raise ValueError("ip and prefix are required together; set both or neither.")
+        if (self.ipv6 is None) != (self.prefixv6 is None):
+            raise ValueError("ipv6 and prefixv6 are required together; set both or neither.")
+        return self
+
+
+class XeSviShutNoShutPolicyModel(InterfacePolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for the IOS-XE `iosXeSviShutNoShut` template (`ios_xe_int_vlan_admin_state`). The template carries only the
+    discriminator and `admin_state` (declared on the base), so any L3 field on this branch is rejected.
+
+    ## Raises
+
+    None
+    """
+
+    policy_type: Literal["iosXeSviShutNoShut"] = Field(alias="policyType", description="IOS-XE admin-state-only SVI policy template discriminator")
+
+
+class SviNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    NX-OS branch of the network-OS container for an SVI. Maps to `configData.networkOS` in the ND API. Selected from the outer union when
+    `networkOSType == "nx-os"` (the injected default when the input omits it).
+
+    ## Raises
+
+    None
+    """
+
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field. The Literal constrains the value.
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", description="Network OS (platform) type discriminator")
     policy: SviPolicyModel | None = Field(default=None, alias="policy")
+
+
+class XeSviNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    IOS-XE branch of the network-OS container for an SVI. Selected from the outer union when `networkOSType == "ios-xe"`. The policy is
+    a discriminated union on `policy_type` (`iosXeSvi` or `iosXeSviShutNoShut`), injected as `iosXeSvi` when the input omits it.
+
+    ## Raises
+
+    None
+    """
+
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field. The Literal constrains the value.
+    network_os_type: Literal["ios-xe"] = Field(default="ios-xe", alias="networkOSType", description="Network OS (platform) type discriminator")
+    policy: XeSviPolicyModel | XeSviShutNoShutPolicyModel | None = Field(default=None, alias="policy", discriminator="policy_type")
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: iosXeSvi` on the `policy` input when it omits the discriminator (key absent, or `None` as the argspec passes
+        an omitted suboption), so the full template is the default and `iosXeSviShutNoShut` must be named explicitly
+        (`ethernet_common.default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return data
+        for key in ("policy",):
+            if isinstance(data.get(key), dict):
+                return {**data, key: default_policy_type(data[key], XeSviPolicyTypeEnum.IOS_XE_SVI.value)}
+        return data
 
 
 class SviConfigDataModel(NDNestedModel):
@@ -218,7 +486,28 @@ class SviConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
-    network_os: SviNetworkOSModel = Field(alias="networkOS")
+    network_os: SviNetworkOSModel | XeSviNetworkOSModel = Field(default_factory=SviNetworkOSModel, alias="networkOS", discriminator="network_os_type")
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_network_os_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `networkOSType: nx-os` on the `network_os` input when it omits the discriminator (key absent, or `None` as the argspec
+        passes an omitted option), so playbooks written before the IOS-XE branch existed keep selecting the NX-OS branch
+        (`ethernet_common.default_network_os_type`).
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return data
+        for key in ("network_os", "networkOS"):
+            if isinstance(data.get(key), dict):
+                return {**data, key: default_network_os_type(data[key])}
+        return data
 
 
 class SviOperDataModel(NDNestedModel):
@@ -245,7 +534,7 @@ class SviInterfaceModel(NDBaseModel):
     """
     # Summary
 
-    SVI interface configuration for Nexus Dashboard.
+    SVI interface configuration for Nexus Dashboard (NX-OS `svi` or IOS-XE `iosXeSvi` / `iosXeSviShutNoShut`).
 
     Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage
     Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
@@ -276,6 +565,22 @@ class SviInterfaceModel(NDBaseModel):
     config_data: SviConfigDataModel | None = Field(default=None, alias="configData")
     oper_data: SviOperDataModel | None = Field(default=None, alias="operData")
 
+    @property
+    def policy_type(self) -> str | None:
+        """
+        # Summary
+
+        The `policy_type` discriminator from `config_data.network_os.policy`, or `None` when `config_data` or `policy` is unset
+        (e.g. a `state: deleted` identifier-only item).
+
+        ## Raises
+
+        None
+        """
+        if self.config_data is None or self.config_data.network_os.policy is None:
+            return None
+        return self.config_data.network_os.policy.policy_type
+
     @field_validator("interface_name", mode="before")
     @classmethod
     def normalize_interface_name(cls, value):
@@ -283,7 +588,9 @@ class SviInterfaceModel(NDBaseModel):
         # Summary
 
         Normalize SVI interface names to the ND API convention (lowercase `vlan` prefix, e.g. `Vlan333` -> `vlan333`,
-        `VLAN333` -> `vlan333`). Bare integers are accepted and prefixed with `vlan` (e.g. `333` -> `vlan333`).
+        `VLAN333` -> `vlan333`). Bare integers are accepted and prefixed with `vlan` (e.g. `333` -> `vlan333`). ND stores an IOS-XE
+        SVI under whatever spelling it is given, looks it up case-insensitively, and removes it from the Catalyst with the lowercase
+        name (lab-verified 2026-09-16 on 4.2.1.10 and 4.3.1.175), so both branches share the lowercase identifier.
 
         When a numeric VLAN ID can be extracted from the input, it is range-checked against the controller-supported
         SVI VLAN range (1-4094) so an out-of-range ID fails early with a clear error instead of being rejected by ND.
@@ -326,7 +633,8 @@ class SviInterfaceModel(NDBaseModel):
 
         Each config item targets a single SVI identified by `interface_name` (e.g. `vlan333`). To configure multiple SVIs
         in one task, list multiple config items. Per-SVI L3 settings (ip, hsrp_*, vrf_interface, ...) live under
-        `config_data.network_os.policy` and apply to that one interface only.
+        `config_data.network_os.policy` and apply to that one interface only. The policy options are the union of both branches;
+        the branch models reject fields that do not belong to the selected `policy_type`.
 
         ## Raises
 
@@ -347,9 +655,14 @@ class SviInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
+                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
+                                            policy_type=dict(
+                                                type="str",
+                                                choices=[SviPolicyTypeEnum.SVI.value] + [e.value for e in XeSviPolicyTypeEnum],
+                                            ),
                                             admin_state=dict(type="bool"),
                                             description=dict(type="str"),
                                             extra_config=dict(type="str"),
@@ -382,6 +695,15 @@ class SviInterfaceModel(NDBaseModel):
                                             netflow=dict(type="bool"),
                                             netflow_monitor=dict(type="str"),
                                             netflow_sampler=dict(type="str"),
+                                            vlan_name=dict(type="str"),
+                                            dhcp_servers=dict(
+                                                type="list",
+                                                elements="dict",
+                                                options=dict(
+                                                    server_ip_address=dict(type="str", required=True),
+                                                    server_vrf=dict(type="str", required=True),
+                                                ),
+                                            ),
                                         ),
                                     ),
                                 ),
