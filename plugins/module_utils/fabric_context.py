@@ -83,6 +83,7 @@ class FabricContext:
         self._switches: list[dict] | None = None
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
+        self._platform_map: dict[str, PlatformType | None] | None = None
 
     def _fabric_not_found_message(self) -> str:
         """
@@ -236,13 +237,14 @@ class FabricContext:
         self._switches = None
         self._switch_map = None
         self._switch_map_by_id = None
+        self._platform_map = None
 
     def _load_switch_maps(self) -> None:
         """
         # Summary
 
         Fetch the fabric switch inventory once, retain the raw switch records, and populate the IP-keyed and ID-keyed
-        lookup maps. Per-switch `platformType` is read on demand from the retained records by `get_platform_type`.
+        lookup maps, plus the IP-keyed `platformType` index that `get_platform_type` reads in O(1) (PR #558 review).
 
         Fails closed on a nonexistent fabric: the switches endpoint returns HTTP 404 when the parent fabric is absent.
         `_query_get` maps that 404 to an empty dict, which would otherwise yield empty maps and surface a misleading
@@ -270,6 +272,27 @@ class FabricContext:
         self._switches = switches
         self._switch_map = {sw["fabricManagementIp"]: sw["switchId"] for sw in switches if sw.get("fabricManagementIp") and sw.get("switchId")}
         self._switch_map_by_id = {sw["switchId"]: sw["fabricManagementIp"] for sw in switches if sw.get("switchId") and sw.get("fabricManagementIp")}
+        self._platform_map = {
+            sw["fabricManagementIp"]: self._parse_platform_type((sw.get("additionalData") or {}).get("platformType"))
+            for sw in switches
+            if sw.get("fabricManagementIp") and sw.get("switchId")
+        }
+
+    @staticmethod
+    def _parse_platform_type(raw: object) -> PlatformType | None:
+        """
+        # Summary
+
+        Coerce a raw `additionalData.platformType` value to a `PlatformType`, or `None` when it is absent or a value newer than the enum.
+
+        ## Raises
+
+        None
+        """
+        try:
+            return PlatformType(raw)
+        except ValueError:
+            return None
 
     @property
     def switches(self) -> list[dict]:
@@ -376,8 +399,9 @@ class FabricContext:
         """
         # Summary
 
-        Resolve a switch management IP address to its `platformType` (as a `PlatformType`) via the cached switch
-        inventory. Callers use this to select the platform-appropriate feature model (e.g. `loopback` vs `iosXeLoopback`).
+        Resolve a switch management IP address to its `platformType` (as a `PlatformType`) via the IP-keyed index built from the cached
+        switch inventory, so a per-interface lookup is O(1) and never rescans the switch list. Callers use this to verify the requested
+        `network_os_type` against the switch's actual platform before any write (`NDBaseInterfaceOrchestrator._check_platform_match`).
 
         Returns `None` when the switch exists in the fabric but reports no recognizable `platformType` (the field is
         nested under a `oneOf` variant and may be absent, or ND may report a value newer than `PlatformType`).
@@ -389,19 +413,11 @@ class FabricContext:
         - If no switch matches the given IP in the fabric.
         """
         self._load_switch_maps()
-        if self._switch_map is None or self._switches is None:
-            raise AssertionError("switch records are None after _load_switch_maps()")
-        if switch_ip not in self._switch_map:
+        if self._platform_map is None:
+            raise AssertionError("platform map is None after _load_switch_maps()")
+        if switch_ip not in self._platform_map:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
-        for switch in self._switches:
-            if switch.get("fabricManagementIp") == switch_ip:
-                raw = (switch.get("additionalData") or {}).get("platformType")
-                try:
-                    return PlatformType(raw)
-                except ValueError:
-                    # Absent (None) or a value newer than PlatformType -> no recognizable platform type.
-                    return None
-        return None
+        return self._platform_map[switch_ip]
 
     def validate_for_mutation(self) -> None:
         """
