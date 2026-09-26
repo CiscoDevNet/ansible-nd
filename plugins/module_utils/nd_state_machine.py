@@ -216,14 +216,17 @@ class NDStateMachine:
                 raise NDStateMachineError(error_msg) from e
         return None
 
-    def _build_plan(self) -> NDStatePlan:
+    def _build_plan(self, state: str | None = None) -> NDStatePlan:
         """Calculate all operations without invoking an orchestrator mutation method."""
         try:
+            before = getattr(self, "before", None)
+            if before is None:
+                before = self.existing
             return NDStatePlanner.plan(
-                state=self.state,
-                before=self.before,
+                state=state or self.state,
+                before=before,
                 proposed=self.proposed,
-                ignore_errors=self.ignore_errors,
+                ignore_errors=getattr(self, "ignore_errors", False),
             )
         except Exception as e:
             raise NDStateMachineError(str(e)) from e
@@ -375,7 +378,7 @@ class NDStateMachine:
 
     def _manage_override_deletions(self, plan: NDStatePlan | None = None) -> None:
         """Delete items not in proposed config for overridden state."""
-        plan = plan or self._build_plan()
+        plan = plan or self._build_plan("overridden")
         self._delete_items(list(plan.deletes))
 
     def _manage_delete_state(self, plan: NDStatePlan | None = None) -> None:

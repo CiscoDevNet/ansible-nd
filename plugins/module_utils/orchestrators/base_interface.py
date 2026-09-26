@@ -525,6 +525,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             )
         return self._capability_preflight
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run local switch-resolution and platform safety checks without capability API calls.
+
+        Aggregate workflows use this in check mode for the exact planned mutation set. Keeping the capability query separate lets
+        them preserve their explicit capability-preflight option while still enforcing the platform contract for every proposed
+        write.
+        """
+        self._require_resolvable_switches(model_instances)
+        self._check_platform_match(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -552,8 +562,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Propagated from `validate_switches_capable` (see its docstring).
         - Propagated from `_check_overridden_removals_discovered` (an override would remove an undiscovered IOS-XE interface).
         """
-        self._require_resolvable_switches(model_instances)
-        self._check_platform_match(model_instances)
+        self.preflight_safety(model_instances)
         self.validate_switches_capable(model_instances)
         self._check_overridden_removals_discovered(model_instances)
 
@@ -1297,12 +1306,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not self.deploy or not self._pending_deploys:
             return None
         self._deploy_attempted = True
-        try:
-            result = self.deploy_targets(self._pending_deploys)
-            self._pending_deploys = []
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Bulk deploy failed for interfaces {self._pending_deploys}: {e}") from e
+        result = self.deploy_targets(self._pending_deploys)
+        self._pending_deploys = []
+        return result
 
     def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
         """
@@ -1689,6 +1695,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             if accepted:
                 msg += f" The controller accepted the removal of {accepted} from the same request; their deploy stays queued."
             raise RuntimeError(msg) from e
+
+    def remove_pending_queue(self, queue_name: str) -> ResponseType | None:
+        """Flush one named deferred delete queue.
+
+        The base interface contract has only the ordinary ``remove`` queue. Ethernet subclasses extend this method so an aggregate
+        executor can preserve reset-family ordering and reconcile each queue from its exact pre/post contents.
+        """
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        return self.remove_pending()
 
     def _remove_interfaces(self) -> ResponseType:
         """

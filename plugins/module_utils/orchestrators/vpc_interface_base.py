@@ -181,6 +181,14 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 return True
         return False
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Validate both peers and member ownership without capability API calls."""
+        super().preflight_safety(model_instances)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        self._validate_unique_pair_names(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -205,10 +213,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
           proposed vPCs in the same task.
         - Propagated from `super().preflight` / `_resolve_switch_id` / `_resolve_peer_switch_id` (unresolvable switch, missing pair).
         """
-        super().preflight(model_instances)
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        self.preflight_safety(model_instances)
+        self.validate_switches_capable(model_instances)
+
+    def _validate_unique_pair_names(self, model_instances: Sequence[ModelType]) -> None:
+        """Reject one vPC name listed under both peers of the same pair."""
         items_by_name: dict[str, list[ModelType]] = {}
         for model_instance in model_instances:
             items_by_name.setdefault(model_instance.interface_name, []).append(model_instance)

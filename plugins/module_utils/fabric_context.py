@@ -262,6 +262,10 @@ class FabricContext:
         - If the fabric does not exist (switches GET 404 confirmed by an absent `fabric_summary`).
         """
         if self._switch_map is not None:
+            # Some injected/shared contexts predate the platform index and carry only the two identity maps. Treat their platform
+            # evidence as unknown rather than asserting: unknown is already the documented safe no-mismatch result.
+            if self._platform_map is None:
+                self._platform_map = {switch_ip: None for switch_ip in self._switch_map}
             return
         ep = EpManageSwitchesListGet()
         ep.fabric_name = self._fabric_name

@@ -1216,6 +1216,17 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         policy_type = getattr(policy, "policy_type", None)
         return getattr(policy_type, "value", policy_type)
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run platform, fabric-ownership, and member-safety checks without capability API calls."""
+        super().preflight_safety(model_instances)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            member_target = self._prepare_member_intent(model_instance, existing_data)
+            self._check_fabric_ownership(model_instance, existing_data)
+            if not member_target:
+                self._check_port_channel_restrictions(model_instance, existing_data, allow_unchanged=True)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -1236,13 +1247,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If the interface-list query used to resolve port-channel membership fails.
         """
         super().preflight(model_instances)
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
-            member_target = self._prepare_member_intent(model_instance, existing_data)
-            self._check_fabric_ownership(model_instance, existing_data)
-            if not member_target:
-                self._check_port_channel_restrictions(model_instance, existing_data, allow_unchanged=True)
 
     def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
         """
@@ -1455,10 +1459,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return None
         results: list = []
         if self._pending_xe_resets:
-            results.extend(self._xe_reset_interfaces())
+            results.extend(self.remove_pending_queue("platform_reset") or [])
         if self._pending_normalizes:
             try:
-                results.extend(self._normalize_interfaces())
+                results.extend(self.remove_pending_queue("normalize") or [])
             except RuntimeError as e:
                 not_attempted = [name for name, switch_id in self._pending_resets]
                 if not_attempted:
@@ -1467,10 +1471,23 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if self._pending_resets:
             # `_reset_interfaces` raises a RuntimeError carrying precise partial-state detail on failure; let it
             # propagate unwrapped rather than re-interpolate the full (now-stale) pending list as an "everything failed" message.
-            reset_results = self._reset_interfaces()
-            self._pending_resets = []
+            reset_results = self.remove_pending_queue("reset") or []
             results.extend(reset_results)
         return results
+
+    def remove_pending_queue(self, queue_name: str) -> list[ResponseType] | None:
+        """Flush exactly one physical-interface reset queue.
+
+        Keeping platform resets, NX normalize, and NX PUT resets independently flushable lets the aggregate workflow preserve
+        family-specific IOS-XE payloads while retaining the global platform-reset -> normalize -> reset ordering.
+        """
+        if queue_name == "platform_reset":
+            return self._xe_reset_interfaces() if self._pending_xe_resets else None
+        if queue_name == "normalize":
+            return self._normalize_interfaces() if self._pending_normalizes else None
+        if queue_name == "reset":
+            return self._reset_interfaces() if self._pending_resets else None
+        raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
 
     def _normalize_groups(self) -> list[list[tuple[str, str]]]:
         """

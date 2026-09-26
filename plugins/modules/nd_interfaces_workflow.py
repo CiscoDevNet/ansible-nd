@@ -51,6 +51,8 @@ options:
           may omit C(config_data).
         - V(ethernet_trunk_host) uses M(cisco.nd.nd_interface_ethernet_trunk_host).
         - V(loopback) uses M(cisco.nd.nd_interface_loopback).
+        - Configured V(loopback) items require C(config_data.network_os.network_os_type) plus
+          C(config_data.network_os.policy.policy_type). Identifier-only V(deleted) items may omit C(config_data).
         - V(port_channel_access) uses M(cisco.nd.nd_interface_port_channel_access).
         - V(port_channel_trunk_host) uses M(cisco.nd.nd_interface_port_channel_trunk_host).
         - V(subinterface_managed) uses M(cisco.nd.nd_interface_subinterface_managed).
@@ -144,6 +146,8 @@ notes:
   missing, self-referential, conflicting, or inverse-inconsistent pair records.
 - vPC identity is pair-scoped. Equal vPC names on different pairs are planned independently, while both peer echoes for one pair are
   required and treated as one resource.
+- Controller/orchestrator-resolved vPC C(peerSwitchId) is internal routing metadata. It is injected into mutation payloads but omitted as
+  C(peer_switch_id) from public target and family snapshots and from operation C(changes).
 - For V(merged) and V(replaced), O(resources[].type) is the desired policy family. An explicitly listed interface using another eligible
   policy in the same structural interface domain is changed with one destination-family replacement request; no separate transition
   option is required.
@@ -236,7 +240,9 @@ EXAMPLES = r"""
             interface_name: loopback10
             config_data:
               network_os:
+                network_os_type: nx-os
                 policy:
+                  policy_type: loopback
                   ip: 192.0.2.10
                   description: Router ID
       - type: ethernet_access
@@ -377,6 +383,8 @@ target_switch_ids:
 resources:
   description:
   - Ordered per-resource-group results. Repeated interface types remain separate through C(resource_index).
+  - Controller-injected vPC C(peer_switch_id) routing metadata is omitted from public C(before), C(after), C(family_before),
+    C(family_after), and operation C(changes), while remaining present in mutation payloads.
   returned: always
   type: list
   elements: dict
@@ -418,7 +426,8 @@ resources:
         status:
           description:
           - V(planned) in check mode.
-          - The actual execution outcome in normal mode.
+          - The actual execution outcome in normal mode. HTTP 207 outcomes require an identified exact V(success); any requested target
+            without that evidence is V(failed), not V(uncertain).
           type: str
         message:
           description: Controller or execution detail associated with this operation outcome.

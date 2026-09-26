@@ -695,15 +695,15 @@ def _raw_ethernet(name, policy_type, **policy):
     }
 
 
-def _raw_loopback(name):
+def _raw_loopback(name, policy_type="loopback", network_os_type="nx-os", **policy):
     return {
         "interfaceName": name,
         "interfaceType": "loopback",
         "configData": {
             "mode": "managed",
             "networkOS": {
-                "networkOSType": "nx-os",
-                "policy": {"policyType": "loopback", "description": "requested loopback"},
+                "networkOSType": network_os_type,
+                "policy": {"policyType": policy_type, **(policy or {"description": "requested loopback"})},
             },
         },
     }
