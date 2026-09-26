@@ -27,9 +27,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 class FakeModel:
     """Minimal interface model used by the executor."""
 
-    def __init__(self, name, switch_ip="192.0.2.1"):
+    def __init__(self, name, switch_ip="192.0.2.1", policy_type=None):
         self.interface_name = name
         self.switch_ip = switch_ip
+        self.policy_type = policy_type
 
     def get_identifier_value(self):
         return self.switch_ip, self.interface_name
@@ -57,12 +58,28 @@ class FakeRestSend:
         self.responses = []
         self.results = []
 
-    def record(self, path, *, success=True, changed=True, data=None, method="POST"):
+    @property
+    def response_count(self):
+        return len(self.responses)
+
+    @property
+    def result_count(self):
+        return len(self.results)
+
+    @property
+    def response_current(self):
+        return self.responses[-1] if self.responses else {}
+
+    @property
+    def result_current(self):
+        return self.results[-1] if self.results else {}
+
+    def record(self, path, *, success=True, changed=True, data=None, method="POST", return_code=None):
         self.responses.append(
             {
                 "METHOD": method,
                 "REQUEST_PATH": path,
-                "RETURN_CODE": 200 if success else 207,
+                "RETURN_CODE": return_code if return_code is not None else (200 if success else 207),
                 "DATA": data or {},
             }
         )
@@ -180,6 +197,9 @@ class FakeOrchestrator:
         self.events.append(("remove", self.name, tuple(self._removes)))
         self.rest_send.record("/interfaceActions/remove")
         self._removes = []
+
+    def remove_pending_queue(self, _queue_name):
+        return self.remove_pending()
 
     def update(self, model, existing_data=None):
         target = (
@@ -463,8 +483,97 @@ class NormalReturn207EthernetFakeOrchestrator(FakeOrchestrator):
             },
             return_code=207,
         )
+        self._normalizes = list(targets[1:])
+
+
+class RetryingNormalizeFakeOrchestrator(NormalReturn207EthernetFakeOrchestrator):
+    """Emit two responses for one logical normalize group, as PR #563 can do."""
+
+    def remove_pending(self):
+        targets = tuple(self._normalizes)
+        self.events.append(("normalize_first", self.name, targets))
+        self.rest_send.record(
+            "/interfaceActions/normalize",
+            success=False,
+            changed=False,
+            data={"results": [{"name": target[0], "switchId": target[1], "status": "failed"} for target in targets]},
+            return_code=500,
+        )
+        self.events.append(("normalize_retry", self.name, targets))
+        self.rest_send.record("/interfaceActions/normalize", success=True, changed=True)
         self._normalizes = []
-        self._resets = []
+
+
+class NoFreshResponseNormalizeFakeOrchestrator(NormalReturn207EthernetFakeOrchestrator):
+    """Raise before recording a response while an older success remains current."""
+
+    def __init__(self, name, events):
+        super().__init__(name, events)
+        self.rest_send.record(
+            "/stale-inventory",
+            success=True,
+            changed=False,
+            method="GET",
+            data={"results": [{"name": "Ethernet1/1", "switchId": "SERIAL1", "status": "success"}]},
+            return_code=207,
+        )
+
+    def remove_pending(self):
+        self.events.append(("normalize_transport_error", self.name, tuple(self._normalizes)))
+        raise RuntimeError("transport failed before a fresh response")
+
+
+class OrderedEthernetFakeOrchestrator(FakeOrchestrator):
+    """Expose all physical reset queues while recording which family flushes each one."""
+
+    deferred_delete_queue_names = frozenset({"platform_reset", "normalize", "reset"})
+
+    def __init__(self, name, events, *, queue_name, reset_profile=None):
+        super().__init__(name, events)
+        self.queue_name = queue_name
+        self.reset_profile = reset_profile
+        self._delete_queues = {"platform_reset": [], "normalize": [], "reset": []}
+
+    @property
+    def deferred_delete_queues(self):
+        return {queue_name: tuple(targets) for queue_name, targets in self._delete_queues.items()}
+
+    @property
+    def pending_deferred_delete_targets(self):
+        return tuple(dict.fromkeys(target for targets in self._delete_queues.values() for target in targets))
+
+    def queue_deferred_delete_targets(self, queue_name, targets):
+        for target in targets:
+            if target not in self._delete_queues[queue_name]:
+                self._delete_queues[queue_name].append(target)
+
+    def dequeue_deferred_delete_targets(self, queue_name, targets):
+        removed = set(targets)
+        self._delete_queues[queue_name] = [target for target in self._delete_queues[queue_name] if target not in removed]
+
+    def deferred_delete_request_groups(self):
+        return tuple(
+            DeferredDeleteRequestGroup(queue_name, (target,))
+            for queue_name in ("platform_reset", "normalize", "reset")
+            for target in self._delete_queues[queue_name]
+        )
+
+    def delete_bulk(self, models):
+        self.events.append(("delete_bulk", self.name, self.queue_name, tuple(model.interface_name for model in models)))
+        for model in models:
+            target = (model.interface_name, self.fabric_context.get_switch_id(model.switch_ip))
+            self.queue_deferred_delete_targets(self.queue_name, [target])
+            self.queue_deploy_targets([target])
+
+    def remove_pending_queue(self, queue_name):
+        targets = tuple(self._delete_queues[queue_name])
+        self.events.append(("flush", self.name, queue_name, self.reset_profile, targets))
+        for target in targets:
+            self.rest_send.record(
+                f"/{queue_name}/{target[0]}",
+                method="PUT" if queue_name != "normalize" else "POST",
+            )
+        self._delete_queues[queue_name] = []
 
 
 class PlatformResetFakeOrchestrator(FakeOrchestrator):
@@ -943,15 +1052,14 @@ def test_overridden_delete_does_not_call_explicit_delete_preflight() -> None:
     assert ("delete_bulk", "only", ("loopback1",)) in events
 
 
-def test_ios_xe_physical_delete_uses_auxiliary_routed_reset_and_one_consolidated_deploy(monkeypatch) -> None:
-    """A delete requested through another Ethernet family routes its IOS-XE reset through the routed orchestrator."""
+def test_ios_xe_physical_delete_uses_selected_family_reset_and_one_consolidated_deploy(monkeypatch) -> None:
+    """A physical delete keeps its IOS-XE reset on the selected family orchestrator."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
         PlatformResetFakeOrchestrator,
     )
     events = []
-    selected = FakeOrchestrator("access", events)
-    routed = PlatformResetFakeOrchestrator("routed", events)
+    selected = PlatformResetFakeOrchestrator("access", events)
     desired = FakeModel("GigabitEthernet3")
     routed_proxy = FakeModel("GigabitEthernet3")
     workflow_plan = plan(
@@ -963,7 +1071,6 @@ def test_ios_xe_physical_delete_uses_auxiliary_routed_reset_and_one_consolidated
             state="deleted",
             resource_type="ethernet_access",
         ),
-        auxiliary_orchestrators=(routed,),
     )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
@@ -973,26 +1080,22 @@ def test_ios_xe_physical_delete_uses_auxiliary_routed_reset_and_one_consolidated
     assert result.mutation_requests == 1
     assert result.deploy_requests == 1
     assert result.items[0].status == "succeeded"
-    assert ("delete_bulk", "access", ("GigabitEthernet3",)) not in events
-    assert ("platform_delete_bulk", "routed", ("GigabitEthernet3",)) in events
-    assert ("platform_reset", "routed", ("GigabitEthernet3", "SERIAL1")) in events
+    assert ("platform_delete_bulk", "access", ("GigabitEthernet3",)) in events
+    assert ("platform_reset", "access", ("GigabitEthernet3", "SERIAL1")) in events
     deploy_events = [event for event in events if event[0] == "deploy"]
     assert deploy_events == [("deploy", "access", (("GigabitEthernet3", "SERIAL1"),))]
-    assert routed.pending_deferred_delete_targets == ()
     assert selected.pending_deploys == ()
-    assert routed.pending_deploys == ()
 
 
-def test_ios_xe_explicit_delete_prefers_planner_selected_reset_after_routed_overridden(monkeypatch) -> None:
-    """An earlier routed overridden group cannot suppress a later explicit IOS-XE physical reset."""
+def test_ios_xe_explicit_delete_uses_its_family_after_routed_overridden(monkeypatch) -> None:
+    """An earlier routed overridden group cannot capture a later access-family IOS-XE reset."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
         PlatformResetFakeOrchestrator,
     )
     events = []
     overridden = OverriddenPlatformResetFakeOrchestrator("routed_overridden", events)
-    selected = FakeOrchestrator("access_deleted", events)
-    reset = PlatformResetFakeOrchestrator("routed_deleted", events)
+    selected = PlatformResetFakeOrchestrator("access_deleted", events)
     desired = FakeModel("GigabitEthernet4")
     routed_proxy = FakeModel("GigabitEthernet4")
     workflow_plan = plan(
@@ -1005,7 +1108,6 @@ def test_ios_xe_explicit_delete_prefers_planner_selected_reset_after_routed_over
             state="deleted",
             resource_type="ethernet_access",
         ),
-        auxiliary_orchestrators=(reset,),
     )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
@@ -1015,8 +1117,8 @@ def test_ios_xe_explicit_delete_prefers_planner_selected_reset_after_routed_over
     assert result.deploy_requests == 1
     assert result.items[0].status == "succeeded"
     assert ("platform_delete_bulk_skipped", "routed_overridden", ("GigabitEthernet4",)) not in events
-    assert ("platform_delete_bulk", "routed_deleted", ("GigabitEthernet4",)) in events
-    assert ("platform_reset", "routed_deleted", ("GigabitEthernet4", "SERIAL1")) in events
+    assert ("platform_delete_bulk", "access_deleted", ("GigabitEthernet4",)) in events
+    assert ("platform_reset", "access_deleted", ("GigabitEthernet4", "SERIAL1")) in events
 
 
 def test_direct_routed_ios_xe_delete_rechecks_platform_proxy_immediately_before_writes(monkeypatch) -> None:
@@ -1052,6 +1154,92 @@ def test_direct_routed_ios_xe_delete_rechecks_platform_proxy_immediately_before_
         ("preflight_delete_models", "routed_deleted"),
     ]
     assert not any(event[0] in {"platform_delete_bulk", "platform_reset", "deploy"} for event in events)
+
+
+def test_family_specific_platform_resets_precede_consolidated_nx_resets(monkeypatch) -> None:
+    """IOS-XE queues stay on their family owners and flush before NX normalize and PUT-reset work."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        OrderedEthernetFakeOrchestrator,
+    )
+    events = []
+    access_xe = OrderedEthernetFakeOrchestrator("access_xe", events, queue_name="platform_reset", reset_profile="iosXeTrunkHost")
+    routed_xe = OrderedEthernetFakeOrchestrator("routed_xe", events, queue_name="platform_reset", reset_profile="iosXeRoutedHost")
+    nx_normalize = OrderedEthernetFakeOrchestrator("nx_normalize", events, queue_name="normalize")
+    nx_reset = OrderedEthernetFakeOrchestrator("nx_reset", events, queue_name="reset")
+    workflow_plan = plan(
+        resource(
+            0,
+            access_xe,
+            deletes=[FakeModel("GigabitEthernet3")],
+            platform_deletes=[FakeModel("GigabitEthernet3")],
+            state="deleted",
+            resource_type="ethernet_access",
+        ),
+        resource(
+            1,
+            routed_xe,
+            deletes=[FakeModel("GigabitEthernet4")],
+            platform_deletes=[FakeModel("GigabitEthernet4")],
+            state="deleted",
+            resource_type="ethernet_routed",
+        ),
+        resource(2, nx_normalize, deletes=[FakeModel("Ethernet1/1")], state="deleted", resource_type="ethernet_trunk_host"),
+        resource(3, nx_reset, deletes=[FakeModel("Ethernet1/2")], state="deleted", resource_type="ethernet_access"),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 4
+    assert result.deploy_requests == 1
+    assert {item.status for item in result.items} == {"succeeded"}
+    assert [(event[1], event[2], event[3]) for event in events if event[0] == "flush"] == [
+        ("access_xe", "platform_reset", "iosXeTrunkHost"),
+        ("routed_xe", "platform_reset", "iosXeRoutedHost"),
+        ("access_xe", "normalize", "iosXeTrunkHost"),
+        ("access_xe", "reset", "iosXeTrunkHost"),
+    ]
+
+
+def test_normalize_retry_uses_queue_drainage_not_response_position(monkeypatch) -> None:
+    """Two PR #563 responses for one logical group still produce exact successful delete items."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        RetryingNormalizeFakeOrchestrator,
+    )
+    events = []
+    orchestrator = RetryingNormalizeFakeOrchestrator("access", events)
+    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1"), FakeModel("Ethernet1/2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 2
+    assert result.deploy_requests == 1
+    assert {item.status for item in result.items} == {"succeeded"}
+    assert [event[0] for event in events if event[0].startswith("normalize_")] == ["normalize_first", "normalize_retry"]
+
+
+def test_normalize_exception_without_fresh_response_does_not_consume_stale_success(monkeypatch) -> None:
+    """A transport exception keeps the target failed even when `response_current` contains an older HTTP 207 success."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        NoFreshResponseNormalizeFakeOrchestrator,
+    )
+    events = []
+    orchestrator = NoFreshResponseNormalizeFakeOrchestrator("access", events)
+    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1")], actual=("before",)))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.changed is False
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 0
+    assert result.items[0].status == "failed"
+    assert orchestrator.pending_normalizes == (("Ethernet1/1", "SERIAL1"),)
+    assert not any(event[0] == "deploy" for event in events)
 
 
 def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_change(monkeypatch):

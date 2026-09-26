@@ -1763,6 +1763,23 @@ def test_rest_send_response_count():
         assert instance.response_count == 2
 
 
+def test_rest_send_result_count():
+    """`result_count` tracks results without reading the deep-copying public history."""
+    instance = RestSend({"check_mode": False})
+
+    assert instance.result_count == 0
+    instance.add_result({"success": True})
+    instance.add_result({"success": False})
+    assert instance.result_count == 2
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("result_count must not read the deep-copying results property")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(RestSend, "results", property(_no_copy))
+        assert instance.result_count == 2
+
+
 # =============================================================================
 # Test: RestSend.add_result()
 # =============================================================================

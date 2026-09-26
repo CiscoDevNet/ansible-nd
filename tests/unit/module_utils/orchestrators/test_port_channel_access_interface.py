@@ -1268,8 +1268,8 @@ def test_port_channel_access_orchestrator_00960() -> None:
 
     - `query_all` (state merged, config scoped to 192.168.1.1) consumes summary (a), switches (b), interfaces (c)
     - Only the `capableSwitches` response remains queued
-    - `preflight` for a free member does not raise (an extra inventory GET would exhaust the generator and raise)
-    - `_switch_interfaces_cache` holds the unfiltered inventory for FDO11111AAA
+    - `preflight` consumes that capability response for a free member but issues no extra inventory GET
+    - The shared `InterfaceStateSnapshot` holds the unfiltered inventory for FDO11111AAA
 
     ## Classes and Methods
 
@@ -1295,9 +1295,10 @@ def test_port_channel_access_orchestrator_00960() -> None:
     # query_all still returns only the managed accessPoHost port-channels...
     assert [iface["interfaceName"] for iface in result] == ["port-channel501"]
     # ...while the cache retains the unfiltered inventory the preflight reads.
-    assert set(instance._switch_interfaces_cache) == {"FDO11111AAA"}
-    assert "ethernet1/2" in instance._switch_interfaces_cache["FDO11111AAA"]
-    assert "port-channel500" in instance._switch_interfaces_cache["FDO11111AAA"]
+    cached = instance.state_snapshot.interfaces_by_switch
+    assert set(cached) == {"FDO11111AAA"}
+    assert "ethernet1/2" in cached["FDO11111AAA"]
+    assert "port-channel500" in cached["FDO11111AAA"]
 
 
 def test_port_channel_access_orchestrator_00970() -> None:

@@ -221,8 +221,7 @@ class InterfaceWorkflowPlanner:
         self._vpc_pair_scope_cache: dict[str, tuple[str, ...]] = {}
         self._vpc_peer_serial_cache: dict[str, str] | None = None
         self._inventory_by_identity: dict[tuple[str, str], dict[str, Any]] | None = None
-        self._routed_delete_orchestrator: EthernetRoutedInterfaceOrchestrator | None = None
-        self._routed_link_cache_owner: EthernetRoutedInterfaceOrchestrator | None = None
+        self._ethernet_link_cache_owner: EthernetBaseOrchestrator | None = None
 
     def plan(self, resources: list[dict[str, Any]]) -> InterfaceWorkflowPlan:
         """Return a complete read-only plan or raise before any mutation method is called."""
@@ -247,8 +246,8 @@ class InterfaceWorkflowPlanner:
                 orchestrator = adapter.build_orchestrator(rest_send=rest_send, snapshot=self.snapshot, results=results)
                 if isinstance(orchestrator, VpcInterfaceBaseOrchestrator):
                     orchestrator.share_peer_serial_cache(self._shared_vpc_peer_serial_cache())
-                if isinstance(orchestrator, EthernetRoutedInterfaceOrchestrator):
-                    self._register_routed_orchestrator(orchestrator)
+                if isinstance(orchestrator, EthernetBaseOrchestrator):
+                    self._register_ethernet_orchestrator(orchestrator)
                 before = self._existing_collection(adapter, orchestrator, proposed)
                 planning_before = self._planning_before_for_policy_transitions(adapter=adapter, before=before, proposed=proposed, state=state)
                 operations = adapter.plan(before=planning_before, proposed=proposed, state=state)
@@ -276,7 +275,7 @@ class InterfaceWorkflowPlanner:
             raise InterfaceWorkflowConflictError(conflicts)
 
         self._run_preflights(resource_plans)
-        auxiliary_orchestrators = () if self._routed_delete_orchestrator is None else (self._routed_delete_orchestrator,)
+        auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = ()
         request_stats = dict(self.snapshot.request_stats)
         request_stats["fabric_link_gets"] = self._fabric_link_gets([*(resource.orchestrator for resource in resource_plans), *auxiliary_orchestrators])
         return InterfaceWorkflowPlan(
@@ -454,6 +453,43 @@ class InterfaceWorkflowPlanner:
         return value if isinstance(value, str) and value else None
 
     @classmethod
+    def _planning_before_for_policy_transitions(
+        cls,
+        *,
+        adapter: InterfaceFamilyAdapter,
+        before: NDConfigCollection,
+        proposed: NDConfigCollection,
+        state: str,
+    ) -> NDConfigCollection:
+        """Hide same-identity policy-union mismatches from the ordinary state planner.
+
+        The shared state planner must not field-merge different branches of a discriminated union. For adapters that
+        explicitly opt in, temporarily removing those current identities makes the ordinary planner emit create
+        candidates. The workflow rewrite phase then converts the candidates to safety-checked destination-family PUT
+        transitions while the resource plan retains the complete observed before collection.
+        """
+        if not adapter.supports_intra_family_policy_transitions or state not in adapter.transition_states:
+            return before
+
+        transition_identifiers = []
+        for desired in proposed:
+            identifier = desired.get_identifier_value()
+            current = before.get(identifier)
+            if current is None:
+                continue
+            current_policy_type = cls._desired_policy_type(current)
+            desired_policy_type = cls._desired_policy_type(desired)
+            if current_policy_type is None or desired_policy_type is None or current_policy_type == desired_policy_type:
+                continue
+            transition_identifiers.append(identifier)
+
+        if not transition_identifiers:
+            return before
+        planning_before = before.copy()
+        planning_before.delete_many(transition_identifiers)
+        return planning_before
+
+    @classmethod
     def _desired_network_os_type(cls, model: NDBaseModel) -> str | None:
         """Return the destination model's frozen network-OS discriminator."""
         config_data = getattr(model, "config_data", None)
@@ -483,17 +519,15 @@ class InterfaceWorkflowPlanner:
         """Normalize known raw/summary interface-type aliases."""
         return {"switchVirtualInterface": "svi"}.get(value, value)
 
-    @classmethod
-    def _vpc_record_fingerprint(
-        cls,
-        current: Mapping[str, Any],
-        switch_id: str,
-        scope: tuple[str, ...],
-    ) -> Any:
-        """Return peer-independent configured vPC state for pair comparison."""
+    @staticmethod
+    def _vpc_record_fingerprint(current: Mapping[str, Any]) -> Any:
+        """Return pair-comparable configured vPC state for one controller echo.
 
-        peer_ids = [candidate for candidate in scope if candidate != switch_id]
-        peer_id = peer_ids[0] if len(peer_ids) == 1 else None
+        ND echoes one vPC interface from both peers with the same configData; only the record's switchId and policy
+        peerSwitchId orientation changes. peer1 and peer2 fields retain the configured payload's meaning in both echoes,
+        so they must not be rebound to the switch that supplied an echo. Member-port spelling and ordering are
+        presentation differences and are normalized before comparison.
+        """
 
         def scrub(value: Any) -> Any:
             if isinstance(value, Mapping):
@@ -502,15 +536,10 @@ class InterfaceWorkflowPlanner:
                 for key, item in value.items():
                     if key in ignored:
                         continue
-                    normalized_key = key
-                    if key.startswith("peer1") and len(key) > 5:
-                        normalized_key = f"peer[{switch_id}]{key[5:]}"
-                    elif peer_id is not None and key.startswith("peer2") and len(key) > 5:
-                        normalized_key = f"peer[{peer_id}]{key[5:]}"
                     normalized_item = scrub(item)
                     if key.endswith("MemberPorts") and isinstance(item, list) and all(isinstance(member, str) for member in item):
                         normalized_item = tuple(sorted(member.strip().lower() for member in item))
-                    normalized[normalized_key] = normalized_item
+                    normalized[key] = normalized_item
                 return normalized
             if isinstance(value, list):
                 return [scrub(item) for item in value]
@@ -555,7 +584,7 @@ class InterfaceWorkflowPlanner:
 
         interface_types = {current.get("interfaceType") for _switch_id, current in present}
         policy_types = {InterfaceStateSnapshot.policy_type(current) for _switch_id, current in present}
-        fingerprints = [self._vpc_record_fingerprint(current, switch_id, scope) for switch_id, current in present]
+        fingerprints = [self._vpc_record_fingerprint(current) for _switch_id, current in present]
         if len(interface_types) != 1 or len(policy_types) != 1 or fingerprints[0] != fingerprints[1]:
             raise InterfaceWorkflowValidationError(
                 f"{label} has inconsistent vPC pair records: interfaceType={sorted(str(value) for value in interface_types)}, "
@@ -588,6 +617,8 @@ class InterfaceWorkflowPlanner:
         policy_type = InterfaceStateSnapshot.policy_type(current)
         if policy_type == "trunkHost":
             return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(current)
+        if policy_type == "iosXeTrunkHost":
+            return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(current)
         if policy_type == "iosXeRoutedHost":
             return EthernetRoutedInterfaceOrchestrator._is_unconfigured_default(current)
         return False
@@ -598,10 +629,10 @@ class InterfaceWorkflowPlanner:
         operations: NDStatePlan,
         inventory: Mapping[tuple[str, str], dict[str, Any]],
     ) -> tuple[NDBaseModel, ...]:
-        """Build routed proxy models for physical deletes requiring a platform-specific reset implementation."""
+        """Build same-family IOS-XE proxy models for physical deletes requiring a platform reset."""
         if resource.adapter.ownership_domain != "ethernet":
             return ()
-        model_class = get_interface_family_adapter("ethernet_routed").model_class
+        model_class = resource.adapter.model_class
         platform_deletes: list[NDBaseModel] = []
         for desired in operations.deletes:
             switch_id = self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
@@ -615,21 +646,14 @@ class InterfaceWorkflowPlanner:
                     config_data={"network_os": {"network_os_type": "ios-xe"}},
                 )
             )
-        if (
-            platform_deletes
-            and resource.state == "deleted"
-            and isinstance(resource.orchestrator, EthernetRoutedInterfaceOrchestrator)
-            and self._routed_delete_orchestrator is None
-        ):
-            self._routed_delete_orchestrator = resource.orchestrator
         return tuple(platform_deletes)
 
-    def _register_routed_orchestrator(self, orchestrator: EthernetRoutedInterfaceOrchestrator) -> None:
-        """Share one lazy fabric-link cache across every routed orchestrator in this workflow."""
-        if self._routed_link_cache_owner is None:
-            self._routed_link_cache_owner = orchestrator
+    def _register_ethernet_orchestrator(self, orchestrator: EthernetBaseOrchestrator) -> None:
+        """Share one lazy fabric-link cache across every Ethernet family in this workflow."""
+        if self._ethernet_link_cache_owner is None:
+            self._ethernet_link_cache_owner = orchestrator
             return
-        orchestrator.share_fabric_link_cache(self._routed_link_cache_owner)
+        orchestrator.share_fabric_link_cache(self._ethernet_link_cache_owner)
 
     @staticmethod
     def _fabric_link_gets(orchestrators: Iterable[NDBaseInterfaceOrchestrator]) -> int:
@@ -647,29 +671,6 @@ class InterfaceWorkflowPlanner:
                 if str(method).upper() == "GET" and "/links" in path:
                     count += 1
         return count
-
-    def _shared_routed_delete_orchestrator(self) -> EthernetRoutedInterfaceOrchestrator:
-        """Return one routed orchestrator shared by every platform-specific physical reset in this workflow."""
-        if self._routed_delete_orchestrator is None:
-            params = {
-                "fabric_name": self.snapshot.fabric_name,
-                "state": "deleted",
-                "config": [],
-                "check_mode": True,
-            }
-            results = Results()
-            results.state = "deleted"
-            results.check_mode = True
-            orchestrator = get_interface_family_adapter("ethernet_routed").build_orchestrator(
-                rest_send=self.rest_send_factory(params),
-                snapshot=self.snapshot,
-                results=results,
-            )
-            if not isinstance(orchestrator, EthernetRoutedInterfaceOrchestrator):
-                raise InterfaceWorkflowValidationError("The ethernet_routed adapter did not build its routed orchestrator.")
-            self._register_routed_orchestrator(orchestrator)
-            self._routed_delete_orchestrator = orchestrator
-        return self._routed_delete_orchestrator
 
     def _dependency_errors(
         self,
@@ -929,7 +930,7 @@ class InterfaceWorkflowPlanner:
                         retained_creates.append(desired)
                         continue
                     current_policy_type = InterfaceStateSnapshot.policy_type(current_records[0][1])
-                    if current_policy_type in resource.adapter.policy_types:
+                    if current_policy_type == self._desired_policy_type(desired):
                         retained_creates.append(desired)
                         continue
                     candidate = _PolicyRewriteCandidate(resource.resource_index, desired, current_records)
@@ -1521,13 +1522,18 @@ class InterfaceWorkflowPlanner:
                 if resource.state == "deleted":
                     resource.orchestrator.preflight_delete(list(resource.operations.deletes))
                     if resource.platform_deletes:
-                        routed_orchestrator = self._shared_routed_delete_orchestrator()
-                        routed_orchestrator.preflight_delete(list(resource.platform_deletes))
+                        resource.orchestrator.preflight_delete(list(resource.platform_deletes))
                     continue
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
                 resource.orchestrator.preflight_create(create_candidates)
+                mutation_candidates = [
+                    *(transition.desired for transition in resource.transitions),
+                    *resource.operations.updates,
+                    *resource.operations.creates,
+                ]
+                resource.orchestrator.preflight_safety(mutation_candidates)
                 if self.run_capability_preflight:
-                    resource.orchestrator.preflight(list(resource.proposed))
+                    resource.orchestrator.validate_switches_capable(mutation_candidates)
             except Exception as exc:
                 raise InterfaceWorkflowValidationError(
                     f"resources[{resource.resource_index}] type '{resource.resource_type}' preflight failed: {exc}"
