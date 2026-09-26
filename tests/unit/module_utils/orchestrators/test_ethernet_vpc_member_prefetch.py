@@ -19,7 +19,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDStateMachineError,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -93,6 +93,11 @@ class _FabricContext:
             return self.switch_map[switch_ip]
         except KeyError as exc:
             raise RuntimeError(f"Unknown switch {switch_ip!r}") from exc
+
+    def get_platform_type(self, switch_ip: str) -> PlatformType:
+        if switch_ip not in self.switch_map:
+            raise RuntimeError(f"Unknown switch {switch_ip!r}")
+        return PlatformType.NX_OS
 
 
 def _member(

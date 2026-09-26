@@ -219,6 +219,7 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
+        execution_baseline = self.existing.copy()
         items_to_create: list[NDBaseModel] = []
         items_to_update: list[NDBaseModel] = []
 
@@ -284,9 +285,30 @@ class NDStateMachine:
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
         # preflight and before this method mutates self.existing (PR #362 review).
 
-        # Execute updates (always individual)
-        for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+        # Execute updates (always individual). Planning above mutates
+        # ``self.existing`` before I/O so check mode can expose the intended
+        # result. If a real update fails, rebuild ``after`` from the execution
+        # baseline plus only the preceding updates the controller accepted;
+        # otherwise a rejected and every not-yet-attempted update appear as
+        # successful in changed/after output.
+        accepted_updates: list[NDBaseModel] = []
+        try:
+            for item in items_to_update:
+                self._execute_operation(
+                    self.model_orchestrator.update,
+                    item,
+                    error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+                )
+                accepted_updates.append(item)
+        except Exception:
+            self.existing = execution_baseline.copy()
+            for item in accepted_updates:
+                if not self.existing.replace(item):
+                    self.existing.add(item)
+            if accepted_updates:
+                self.sent.add_many(accepted_updates)
+            self.output.assign(after=self.existing)
+            raise
 
         # Execute creates (bulk or individual)
         if items_to_create:

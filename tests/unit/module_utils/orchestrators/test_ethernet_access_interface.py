@@ -695,14 +695,14 @@ def test_ethernet_access_orchestrator_00570() -> None:
     """
     # Summary
 
-    Verify `delete` refuses to normalize a port-channel member: normalizing would strip the channel-group
-    membership and silently detach the interface from its port-channel.
+    Verify `delete` trusts current host intent over a stale positive operational
+    port-channel ID when no parent intent claims the interface.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10
-    - `delete` raises `RuntimeError` naming the port-channel; no normalize or deploy is queued
+    - interfaceList reports current `accessHost` intent, no parent claim, and stale `portChannelId: 10`
+    - `delete` queues normalize and deploy
 
     ## Classes and Methods
 
@@ -719,25 +719,25 @@ def test_ethernet_access_orchestrator_00570() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({})
 
-    with pytest.raises(RuntimeError, match=r"Delete failed for.*member of port-channel 10.*Refusing to normalize"):
+    with does_not_raise():
         instance.delete(model)
 
-    assert instance._pending_normalizes == []
-    assert instance._pending_deploys == []
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
 def test_ethernet_access_orchestrator_00580() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` refuses when any interface in the batch is a port-channel member, failing fast on
-    the first offender so the caller does not silently detach interfaces from their port-channels.
+    Verify `delete_bulk` uses the same intent-first stale-operational decision as
+    single delete.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10
-    - `delete_bulk` raises `RuntimeError`; no normalize or deploy is queued
+    - interfaceList reports current `accessHost` intent, no parent claim, and stale `portChannelId: 10`
+    - `delete_bulk` queues normalize and deploy
 
     ## Classes and Methods
 
@@ -754,11 +754,11 @@ def test_ethernet_access_orchestrator_00580() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*Refusing to normalize"):
+    with does_not_raise():
         instance.delete_bulk([model])
 
-    assert instance._pending_normalizes == []
-    assert instance._pending_deploys == []
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
 def test_ethernet_access_orchestrator_00590() -> None:
@@ -800,17 +800,16 @@ def test_ethernet_access_orchestrator_00600() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` silently skips port-channel members when `state == "overridden"` so fabric-wide
-    convergence does not detach interfaces from their port-channels. Non-member interfaces in the same batch
-    are still queued for normalize / deploy.
+    Verify `state: overridden` resets an omitted host-policy interface despite a
+    stale operational ID, while also resetting an ordinary non-member.
 
     ## Test
 
     - state is "overridden"
     - switches-list resolves 192.168.1.1 -> FDO11111AAA and 192.168.1.2 -> FDO22222BBB
-    - Ethernet1/1 on FDO11111AAA is a PC 10 member -> skipped
+    - Ethernet1/1 on FDO11111AAA has host intent, no parent claim, and stale PC 10 operData -> queued
     - Ethernet1/2 on FDO22222BBB is not a PC member -> queued
-    - `delete_bulk` does not raise; only the non-member ends up in `_pending_normalizes` / `_pending_deploys`
+    - `delete_bulk` does not raise; both interfaces are queued
 
     ## Classes and Methods
 
@@ -832,8 +831,14 @@ def test_ethernet_access_orchestrator_00600() -> None:
     with does_not_raise():
         instance.delete_bulk([pc_member, non_member])
 
-    assert instance._pending_normalizes == [("Ethernet1/2", "FDO22222BBB")]
-    assert instance._pending_deploys == [("Ethernet1/2", "FDO22222BBB")]
+    assert instance._pending_normalizes == [
+        ("Ethernet1/1", "FDO11111AAA"),
+        ("Ethernet1/2", "FDO22222BBB"),
+    ]
+    assert instance._pending_deploys == [
+        ("Ethernet1/1", "FDO11111AAA"),
+        ("Ethernet1/2", "FDO22222BBB"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -885,15 +890,15 @@ def test_ethernet_access_orchestrator_00610() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` still raises on a port-channel member when `state == "deleted"` (the user named the
-    interface explicitly), so the user is told loudly rather than having their PC silently broken.
+    Verify an explicitly named delete also permits current host intent with no
+    parent claim despite stale positive operational membership.
 
     ## Test
 
     - state is "deleted"
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - Ethernet1/1 is a PC 10 member, user named it
-    - `delete_bulk` raises `RuntimeError`; nothing is queued
+    - Ethernet1/1 has `accessHost` intent, no parent claim, and stale PC 10 operData
+    - `delete_bulk` queues normalize and deploy
 
     ## Classes and Methods
 
@@ -910,11 +915,11 @@ def test_ethernet_access_orchestrator_00610() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*Refusing to normalize"):
+    with does_not_raise():
         instance.delete_bulk([model])
 
-    assert instance._pending_normalizes == []
-    assert instance._pending_deploys == []
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
 def test_ethernet_access_orchestrator_00595() -> None:

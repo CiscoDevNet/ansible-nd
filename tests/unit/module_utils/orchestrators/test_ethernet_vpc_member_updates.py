@@ -19,7 +19,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDStateMachineError,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -231,6 +231,8 @@ class _Controller:
                 return {"links": []}
         if verb_value == HttpVerbEnum.PUT.value and "/interfaces/Ethernet1%2F" in path:
             return {}
+        if verb_value == HttpVerbEnum.POST.value and path.endswith("/interfaceActions/deploy"):
+            return {}
         raise AssertionError(f"Unexpected controller request: {verb_value} {path}; data={data}")
 
 
@@ -248,6 +250,12 @@ class _FabricContext:
         except KeyError as exc:
             raise RuntimeError(f"Unknown switch {switch_ip!r}") from exc
 
+    @staticmethod
+    def get_platform_type(switch_ip: str) -> PlatformType:
+        if switch_ip not in _FabricContext.switch_map:
+            raise RuntimeError(f"Unknown switch {switch_ip!r}")
+        return PlatformType.NX_OS
+
 
 def _state_machine(
     case: _VpcCase,
@@ -257,6 +265,7 @@ def _state_machine(
     inventories: dict[str, list[dict[str, Any]]] | None = None,
     local_names: tuple[str, ...] = ("Ethernet1/24",),
     pair_records: dict[str, dict[str, Any]] | None = None,
+    deploy: bool = False,
 ) -> tuple[NDStateMachine, _Controller]:
     if state == "deleted":
         config = [{"switch_ip": LOCAL_IP, "interface_name": name} for name in local_names]
@@ -275,9 +284,10 @@ def _state_machine(
         "output_level": "normal",
         "ignore_errors": False,
         "fabric_name": "fabric_1",
-        "config_actions": {"deploy": False},
+        "config_actions": {"deploy": deploy},
     }
     orchestrator = case.orchestrator_class(rest_send=_rest_send(params))
+    orchestrator.apply_config_actions(params)
     controller = _Controller(
         inventories or _inventories(case, local_names=local_names),
         pair_records=pair_records or {},
@@ -356,6 +366,35 @@ def test_pair_aware_safe_merge_preserves_authentic_member_payload(
     assert "ptp" not in policy
     assert "operData" not in payload
     assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_pair_aware_member_update_deploys_exactly_once(case: _VpcCase) -> None:
+    """Each pair-aware policy produces one PUT and one consolidated deploy."""
+    state_machine, controller = _state_machine(
+        case,
+        requested_policy={"description": "deployed pair-aware member"},
+        deploy=True,
+    )
+
+    state_machine.manage_state()
+    state_machine.model_orchestrator.deploy_pending()
+
+    writes = _writes(controller)
+    assert [call["verb"] for call in writes] == [
+        HttpVerbEnum.PUT.value,
+        HttpVerbEnum.POST.value,
+    ]
+    assert writes[1]["path"].endswith("/interfaceActions/deploy")
+    assert writes[1]["data"] == {
+        "interfaces": [
+            {
+                "interfaceName": "Ethernet1/24",
+                "switchId": LOCAL_SERIAL,
+            }
+        ]
+    }
+    assert state_machine.model_orchestrator._pending_deploys == []
 
 
 @pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)

@@ -32,6 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
     NDStateMachineError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -177,6 +178,8 @@ class _Controller:
             if self.fail_put or put_number == self.fail_put_number:
                 raise RuntimeError("injected member PUT failure")
             return {}
+        if verb_value == HttpVerbEnum.POST.value and path.endswith("/interfaceActions/deploy"):
+            return {}
         raise AssertionError(f"Unexpected controller request: {verb_value} {path}; data={data}")
 
     @property
@@ -190,6 +193,9 @@ class _FabricContext:
 
     switch_map = {SWITCH_IP: SWITCH_ID}
 
+    def __init__(self, platform_type: str) -> None:
+        self.platform_type = PlatformType(platform_type)
+
     @staticmethod
     def validate_for_mutation() -> None:
         """The synthetic fabric is local, present, and not frozen."""
@@ -200,6 +206,12 @@ class _FabricContext:
         if switch_ip != SWITCH_IP:
             raise RuntimeError(f"Switch with IP '{switch_ip}' not found in fabric 'fabric_1'.")
         return SWITCH_ID
+
+    def get_platform_type(self, switch_ip: str) -> PlatformType:
+        """Return the platform reported by the synthetic switch inventory."""
+        if switch_ip != SWITCH_IP:
+            raise RuntimeError(f"Switch with IP '{switch_ip}' not found in fabric 'fabric_1'.")
+        return self.platform_type
 
 
 def _member_record(
@@ -301,6 +313,13 @@ def _host_record(case: _MemberCase, interface_name: str) -> dict[str, Any]:
     }
 
 
+def _host_record_with_stale_membership(case: _MemberCase) -> dict[str, Any]:
+    """Return current host intent with a stale positive operational bundle ID."""
+    record = _host_record(case, case.interface_name)
+    record["operData"]["portChannelId"] = PORT_CHANNEL_ID
+    return record
+
+
 def _rest_send(params: dict[str, Any]) -> RestSend:
     """Build the RestSend required by a concrete orchestrator."""
     rest_send = RestSend({**params, "check_mode": False})
@@ -320,6 +339,7 @@ def _state_machine(
     inventory_override: list[dict[str, Any]] | None = None,
     fail_put: bool = False,
     fail_put_number: int | None = None,
+    deploy: bool = False,
 ) -> tuple[NDStateMachine, _Controller]:
     """Construct a state machine backed by authentic member and parent inventory."""
     if config_override is not None:
@@ -334,9 +354,10 @@ def _state_machine(
         "output_level": "normal",
         "ignore_errors": False,
         "fabric_name": "fabric_1",
-        "config_actions": {"deploy": False},
+        "config_actions": {"deploy": deploy},
     }
     orchestrator = case.orchestrator_class(rest_send=_rest_send(params))
+    orchestrator.apply_config_actions(params)
     inventory = inventory_override or [
         _parent_record(case),
         _member_record(
@@ -346,7 +367,7 @@ def _state_machine(
         ),
     ]
     controller = _Controller(inventory, fail_put=fail_put, fail_put_number=fail_put_number)
-    object.__setattr__(orchestrator, "_fabric_context", _FabricContext())
+    object.__setattr__(orchestrator, "_fabric_context", _FabricContext(case.network_os_type))
     object.__setattr__(orchestrator, "_request", MethodType(controller.request, orchestrator))
 
     module = MockAnsibleModule()
@@ -439,6 +460,53 @@ def test_idempotent_member_merge_performs_no_write(case: _MemberCase) -> None:
     assert _write_calls(controller) == []
     assert state_machine.output.format()["changed"] is False
     assert state_machine.model_orchestrator._pending_deploys == []
+
+
+@pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
+def test_member_update_deploys_exactly_once_when_enabled(case: _MemberCase) -> None:
+    """Each standalone member policy produces one PUT and one consolidated deploy."""
+    state_machine, controller = _state_machine(
+        case,
+        state="merged",
+        policy={"description": "deployed member update"},
+        deploy=True,
+    )
+
+    state_machine.manage_state()
+    state_machine.model_orchestrator.deploy_pending()
+
+    writes = _write_calls(controller)
+    assert [call["verb"] for call in writes] == [
+        HttpVerbEnum.PUT.value,
+        HttpVerbEnum.POST.value,
+    ]
+    assert writes[1]["path"].endswith("/interfaceActions/deploy")
+    assert writes[1]["data"] == {
+        "interfaces": [
+            {
+                "interfaceName": case.interface_name,
+                "switchId": SWITCH_ID,
+            }
+        ]
+    }
+    assert state_machine.model_orchestrator._pending_deploys == []
+
+
+@pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
+def test_idempotent_member_replay_never_deploys_when_enabled(case: _MemberCase) -> None:
+    """Deploy true does not turn an idempotent member replay into controller I/O."""
+    state_machine, controller = _state_machine(
+        case,
+        state="merged",
+        policy={"description": "old member description"},
+        deploy=True,
+    )
+
+    state_machine.manage_state()
+    state_machine.model_orchestrator.deploy_pending()
+
+    assert _write_calls(controller) == []
+    assert state_machine.output.format()["changed"] is False
 
 
 @pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
@@ -589,6 +657,98 @@ def test_direct_delete_paths_reject_configured_member_with_stale_operdata(case: 
     assert orchestrator._pending_resets == []
 
 
+def test_stale_operational_membership_allows_single_host_delete() -> None:
+    """Current host intent wins over stale positive operData after parent removal."""
+    case = MEMBER_CASES[0]
+    state_machine, controller = _state_machine(
+        case,
+        state="deleted",
+        inventory_override=[_host_record_with_stale_membership(case)],
+    )
+    model = next(iter(state_machine.proposed))
+    orchestrator = state_machine.model_orchestrator
+
+    orchestrator.delete(model)
+
+    assert _write_calls(controller) == []
+    assert orchestrator._pending_normalizes == [(case.interface_name, SWITCH_ID)]
+    assert orchestrator._pending_deploys == [(case.interface_name, SWITCH_ID)]
+
+
+def test_stale_operational_membership_allows_bulk_host_delete() -> None:
+    """The normal state-machine bulk-delete path applies the same intent-first decision."""
+    case = MEMBER_CASES[0]
+    state_machine, controller = _state_machine(
+        case,
+        state="deleted",
+        inventory_override=[_host_record_with_stale_membership(case)],
+    )
+
+    state_machine.manage_state()
+
+    assert _write_calls(controller) == []
+    assert state_machine.model_orchestrator._pending_normalizes == [(case.interface_name, SWITCH_ID)]
+    assert state_machine.model_orchestrator._pending_deploys == [(case.interface_name, SWITCH_ID)]
+    assert state_machine.output.format()["changed"] is True
+
+
+def test_stale_operational_membership_allows_overridden_host_cleanup() -> None:
+    """Overridden no longer preserves an omitted host solely because operData is stale."""
+    case = MEMBER_CASES[0]
+    state_machine, controller = _state_machine(
+        case,
+        state="overridden",
+        config_override=[],
+        inventory_override=[_host_record_with_stale_membership(case)],
+    )
+
+    state_machine.manage_state()
+
+    assert _write_calls(controller) == []
+    assert state_machine.model_orchestrator._pending_normalizes == [(case.interface_name, SWITCH_ID)]
+    assert state_machine.model_orchestrator._pending_deploys == [(case.interface_name, SWITCH_ID)]
+
+
+def test_parent_claim_blocks_host_policy_delete() -> None:
+    """A current parent claim outranks a host-policy echo during reconciliation."""
+    case = MEMBER_CASES[0]
+    state_machine, controller = _state_machine(
+        case,
+        state="deleted",
+        inventory_override=[
+            _parent_record(case),
+            _host_record_with_stale_membership(case),
+        ],
+    )
+
+    with pytest.raises(NDStateMachineError, match=r"(?i)claimed by parent intent.*port-channel20"):
+        state_machine.manage_state()
+
+    assert _write_calls(controller) == []
+    assert state_machine.model_orchestrator._pending_normalizes == []
+    assert state_machine.model_orchestrator._pending_deploys == []
+
+
+def test_unexplained_positive_operational_membership_fails_closed() -> None:
+    """A non-host policy cannot use the stale-operData exception."""
+    case = MEMBER_CASES[0]
+    unknown = _host_record_with_stale_membership(case)
+    unknown["configData"]["networkOS"]["policy"]["policyType"] = "unmodeledEthernetPolicy"
+    state_machine, controller = _state_machine(
+        case,
+        state="deleted",
+        inventory_override=[unknown],
+    )
+    model = next(iter(state_machine.proposed))
+
+    with pytest.raises(RuntimeError, match=r"(?i)inconsistent ownership evidence"):
+        state_machine.model_orchestrator.delete(model, existing_data=unknown)
+
+    assert _write_calls(controller) == []
+    assert state_machine.model_orchestrator._pending_normalizes == []
+    assert state_machine.model_orchestrator._pending_deploys == []
+
+
 @pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
 def test_overridden_omits_member_from_host_family_scope(case: _MemberCase) -> None:
     """An omitted member is preserved while an ordinary host remains converged."""
@@ -670,6 +830,10 @@ def test_member_put_failure_never_falls_back_to_post_or_queues_deploy(
     assert [call["verb"] for call in writes] == [HttpVerbEnum.PUT.value]
     assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
     assert state_machine.model_orchestrator._pending_deploys == []
+    output = state_machine.output.format()
+    assert output["changed"] is False
+    assert output["after"] == output["before"]
+    assert output["diff"] == []
 
 
 @pytest.mark.parametrize(
@@ -787,3 +951,11 @@ def test_second_member_put_failure_preserves_only_first_accepted_deploy() -> Non
     ]
     assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
     assert state_machine.model_orchestrator._pending_deploys == [(case.interface_name, SWITCH_ID)]
+    output = state_machine.output.format()
+    assert output["changed"] is True
+    descriptions = {item["interface_name"]: item["config_data"]["network_os"]["policy"]["description"] for item in output["after"]}
+    assert descriptions == {
+        case.interface_name: "first accepted",
+        second_name: "old member description",
+    }
+    assert output["diff"] == []

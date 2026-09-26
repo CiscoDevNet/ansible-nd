@@ -121,8 +121,8 @@ class ValidatedMemberOwnership:
 
 
 @dataclass(frozen=True)
-class _ParentClaim:
-    """Internal representation of a parent record that names a member."""
+class ParentMembershipClaim:
+    """One cached parent-intent record that names an ethernet interface."""
 
     switch_id: str
     interface_name: str
@@ -191,7 +191,7 @@ class EthernetMembershipIndex:
         self._inventories: dict[str, dict[str, InterfaceRecord]] = {}
         self._members: dict[MemberKey, IndexedEthernetMember] = {}
         self._vpc_members_by_parent: dict[MemberKey, tuple[IndexedEthernetMember, ...]] = {}
-        self._claims: dict[MemberKey, tuple[_ParentClaim, ...]] = {}
+        self._claims: dict[MemberKey, tuple[ParentMembershipClaim, ...]] = {}
         self._peer_switch_ids = self._normalize_peer_switch_ids(peer_switch_ids)
         self._vpc_parents_by_signature: dict[VpcParentSignature, tuple[_VpcParentCopy, ...]] = {}
         self._vpc_peer_cache: dict[tuple[str, str], str] = {}
@@ -223,6 +223,18 @@ class EthernetMembershipIndex:
         if member is None:
             raise MembershipValidationError(f"Interface {interface_name!r} on switch {switch_id!r} is not an " "indexed ethernet member")
         return member
+
+    def claiming_parents(self, switch_id: str, interface_name: str) -> tuple[ParentMembershipClaim, ...]:
+        """Return every cached parent-intent record that names the interface.
+
+        This is deliberately independent of the interface's own policy.  During
+        convergence ND can already echo a host policy on a former member while a
+        parent record still claims it, or retain stale positive operational
+        membership after the parent claim is gone.  Delete classification needs
+        those two sources of intent separately.
+        """
+
+        return self._claims_for(switch_id, interface_name)
 
     def validate(self, switch_id: str, interface_name: str) -> ValidatedMemberOwnership:
         """Validate and return ownership proof for one indexed member.
@@ -343,7 +355,7 @@ class EthernetMembershipIndex:
     def _build_parent_claims(self) -> None:
         """Index every parent membership reference once for constant-time lookups."""
 
-        mutable_claims: dict[MemberKey, list[_ParentClaim]] = {}
+        mutable_claims: dict[MemberKey, list[ParentMembershipClaim]] = {}
         for switch_id, inventory in self._inventories.items():
             for record in inventory.values():
                 policy = self._policy(record)
@@ -364,7 +376,7 @@ class EthernetMembershipIndex:
                 for member_name, claim_fields in claim_fields_by_member.items():
                     key = (switch_id, member_name)
                     mutable_claims.setdefault(key, []).append(
-                        _ParentClaim(
+                        ParentMembershipClaim(
                             switch_id=switch_id,
                             interface_name=parent_name,
                             interface_type=interface_type,
@@ -579,12 +591,12 @@ class EthernetMembershipIndex:
             )
         return configured_id, operational_id
 
-    def _claims_for(self, switch_id: str, interface_name: str) -> tuple[_ParentClaim, ...]:
+    def _claims_for(self, switch_id: str, interface_name: str) -> tuple[ParentMembershipClaim, ...]:
         if switch_id not in self._inventories:
             raise MembershipValidationError(f"No cached interface inventory exists for switch {switch_id!r}")
         return self._claims.get(self._key(switch_id, interface_name), ())
 
-    def _require_single_claim(self, member: IndexedEthernetMember) -> _ParentClaim:
+    def _require_single_claim(self, member: IndexedEthernetMember) -> ParentMembershipClaim:
         descriptor = member.descriptor
         if descriptor is None:
             raise MembershipValidationError(
@@ -606,7 +618,7 @@ class EthernetMembershipIndex:
         *,
         expected_parent_name: str | None = None,
         expected_member_field: str | None = None,
-    ) -> _ParentClaim:
+    ) -> ParentMembershipClaim:
         """Require exactly one compatible vPC parent claim for a physical member."""
 
         policy = self._required_policy(member.record)
@@ -686,7 +698,7 @@ class EthernetMembershipIndex:
     def _validate_parent_claim(
         self,
         member: IndexedEthernetMember,
-        claim: _ParentClaim,
+        claim: ParentMembershipClaim,
         member_port_channel_id: int,
         *,
         local_member_field: str,
@@ -739,7 +751,7 @@ class EthernetMembershipIndex:
             record=claim.record,
         )
 
-    def _standalone_parent_port_channel_id(self, claim: _ParentClaim) -> int:
+    def _standalone_parent_port_channel_id(self, claim: ParentMembershipClaim) -> int:
         try:
             name_id = normalize_port_channel_id(claim.interface_name)
             policy = self._policy(claim.record) or {}
@@ -761,7 +773,7 @@ class EthernetMembershipIndex:
     def _validate_vpc_pair(
         self,
         member: IndexedEthernetMember,
-        claim: _ParentClaim,
+        claim: ParentMembershipClaim,
     ) -> ValidatedMemberOwnership:
         descriptor = member.descriptor
         if descriptor is None or not descriptor.pair_aware:

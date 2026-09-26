@@ -829,14 +829,14 @@ def test_ethernet_routed_orchestrator_00720() -> None:
     """
     # Summary
 
-    Verify `preflight_delete` refuses an explicitly named port-channel member, so a `--check` `state: deleted` run fails the
-    same way the normal run's `delete_bulk` would.
+    Verify `preflight_delete` permits current routed-host intent with no parent
+    claim despite a stale positive operational port-channel ID.
 
     ## Test
 
-    - interfaceList reports Ethernet1/7 as a member of port-channel 10
+    - interfaceList reports `routedHost`, no parent claim, and stale `portChannelId: 10`
     - `preflight_delete` receives the existing model for Ethernet1/7
-    - `RuntimeError` refuses to normalize the member
+    - preflight succeeds, matching normal intent-first deletion
 
     ## Classes and Methods
 
@@ -850,7 +850,7 @@ def test_ethernet_routed_orchestrator_00720() -> None:
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10. Refusing to normalize a port-channel member"):
+    with does_not_raise():
         orchestrator.preflight_delete([_nx_model("Ethernet1/7")])
 
 

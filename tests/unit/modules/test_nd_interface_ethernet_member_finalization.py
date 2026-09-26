@@ -31,6 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.modules import (
     nd_interface_ethernet_access,
+    nd_interface_ethernet_routed,
     nd_interface_ethernet_trunk_host,
 )
 
@@ -42,6 +43,7 @@ ACCEPTED_NOTE = (
 MODULES = (
     nd_interface_ethernet_access,
     nd_interface_ethernet_trunk_host,
+    nd_interface_ethernet_routed,
 )
 
 

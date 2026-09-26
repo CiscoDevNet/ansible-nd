@@ -1112,7 +1112,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
-            self._check_port_channel_delete_restriction(model_instance, existing_data)
+            self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
             self._check_xe_fabric_link(model_instance)
 
     @staticmethod
@@ -1144,43 +1144,115 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return None
         return pc_id
 
-    def _check_port_channel_delete_restriction(self, model_instance: ModelType, existing_data: dict | None) -> None:
+    def _port_channel_delete_restriction(
+        self,
+        model_instance: ModelType,
+        existing_data: dict | None,
+        *,
+        switch_id: str,
+    ) -> str | None:
+        """Return the intent-first reason an ethernet delete must be refused.
+
+        Configured intent is authoritative.  A supported member policy is
+        protected immediately.  Otherwise the complete cached switch inventory
+        is consulted for a parent port-channel or vPC claim before operational
+        data is considered.  A recognized user-managed host policy with no
+        parent claim is safe to reset even when ND still echoes a stale positive
+        ``operData.portChannelId``.
+
+        Unknown/protected member-like policies and unexplained positive
+        operational membership remain fail-closed.
         """
-        # Summary
 
-        Refuse to normalize an interface that is currently a port-channel member. Normalizing resets the
-        interface to the `int_trunk_host` template, which silently strips the channel-group membership
-        and detaches the interface from its port-channel — a destructive change that an unsuspecting user
-        asking to delete an access-interface configuration almost certainly did not intend.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the existing wire state shows the interface is a port-channel member.
-        """
         policy_type = self._existing_policy_type(existing_data)
-        disposition = classify_member_policy(policy_type)
-        if disposition != MemberPolicyDisposition.NOT_MEMBER:
+        descriptor = get_member_policy_descriptor(policy_type)
+        if descriptor is not None:
             configured_id = None
-            if get_member_policy_descriptor(policy_type) is not None and existing_data is not None:
+            if existing_data is not None:
                 try:
                     configured_id = parse_member_interface_response(existing_data).normalized_port_channel_id
                 except ValueError:
                     configured_id = None
             owner = f"port-channel {configured_id}" if configured_id is not None else f"member policy '{policy_type}'"
-            raise RuntimeError(
+            return (
                 f"Interface {model_instance.interface_name} is a member of {owner}. "
-                f"Refusing to normalize a port-channel member (this would strip its "
-                f"channel-group membership). Remove it from the parent first."
+                "Refusing to normalize a port-channel member (this would strip its "
+                "channel-group membership). Remove it from the parent first."
             )
+
+        # State-machine and normal orchestrator flows populate this cache through
+        # query_all() / _existing_interface() before deletion.  ``existing_data``
+        # is also a documented synthetic test override; when such a direct caller
+        # supplies it without a cache, classify only the supplied evidence rather
+        # than issuing a surprising extra request.
+        parent_claims = (
+            self._membership_index().claiming_parents(switch_id, model_instance.interface_name) if switch_id in self._switch_interfaces_cache else ()
+        )
+        if parent_claims:
+            parents = ", ".join(sorted(f"{claim.interface_name} ({claim.interface_type}, policy {claim.policy_type!r})" for claim in parent_claims))
+            return (
+                f"Interface {model_instance.interface_name} is still claimed by parent intent: {parents}. "
+                "Refusing to normalize it because that would strip its channel-group membership. "
+                "Remove it from the parent and wait for intent reconciliation before retrying."
+            )
+
+        disposition = classify_member_policy(policy_type)
+        if disposition != MemberPolicyDisposition.NOT_MEMBER:
+            return (
+                f"Interface {model_instance.interface_name} uses protected or unsupported member policy "
+                f"'{policy_type}'. Refusing to normalize it without a modeled ownership contract; "
+                "reconcile the parent port-channel first."
+            )
+
         port_channel_id = self._existing_port_channel_id(existing_data)
-        if port_channel_id is not None:
-            raise RuntimeError(
-                f"Interface {model_instance.interface_name} is a member of port-channel {port_channel_id}. "
-                f"Refusing to normalize a port-channel member (this would strip its channel-group membership). "
-                f"Remove the interface from the port-channel first, then re-run the delete."
+        if port_channel_id is None:
+            return None
+        if policy_type in self.CONVERTIBLE_POLICY_TYPES:
+            logger.info(
+                "Allowing delete of host-policy interface %s on switch %s despite stale operational port-channel %s; "
+                "the cached intent contains no parent claim",
+                model_instance.interface_name,
+                switch_id,
+                port_channel_id,
             )
+            return None
+        return (
+            f"Interface {model_instance.interface_name} reports operational membership in port-channel "
+            f"{port_channel_id}, but its configured policy is {policy_type!r} and no parent intent claim was found. "
+            "Refusing to normalize inconsistent ownership evidence; reconcile the parent and retry."
+        )
+
+    def _check_port_channel_delete_restriction(
+        self,
+        model_instance: ModelType,
+        existing_data: dict | None,
+        *,
+        switch_id: str | None = None,
+    ) -> None:
+        """
+        # Summary
+
+        Apply the shared intent-first deletion classifier and refuse unsafe
+        normalization.  Current member policy and parent intent take precedence;
+        stale positive operational membership does not override a recognized host
+        policy after the parent claim has disappeared.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If configured or parent intent still claims membership.
+        - If member-like or operational evidence is inconsistent and cannot be
+          proven safe.
+        """
+        resolved_switch_id = switch_id or self._resolve_switch_id(model_instance.switch_ip)
+        restriction = self._port_channel_delete_restriction(
+            model_instance,
+            existing_data,
+            switch_id=resolved_switch_id,
+        )
+        if restriction is not None:
+            raise RuntimeError(restriction)
 
     def remove_pending(self) -> ResponseType | None:
         """
@@ -1630,13 +1702,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
             if self._model_is_ios_xe(model_instance):
                 self._check_xe_fabric_link(model_instance)
                 self._queue_xe_reset(model_instance.interface_name, switch_id)
                 self._queue_deploy(model_instance.interface_name, switch_id)
                 return {}
-            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
-            self._check_port_channel_delete_restriction(model_instance, existing_data)
             if self._has_unresettable_fields(existing_data):
                 self._queue_reset(model_instance.interface_name, switch_id)
             else:
@@ -1707,6 +1779,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            existing_policy_type = self._existing_policy_type(existing_data)
+            if classify_member_policy(existing_policy_type) != MemberPolicyDisposition.NOT_MEMBER:
+                raise RuntimeError(
+                    f"Interface {model_instance.interface_name} already exists with member "
+                    f"policy '{existing_policy_type}'; a member must never be sent through "
+                    "the create endpoint."
+                )
             self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_restrictions(model_instance, existing_data)
             payload = model_instance.to_payload()
@@ -1792,33 +1871,34 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            if self._model_is_ios_xe(model_instance):
+            if self._model_is_ios_xe(model_instance) and state == "overridden":
+                logger.info(
+                    "Skipping IOS-XE interface %s on switch %s during state:overridden (IOS-XE interfaces are merge-only)",
+                    model_instance.interface_name,
+                    model_instance.switch_ip,
+                )
+                continue
+            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            restriction = self._port_channel_delete_restriction(
+                model_instance,
+                existing_data,
+                switch_id=switch_id,
+            )
+            if restriction is not None:
                 if state == "overridden":
                     logger.info(
-                        "Skipping IOS-XE interface %s on switch %s during state:overridden (IOS-XE interfaces are merge-only)",
+                        "Skipping protected interface %s on switch %s during state:overridden: %s",
                         model_instance.interface_name,
                         model_instance.switch_ip,
+                        restriction,
                     )
                     continue
+                raise RuntimeError(restriction)
+            if self._model_is_ios_xe(model_instance):
                 self._check_xe_fabric_link(model_instance)
                 self._queue_xe_reset(model_instance.interface_name, switch_id)
                 self._queue_deploy(model_instance.interface_name, switch_id)
                 continue
-            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
-            policy_type = self._existing_policy_type(existing_data)
-            member_disposition = classify_member_policy(policy_type)
-            port_channel_id = self._existing_port_channel_id(existing_data)
-            if member_disposition != MemberPolicyDisposition.NOT_MEMBER or port_channel_id is not None:
-                if state == "overridden":
-                    owner = port_channel_id if port_channel_id is not None else policy_type
-                    logger.info(
-                        "Skipping port-channel member %s on switch %s (owner %s) during state:overridden",
-                        model_instance.interface_name,
-                        model_instance.switch_ip,
-                        owner,
-                    )
-                    continue
-                self._check_port_channel_delete_restriction(model_instance, existing_data)
             if self._has_unresettable_fields(existing_data):
                 self._queue_reset(model_instance.interface_name, switch_id)
             else:
