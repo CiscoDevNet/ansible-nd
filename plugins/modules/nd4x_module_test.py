@@ -12,7 +12,7 @@ DOCUMENTATION = r"""
 ---
 module: nd4x_module_test
 short_description: Run standardized integration tests for ND 4.x modules
-version_added: "1.6.0"
+version_added: "2.0.0"
 description:
   - Provides a common integration-test runner for Cisco ND 4.x modules.
   - During normal execution, optionally verifies that predictive check mode did
