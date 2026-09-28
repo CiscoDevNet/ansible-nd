@@ -76,3 +76,7 @@ class BasePath:
         if not segments:
             return cls.API
         return f"{cls.API}/{'/'.join(segments)}"
+
+
+# Alias retained for links endpoints that import ``BasePathLinks`` directly.
+BasePathLinks = BasePath

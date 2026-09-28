@@ -17,8 +17,8 @@ with interface-type-specific payload construction and query filtering.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from typing import ClassVar
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
@@ -71,7 +71,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
         underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
-        deploy/remove queues and the per-switch interface cache read by `_switch_interfaces`.
+        deploy/remove queues, the `_deploy_attempted` stage flag read by `deploy_accepted_mutations`, and the per-switch interface
+        cache read by `_switch_interfaces`.
 
         ## Raises
 
@@ -79,7 +80,24 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         self._pending_deploys: list[tuple[str, str]] = []
         self._pending_removes: list[tuple[str, str]] = []
+        self._deploy_attempted: bool = False
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
+
+    def apply_config_actions(self, params: Mapping[str, Any]) -> bool:
+        """
+        # Summary
+
+        Set `deploy` from the module's `config_actions` params and return the resolved value. This is the single bridge between the shared
+        `config_actions_spec(include=("deploy",))` argument fragment and the orchestrator, so every `nd_interface_*` module resolves the
+        deploy flag the same way. Deployment is opt-in: when `config_actions` is absent, `None`, or empty, `deploy` is `False`.
+
+        ## Raises
+
+        None
+        """
+        config_actions = params.get("config_actions") or {}
+        self.deploy = bool(config_actions.get("deploy", False))
+        return self.deploy
 
     @property
     def fabric_name(self) -> str:
@@ -204,7 +222,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         1. Resolve every `switch_ip` to a `switchId` via `_require_resolvable_switches`. This runs for every interface
            orchestrator, including those that opt out of the capability preflight, so an unknown switch is reported in check
            mode too (PR #550 review).
-        2. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
+        2. Platform check via `_check_platform_match`: each proposed `network_os_type` must agree with the `platformType` the
+           switch reports in the inventory fetched by step 1, so a mismatch fails in check mode too (PR #558 review).
+        3. Capability preflight via `validate_switches_capable`, a no-op unless the orchestrator opts in via the
            `interface_type`/`interface_mode` ClassVars.
 
         ## Raises
@@ -212,10 +232,52 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         ### RuntimeError
 
         - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
+        - Propagated from `_check_platform_match` (requested `network_os_type` differs from the switch's `platformType`).
         - Propagated from `validate_switches_capable` (see its docstring).
         """
         self._require_resolvable_switches(model_instances)
+        self._check_platform_match(model_instances)
         self.validate_switches_capable(model_instances)
+
+    def _check_platform_match(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Refuse any proposed interface whose `config_data.network_os.network_os_type` disagrees with the `platformType` its switch reports,
+        so a `--check` run fails on a platform mismatch exactly like a normal run would when ND rejects the write (PR #558 review). The
+        controller rejects the incompatible request before persisting intent, so this guard changes no outcome; it makes the outcome the
+        same in both modes and reports it in the module's own words before any request is sent.
+
+        Reads only the switch inventory `_require_resolvable_switches` already fetched (`FabricContext.get_platform_type` is an O(1)
+        index lookup), so no request is added. Each unique `(switch_ip, network_os_type)` pair is compared once and every mismatch is
+        aggregated into a single `RuntimeError`. A switch that reports no recognizable `platformType`, or a model without a
+        `network_os_type`, is skipped: there is no evidence of a mismatch to act on.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more proposed interfaces request a `network_os_type` that differs from the switch's reported `platformType`.
+        """
+        by_pair: dict[tuple[str, str], list[str]] = {}
+        for model_instance in model_instances:
+            network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
+            requested = getattr(network_os, "network_os_type", None)
+            switch_ip = getattr(model_instance, "switch_ip", None)
+            if not isinstance(requested, str) or not isinstance(switch_ip, str):
+                continue
+            by_pair.setdefault((switch_ip, requested), []).append(str(getattr(model_instance, "interface_name", "")))
+        mismatches: list[str] = []
+        for (switch_ip, requested), interface_names in by_pair.items():
+            platform = self.fabric_context.get_platform_type(switch_ip)
+            if platform is None or platform.value == requested:
+                continue
+            mismatches.append(
+                f"Switch {switch_ip} reports platformType '{platform.value}', but the requested network_os_type is '{requested}' "
+                f"({', '.join(interface_names)})"
+            )
+        if mismatches:
+            raise RuntimeError(f"{'; '.join(mismatches)}. No changes were made.")
 
     def _require_resolvable_switches(self, model_instances: Sequence[ModelType]) -> set[str]:
         """
@@ -393,14 +455,18 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         When `deploy` is `False`, returns `None` without making any API call.
 
+        Sets `_deploy_attempted` before sending so that, if this request fails, the failure-path finalizer
+        (`deploy_accepted_mutations`) does not resubmit the identical deployment (PR #547 review).
+
         ## Raises
 
         ### RuntimeError
 
-        - If the deploy API request fails.
+        - If the deploy API request fails. The queue is retained.
         """
         if not self.deploy or not self._pending_deploys:
             return None
+        self._deploy_attempted = True
         try:
             result = self._deploy_interfaces(self._pending_deploys)
             self._pending_deploys = []
@@ -426,8 +492,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         exactly one that was not accepted.
 
         Returns the deployed `(interface_name, switch_id)` pairs so the caller can name them in the failure report. Returns an
-        empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case) or when
-        no accepted-mutation pairs are queued.
+        empty list without any API call when `deploy` is `False` (staged intent is the documented contract in that case), when
+        the normal `deploy_pending` request was already attempted (a failed normal deploy is reported by its own error and must not
+        be resubmitted — PR #547 review), or when no accepted-mutation pairs are queued.
 
         ## Raises
 
@@ -435,7 +502,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - If the failure-path deploy API request fails. The accepted pairs remain queued in that case.
         """
-        if not self.deploy:
+        if not self.deploy or self._deploy_attempted:
             return []
         unsent = self._unsent_delete_pairs()
         accepted = [pair for pair in self._pending_deploys if pair not in unsent]
@@ -512,6 +579,38 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in pairs]}
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
+    def _accepted_multistatus_pairs(self) -> set[tuple[str, str]]:
+        """
+        # Summary
+
+        Return the `(interface_name, switch_id)` pair (name lower-cased) of every `DATA.results[]` item in the most recent response
+        whose `status` is exactly `success` (case/whitespace-tolerant). The pair-keyed counterpart of `_accepted_multistatus_names`
+        for the bulk endpoints whose 207 items carry `interfaceName` and `switchId` (`interfaceActions/remove`), so the same name on
+        two switches is told apart. Only an exact `success` is trusted (vault: `multi-status-207-status-field-inconsistent`; issue
+        #397). Returns an empty set when the last response was not a 207 or carries no `results[]` envelope.
+
+        ## Raises
+
+        None
+        """
+        if self.rest_send.return_code != 207:
+            return set()
+        data = self.rest_send.response_current.get("DATA")
+        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            return set()
+        accepted: set[tuple[str, str]] = set()
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").strip().lower() != "success":
+                continue
+            name = item.get("interfaceName")
+            switch_id = item.get("switchId")
+            if isinstance(name, str) and name.strip() and isinstance(switch_id, str) and switch_id.strip():
+                accepted.add((name.strip().lower(), switch_id.strip()))
+        return accepted
+
     def remove_pending(self) -> ResponseType | None:
         """
         # Summary
@@ -520,20 +619,39 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Returns `None` without making any API call if the queue is empty.
 
+        The endpoint answers HTTP 207 with an independent `results[]` status per interface, so one removal can succeed while another
+        is rejected. On a failed request, the pairs the response reports as an exact `success` (`_accepted_multistatus_pairs`) are
+        dequeued — their removal IS on the controller, and the module's failure-path finalizer (`deploy_accepted_mutations`) must
+        ship it rather than strand it staged, where a retry would no longer find the interface and never deploy it (PR #547 review).
+        Rejected, status-less, and unknown-status pairs stay queued as unsent. The response is consulted only when the request
+        recorded a new one: a sender exception leaves the previous response in place (issue #554), which must not be mistaken for
+        this request's result.
+
         ## Raises
 
         ### RuntimeError
 
-        - If the remove API request fails.
+        - If the remove API request fails. The message names the pairs the controller rejected and, for a mixed 207, the pairs it
+          accepted from the same request (whose deploy stays queued).
         """
         if not self._pending_removes:
             return None
+        submitted = list(self._pending_removes)
+        recorded = self.rest_send.response_count
         try:
             result = self._remove_interfaces()
             self._pending_removes = []
             return result
         except Exception as e:
-            raise RuntimeError(f"Bulk remove failed for interfaces {self._pending_removes}: {e}") from e
+            accepted: list[tuple[str, str]] = []
+            if self.rest_send.response_count > recorded:
+                accepted_pairs = self._accepted_multistatus_pairs()
+                accepted = [pair for pair in submitted if (pair[0].lower(), pair[1]) in accepted_pairs]
+                self._pending_removes = [pair for pair in self._pending_removes if pair not in accepted]
+            msg = f"Bulk remove failed for interfaces {self._pending_removes}: {e}"
+            if accepted:
+                msg += f" The controller accepted the removal of {accepted} from the same request; their deploy stays queued."
+            raise RuntimeError(msg) from e
 
     def _remove_interfaces(self) -> ResponseType:
         """

@@ -30,6 +30,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     MtuEnum,
     SpeedEnum,
     StormControlActionEnum,
+    XeEthernetSpeedEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostConfigDataModel,
@@ -37,6 +38,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     EthernetTrunkHostNetworkOSModel,
     EthernetTrunkHostPolicyModel,
     EthernetTrunkHostVlanMappingEntryModel,
+    XeEthernetTrunkHostNetworkOSModel,
+    XeEthernetTrunkHostPolicyModel,
 )
 from pydantic import ValidationError
 
@@ -93,6 +96,9 @@ SAMPLE_ANSIBLE_CONFIG = {
         "network_os": {
             "network_os_type": "nx-os",
             "policy": {
+                # The discriminator is injected on input when omitted and echoed in config output (issue #535), so the
+                # round-trip fixtures carry it explicitly.
+                "policy_type": "trunkHost",
                 "admin_state": True,
                 "allowed_vlans": "1-100",
                 "native_vlan": 10,
@@ -1108,7 +1114,10 @@ def test_ethernet_trunk_host_interface_00530():
         ("e1/1", "Ethernet1/1"),
         ("eth1/1/1", "Ethernet1/1/1"),
         ("Ethernet1/1.10", "Ethernet1/1.10"),
-        ("loopback0", "Loopback0"),
+        ("loopback0", "loopback0"),
+        ("gigabitethernet1/0/1", "GigabitEthernet1/0/1"),
+        ("gi1/0/1", "GigabitEthernet1/0/1"),
+        ("TenGigabitEthernet1/1/1", "TenGigabitEthernet1/1/1"),
         ("", ""),
     ],
     ids=[
@@ -1120,7 +1129,10 @@ def test_ethernet_trunk_host_interface_00530():
         "abbrev_e",
         "abbrev_breakout",
         "subinterface_passthrough",
-        "unrecognized_prefix_titlecase",
+        "unrecognized_prefix_verbatim",
+        "xe_lowercase_full",
+        "xe_abbrev",
+        "xe_tengig_verbatim",
         "empty_passthrough",
     ],
 )
@@ -1128,15 +1140,16 @@ def test_ethernet_trunk_host_interface_00550(value, expected):
     """
     # Summary
 
-    Verify `normalize_interface_name` expands any case-insensitive NX-OS abbreviation of `Ethernet`
-    (`e`, `eth`, ...) to the canonical wire prefix and falls back to Title case for unrecognized prefixes.
+    Verify `normalize_interface_name` expands any case-insensitive abbreviation of a canonical prefix (`Ethernet`,
+    `GigabitEthernet`) to the wire form and passes every other prefix through verbatim - never re-cased - so correctly-typed
+    names of other IOS-XE families (`TenGigabitEthernet`) are not corrupted (shared `ethernet_common` normalizer, issue #535).
 
     ## Test
 
-    - Case variants of the full name normalize to `Ethernet...`
-    - Abbreviations (`eth1/1`, `e1/1`) expand to `Ethernet1/1` so they match the wire form (idempotency)
+    - Case variants of the full name normalize to `Ethernet...` / `GigabitEthernet...`
+    - Abbreviations (`eth1/1`, `e1/1`, `gi1/0/1`) expand so they match the wire form (idempotency)
     - Subinterface / breakout suffixes pass through verbatim
-    - An unrecognized prefix is Title-cased rather than expanded
+    - An unrecognized prefix passes through verbatim
 
     ## Classes and Methods
 
@@ -1302,24 +1315,23 @@ def test_ethernet_trunk_host_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` is omitted from `to_config()` output (the field is hardcoded by the model and is
-    not in the argspec, so surfacing the wire form `"trunkHost"` back to playbooks would only confuse
-    assertions that compare against the snake_case Ansible convention).
+    Verify `policy_type` IS surfaced in `to_config()` output. With the IOS-XE branch (issue #535) the field is a real
+    discriminator the user may supply (`trunkHost` / `iosXeTrunkHost`), so it is exposed in the argspec and echoed back in
+    `before` / `after` / `gathered` exactly like `nd_interface_ethernet_routed` does.
 
     ## Test
 
-    - From a full API response, to_config() does NOT include `policy_type` in the policy dict
-    - All other policy fields ARE present (sanity check that we only omitted policy_type)
+    - From a full NX-OS API response, to_config() includes `policy_type == "trunkHost"` in the policy dict
+    - All other policy fields are still present
 
     ## Classes and Methods
 
     - EthernetTrunkHostInterfaceModel.to_config()
-    - EthernetTrunkHostPolicyModel._strip_policy_type_in_config()
     """
     instance = EthernetTrunkHostInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
     policy = result["config_data"]["network_os"]["policy"]
-    assert "policy_type" not in policy
+    assert policy["policy_type"] == "trunkHost"
     assert policy["admin_state"] is True
     assert policy["allowed_vlans"] == "1-100"
 
@@ -1769,7 +1781,7 @@ def test_ethernet_trunk_host_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - policy_type is not exposed in the argspec (hardcoded by the model)
+    - `network_os_type` is exposed (optional, default `nx-os`) and `policy_type` is exposed (optional, derived from `network_os_type`)
 
     ## Classes and Methods
 
@@ -1785,15 +1797,19 @@ def test_ethernet_trunk_host_interface_01100():
     assert spec["config"]["elements"] == "dict"
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["state"]["default"] == "merged"
-    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
-    # and intentionally absent from the user-facing argument spec.
+    # interface_type and mode are hardcoded in the Pydantic model and intentionally absent from the user-facing
+    # argument spec. network_os_type / policy_type are the branch discriminators (issue #535).
     config_options = spec["config"]["options"]
     assert "interface_type" not in config_options
     config_data_spec = config_options["config_data"]["options"]
     assert "mode" not in config_data_spec
-    assert "network_os_type" not in config_data_spec["network_os"]["options"]
-    policy_spec = config_data_spec["network_os"]["options"]["policy"]["options"]
-    assert "policy_type" not in policy_spec
+    network_os_spec = config_data_spec["network_os"]["options"]
+    assert network_os_spec["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
+    assert network_os_spec["network_os_type"]["default"] == "nx-os"
+    assert network_os_spec["network_os_type"].get("required") is not True
+    policy_spec = network_os_spec["policy"]["options"]
+    assert policy_spec["policy_type"]["choices"] == ["trunkHost", "iosXeTrunkHost"]
+    assert policy_spec["policy_type"].get("required") is not True
 
 
 @pytest.mark.parametrize(
@@ -1804,8 +1820,6 @@ def test_ethernet_trunk_host_interface_01100():
         ("duplex_mode", DuplexModeEnum, "value"),
         ("fec", FecEnum, "value"),
         ("link_type", LinkTypeEnum, "value"),
-        ("mtu", MtuEnum, "value"),
-        ("speed", SpeedEnum, "value"),
         ("storm_control_action", StormControlActionEnum, "value"),
     ],
     ids=[
@@ -1814,8 +1828,6 @@ def test_ethernet_trunk_host_interface_01100():
         "duplex_mode",
         "fec",
         "link_type",
-        "mtu",
-        "speed",
         "storm_control_action",
     ],
 )
@@ -1931,3 +1943,343 @@ def test_ethernet_trunk_host_interface_01140(kwargs, should_raise):
     else:
         with does_not_raise():
             EthernetTrunkHostPolicyModel(**kwargs)
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #535)
+# =============================================================================
+
+# ND 4.2.1 / 4.3.1 `iosXeIntTrunkHostTemplate` default echo, restricted to the fields the XE model declares, in WIRE form.
+# Held literally (not derived from the model's table) so a wrong or missing `reverse_diff_defaults` entry fails here.
+XE_TRUNK_TEMPLATE_DEFAULT_ECHO = {"adminState": True, "allowedVlans": "none", "bpduGuard": "default", "mtu": 1500, "speed": "auto"}
+
+SAMPLE_XE_API_RESPONSE = {
+    "switchIp": "192.168.2.1",
+    "interfaceName": "GigabitEthernet1/0/1",
+    "interfaceType": "ethernet",
+    "configData": {
+        "mode": "trunk",
+        "networkOS": {
+            "networkOSType": "ios-xe",
+            "policy": {
+                "policyType": "iosXeTrunkHost",
+                "adminState": True,
+                "allowedVlans": "10,20-30",
+                "description": "cat trunk",
+                "mtu": 1500,
+                "speed": "auto",
+            },
+        },
+    },
+}
+
+
+def test_ethernet_trunk_host_interface_01200():
+    """
+    # Summary
+
+    Verify the IOS-XE policy model injects `policy_type: iosXeTrunkHost` when the input omits it (key absent, or present as `None`
+    the way the argspec passes an omitted suboption), and an explicit value is accepted unchanged.
+
+    ## Test
+
+    - No `policy_type` -> `iosXeTrunkHost`
+    - `policy_type: None` -> `iosXeTrunkHost`
+    - Explicit `iosXeTrunkHost` -> unchanged
+
+    ## Classes and Methods
+
+    - XeEthernetTrunkHostPolicyModel.default_policy_type()
+    """
+    with does_not_raise():
+        omitted = XeEthernetTrunkHostPolicyModel.model_validate({"allowed_vlans": "10"})
+        none_valued = XeEthernetTrunkHostPolicyModel.model_validate({"policy_type": None, "allowed_vlans": "10"})
+        explicit = XeEthernetTrunkHostPolicyModel.model_validate({"policy_type": "iosXeTrunkHost", "allowed_vlans": "10"})
+    assert omitted.policy_type == "iosXeTrunkHost"
+    assert none_valued.policy_type == "iosXeTrunkHost"
+    assert explicit.policy_type == "iosXeTrunkHost"
+
+
+def test_ethernet_trunk_host_interface_01210():
+    """
+    # Summary
+
+    Verify the IOS-XE policy model is write-strict: fields that belong only to the NX-OS `trunkHost` template (`native_vlan`,
+    `vlan_mapping`) are rejected, and the NX-OS discriminator is rejected under the XE model.
+
+    ## Test
+
+    - `native_vlan` under the XE model raises
+    - `vlan_mapping` under the XE model raises
+    - `policy_type: trunkHost` under the XE model raises
+
+    ## Classes and Methods
+
+    - XeEthernetTrunkHostPolicyModel (extra="forbid" via InterfacePolicyStrictBase)
+    """
+    with pytest.raises(ValidationError):
+        result = XeEthernetTrunkHostPolicyModel.model_validate({"allowed_vlans": "10", "native_vlan": 10})
+    with pytest.raises(ValidationError):
+        result = XeEthernetTrunkHostPolicyModel.model_validate({"allowed_vlans": "10", "vlan_mapping": True})
+    with pytest.raises(ValidationError):
+        result = XeEthernetTrunkHostPolicyModel.model_validate({"policy_type": "trunkHost", "allowed_vlans": "10"})
+
+
+@pytest.mark.parametrize(
+    "field,value,should_raise",
+    [
+        ("allowed_vlans", "none", False),
+        ("allowed_vlans", "all", False),
+        ("allowed_vlans", "1-200,500-2000,3000", False),
+        ("allowed_vlans", "4095", True),
+        ("allowed_vlans", "200-100", True),
+        ("allowed_vlans", "bogus", True),
+        ("mtu", 1500, False),
+        ("mtu", 9216, False),
+        ("mtu", "9000", False),
+        ("mtu", 1499, True),
+        ("mtu", 9217, True),
+        ("mtu", "jumbo", True),
+        ("description", "x" * 200, False),
+        ("description", "x" * 201, True),
+        ("speed", "noNegotiate", False),
+        ("speed", "200Gb", True),
+    ],
+    ids=[
+        "vlans_none",
+        "vlans_all",
+        "vlans_ranges",
+        "vlans_above_max",
+        "vlans_reversed_range",
+        "vlans_bogus",
+        "mtu_min",
+        "mtu_max",
+        "mtu_numeric_string",
+        "mtu_below",
+        "mtu_above",
+        "mtu_nx_enum_rejected",
+        "description_max",
+        "description_over",
+        "speed_xe_only",
+        "speed_nx_only_rejected",
+    ],
+)
+def test_ethernet_trunk_host_interface_01220(field, value, should_raise):
+    """
+    # Summary
+
+    Verify the IOS-XE policy model enforces the `iosXeIntTrunkHostTemplate` constraints: `allowedVlans` through the shared
+    `AllowedVlans` parser, `mtu` integer 1500-9216 (a numeric string is coerced because the shared argspec `mtu` option is `str`-typed
+    to fit the NX-OS enum), `description` max length 200, `speed` from the XE enum.
+
+    ## Test
+
+    - In-range / valid values are accepted; out-of-range / wrong-branch values raise
+
+    ## Classes and Methods
+
+    - XeEthernetTrunkHostPolicyModel
+    """
+    if should_raise:
+        with pytest.raises(ValidationError):
+            result = XeEthernetTrunkHostPolicyModel.model_validate({field: value})
+    else:
+        with does_not_raise():
+            instance = XeEthernetTrunkHostPolicyModel.model_validate({field: value})
+        if field == "mtu":
+            assert instance.mtu == int(value)
+
+
+def test_ethernet_trunk_host_interface_01230():
+    """
+    # Summary
+
+    Verify the full interface model selects the branch from `network_os_type`: `ios-xe` yields the XE network-OS container and
+    XE policy model, `policy_type` is derived when omitted, and the wire payload carries `networkOSType: ios-xe` /
+    `policyType: iosXeTrunkHost`. The omitted form equals the explicit form.
+
+    ## Test
+
+    - `from_config` with `network_os_type: ios-xe` and no `policy_type` -> XE branch, `policy_type == "iosXeTrunkHost"`
+    - `to_payload()` carries the XE discriminators; `policy_type` property reports `iosXeTrunkHost`
+    - Omitted and explicit forms produce identical payload and config output
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.from_config()
+    - EthernetTrunkHostInterfaceModel.policy_type
+    - XeEthernetTrunkHostNetworkOSModel
+    """
+    base = {"switch_ip": "192.168.2.1", "interface_name": "GigabitEthernet1/0/1"}
+    omitted = EthernetTrunkHostInterfaceModel.from_config(
+        {**base, "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": None, "allowed_vlans": "10,20-30", "mtu": "9000"}}}}
+    )
+    explicit = EthernetTrunkHostInterfaceModel.from_config(
+        {
+            **base,
+            "config_data": {
+                "network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": "iosXeTrunkHost", "allowed_vlans": "10,20-30", "mtu": 9000}}
+            },
+        }
+    )
+    assert isinstance(omitted.config_data.network_os, XeEthernetTrunkHostNetworkOSModel)
+    assert isinstance(omitted.config_data.network_os.policy, XeEthernetTrunkHostPolicyModel)
+    assert omitted.policy_type == "iosXeTrunkHost"
+    payload = omitted.to_payload()
+    assert payload["configData"]["networkOS"]["networkOSType"] == "ios-xe"
+    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeTrunkHost", "allowedVlans": "10,20-30", "mtu": 9000}
+    assert omitted.to_payload() == explicit.to_payload()
+    assert omitted.to_config() == explicit.to_config()
+    assert omitted.to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "iosXeTrunkHost"
+
+
+def test_ethernet_trunk_host_interface_01240():
+    """
+    # Summary
+
+    Verify backward compatibility for existing playbooks: a config that never mentions `network_os_type` (key absent, or `None`)
+    selects the NX-OS branch and injects `policy_type: trunkHost`, so the payload is byte-identical to the pre-#535 shape.
+
+    ## Test
+
+    - `from_config` without `network_os_type` -> NX-OS branch, `policy_type == "trunkHost"`, `networkOSType: nx-os` in payload
+    - `network_os_type: None` behaves the same
+    - `policy_type` property reports `None` for an identifier-only item (no config_data)
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostConfigDataModel.default_network_os_type()
+    - EthernetTrunkHostPolicyModel.default_policy_type()
+    """
+    base = {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/1"}
+    absent = EthernetTrunkHostInterfaceModel.from_config({**base, "config_data": {"network_os": {"policy": {"allowed_vlans": "10"}}}})
+    none_valued = EthernetTrunkHostInterfaceModel.from_config(
+        {**base, "config_data": {"network_os": {"network_os_type": None, "policy": {"policy_type": None, "allowed_vlans": "10"}}}}
+    )
+    for instance in (absent, none_valued):
+        assert isinstance(instance.config_data.network_os, EthernetTrunkHostNetworkOSModel)
+        assert isinstance(instance.config_data.network_os.policy, EthernetTrunkHostPolicyModel)
+        assert instance.policy_type == "trunkHost"
+        payload = instance.to_payload()
+        assert payload["configData"]["networkOS"]["networkOSType"] == "nx-os"
+        assert payload["configData"]["networkOS"]["policy"] == {"policyType": "trunkHost", "allowedVlans": "10"}
+    assert EthernetTrunkHostInterfaceModel(**base).policy_type is None
+
+
+def test_ethernet_trunk_host_interface_01250():
+    """
+    # Summary
+
+    Verify a wrong-OS policy under a network-OS branch is rejected: `policyType: iosXeTrunkHost` under `networkOSType: nx-os` raises,
+    and `policyType: trunkHost` under `networkOSType: ios-xe` raises.
+
+    ## Test
+
+    - Both cross-OS combinations raise `ValidationError`
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostConfigDataModel (network_os discriminated union)
+    """
+    base = {"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/1"}
+    with pytest.raises(ValidationError):
+        result = EthernetTrunkHostInterfaceModel.from_config(
+            {**base, "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "iosXeTrunkHost", "allowed_vlans": "10"}}}}
+        )
+    with pytest.raises(ValidationError):
+        result = EthernetTrunkHostInterfaceModel.from_config(
+            {**base, "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": "trunkHost", "allowed_vlans": "10"}}}}
+        )
+
+
+def test_ethernet_trunk_host_interface_01260():
+    """
+    # Summary
+
+    Verify `from_response` on an IOS-XE wire record selects the XE branch and is read-tolerant of an undeclared server key, and
+    `to_config` round-trips it with snake_case keys and the `iosXeTrunkHost` discriminator.
+
+    ## Test
+
+    - `from_response(SAMPLE_XE_API_RESPONSE + undeclared key)` does not raise; XE branch selected
+    - `to_config()` policy carries `policy_type`, `allowed_vlans`, `description`, `mtu`, `speed` in snake_case
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.from_response()
+    - EthernetTrunkHostInterfaceModel.to_config()
+    """
+    response = copy.deepcopy(SAMPLE_XE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["ptp"] = False
+    with does_not_raise():
+        instance = EthernetTrunkHostInterfaceModel.from_response(response)
+    assert isinstance(instance.config_data.network_os.policy, XeEthernetTrunkHostPolicyModel)
+    policy = instance.to_config()["config_data"]["network_os"]["policy"]
+    assert policy == {
+        "policy_type": "iosXeTrunkHost",
+        "admin_state": True,
+        "allowed_vlans": "10,20-30",
+        "description": "cat trunk",
+        "mtu": 1500,
+        "speed": "auto",
+    }
+
+
+def test_ethernet_trunk_host_interface_01270():
+    """
+    # Summary
+
+    Verify the IOS-XE policy model normalizes its template-default echo to absent on the reverse pass of `get_diff`, so a
+    replaced/overridden run against an XE interface the user never customized is idempotent (issue #410), while a non-default
+    existing-side value is still reported as a removal.
+
+    ## Test
+
+    - Existing built from the literal XE default echo; proposed carries only `admin_state` -> reverse dict is `{policyType}` only
+      and `get_diff(..., exclude_unset=False)` reports no difference
+    - Existing with `allowedVlans: "10"` -> `get_diff` reports a difference
+
+    ## Classes and Methods
+
+    - XeEthernetTrunkHostPolicyModel.reverse_diff_defaults
+    - NDBaseModel.to_reverse_diff_dict()
+    - NDBaseModel.get_diff()
+    """
+    existing = XeEthernetTrunkHostPolicyModel.from_response({"policyType": "iosXeTrunkHost", **XE_TRUNK_TEMPLATE_DEFAULT_ECHO})
+    proposed = XeEthernetTrunkHostPolicyModel.from_config({"policy_type": "iosXeTrunkHost", "admin_state": True})
+    assert existing.to_reverse_diff_dict() == {"policyType": "iosXeTrunkHost"}
+    assert existing.get_diff(proposed, exclude_unset=False) is True
+    customized = XeEthernetTrunkHostPolicyModel.from_response({"policyType": "iosXeTrunkHost", **XE_TRUNK_TEMPLATE_DEFAULT_ECHO, "allowedVlans": "10"})
+    assert customized.get_diff(proposed, exclude_unset=False) is False
+
+
+def test_ethernet_trunk_host_interface_01280():
+    """
+    # Summary
+
+    Contract test for the shared argspec: `speed` choices are the union of the NX-OS and IOS-XE enums (the argspec cannot express
+    the per-branch subset; the branch models enforce it), and `mtu` is a plain `str` option with no `choices` (NX-OS takes the
+    `default` / `jumbo` enum, IOS-XE an integer 1500-9216).
+
+    ## Test
+
+    - `speed` choices == SpeedEnum | XeEthernetSpeedEnum, no duplicates
+    - `mtu` has type `str` and no `choices`
+    - An IOS-XE-only speed is still rejected by the NX-OS branch model; a NX-only mtu by the XE model
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    policy_spec = EthernetTrunkHostInterfaceModel.get_argument_spec()["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"][
+        "options"
+    ]
+    speed_choices = policy_spec["speed"]["choices"]
+    assert set(speed_choices) == {e.value for e in SpeedEnum} | {e.value for e in XeEthernetSpeedEnum}
+    assert len(speed_choices) == len(set(speed_choices))
+    assert policy_spec["mtu"]["type"] == "str"
+    assert "choices" not in policy_spec["mtu"]
+    with pytest.raises(ValidationError):
+        result = EthernetTrunkHostPolicyModel(speed="noNegotiate")
+    with pytest.raises(ValidationError):
+        result = XeEthernetTrunkHostPolicyModel(mtu="jumbo")

@@ -319,20 +319,23 @@ def test_sender_nd_00430():
     """
     # Summary
 
-    Verify payload setter raises TypeError for list.
+    Verify payload setter accepts a top-level JSON array (list).
 
     ## Test
 
-    - Setting payload to a list raises TypeError
+    - Setting payload to a list stores it unchanged. Some ND action endpoints
+      (e.g. access/ToR associate/disassociate) take a top-level JSON array as
+      the request body rather than a JSON object.
 
     ## Classes and Methods
 
     - Sender.payload (setter)
     """
     instance = Sender()
-    match = r"Sender\.payload:.*must be a dict"
-    with pytest.raises(TypeError, match=match):
-        instance.payload = [1, 2, 3]  # type: ignore[assignment]
+    with does_not_raise():
+        instance.payload = [{"a": 1}, {"b": 2}]
+        result = instance.payload
+    assert result == [{"a": 1}, {"b": 2}]
 
 
 # =============================================================================

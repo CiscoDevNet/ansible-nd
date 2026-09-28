@@ -266,5 +266,37 @@
         "REQUEST_PATH": "/api/v1/test/transient",
         "MESSAGE": "OK",
         "DATA": {"results": [{"name": "acl_new", "status": "success"}]}
+    },
+    "test_rest_send_01120a": {
+        "TEST_NOTES": ["Transient GET 409 (ND OpenAPI documents 409 on safe GETs, e.g. /links, while the resource state is reconciling). Retryable - the loop must consume the follow-up 200 in 01120b."],
+        "RETURN_CODE": 409,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links",
+        "MESSAGE": "Conflict",
+        "DATA": {"code": 409, "message": "The request could not be completed due to a conflict with the current state of the resource."}
+    },
+    "test_rest_send_01120b": {
+        "TEST_NOTES": ["Recovery response consumed by the retry of 01120a - reconciliation finished."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/links",
+        "MESSAGE": "OK",
+        "DATA": {"links": [{"linkId": "link-1"}]}
+    },
+    "test_rest_send_01130a": {
+        "TEST_NOTES": ["POST 400 under a legacy injected strategy with no is_terminal_client_error(). The handler cannot classify it, so it keeps the historical retryable=True and the loop must consume the follow-up 200 in 01130b."],
+        "RETURN_CODE": 400,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/legacy",
+        "MESSAGE": "Bad Request",
+        "DATA": {"code": 400, "message": "Transient validation failure"}
+    },
+    "test_rest_send_01130b": {
+        "TEST_NOTES": ["Recovery response consumed by the retry of 01130a."],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/legacy",
+        "MESSAGE": "OK",
+        "DATA": {"results": [{"name": "item", "status": "success"}]}
     }
 }
