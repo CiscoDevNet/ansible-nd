@@ -29,12 +29,11 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
                 - `policy` -> `XeEthernetRoutedPolicyModel` (`policy_type: "iosXeRoutedHost"`, injected when omitted)
 
 `policy_type` is optional on input: each network OS has exactly one managed routed policy type today, so it is derived from
-`network_os_type` (`_default_policy_type`). An explicit value is still accepted and validated.
+`network_os_type` (`default_policy_type`). An explicit value is still accepted and validated.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -48,75 +47,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     XeEthernetSpeedEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    default_policy_type,
+    normalize_ethernet_interface_name,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host
-
-# Leading alphabetic prefix + the remainder (digits, /, ., -) of an interface name.
-# TODO: issue #353 consolidates per-model interface-name normalization into shared helpers; this module's
-# normalizer is the first to canonicalize across BOTH network OS families and should seed that helper.
-_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
-
-# Wire-canonical interface-name prefixes this module manages (lab-verified 2026-07-27: ND echoes
-# `Ethernet1/7` on NX-OS and `GigabitEthernet3` on IOS-XE). A user-supplied prefix that is a
-# case-insensitive prefix of exactly ONE canonical name is expanded to it (e.g. `e1/7`, `eth1/7`,
-# `gi3`); anything else passes through verbatim so correctly-typed names of other XE interface
-# families (e.g. `TenGigabitEthernet1/1`) are never corrupted.
-_CANONICAL_INTERFACE_PREFIXES = ("Ethernet", "GigabitEthernet")
-
-
-def normalize_ethernet_interface_name(value):
-    """
-    # Summary
-
-    Normalize the leading alphabetic prefix of an interface name to its wire-canonical form (see
-    `EthernetRoutedInterfaceModel.normalize_interface_name` for examples). Shared between the model's field validator
-    and the orchestrator's config-name matching so both sides canonicalize identically.
-
-    ## Raises
-
-    None
-    """
-    if not isinstance(value, str) or not value:
-        return value
-    match = _INTERFACE_NAME_PREFIX_RE.match(value)
-    if not match:
-        return value
-    prefix, rest = match.groups()
-    expansions = [canonical for canonical in _CANONICAL_INTERFACE_PREFIXES if canonical.lower().startswith(prefix.lower())]
-    if len(expansions) == 1:
-        return expansions[0] + rest
-    return value
-
 
 # Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
 # The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
 # union lets ansible-doc / schema consumers discover every accepted spelling (PR #550 review).
 _NX_SPEED_CHOICES: list[str] = [e.value for e in SpeedEnum]
 _SPEED_ARGSPEC_CHOICES: list[str] = _NX_SPEED_CHOICES + [e.value for e in XeEthernetSpeedEnum if e.value not in _NX_SPEED_CHOICES]
-
-
-def _default_policy_type(data: Any, policy_type: str) -> Any:
-    """
-    # Summary
-
-    Inject the `policyType` discriminator into a policy input dict when the caller did not supply it (key absent, or present with
-    `None`, which is how the Ansible argspec passes an omitted suboption). The module manages exactly one routed policy type per
-    network OS today, so `policy_type` is fully determined by `network_os_type` and the user need not repeat it (PR #550 review).
-    An explicit value is left untouched, which keeps the input forward-compatible with the feature-gated follow-up branches
-    (`endPointLocator`, `ipfmL3Port`, `dataBrokerL3Host`): when the NX branch becomes a `policy_type` discriminated union, this
-    same injection supplies the discriminator Pydantic needs for an omitted value. Injecting on the input (rather than a field
-    default) makes the field explicitly SET, so `merge()` / `get_diff(exclude_unset=True)` treat it exactly like a typed value.
-
-    ## Raises
-
-    None
-    """
-    if not isinstance(data, dict):
-        return data
-    if data.get("policyType") is not None or data.get("policy_type") is not None:
-        return data
-    return {**{key: value for key, value in data.items() if key not in ("policyType", "policy_type")}, "policyType": policy_type}
 
 
 class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
@@ -153,7 +96,7 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
     }
 
     policy_type: Literal["routedHost"] = Field(
-        alias="policyType", description="Routed-host policy template discriminator; injected as `routedHost` when omitted (see `_default_policy_type`)"
+        alias="policyType", description="Routed-host policy template discriminator; injected as `routedHost` when omitted (see `default_policy_type`)"
     )
 
     @model_validator(mode="before")
@@ -162,13 +105,13 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         """
         # Summary
 
-        Supply `policyType: routedHost` when the input omits the discriminator (`_default_policy_type`).
+        Supply `policyType: routedHost` when the input omits the discriminator (`default_policy_type`).
 
         ## Raises
 
         None
         """
-        return _default_policy_type(data, "routedHost")
+        return default_policy_type(data, "routedHost")
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
@@ -234,7 +177,7 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     policy_type: Literal["iosXeRoutedHost"] = Field(
         alias="policyType",
-        description="IOS-XE routed-host policy template discriminator; injected as `iosXeRoutedHost` when omitted (see `_default_policy_type`)",
+        description="IOS-XE routed-host policy template discriminator; injected as `iosXeRoutedHost` when omitted (see `default_policy_type`)",
     )
 
     @model_validator(mode="before")
@@ -243,13 +186,13 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         """
         # Summary
 
-        Supply `policyType: iosXeRoutedHost` when the input omits the discriminator (`_default_policy_type`).
+        Supply `policyType: iosXeRoutedHost` when the input omits the discriminator (`default_policy_type`).
 
         ## Raises
 
         None
         """
-        return _default_policy_type(data, "iosXeRoutedHost")
+        return default_policy_type(data, "iosXeRoutedHost")
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
@@ -365,7 +308,7 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
 
         Normalize the leading alphabetic prefix of an interface name to its wire-canonical form so that user-supplied
         casing or abbreviations round-trip against the wire. A prefix matching (case-insensitively) exactly one of the
-        canonical names in `_CANONICAL_INTERFACE_PREFIXES` is expanded to it. Examples:
+        canonical names in `ethernet_common._CANONICAL_INTERFACE_PREFIXES` is expanded to it. Examples:
 
         - `ethernet1/7`, `ETHERNET1/7`, `eth1/7`, `e1/7` -> `Ethernet1/7`
         - `gigabitethernet3`, `gi3` -> `GigabitEthernet3`
