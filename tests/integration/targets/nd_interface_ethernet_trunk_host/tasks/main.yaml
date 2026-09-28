@@ -16,8 +16,9 @@
 # TODO: Modify the above (and below) if the team decides to use tests/integration/integration_config.yml instead.
 #
 # supports_vlan_mapping (bool, default: false)
-#   Enables the VLAN-mapping / dot1q-tunnel test workflow in
-#   nd4x_demo_vlan_mapping.yaml. Skipped by
+#   Enables the VLAN-mapping / dot1q-tunnel workflow in merged.yaml
+#   for normal integration runs, and in nd4x_demo_vlan_mapping.yaml
+#   when running the nd4x_demo tags. Skipped by
 #   default because Nexus 9000v virtual switches reject
 #   `switchport vlan mapping ... dot1q-tunnel ...` (ND returns HTTP 400).
 #   On a hardware-backed testbed, add to inventory.networking [nd:vars]:
