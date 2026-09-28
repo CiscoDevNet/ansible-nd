@@ -450,9 +450,7 @@ def test_idempotency_retries_until_expected_result(action_plugin):
         {"changed": False, "failed": False},
     ]
 
-    with patch(
-        "ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep"
-    ) as sleep:
+    with patch("ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep") as sleep:
         result = run_plugin(action_plugin)
 
     assert action_plugin._execute_module.call_count == 5
@@ -471,9 +469,7 @@ def test_idempotency_stops_after_first_success(action_plugin):
         {"changed": False, "failed": False},
     ]
 
-    with patch(
-        "ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep"
-    ) as sleep:
+    with patch("ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep") as sleep:
         result = run_plugin(action_plugin)
 
     assert result["idempotency_attempts"] == 1
@@ -491,9 +487,7 @@ def test_idempotency_failure_after_retries_is_reported(action_plugin):
         {"changed": True, "failed": True, "msg": "still failing"},
     ]
 
-    with patch(
-        "ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep"
-    ) as sleep:
+    with patch("ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep") as sleep:
         with pytest.raises(
             AnsibleActionFail,
             match=r"Expected idempotency failed=False but got failed=True",

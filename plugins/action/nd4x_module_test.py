@@ -1089,10 +1089,7 @@ class ActionModule(ActionBase):
         }
 
         if idempotency_results is not None:
-            summary["idempotency_results"] = [
-                self._summarize_module_result(attempt_result)
-                for attempt_result in idempotency_results
-            ]
+            summary["idempotency_results"] = [self._summarize_module_result(attempt_result) for attempt_result in idempotency_results]
 
         return "%s\nRun summary: %s" % (message, json.dumps(summary, sort_keys=True))
 
