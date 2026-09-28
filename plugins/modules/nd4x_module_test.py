@@ -81,11 +81,25 @@ options:
     default: []
   idempotency:
     description:
-      - Whether to execute the target module exactly once after apply to validate
-        idempotency.
-      - The idempotency execution must report C(changed=false).
+      - Whether to execute the target module after apply to validate idempotency.
+      - The target module is executed up to O(idempotency_retries) times and
+        stops early when the expected idempotency result is reached.
     type: bool
     default: true
+  idempotency_retries:
+    description:
+      - Maximum number of idempotency executions after the initial apply.
+      - Execution stops early when the result reports C(changed=false) and
+        C(failed=false).
+      - The default is one idempotency execution.
+    type: int
+    default: 1
+  idempotency_delay:
+    description:
+      - Number of seconds to wait between idempotency executions.
+      - No delay occurs before the first execution or after the final execution.
+    type: int
+    default: 0
   nd_queries:
     description:
       - ND REST API queries executed after a successful real apply.
@@ -103,8 +117,9 @@ notes:
   - When Ansible is invoked with C(--check), predictive check mode and configured
     O(check_mode_queries) execute; apply, idempotency, and post-apply ND REST
     validation are skipped.
-  - Idempotency uses exactly one second real module execution and does not retry
-    module application.
+  - Idempotency executes the target module up to O(idempotency_retries) times,
+    waits O(idempotency_delay) seconds only between attempts, and stops early
+    when the expected idempotency result is reached.
   - See C(tests/integration/playbooks/nd4x_module_tests/README.md) for the
     authoritative contributor guide, scenario templates, safety requirements,
     execution commands, and migration acceptance checklist.
@@ -171,14 +186,20 @@ first_run_result:
   type: dict
   returned: when Ansible is not running in global check mode
 second_run_result:
-  description: Result returned by the single idempotency execution.
+  description: Result returned by the final idempotency execution.
   type: dict
   returned: when idempotency is enabled and the real apply succeeds
 idempotency_attempts:
   description:
     - Number of idempotency executions performed.
-    - The value is C(0) when idempotency is skipped and C(1) when it executes.
+    - The value is C(0) when idempotency is skipped and otherwise reflects the
+      number of executions performed before success or the retry limit.
   type: int
+  returned: always
+idempotency_results:
+  description: Results returned by each idempotency execution, in order.
+  type: list
+  elements: dict
   returned: always
 nd_query_results:
   description: Results returned by ND REST API validation queries.

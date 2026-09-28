@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import json
+import time
 
 try:
     from jsonpath_ng.ext import parse
@@ -352,11 +353,11 @@ class ActionModule(ActionBase):
         nd_queries = args.get("nd_queries", [])
         self._validate_nd_queries(nd_queries)
 
-        if idempotency_retries != 1:
-            raise AnsibleActionFail("Argument idempotency_retries must be 1 because " + "idempotency performs exactly one second application")
+        if idempotency_retries < 1:
+            raise AnsibleActionFail("Argument idempotency_retries must be at least 1, got %r" % idempotency_retries)
 
-        if idempotency_delay != 0:
-            raise AnsibleActionFail("Argument idempotency_delay must be 0 because " + "idempotency retries are not supported")
+        if idempotency_delay < 0:
+            raise AnsibleActionFail("Argument idempotency_delay must be at least 0, got %r" % idempotency_delay)
 
         # Automatically require the second run to be unchanged.
         if run_idempotency:
@@ -393,6 +394,7 @@ class ActionModule(ActionBase):
         check_mode_query_results = []
         first_run_result = None
         second_run_result = None
+        idempotency_results = []
         idempotency_attempts = 0
         nd_query_results = []
 
@@ -484,14 +486,26 @@ class ActionModule(ActionBase):
                     idempotency_attempts=0,
                 )
 
-                # Run exactly one second application for idempotency.
+                # Retry idempotency until the expected result is reached or
+                # the configured attempt limit is exhausted.
                 if run_idempotency and not bool(first_run_result.get("failed", False)):
-                    second_run_result = self._run_target_module(
-                        module_name=module_name,
-                        module_args=final_module_args,
-                        task_vars=task_vars,
-                    )
-                    idempotency_attempts = 1
+                    for attempt_index in range(idempotency_retries):
+                        if attempt_index > 0 and idempotency_delay:
+                            time.sleep(idempotency_delay)
+
+                        second_run_result = self._run_target_module(
+                            module_name=module_name,
+                            module_args=final_module_args,
+                            task_vars=task_vars,
+                        )
+                        idempotency_results.append(second_run_result)
+                        idempotency_attempts += 1
+
+                        if self._phase_matches_expectation(
+                            second_run_result,
+                            expected["idempotency"],
+                        ):
+                            break
 
                     self._assert_phase(
                         phase_name="idempotency",
@@ -501,6 +515,7 @@ class ActionModule(ActionBase):
                         first_run_result=first_run_result,
                         second_run_result=second_run_result,
                         idempotency_attempts=idempotency_attempts,
+                        idempotency_results=idempotency_results,
                     )
 
                 # REST validation is performed only after a real apply.
@@ -521,6 +536,7 @@ class ActionModule(ActionBase):
                 "check_mode_query_results": check_mode_query_results,
                 "first_run_result": first_run_result,
                 "second_run_result": second_run_result,
+                "idempotency_results": idempotency_results,
                 "idempotency_attempts": idempotency_attempts,
                 "nd_query_results": nd_query_results,
             }
@@ -986,6 +1002,16 @@ class ActionModule(ActionBase):
         actual_failed = bool(module_result.get("failed", False))
         return actual_failed != expected_failed
 
+    def _phase_matches_expectation(self, module_result, phase_expectation):
+        for key in ("failed", "changed"):
+            if key in phase_expectation:
+                actual_value = bool(module_result.get(key, False))
+
+                if actual_value != phase_expectation[key]:
+                    return False
+
+        return True
+
     def _assert_phase(
         self,
         phase_name,
@@ -995,6 +1021,7 @@ class ActionModule(ActionBase):
         first_run_result,
         second_run_result,
         idempotency_attempts,
+        idempotency_results=None,
     ):
         if module_result is None:
             raise AnsibleActionFail("Expected phase %s was not executed" % phase_name)
@@ -1018,6 +1045,7 @@ class ActionModule(ActionBase):
                         first_run_result=first_run_result,
                         second_run_result=second_run_result,
                         idempotency_attempts=idempotency_attempts,
+                        idempotency_results=idempotency_results,
                     )
                 )
 
@@ -1040,6 +1068,7 @@ class ActionModule(ActionBase):
                         first_run_result=first_run_result,
                         second_run_result=second_run_result,
                         idempotency_attempts=idempotency_attempts,
+                        idempotency_results=idempotency_results,
                     )
                 )
 
@@ -1050,6 +1079,7 @@ class ActionModule(ActionBase):
         first_run_result,
         second_run_result,
         idempotency_attempts,
+        idempotency_results=None,
     ):
         summary = {
             "idempotency_attempts": idempotency_attempts,
@@ -1057,6 +1087,13 @@ class ActionModule(ActionBase):
             "first_run_result": self._summarize_module_result(first_run_result),
             "second_run_result": self._summarize_module_result(second_run_result),
         }
+
+        if idempotency_results is not None:
+            summary["idempotency_results"] = [
+                self._summarize_module_result(attempt_result)
+                for attempt_result in idempotency_results
+            ]
+
         return "%s\nRun summary: %s" % (message, json.dumps(summary, sort_keys=True))
 
     def _summarize_module_result(self, module_result):

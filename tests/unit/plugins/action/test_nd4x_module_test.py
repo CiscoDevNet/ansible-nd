@@ -3,7 +3,7 @@
 from __future__ import absolute_import, division, print_function
 
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 from ansible.errors import AnsibleActionFail
@@ -387,13 +387,13 @@ def test_prepare_check_mode_queries_preserves_acceptable_status_list(action_plug
         ),
         (
             "idempotency_retries",
-            2,
-            "must be 1",
+            0,
+            "must be at least 1",
         ),
         (
             "idempotency_delay",
-            10,
-            "must be 0",
+            -1,
+            "must be at least 0",
         ),
     ],
 )
@@ -437,6 +437,71 @@ def test_normal_execution_runs_each_phase_once(action_plugin):
     assert result["idempotency_attempts"] == 1
     assert result["second_run_result"]["changed"] is False
     assert action_plugin._task.check_mode is False
+
+
+def test_idempotency_retries_until_expected_result(action_plugin):
+    action_plugin._task.args["idempotency_retries"] = 3
+    action_plugin._task.args["idempotency_delay"] = 10
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": True, "failed": False},
+        {"changed": True, "failed": False},
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep"
+    ) as sleep:
+        result = run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 5
+    assert result["idempotency_attempts"] == 3
+    assert [item["changed"] for item in result["idempotency_results"]] == [True, True, False]
+    assert result["second_run_result"]["changed"] is False
+    assert sleep.call_args_list == [call(10), call(10)]
+
+
+def test_idempotency_stops_after_first_success(action_plugin):
+    action_plugin._task.args["idempotency_retries"] = 6
+    action_plugin._task.args["idempotency_delay"] = 10
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep"
+    ) as sleep:
+        result = run_plugin(action_plugin)
+
+    assert result["idempotency_attempts"] == 1
+    assert len(result["idempotency_results"]) == 1
+    sleep.assert_not_called()
+
+
+def test_idempotency_failure_after_retries_is_reported(action_plugin):
+    action_plugin._task.args["idempotency_retries"] = 2
+    action_plugin._task.args["idempotency_delay"] = 10
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": True, "failed": False},
+        {"changed": True, "failed": True, "msg": "still converging"},
+        {"changed": True, "failed": True, "msg": "still failing"},
+    ]
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep"
+    ) as sleep:
+        with pytest.raises(
+            AnsibleActionFail,
+            match=r"Expected idempotency failed=False but got failed=True",
+        ):
+            run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 4
+    sleep.assert_called_once_with(10)
 
 
 def test_global_check_mode_runs_only_check_phase(action_plugin):
