@@ -17,7 +17,7 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -124,6 +124,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     # The lab-verified C8000V reset target: a defaults-only `iosXeRoutedHost` in routed mode (probe 2026-07-27, HTTP 204).
     XE_RESET_MODE: ClassVar[str] = "routed"
     XE_RESET_POLICY_TYPE: ClassVar[str] = "iosXeRoutedHost"
+    XE_RESET_POLICY_DEFAULTS: ClassVar[dict[str, Any]] = XeEthernetRoutedPolicyModel.payload_defaults
 
     def _managed_policy_types(self) -> set[str]:
         """

@@ -1197,7 +1197,7 @@ def test_ethernet_access_orchestrator_00730() -> None:
     ## Test
 
     - Payload carries interfaceName/interfaceType/switchId, mode "trunk", networkOSType "ios-xe"
-    - Policy is exactly {policyType: iosXeTrunkHost, adminState: true}; no "mtu" anywhere
+    - Policy is exactly {policyType: iosXeTrunkHost, adminState: true, allowedVlans: none, mtu: 1500} (issue #564 template defaults)
 
     ## Classes and Methods
 
@@ -1209,8 +1209,9 @@ def test_ethernet_access_orchestrator_00730() -> None:
     assert payload["switchId"] == "FDO22222BBB"
     assert payload["configData"]["mode"] == "trunk"
     assert payload["configData"]["networkOS"]["networkOSType"] == "ios-xe"
-    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeTrunkHost", "adminState": True}
-    assert "mtu" not in str(payload)
+    # ND 4.3.1 rejects the reset PUT without `allowedVlans` and `mtu` (issue #564; lab-verified 2026-09-14), so the body carries
+    # the template defaults from `XeEthernetTrunkHostPolicyModel.payload_defaults`; 4.2.1 stores the same values either way.
+    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeTrunkHost", "adminState": True, "allowedVlans": "none", "mtu": 1500}
 
 
 def test_ethernet_access_orchestrator_00740() -> None:
