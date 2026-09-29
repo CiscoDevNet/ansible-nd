@@ -71,8 +71,8 @@ The `cisco.nd.nd4x_module_test` action plugin handles:
 - Preventing real apply when predictive execution changed controller state.
 - Checking expected `changed` and `failed` values for each phase.
 - Running the first real apply exactly once.
-- Running one additional real application for idempotency.
-- Automatically requiring the idempotency execution to report `changed: false`.
+- Running bounded idempotency applications with configurable retry and delay behavior.
+- Automatically requiring a successful idempotency result to report `changed: false`.
 - Running configured post-apply ND REST validation queries.
 - Restoring the original Ansible check-mode state after success or failure.
 - Returning individual phase results to the calling playbook.
@@ -117,7 +117,7 @@ run the first real apply
         ↓
 validate apply expectations
         ↓
-run one real idempotency application
+run idempotency until success or the retry limit
         ↓
 require changed == false
         ↓
@@ -246,7 +246,13 @@ Example:
 common_args:
   fabric_name: "{{ test_fabric_name }}"
   output_level: "{{ nd_info.output_level }}"
-  timeout: 300
+```
+
+For long-running tests, set this at task or block scope:
+
+```yaml
+vars:
+  ansible_command_timeout: 300
 ```
 
 ### `module_args`
@@ -379,7 +385,8 @@ check_mode_queries:
       /api/v1/manage/fabrics/{{ test_fabric_name
       }}/switches/{{ test_switch_id }}/interfaces
     expected_status: 200
-    unordered: true
+    unordered_paths:
+      - /interfaces
     ignore_keys:
       - operData
 ```
@@ -391,7 +398,7 @@ Each query supports:
 | `name` | No | Query path | Human-readable query name |
 | `path` | Yes | None | ND REST API path |
 | `expected_status` | No | `200` | Required HTTP response status, or a non-empty list of acceptable statuses |
-| `unordered` | No | `false` | Treat lists as unordered during normalization |
+| `unordered_paths` | No | `[]` | JSON pointers relative to `current`; only lists at these paths are treated as unordered. `*` matches one path component, including a list index; `""` names the response itself when it is a list. |
 | `ignore_keys` | No | `[]` | Dictionary keys removed recursively before comparison |
 
 Check-mode snapshot queries always use GET. A method cannot be supplied.
@@ -434,16 +441,18 @@ The harness recursively:
 
 - Sorts dictionary keys.
 - Normalizes nested dictionaries and lists.
-- Optionally sorts normalized list values.
+- Sorts normalized list values only at paths listed in `unordered_paths`.
 - Removes explicitly configured ignored dictionary keys.
 
-Use:
+Use an explicit JSON pointer for each list whose order is not guaranteed:
 
 ```yaml
-unordered: true
+unordered_paths:
+  - /interfaces
 ```
 
-when the controller does not guarantee list ordering.
+when the controller does not guarantee ordering for that specific list. All
+other lists remain order-sensitive, including nested lists.
 
 Use `ignore_keys` only for fields known to be volatile and unrelated to managed configuration.
 
@@ -509,7 +518,8 @@ Do not add an ignored key until the reported difference is confirmed to be opera
 
 ### `idempotency`
 
-Controls whether the harness performs one additional real application.
+Controls whether the harness performs idempotency validation after the initial
+real apply.
 
 Default:
 
@@ -519,10 +529,15 @@ idempotency: true
 
 When enabled:
 
-- The target module is executed once after the initial real apply.
-- The second execution must report `changed: false`.
-- The second execution must not fail.
-- `idempotency_attempts` is returned as `1`.
+- The target module is executed up to `idempotency_retries` times after the
+  initial real apply.
+- Attempts stop early when the result matches the expected idempotency result,
+  normally `changed: false` and `failed: false`.
+- `idempotency_delay` seconds are waited only between attempts.
+- If all attempts fail to reach the expected result, the harness fails and
+  includes the result from every attempt in the error summary.
+- `idempotency_attempts` reports the actual number of executions and
+  `idempotency_results` contains their results in order.
 
 When disabled:
 
@@ -530,35 +545,33 @@ When disabled:
 idempotency: false
 ```
 
-the second real execution is skipped and `idempotency_attempts` is returned as `0`.
+the idempotency executions are skipped and `idempotency_attempts` is returned as
+`0`.
 
 ### `idempotency_retries`
 
-Legacy compatibility option.
-
-The only supported value is:
+Maximum number of idempotency executions after the initial apply, including the
+first idempotency attempt. The default is:
 
 ```yaml
 idempotency_retries: 1
 ```
 
-The harness performs exactly one idempotency execution and does not retry module application.
-
-Any value other than `1` is rejected.
+The value must be at least `1`. For example, `idempotency_retries: 6` permits
+up to six idempotency executions, but the harness stops earlier when the
+expected result is reached.
 
 ### `idempotency_delay`
 
-Legacy compatibility option.
-
-The only supported value is:
+Number of seconds to wait between idempotency executions. The default is:
 
 ```yaml
 idempotency_delay: 0
 ```
 
-The harness does not delay or poll between idempotency applications.
-
-Any value other than `0` is rejected.
+The value must be at least `0`. No delay occurs before the first attempt or
+after the final attempt. For example, `idempotency_delay: 10` waits ten seconds
+before each attempt after the first one.
 
 ### `nd_queries`
 
@@ -707,7 +720,7 @@ When:
 idempotency: false
 ```
 
-the second real application is skipped.
+all idempotency executions are skipped.
 
 ### Expected predictive failure
 
@@ -747,8 +760,9 @@ The result contains:
 | `check_mode_result` | Target-module predictive result |
 | `check_mode_query_results` | Snapshot comparison results |
 | `first_run_result` | First real apply result |
-| `second_run_result` | Idempotency result |
-| `idempotency_attempts` | Number of idempotency executions: `0` or `1` |
+| `second_run_result` | Result from the final idempotency execution |
+| `idempotency_results` | Results from each idempotency execution, in order |
+| `idempotency_attempts` | Actual number of idempotency executions: `0` when skipped, otherwise up to `idempotency_retries` |
 | `nd_query_results` | Post-apply REST query results |
 
 Values for skipped phases are returned as `null` or empty collections as appropriate.
@@ -767,7 +781,8 @@ During global Ansible check mode, the top-level `changed` value reflects the pre
     that:
       - scenario_result.check_mode_result.changed | bool
       - scenario_result.first_run_result.changed | bool
-      - scenario_result.idempotency_attempts == 1
+      - scenario_result.idempotency_attempts >= 1
+      - scenario_result.idempotency_results | length == scenario_result.idempotency_attempts
       - scenario_result.second_run_result.changed == false
       - scenario_result.second_run_result.failed
         | default(false)
@@ -928,6 +943,8 @@ Do not require contributors to manually keep a management IP and switch ID synch
 ```yaml
 ---
 - name: Run standardized example-module merged scenario
+  vars:
+    ansible_command_timeout: 300
   block:
     - name: "MERGED SETUP: Establish a clean baseline"
       cisco.nd.example_module:
@@ -944,7 +961,6 @@ Do not require contributors to manually keep a management IP and switch ID synch
         common_args:
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
-          timeout: 300
 
         module_args: {}
 
@@ -968,7 +984,8 @@ Do not require contributors to manually keep a management IP and switch ID synch
               /api/v1/manage/fabrics/{{ test_fabric_name
               }}/switches/{{ test_switch_id }}/resources
             expected_status: 200
-            unordered: true
+            unordered_paths:
+              - /resources
             ignore_keys:
               - operData
 
@@ -990,7 +1007,8 @@ Do not require contributors to manually keep a management IP and switch ID synch
       ansible.builtin.assert:
         that:
           - merged_result.first_run_result.after | length == 1
-          - merged_result.idempotency_attempts == 1
+          - merged_result.idempotency_attempts >= 1
+          - merged_result.idempotency_results | length == merged_result.idempotency_attempts
           - merged_result.second_run_result.changed == false
           - merged_result.check_mode_query_results[0].unchanged | bool
 
