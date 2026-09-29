@@ -26,6 +26,18 @@ class AccessHostPolicyTypeEnum(str, Enum):
     ACCESS_HOST = "accessHost"
 
 
+class XeAccessHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_access` (issue #534): the `iosXeAccess` member of the ND create-side
+    `createInterfaceEthernetAccessXeType` mapping (`ios_xe_int_access_host` template). `iosXeAccessPoMember` is a port-channel
+    member type provisioned through the port-channel modules and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS = "iosXeAccess"
+
+
 class AccessPoHostPolicyTypeEnum(str, Enum):
     """
     # Summary
@@ -44,6 +56,30 @@ class TrunkPoHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_PO_HOST = "trunkPoHost"
+
+
+class XeAccessPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_access` (issue #536): the `iosXeAccessPoHost` member of the ND create-side
+    `createInterfacePortChannelAccessXeType` mapping (`ios_xe_int_port_channel_access_host` template). `iosXeAccessPoMember` is the
+    member type ND provisions on the port-channel's ethernet members and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS_PO_HOST = "iosXeAccessPoHost"
+
+
+class XeTrunkPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_trunk_host` (issue #537): the `iosXeTrunkPoHost` member of the ND create-side
+    `createInterfacePortChannelTrunkXeType` mapping (`ios_xe_int_port_channel_trunk_host` template). `iosXeTrunkPoMember` is the member
+    type ND provisions on the port-channel's ethernet members and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_TRUNK_PO_HOST = "iosXeTrunkPoHost"
 
 
 class AccessVpcHostPolicyTypeEnum(str, Enum):
@@ -163,6 +199,21 @@ class PortChannelModeEnum(str, Enum):
     PASSIVE = "passive"
 
 
+class XePortChannelModeEnum(str, Enum):
+    """
+    # Summary
+
+    Port-channel mode on IOS-XE (`iosXeIntPortChannel{Access,Trunk}HostTemplate.portChannelMode`): LACP `on` / `active` / `passive`
+    plus PAgP `auto` / `desirable`, which the NX-OS `PortChannelModeEnum` does not offer.
+    """
+
+    ON = "on"
+    ACTIVE = "active"
+    PASSIVE = "passive"
+    AUTO = "auto"
+    DESIRABLE = "desirable"
+
+
 class SpeedEnum(str, Enum):
     """
     # Summary
@@ -206,6 +257,18 @@ class TrunkHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_HOST = "trunkHost"
+
+
+class XeTrunkHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_trunk_host` (issue #535): the `iosXeTrunkHost` member of the ND
+    create-side `createInterfaceEthernetTrunkXeType` mapping (`ios_xe_int_trunk_host` template). `iosXeTrunkPoMember` is a
+    port-channel member type provisioned through the port-channel modules and `userDefined` is intentionally excluded.
+    """
+
+    IOS_XE_TRUNK_HOST = "iosXeTrunkHost"
 
 
 class SviPolicyTypeEnum(str, Enum):
