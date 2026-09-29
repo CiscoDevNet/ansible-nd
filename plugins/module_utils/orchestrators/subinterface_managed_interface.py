@@ -50,7 +50,7 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
     after all mutations are complete to deploy all changes in a single API call. `delete` queues subinterfaces for
     bulk removal via `remove_pending`.
 
-    For `state: overridden`, `query_all` queries ALL switches in the fabric to enable fabric-wide convergence.
+    For `state: overridden` and `state: gathered`, `query_all` queries all switches in the fabric.
 
     Uses `FabricContext` for pre-flight validation and switch resolution.
 
@@ -227,11 +227,11 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         `interfaceType: "subInterface"` and `policyType: "subinterface"` (managed variant). The
         unmanaged variant (`monitorSubinterface`) is managed by a separate orchestrator and is excluded here.
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
+        The query is fabric-wide for `state: overridden` and `state: gathered`.
+        Other states are limited to switches named in the user configuration.
 
-        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning
-        any data.
+        Runs `validate_prerequisites` on first call to ensure the fabric exists
+        and the requested operation is permitted.
 
         Each returned interface dict is enriched with a `switch_ip` field so that
         `SubinterfaceManagedInterfaceModel` can be constructed with the composite identifier
@@ -249,7 +249,11 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         try:
             self.validate_prerequisites()
             all_subifs = []
-            for switch_ip, switch_id in self._switches_to_query().items():
+            if self.rest_send.params.get("state") == "gathered":
+                switches_to_query = self.fabric_context.switch_map
+            else:
+                switches_to_query = self._switches_to_query()
+            for switch_ip, switch_id in switches_to_query.items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 subifs = [iface for iface in interfaces if iface.get("interfaceType") == "subInterface"]
                 managed = [
