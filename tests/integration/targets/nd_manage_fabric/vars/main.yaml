@@ -28,6 +28,7 @@ ai_ebgp_test_fabric_config_actions: "ai_ebgp_test_fabric_config_actions"
 campus_test_fabric_merged: "campus_test_fabric_merged"
 campus_test_fabric_replaced: "campus_test_fabric_replaced"
 campus_test_fabric_deleted: "campus_test_fabric_deleted"
+campus_test_fabric_config_actions: "campus_test_fabric_config_actions"
 
 # Common fabric configuration for all tests
 # common_fabric_config:
@@ -222,7 +223,6 @@ fabric_config_ibgp:
 # Common Campus iBGP VXLAN fabric configuration for all Campus tests
 # common_campus_fabric_config:
 fabric_config_campus:
-  category: fabric
   location:
     latitude: 37.7749
     longitude: -122.4194
@@ -231,7 +231,6 @@ fabric_config_campus:
   security_domain: all
   telemetry_collection: false
   management:
-    type: vxlanCampus
     bgp_asn: "65001"
     replication_mode: multicast
     anycast_gateway_mac: "2020.0000.00aa"
@@ -239,7 +238,7 @@ fabric_config_campus:
     ospf_process_id: 1
     ospf_area_id: "0.0.0.0"
     system_mtu: 1500
-    vlan_trunking_protocol_mode: off
+    vlan_trunking_protocol_mode: "off"
     route_reflector_count: 2
     bgp_ipv4_unicast_peering: false
     auto_bgp_neighbor_description: true
@@ -255,9 +254,6 @@ fabric_config_campus:
     day0_bootstrap: false
     local_dhcp_server: false
     dhcp_protocol_version: dhcpv4
-    dhcp_start_address: ""
-    dhcp_end_address: ""
-    management_gateway: ""
     management_ipv4_prefix: 24
 
 # Common External Connectivity fabric configuration for all External tests

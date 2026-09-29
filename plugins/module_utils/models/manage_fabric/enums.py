@@ -126,6 +126,22 @@ class LinkStateRoutingProtocolEnum(str, Enum):
     ISIS = "isis"
 
 
+class VlanTrunkingProtocolModeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for Campus VXLAN VLAN Trunking Protocol modes.
+
+    ## Values
+
+    - `OFF` - Disable VLAN Trunking Protocol
+    - `TRANSPARENT` - Run VLAN Trunking Protocol in transparent mode
+    """
+
+    OFF = "off"
+    TRANSPARENT = "transparent"
+
+
 class CoppPolicyEnum(str, Enum):
     """
     # Summary

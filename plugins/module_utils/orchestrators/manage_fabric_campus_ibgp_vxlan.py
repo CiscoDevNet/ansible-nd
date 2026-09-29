@@ -1,36 +1,34 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
+from typing import ClassVar
 
-from typing import Type
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsDelete,
     EpManageFabricsGet,
     EpManageFabricsListGet,
     EpManageFabricsPost,
     EpManageFabricsPut,
-    EpManageFabricsDelete,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
-class ManageCampusIbgpVxlanFabricOrchestrator(NDBaseOrchestrator):
-    model_class: Type[NDBaseModel] = FabricCampusIbgpVxlanModel
+class ManageCampusIbgpVxlanFabricOrchestrator(ConfigActionsMixin, NDBaseOrchestrator):
+    model_class: ClassVar[type[NDBaseModel]] = FabricCampusIbgpVxlanModel
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsListGet
+    create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageFabricsDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageFabricsListGet
 
     def query_all(self) -> ResponseType:
         """

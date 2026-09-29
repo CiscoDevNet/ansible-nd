@@ -14,11 +14,11 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_fabric_campus_ibgp_vxlan
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage Campus iBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
 - Manage Campus iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
-- This module maps to the Manage API fabric discriminator O(config.management.type=vxlanCampus).
+- This module manages the C(vxlanCampus) Manage API fabric type.
 - It supports creating, updating, replacing, and deleting Campus iBGP VXLAN fabrics.
 author:
 - Matt Tarkington (@mtarking)
@@ -36,11 +36,6 @@ options:
         - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
-      category:
-        description:
-        - The resource category.
-        type: str
-        default: fabric
       location:
         description:
         - The geographic location of the fabric.
@@ -60,7 +55,7 @@ options:
         description:
         - License Tier value of a fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -77,7 +72,7 @@ options:
         description:
         - Telemetry collection method.
         type: str
-        default: outOfBand
+        default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -89,12 +84,12 @@ options:
         description:
         - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
         - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - Security Domain associated with the fabric.
@@ -105,12 +100,6 @@ options:
         - The Campus iBGP VXLAN management configuration for the fabric.
         type: dict
         suboptions:
-          type:
-            description:
-            - The fabric management type. Must be C(vxlanCampus) for Campus iBGP VXLAN fabrics.
-            type: str
-            default: vxlanCampus
-            choices: [ vxlanCampus ]
           bgp_asn:
             description:
             - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
@@ -134,6 +123,7 @@ options:
           replication_mode:
             description:
             - Replication Mode for BUM Traffic.
+            - Although the OpenAPI schema also declares C(ingress), ND 4.2.1 rejects that value for Campus fabrics.
             type: str
             default: multicast
             choices: [ multicast, ingress ]
@@ -253,6 +243,7 @@ options:
           site_id:
             description:
             - EVPN Multi-Site Support. Defaults to Fabric ASN.
+            - Plain site ID values above C(4294967295) require Nexus Dashboard 4.3.1 or later.
             type: str
           fabric_mtu:
             description:
@@ -431,20 +422,18 @@ options:
             description:
             - DHCP Scope Start Address.
             type: str
-            default: ""
           dhcp_end_address:
             description:
             - DHCP Scope End Address.
             type: str
-            default: ""
           management_gateway:
             description:
             - Default Gateway For Management VRF.
             type: str
-            default: ""
           management_ipv4_prefix:
             description:
-            - Switch Mgmt IP Subnet Prefix (IPv4, 8-30).
+            - Switch management IP subnet prefix (IPv4, 8-31).
+            - The Nexus Dashboard 4.3.1 OpenAPI permits prefix length C(31); the live 4.3.1.175 Campus endpoint required C(24).
             type: int
             default: 24
           management_ipv6_prefix:
@@ -496,10 +485,9 @@ options:
             description:
             - Backup time (UTC) in 24 hour format HH:MM (00:00 to 23:59).
             type: str
-            default: ""
           link_state_routing_protocol:
             description:
-            - Link-State Routing Protocol. Supported: OSPF.
+            - "Link-State Routing Protocol. Supported: OSPF."
             type: str
             default: ospf
           route_reflector_count:
@@ -518,6 +506,11 @@ options:
             - Generate BGP EVPN Neighbor Description.
             type: bool
             default: true
+          bgp_fast_convergence:
+            description:
+            - Enable fast convergence for BGP sessions and next-hop updates.
+            - This option requires Nexus Dashboard 4.3.1 or later.
+            type: bool
           ospf_process_id:
             description:
             - OSPF Process Id (for Nexus - OSPF Process Tag, 1-65535).
@@ -563,7 +556,6 @@ options:
             description:
             - Additional CLIs for all leafs (from show run).
             type: str
-            default: ""
           extra_config_xe_spine:
             description:
             - Additional CLIs for all spines (from show run).
@@ -842,15 +834,43 @@ options:
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, deleted, overridden ]
+  config_actions:
+    description:
+    - Controls save and deploy behavior after fabric configuration is updated.
+    - Save writes pending configuration to the controller.
+    - Deploy pushes the saved configuration to switches.
+    - Skipped automatically when O(state=deleted) or when no changes are made.
+    type: dict
+    suboptions:
+      save:
+        description:
+        - Whether to save fabric configuration after changes.
+        type: bool
+        default: false
+      deploy:
+        description:
+        - Whether to deploy fabric configuration to switches after saving.
+        - Requires O(config_actions.save=true) when enabled.
+        type: bool
+        default: false
+      type:
+        description:
+        - Scope of the deploy operation.
+        - C(switch) deploys only to affected switches.
+        - C(global) deploys to all switches in the fabric.
+        type: str
+        default: switch
+        choices: [ switch, global ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only Campus iBGP VXLAN fabric type (C(vxlanCampus)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
+- O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 """
 
 EXAMPLES = r"""
@@ -859,7 +879,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_campus_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -868,7 +887,6 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanCampus
           bgp_asn: "65001"
           replication_mode: multicast
           anycast_gateway_mac: "2020.0000.00aa"
@@ -892,9 +910,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
   register: result
 
@@ -903,7 +918,6 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_campus_fabric
-        category: fabric
         management:
           bgp_asn: "65002"
           performance_monitoring: true
@@ -917,7 +931,6 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_campus_fabric
-        category: fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -926,9 +939,8 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanCampus
           bgp_asn: "65004"
-          replication_mode: ingress
+          replication_mode: multicast
           link_state_routing_protocol: ospf
           ospf_process_id: 3
           ospf_area_id: "0.0.0.1"
@@ -948,9 +960,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
           management_ipv6_prefix: 64
   register: result
@@ -960,9 +969,7 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_campus_fabric
-        category: fabric
         management:
-          type: vxlanCampus
           bgp_asn: "65004"
   register: result
 
@@ -983,6 +990,77 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+    description: Whether the module made any changes.
+    type: bool
+    returned: always
+    sample: true
+before:
+    description:
+    - Campus iBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65001"}}]
+after:
+    description:
+    - Campus iBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65002"}}]
+diff:
+    description: Configuration differences between before and after states.
+    type: list
+    returned: always
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65002"}}]
+proposed:
+    description: Proposed configuration sent to the module.
+    type: list
+    returned: info or debug output_level
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65002"}}]
+output_level:
+    description: The output level set for the module.
+    type: str
+    returned: always
+    sample: normal
+logs:
+    description: Debug log messages from module execution.
+    type: list
+    returned: debug output_level
+    sample: ["Starting state machine for merged state"]
+api_paths:
+    description: API endpoint paths used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["/api/v1/manage/fabrics/campus_east"]
+api_verbs:
+    description: HTTP methods used during operations.
+    type: list
+    returned: verbosity >= 2 (-vv)
+    sample: ["PUT"]
+api_response:
+    description: Full API responses from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"RETURN_CODE": 200, "MESSAGE": "Success"}]
+api_result:
+    description: Operation results from the controller.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+    sample: [{"success": true, "changed": true}]
+api_diff:
+    description: API-level differences for each operation.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_metadata:
+    description: Operation metadata with sequence and identifiers.
+    type: list
+    returned: verbosity >= 3 (-vvv)
+api_payload:
+    description: Request payloads sent to the API.
+    type: list
+    returned: verbosity >= 3 (-vvv)
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -992,6 +1070,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_campus_ibgp_vxlan import ManageCampusIbgpVxlanFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 
 
 def main():
@@ -1002,7 +1083,22 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
+
     require_pydantic(module)
+
+    # Parse and validate config_actions BEFORE any state mutation so invalid
+    # input fails deterministically on every run, including idempotent no-drift
+    # runs, and never mutates ND before failing.
+    state = module.params.get("state", "merged")
+    try:
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
+    except ValueError as e:
+        module.fail_json(msg=str(e))
 
     nd_state_machine = None
     try:
@@ -1014,6 +1110,21 @@ def main():
 
         # Manage state
         nd_state_machine.manage_state()
+
+        # Execute config save/deploy actions via the shared controller (only on real changes)
+        if state != "deleted" and len(nd_state_machine.sent) > 0:
+            fabric_names = []
+            for item in nd_state_machine.sent:
+                name = item.get_identifier_value()
+                if name and name not in fabric_names:
+                    fabric_names.append(name)
+            if fabric_names:
+                nd_state_machine.model_orchestrator.run_config_actions(
+                    actions=config_actions,
+                    fabric_names=fabric_names,
+                    state=state,
+                    check_mode=module.check_mode,
+                )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

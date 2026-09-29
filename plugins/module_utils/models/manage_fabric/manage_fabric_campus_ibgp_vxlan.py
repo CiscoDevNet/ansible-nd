@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, ClassVar
+import re
+
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -15,8 +17,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    FabricTypeEnum,
     DhcpProtocolVersionEnum,
+    FabricTypeEnum,
     GreenfieldDebugFlagEnum,
     ReplicationModeEnum,
     RendezvousPointCountEnum,
@@ -28,8 +30,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
-    NetflowSettingsModel,
     BootstrapSubnetModel,
+    NetflowSettingsModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
 
@@ -49,13 +51,12 @@ VXLAN Campus fabrics through the Nexus Dashboard Fabric Controller (NDFC) API.
 ```python
 # Create a new VXLAN Campus fabric
 fabric_data = {
-    "name": "MyCampusFabric",
+    "fabric_name": "MyCampusFabric",
     "management": {
-        "type": "vxlanCampus",
-        "bgpAsn": "65001",
+        "bgp_asn": "65001",
     }
 }
-fabric = FabricCampusIbgpVxlanModel(**fabric_data)
+fabric = FabricCampusIbgpVxlanModel.from_config(fabric_data)
 ```
 """
 
@@ -75,10 +76,28 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        populate_by_name=True,
+        extra="allow",
+        hide_input_in_errors=True,
+    )
+
+    _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+
+    empty_string_means_unset: ClassVar[bool] = True
+
+    # ND 4.3.1 echoes this release-specific schema default even when omitted.
+    # Normalizing it on the reverse diff keeps replaced/overridden idempotent
+    # while allowing the field to remain absent from ordinary ND 4.2.1 payloads.
+    reverse_diff_defaults: ClassVar[dict[str, object]] = {"bgpFastConvergence": False}
 
     # Fabric Type (required for discriminated union)
-    type: Literal["vxlanCampus"] = Field(description="Fabric management type", default=FabricTypeEnum.CAMPUS_IBGP_VXLAN)
+    type: Literal[FabricTypeEnum.CAMPUS_IBGP_VXLAN] = Field(
+        description="Fabric management type",
+        default=FabricTypeEnum.CAMPUS_IBGP_VXLAN,
+    )
 
     # Core Configuration (from vxlanProperties)
     bgp_asn: str = Field(
@@ -86,8 +105,8 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]",
     )
 
-    # Name under management section is optional for backward compatibility
-    name: Optional[str] = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    # Internal wire field propagated from FabricCampusIbgpVxlanModel.fabric_name.
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
     # --- vxlanProperties (shared VXLAN fields) ---
 
@@ -244,10 +263,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # Site / MTU
-    site_id: Optional[str] = Field(
+    site_id: str | None = Field(
         alias="siteId",
         description="EVPN Multi-Site Support. Defaults to Fabric ASN",
-        default=None,
+        default="",
     )
     fabric_mtu: int = Field(
         alias="fabricMtu",
@@ -438,26 +457,26 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="IP protocol version for Local DHCP Server",
         default=DhcpProtocolVersionEnum.DHCPV4,
     )
-    dhcp_start_address: str = Field(
+    dhcp_start_address: str | None = Field(
         alias="dhcpStartAddress",
         description="DHCP Scope Start Address",
-        default="",
+        default=None,
     )
-    dhcp_end_address: str = Field(
+    dhcp_end_address: str | None = Field(
         alias="dhcpEndAddress",
         description="DHCP Scope End Address",
-        default="",
+        default=None,
     )
-    management_gateway: str = Field(
+    management_gateway: str | None = Field(
         alias="managementGateway",
         description="Default Gateway For Management VRF",
-        default="",
+        default=None,
     )
     management_ipv4_prefix: int = Field(
         alias="managementIpv4Prefix",
         description="Switch Mgmt IP Subnet Prefix (IPv4)",
         ge=8,
-        le=30,
+        le=31,
         default=24,
     )
     management_ipv6_prefix: int = Field(
@@ -467,27 +486,27 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         le=126,
         default=64,
     )
-    bootstrap_subnet_collection: List[BootstrapSubnetModel] = Field(
+    bootstrap_subnet_collection: list[BootstrapSubnetModel] = Field(
         alias="bootstrapSubnetCollection",
         description="List of IPv4/IPv6 subnets for bootstrap",
         default_factory=list,
     )
 
     # Backup
-    real_time_backup: Optional[bool] = Field(
+    real_time_backup: bool | None = Field(
         alias="realTimeBackup",
         description="Backup hourly only if config deployed since last backup",
         default=None,
     )
-    scheduled_backup: Optional[bool] = Field(
+    scheduled_backup: bool | None = Field(
         alias="scheduledBackup",
         description="Enable daily backup at scheduled time",
         default=None,
     )
-    scheduled_backup_time: str = Field(
+    scheduled_backup_time: str | None = Field(
         alias="scheduledBackupTime",
         description="Backup time (UTC) in 24 hour format HH:MM",
-        default="",
+        default=None,
     )
 
     # --- campusProperties (campus-specific fields) ---
@@ -507,6 +526,11 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         alias="bgpIpv4UnicastPeering",
         description="Enable BGP IPv4 unicast session between RR and RR client",
         default=False,
+    )
+    bgp_fast_convergence: bool | None = Field(
+        alias="bgpFastConvergence",
+        description="Enable immediate BGP failure detection and undampened next-hop updates (ND 4.3.1+)",
+        default=None,
     )
     auto_bgp_neighbor_description: bool = Field(
         alias="autoBgpNeighborDescription",
@@ -565,10 +589,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # Extra Config (IOS-XE / NX-OS)
-    ios_xe_leaf_freeform: str = Field(
+    ios_xe_leaf_freeform: str | None = Field(
         alias="iosXeLeafFreeform",
         description="Additional CLIs for all leafs (from show run)",
-        default="",
+        default=None,
     )
     extra_config_xe_spine: str = Field(
         alias="extraConfigXeSpine",
@@ -614,7 +638,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Manage switches with only Inband connectivity",
         default=False,
     )
-    seed_switch_core_interfaces: List[str] = Field(
+    seed_switch_core_interfaces: list[str] = Field(
         alias="seedSwitchCoreInterfaces",
         description="Core-facing interface list on seed switch (N9K border gateway spine)",
         default_factory=list,
@@ -644,10 +668,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
 
     # --- netflowProperties ---
 
-    netflow_settings: NetflowSettingsModel = Field(
+    netflow_settings: NetflowSettingsModel | None = Field(
         alias="netflowSettings",
         description="Settings associated with netflow",
-        default_factory=NetflowSettingsModel,
+        default=None,
     )
 
     @field_validator("bgp_asn")
@@ -663,8 +687,33 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         - `ValueError` - If the value does not match the expected ASN format
         """
         if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. " "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
+            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
+
+    @field_validator("site_id")
+    @classmethod
+    def validate_site_id(cls, value: str | None) -> str | None:
+        """Validate the Campus site ID accepted by the 4.2.1/4.3.1 schemas."""
+        if value in (None, ""):
+            return value
+        if "." in value:
+            if not BGP_ASN_RE.match(value):
+                raise ValueError(f"Invalid dotted site ID: {value}")
+            return value
+        if not value.isdigit():
+            raise ValueError(f"Site ID must be numeric or dotted ASN notation, got: {value}")
+        site_id = int(value)
+        if not (1 <= site_id <= 281474976710655):
+            raise ValueError(f"Site ID must be between 1 and 281474976710655, got: {site_id}")
+        return value
+
+    @field_validator("anycast_gateway_mac")
+    @classmethod
+    def validate_mac_address(cls, value: str) -> str:
+        """Validate and normalize the anycast gateway MAC address."""
+        if not re.fullmatch(r"([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}", value):
+            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
+        return value.lower()
 
 
 class FabricCampusIbgpVxlanModel(FabricBaseModel):
@@ -685,4 +734,15 @@ class FabricCampusIbgpVxlanModel(FabricBaseModel):
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.CAMPUS_IBGP_VXLAN
 
     # Core Management Configuration
-    management: Optional[CampusIbgpVxlanManagementModel] = Field(description="Campus iBGP VXLAN management configuration", default=None)
+    management: CampusIbgpVxlanManagementModel | None = Field(description="Campus iBGP VXLAN management configuration", default=None)
+
+    def _post_validate_consistency(self) -> None:
+        """Default the Campus site ID to the fabric BGP ASN."""
+        super()._post_validate_consistency()
+        if self.management is not None and self.management.site_id == "":
+            bgp_asn = self.management.bgp_asn
+            if "." in bgp_asn:
+                high, low = bgp_asn.split(".")
+                self.management.site_id = str(int(high) * 65536 + int(low))
+            else:
+                self.management.site_id = bgp_asn
