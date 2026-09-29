@@ -270,9 +270,7 @@ def test_invalid_check_mode_query_status_list_rejected(action_plugin, value):
 
 
 @pytest.mark.parametrize("unordered_paths", [None, "", {}, 1])
-def test_invalid_check_mode_query_unordered_paths_must_be_list(
-    action_plugin, unordered_paths
-):
+def test_invalid_check_mode_query_unordered_paths_must_be_list(action_plugin, unordered_paths):
     with pytest.raises(AnsibleActionFail, match="unordered_paths must be a list"):
         action_plugin._validate_check_mode_queries(
             [

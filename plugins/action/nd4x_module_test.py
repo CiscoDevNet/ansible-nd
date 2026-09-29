@@ -230,9 +230,7 @@ class ActionModule(ActionBase):
                     raise AnsibleActionFail("%s must be an empty string or start with '/'" % argument_name)
 
                 if any(
-                    token == "~"
-                    and (index + 1 == len(unordered_path) or unordered_path[index + 1] not in "01")
-                    for index, token in enumerate(unordered_path)
+                    token == "~" and (index + 1 == len(unordered_path) or unordered_path[index + 1] not in "01") for index, token in enumerate(unordered_path)
                 ):
                     raise AnsibleActionFail("%s contains an invalid JSON pointer escape" % argument_name)
 
@@ -567,10 +565,7 @@ class ActionModule(ActionBase):
         if unordered_paths is None:
             unordered_paths = ()
         elif isinstance(unordered_paths, list):
-            unordered_paths = tuple(
-                tuple(pointer.split("/")[1:]) if pointer else ()
-                for pointer in unordered_paths
-            )
+            unordered_paths = tuple(tuple(pointer.split("/")[1:]) if pointer else () for pointer in unordered_paths)
 
         if ignore_keys is None:
             ignore_keys = frozenset()
@@ -591,8 +586,7 @@ class ActionModule(ActionBase):
 
         if isinstance(value, list):
             unordered = any(
-                len(pointer) == len(path)
-                and all(expected == "*" or expected == actual for expected, actual in zip(pointer, path))
+                len(pointer) == len(path) and all(expected == "*" or expected == actual for expected, actual in zip(pointer, path))
                 for pointer in unordered_paths
             )
             normalized = [
