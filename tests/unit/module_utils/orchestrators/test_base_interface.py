@@ -37,7 +37,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    BulkCreateGroupKey,
+    BulkCreateItem,
+    NDBaseInterfaceOrchestrator,
+    finalize_accepted_intent,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -80,6 +85,12 @@ class _StubCapableOrchestrator(_StubInterfaceOrchestrator):
 
     interface_type = "loopback"
     interface_mode = "managed"
+
+
+class _StubBulkCreateOrchestrator(_StubInterfaceOrchestrator):
+    """Stub with a bulk-create endpoint, used to drive `_post_bulk_create_group` through a real `RestSend`."""
+
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
 
 
 def responses_base_interface(key: str):
@@ -1336,6 +1347,523 @@ def test_base_interface_00750() -> None:
 
 
 # =============================================================================
+# Test: _post_bulk_create_group
+# =============================================================================
+
+
+def _bulk_items(*names: str) -> list[BulkCreateItem]:
+    """Build one `BulkCreateItem` per interface name with a minimal payload."""
+    return [BulkCreateItem(interface_name=name, payload={"interfaceName": name, "switchId": "FDO12345ABC"}) for name in names]
+
+
+def test_base_interface_00760() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` queues a deploy for the items a mixed HTTP 207 create reports as an exact `success` before the
+    failure propagates, so the failure-path finalizer ships them instead of stranding them staged (PR #570 review). ND echoes the
+    IOS-XE canonical spelling (`Port-channel101`) against the module's lowercase identifier, so the match is case-insensitive and the
+    queued pair keeps the module's identifier.
+
+    ## Test
+
+    - One group of two items: port-channel101 and port-channel102 on switch A
+    - POST returns 207: `Port-channel101` `success`, `Port-channel102` `failed`
+    - `RuntimeError` names the accepted item
+    - `_pending_deploys` holds only port-channel101
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="iosXeAccessPoHost")
+
+    match = r"accepted \['port-channel101'\] from the same request"
+    with pytest.raises(RuntimeError, match=match):
+        instance._post_bulk_create_group(group_key, _bulk_items("port-channel101", "port-channel102"))
+
+    assert instance._pending_deploys == [("port-channel101", "FDO12345ABC")]
+
+
+def test_base_interface_00770() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` queues a deploy for every item of the group, in request order, and returns the response when
+    the create succeeds.
+
+    ## Test
+
+    - One group of two items: loopback10 and loopback20 on switch A
+    - POST returns an all-success 207
+    - No exception; the response data is returned
+    - `_pending_deploys` holds both pairs in request order
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with does_not_raise():
+        result = instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+
+    assert len(result["results"]) == 2
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABC")]
+
+
+def test_base_interface_00780() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` does not reconcile against a stale response: when the sender raises before any response is
+    recorded, `response_current` still holds the previous group's all-success 207, and none of its names may be queued for the new
+    group (issue #554 freshness requirement).
+
+    ## Test
+
+    - First group: loopback10 and loopback20; POST returns an all-success 207; both are queued
+    - The deploy queue is emptied and the sender is set to raise `ValueError` from `commit`
+    - Second group submits the same two names: the exception propagates and claims no accepted item
+    - `_pending_deploys` stays empty; still exactly one response was recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with does_not_raise():
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+    assert rest_send.return_code == 207
+    instance._pending_deploys = []
+
+    rest_send.sender.raise_method = "commit"
+    rest_send.sender.raise_exception = ValueError("simulated transport failure")
+
+    with pytest.raises(Exception) as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+    assert len(rest_send.responses) == 1
+
+
+def test_base_interface_00790() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` trusts only an exact (case/whitespace-tolerant) `success` item status on a failed 207 and
+    ignores everything else: `error`, a missing `status` key, a non-dict item, and a `success` for a name that was never submitted
+    (vault: `multi-status-207-status-field-inconsistent`).
+
+    ## Test
+
+    - One group of three items: loopback10, loopback20, loopback30
+    - POST returns 207: ` Loopback10 ` ` Success `, loopback20 `error`, loopback30 without a status key, an unsubmitted loopback99
+      `success`, and a bare string item
+    - An exception is raised
+    - Only loopback10 is queued for deploy
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(RuntimeError, match=r"accepted \['loopback10'\] from the same request"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20", "loopback30"))
+
+    assert instance._pending_deploys == [("loopback10", "FDO12345ABC")]
+
+
+def _bulk_orchestrator_with_inventory(gen_responses: ResponseGenerator, names: list[str] | None) -> _StubBulkCreateOrchestrator:
+    """Return a bulk-create stub whose cached inventory for FDO12345ABC holds `names` (no cache entry at all when `None`)."""
+    instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(gen_responses))
+    if names is not None:
+        instance._switch_interfaces_cache["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
+    return instance
+
+
+def test_base_interface_00796() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` recovers an item the controller created although the request failed WITHOUT a 207: ND 4.2.1
+    answers a flat HTTP 500 naming only the failing item, yet commits the valid sibling (lab-verified 2026-09-21). The switch
+    inventory is re-read once, and a submitted name that exists now but did not exist in the cached inventory before the request is
+    queued for deploy.
+
+    ## Test
+
+    - Cached inventory before the request: loopback10 only
+    - One group: loopback207 (valid) and loopback1024 (out of range); POST returns a flat 500
+    - Re-read inventory lists loopback10 and loopback207
+    - `RuntimeError` names loopback207 as created; `_pending_deploys` holds only loopback207
+    - Exactly two requests: the POST and one inventory GET
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), ["loopback10"])
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(RuntimeError, match=r"created \['loopback207'\] from the same request"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback207", "loopback1024"))
+
+    assert instance._pending_deploys == [("loopback207", "FDO12345ABC")]
+    assert len(instance.rest_send.responses) == 2
+
+
+def test_base_interface_00797() -> None:
+    """
+    # Summary
+
+    Verify the non-207 recovery never claims an interface that already existed before the request: presence after the failure proves
+    acceptance only for a name the cached inventory did not hold. A system-provisioned interface the user merely named (ND answers
+    "already in use") must not be queued for deploy.
+
+    ## Test
+
+    - Cached inventory before the request: loopback10 and loopback100
+    - One group: loopback100; POST returns a flat 500 "already in use"
+    - Re-read inventory still lists loopback100
+    - The original exception propagates without a recovery claim; `_pending_deploys` stays empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), ["loopback10", "loopback100"])
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(Exception) as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback100"))
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+
+
+def test_base_interface_00798() -> None:
+    """
+    # Summary
+
+    Verify the non-207 recovery is skipped when the orchestrator holds no cached inventory for the switch: without a "before" there is
+    nothing to compare against, so no request is added and nothing is queued.
+
+    ## Test
+
+    - No cache entry for the switch
+    - POST returns a flat 500
+    - The original exception propagates; exactly one request was made; `_pending_deploys` stays empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), None)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(Exception, match=r"Out of Range"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback207", "loopback1024"))
+
+    assert instance._pending_deploys == []
+    assert len(instance.rest_send.responses) == 1
+
+
+def test_base_interface_00799() -> None:
+    """
+    # Summary
+
+    Verify a failing inventory re-read never masks the create failure: the original error is the one raised, nothing is queued, and
+    the stale cache entry is gone so a later reader fetches fresh data.
+
+    ## Test
+
+    - Cached inventory before the request: loopback10
+    - POST returns a flat 500; the inventory re-read returns 500 as well
+    - The raised exception carries the create error (`Out of Range`), not the inventory error
+    - `_pending_deploys` stays empty; the switch has no cache entry
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _bulk_orchestrator_with_inventory(ResponseGenerator(responses()), ["loopback10"])
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(Exception, match=r"Out of Range") as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback207", "loopback1024"))
+
+    assert "inventory unavailable" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+    assert "FDO12345ABC" not in instance._switch_interfaces_cache
+
+
+def test_base_interface_00795() -> None:
+    """
+    # Summary
+
+    Verify `_post_bulk_create_group` refuses to run on an orchestrator that defines no `create_bulk_endpoint`, before any request.
+
+    ## Test
+
+    - The stub orchestrator has `create_bulk_endpoint = None`
+    - `RuntimeError` names the orchestrator class
+    - No response is recorded and nothing is queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    rest_send = _build_rest_send(ResponseGenerator(iter(())))
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with pytest.raises(RuntimeError, match=r"_StubInterfaceOrchestrator.*create_bulk_endpoint"):
+        instance._post_bulk_create_group(group_key, _bulk_items("loopback10"))
+
+    assert len(rest_send.responses) == 0
+    assert instance._pending_deploys == []
+
+
+# =============================================================================
+# Test: bulk-create / remove freshness bookkeeping never copies the response history (PR #570 review)
+# =============================================================================
+
+
+def _switch_inventory_response(switch_id: str) -> dict:
+    """Build a GET-inventory-shaped response for `switch_id` so the RestSend history resembles a real per-switch query fan-out."""
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/interfaces?switchId={switch_id}",
+        "MESSAGE": "OK",
+        "DATA": {"interfaces": [{"interfaceName": f"port-channel{index}", "switchId": switch_id} for index in range(1, 65)]},
+    }
+
+
+def _scale_bulk_orchestrator(switch_count: int) -> _StubBulkCreateOrchestrator:
+    """
+    Build a bulk-create stub whose RestSend history already holds one inventory response per switch, mirroring the state after
+    `query_all` fanned out over `switch_count` switches, so every per-group freshness snapshot faces a history that grows with the
+    fabric.
+    """
+    instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    for index in range(switch_count):
+        instance.rest_send.add_response(_switch_inventory_response(f"FDO{index:08d}"))
+    return instance
+
+
+def _forbid_response_history_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any read of the deep-copying `RestSend.responses` property fail the test."""
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("freshness bookkeeping must not read the deep-copying RestSend.responses property")
+
+    monkeypatch.setattr(RestSend, "responses", property(_no_copy))
+
+
+def test_base_interface_00791(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Scale regression for the bulk-create freshness snapshot: `create_bulk` sends one group per `(switch, policyType)`, and the per-group
+    snapshot must be a cheap counter, not a deep copy of the whole response history, which already holds one inventory response per
+    switch and so makes the run quadratic in the switch count (PR #570 review benchmark: ~18 s of local copying at 200 switches).
+
+    ## Test
+
+    - The RestSend history holds 50 inventory responses; `RestSend.responses` is patched to raise if read
+    - `_request` is replaced by a stub that records one 207 per POST
+    - `_post_bulk_create_group` is called once per switch, 50 times, and never reads `responses`
+    - Every item is deploy-queued; `response_count` grew by exactly one per group
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - RestSend.response_count
+    """
+    switch_count = 50
+    instance = _scale_bulk_orchestrator(switch_count)
+    posted: list[str] = []
+
+    def _stub_request(self, path, verb, data=None, **kwargs):  # pylint: disable=unused-argument
+        posted.append(data["interfaces"][0]["switchId"])
+        self.rest_send.add_response({"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": path, "MESSAGE": "Multi-Status", "DATA": {}})
+        return {}
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_request", _stub_request)
+    _forbid_response_history_copy(monkeypatch)
+
+    with does_not_raise():
+        for index in range(switch_count):
+            switch_id = f"FDO{index:08d}"
+            group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type="iosXeAccessPoHost")
+            items = [BulkCreateItem(interface_name="port-channel101", payload={"interfaceName": "port-channel101", "switchId": switch_id})]
+            instance._post_bulk_create_group(group_key, items)
+
+    assert posted == [f"FDO{index:08d}" for index in range(switch_count)]
+    assert instance._pending_deploys == [("port-channel101", f"FDO{index:08d}") for index in range(switch_count)]
+    assert instance.rest_send.response_count == 2 * switch_count
+
+
+def test_base_interface_00792(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the failure side of the bulk-create freshness check is also copy-free and still correct: when the request raises WITHOUT
+    the controller answering (the sender raised; issue #554 keeps the previous `response_current`), the 207 branch must see that the
+    count did not grow, claim nothing, and let the error propagate, all without reading the deep-copying `responses`.
+
+    ## Test
+
+    - The RestSend history holds 20 inventory responses; `RestSend.responses` is patched to raise if read
+    - No cached inventory for the switch, so the non-207 recovery is skipped without a GET
+    - `_request` raises without recording a response
+    - The error propagates without a `from the same request` claim; nothing is queued; `response_count` is unchanged
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    - RestSend.response_count
+    """
+    switch_count = 20
+    instance = _scale_bulk_orchestrator(switch_count)
+
+    def _stub_request(self, path, verb, data=None, **kwargs):  # pylint: disable=unused-argument
+        raise RuntimeError("sender raised before any response")
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_request", _stub_request)
+    _forbid_response_history_copy(monkeypatch)
+    group_key = BulkCreateGroupKey(switch_id="FDO00000003", policy_type="iosXeAccessPoHost")
+
+    with pytest.raises(RuntimeError, match=r"sender raised before any response") as exc_info:
+        instance._post_bulk_create_group(group_key, _bulk_items("port-channel101"))
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == switch_count
+
+
+def test_base_interface_00793(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the remove-path freshness snapshot (`remove_pending`, PR #547) is copy-free as well: both its reads of the history, before
+    the request and on the failure path, must use the counter, never the deep-copying `responses`.
+
+    ## Test
+
+    - 50 pairs are queued for removal; the RestSend history holds 50 inventory responses; `RestSend.responses` is patched to raise
+    - `_remove_interfaces` is replaced by a stub that records one 207 and returns; `remove_pending` succeeds and empties the queue
+    - The stub is then made to raise without recording a response; `remove_pending` raises `Bulk remove failed` with no accepted claim,
+      leaves the queue intact, and never reads `responses`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.remove_pending()
+    - RestSend.response_count
+    """
+    switch_count = 50
+    instance = _scale_bulk_orchestrator(switch_count)
+    pairs = [("port-channel101", f"FDO{index:08d}") for index in range(switch_count)]
+    for name, switch_id in pairs:
+        instance._queue_remove(name, switch_id)
+
+    def _stub_remove(self):
+        self.rest_send.add_response({"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": "/remove", "MESSAGE": "Multi-Status", "DATA": {}})
+        return {}
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_remove_interfaces", _stub_remove)
+    _forbid_response_history_copy(monkeypatch)
+
+    with does_not_raise():
+        instance.remove_pending()
+    assert instance._pending_removes == []
+    assert instance.rest_send.response_count == switch_count + 1
+
+    for name, switch_id in pairs:
+        instance._queue_remove(name, switch_id)
+
+    def _stub_remove_raises(self):
+        raise RuntimeError("sender raised before any response")
+
+    monkeypatch.setattr(_StubBulkCreateOrchestrator, "_remove_interfaces", _stub_remove_raises)
+
+    with pytest.raises(RuntimeError, match=r"Bulk remove failed") as exc_info:
+        instance.remove_pending()
+
+    assert "accepted the removal" not in str(exc_info.value)
+    assert instance._pending_removes == pairs
+    assert instance.rest_send.response_count == switch_count + 1
+
+
+# =============================================================================
 # Test: validate_switches_capable
 # =============================================================================
 
@@ -1947,3 +2475,234 @@ def test_base_interface_01000(params: dict) -> None:
 
     assert result is False
     assert instance.deploy is False
+
+
+# =============================================================================
+# Test: _check_xe_removal_discovered (PR #570 / #571 review)
+# =============================================================================
+
+
+def _xe_record(name: str, status: str | None, network_os_type: str = "ios-xe") -> dict:
+    """Build a minimal interface-list record with the given `operData.operationalStatus` (key omitted when `None`)."""
+    oper_data = {"operationalDescription": "Not discovered"} if status is None else {"operationalStatus": status}
+    return {"interfaceName": name, "configData": {"networkOS": {"networkOSType": network_os_type}}, "operData": oper_data}
+
+
+def _seeded_orchestrator(gen_responses: ResponseGenerator, records: list[dict]) -> _StubInterfaceOrchestrator:
+    """Return a stub orchestrator whose inventory cache for CAT9KV1701 already holds `records` (no interface-list GET needed)."""
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses))
+    instance._switch_interfaces_cache["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
+    return instance
+
+
+def test_base_interface_01100() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` makes no request and does not raise when every removal candidate is discovered
+    (`operationalStatus` `up` or `down`, case- and whitespace-tolerant), including a candidate the inventory does not list.
+
+    ## Test
+
+    - Candidates: port-channel101 (`up`), vlan980 (` Down `), port-channel999 (absent from the inventory)
+    - No exception; no response is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [_xe_record("port-channel101", "up"), _xe_record("vlan980", " Down ")])
+    pairs = [("Port-channel101", "CAT9KV1701"), ("vlan980", "CAT9KV1701"), ("port-channel999", "CAT9KV1701")]
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered(pairs)
+
+    assert len(instance.rest_send.responses) == 0
+
+
+def test_base_interface_01110() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` ignores NX-OS interfaces: the discovery prerequisite is an IOS-XE behaviour, so an
+    undiscovered NX-OS candidate triggers neither a request nor a failure.
+
+    ## Test
+
+    - Candidate port-channel501 is `nx-os` with `operationalStatus: unknown`
+    - No exception; no response is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [_xe_record("port-channel501", "unknown", network_os_type="nx-os")])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("port-channel501", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 0
+
+
+def test_base_interface_01120() -> None:
+    """
+    # Summary
+
+    Verify undiscovered IOS-XE candidates whose deployment history holds no push of their configuration are allowed: the intent was
+    never deployed, so nothing is on the switch and removing it is safe. One history GET per candidate, filtered to its records and
+    capped at `XE_HISTORY_MAX`; companion records ND files under the same entity (the SVI's `vlan 985`) are not a push of the
+    interface and do not count.
+
+    ## Test
+
+    - Candidates port-channel120 and vlan985 are `ios-xe` with `operationalStatus: unknown`
+    - port-channel120's history is empty; vlan985's holds only `vlan 985` records
+    - No exception; exactly two requests, the last one the filtered, sorted, capped history GET for vlan985
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown"), _xe_record("vlan985", "unknown")])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("Port-channel120", "CAT9KV1701"), ("vlan985", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 2
+    path, query = instance.rest_send.path.split("?", 1)
+    assert path == "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory"
+    assert set(query.split("&")) == {"filter=entityName%3Avlan985", "sort=completeTimestamp%3Adesc", "max=10"}
+
+
+def test_base_interface_01125() -> None:
+    """
+    # Summary
+
+    Verify an undiscovered IOS-XE candidate whose newest configuration push was a successful `no interface <name>` is allowed: the
+    interface was removed from the switch and re-staged, so nothing is on the switch. The older create push does not count.
+
+    ## Test
+
+    - Candidate port-channel120 is `ios-xe` with `operationalStatus: unknown`
+    - History (newest first): a successful `no interface Port-channel120`, then the create push
+    - No exception; exactly one request
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown")])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("Port-channel120", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 1
+
+
+@pytest.mark.parametrize("status", ["unknown", None, "initializing"], ids=["unknown", "missing", "unrecognized"])
+def test_base_interface_01130(status: str | None) -> None:
+    """
+    # Summary
+
+    Verify an undiscovered IOS-XE candidate whose newest configuration push is a create fails the whole operation: its intent is on
+    the switch, and ND generates the switch-side removal only once it has discovered the interface. A missing, `unknown` or
+    unrecognized `operationalStatus` all count as not discovered. This is also the reviewer's corner: a deployed, undiscovered
+    interface that was then edited without a deploy has the same history, so it is refused too.
+
+    ## Test
+
+    - Candidate port-channel101 is `ios-xe` with the parametrized `operationalStatus`
+    - History holds the successful `interface Port-channel101` create push
+    - `RuntimeError` names the interface, its status, and the retry condition; exactly one request
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+
+    def responses():
+        yield responses_base_interface("test_base_interface_01130a")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel101", status)])
+
+    match = r"Cannot remove IOS-XE interface.*Port-channel101.*has not finished discovering.*Retry after operationalStatus becomes up or down"
+    with pytest.raises(RuntimeError, match=match):
+        instance._check_xe_removal_discovered([("Port-channel101", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 1
+
+
+@pytest.mark.parametrize("key", ["a", "b"], ids=["failed_removal_newest", "ascending_response_order"])
+def test_base_interface_01135(key: str) -> None:
+    """
+    # Summary
+
+    Verify the history verdict errs on the side of refusing: a `no interface <name>` push that did not succeed leaves the interface on
+    the switch, and the newest push is chosen by its own `completeTimestamp`, so a response the controller did not sort newest-first
+    still resolves to the create push.
+
+    ## Test
+
+    - `a`: newest record is `no interface Port-channel101` with `status: failed`, older one is the create push
+    - `b`: records arrive oldest first: a successful removal, then a newer create push
+    - `RuntimeError` names Port-channel101 in both cases
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+
+    def responses():
+        yield responses_base_interface(f"test_base_interface_01135{key}")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel101", "unknown")])
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*Port-channel101"):
+        instance._check_xe_removal_discovered([("Port-channel101", "CAT9KV1701")])
+
+
+def test_base_interface_01140() -> None:
+    """
+    # Summary
+
+    Verify each undiscovered candidate on a switch gets its own history GET, and that the failure names only the candidates whose
+    configuration is on the switch.
+
+    ## Test
+
+    - Candidates port-channel120 (never deployed, empty history) and port-channel121 (create push in history), both `unknown`, same switch
+    - `RuntimeError` names port-channel121 and not port-channel120
+    - Exactly two requests
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    - NDBaseInterfaceOrchestrator._xe_interface_deployed()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    instance = _seeded_orchestrator(ResponseGenerator(responses()), [_xe_record("port-channel120", "unknown"), _xe_record("port-channel121", "unknown")])
+
+    with pytest.raises(RuntimeError, match=r"port-channel121") as exc_info:
+        instance._check_xe_removal_discovered([("port-channel120", "CAT9KV1701"), ("port-channel121", "CAT9KV1701")])
+
+    assert "port-channel120" not in str(exc_info.value)
+    assert len(instance.rest_send.responses) == 2

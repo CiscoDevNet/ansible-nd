@@ -60,6 +60,22 @@ def normalize_ethernet_interface_name(value):
     return value
 
 
+def normalize_member_interface_names(value):
+    """
+    # Summary
+
+    Normalize every member interface name in a port-channel `ports` list through `normalize_ethernet_interface_name` (see it for the
+    expansion rules). A non-list value is returned unchanged so the field's own type validation reports it.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(value, list):
+        return value
+    return [normalize_ethernet_interface_name(name) for name in value]
+
+
 def default_policy_type(data: Any, policy_type: str) -> Any:
     """
     # Summary
