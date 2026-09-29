@@ -253,6 +253,7 @@ class NDBaseModel(BaseModel, ABC):
         if isinstance(value, (list, tuple, set)):
             return {secret for child in value for secret in NDBaseModel._secret_strings(child)}  # pylint: disable=protected-access
         return set()
+
     def _apply_payload_defaults(self, data: Dict[str, Any], info: SerializationInfo) -> Dict[str, Any]:
         """
         # Summary
