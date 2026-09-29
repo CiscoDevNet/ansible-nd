@@ -67,12 +67,12 @@ def run_plugin(plugin):
         return plugin.run(task_vars={})
 
 
-def check_mode_query(unordered=True, ignore_keys=None):
+def check_mode_query(unordered_paths=None, ignore_keys=None):
     query = {
         "name": "Snapshot managed interfaces",
         "path": ("/api/v1/manage/fabrics/unit_test_fabric/" "switches/SWITCH123/interfaces"),
         "expected_status": 200,
-        "unordered": unordered,
+        "unordered_paths": unordered_paths or [],
     }
 
     if ignore_keys is not None:
@@ -269,18 +269,35 @@ def test_invalid_check_mode_query_status_list_rejected(action_plugin, value):
         )
 
 
-def test_invalid_check_mode_query_unordered_rejected(
-    action_plugin,
+@pytest.mark.parametrize("unordered_paths", [None, "", {}, 1])
+def test_invalid_check_mode_query_unordered_paths_must_be_list(
+    action_plugin, unordered_paths
 ):
-    with pytest.raises(
-        AnsibleActionFail,
-        match="must be a boolean",
-    ):
+    with pytest.raises(AnsibleActionFail, match="unordered_paths must be a list"):
         action_plugin._validate_check_mode_queries(
             [
                 {
                     "path": "/api/v1/test",
-                    "unordered": "invalid",
+                    "unordered_paths": unordered_paths,
+                }
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "unordered_path",
+    [None, 1, {}, "interfaces", "/foo/~2bar", "/foo/~"],
+)
+def test_invalid_check_mode_query_unordered_path_rejected(
+    action_plugin,
+    unordered_path,
+):
+    with pytest.raises(AnsibleActionFail):
+        action_plugin._validate_check_mode_queries(
+            [
+                {
+                    "path": "/api/v1/test",
+                    "unordered_paths": [unordered_path],
                 }
             ]
         )
@@ -344,7 +361,7 @@ def test_prepare_check_mode_queries_applies_defaults(
             "name": "Snapshot",
             "path": "/api/v1/test",
             "expected_status": 200,
-            "unordered": False,
+            "unordered_paths": [],
             "ignore_keys": [],
         }
     ]
@@ -580,7 +597,7 @@ def test_check_mode_restored_after_execution_error(
 def test_check_mode_query_wraps_predictive_execution(
     action_plugin,
 ):
-    query = check_mode_query(unordered=True)
+    query = check_mode_query(unordered_paths=[""])
     action_plugin._task.args["check_mode_queries"] = [query]
 
     before_state = [
@@ -719,14 +736,14 @@ def test_unordered_snapshot_lists_compare_equal(action_plugin):
             {"interfaceName": "Ethernet1/41"},
             {"interfaceName": "Ethernet1/42"},
         ],
-        unordered=True,
+        unordered_paths=[""],
     )
     after = action_plugin._normalize_snapshot(
         [
             {"interfaceName": "Ethernet1/42"},
             {"interfaceName": "Ethernet1/41"},
         ],
-        unordered=True,
+        unordered_paths=[""],
     )
 
     assert before == after
@@ -735,14 +752,73 @@ def test_unordered_snapshot_lists_compare_equal(action_plugin):
 def test_ordered_snapshot_lists_preserve_order(action_plugin):
     before = action_plugin._normalize_snapshot(
         ["one", "two"],
-        unordered=False,
+        unordered_paths=[],
     )
     after = action_plugin._normalize_snapshot(
         ["two", "one"],
-        unordered=False,
+        unordered_paths=[],
     )
 
     assert before != after
+
+
+def test_unordered_collection_does_not_hide_nested_list_reordering(action_plugin):
+    before = action_plugin._normalize_snapshot(
+        {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/41",
+                    "secondaryIps": ["192.0.2.1", "192.0.2.2"],
+                },
+                {"interfaceName": "Ethernet1/42", "secondaryIps": []},
+            ]
+        },
+        unordered_paths=["/interfaces"],
+    )
+    after = action_plugin._normalize_snapshot(
+        {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/42",
+                    "secondaryIps": [],
+                },
+                {
+                    "interfaceName": "Ethernet1/41",
+                    "secondaryIps": ["192.0.2.2", "192.0.2.1"],
+                },
+            ]
+        },
+        unordered_paths=["/interfaces"],
+    )
+
+    assert before != after
+
+
+def test_explicit_wildcard_path_makes_nested_list_unordered(action_plugin):
+    before = action_plugin._normalize_snapshot(
+        {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/41",
+                    "secondaryIps": ["192.0.2.1", "192.0.2.2"],
+                }
+            ]
+        },
+        unordered_paths=["/interfaces", "/interfaces/*/secondaryIps"],
+    )
+    after = action_plugin._normalize_snapshot(
+        {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/41",
+                    "secondaryIps": ["192.0.2.2", "192.0.2.1"],
+                }
+            ]
+        },
+        unordered_paths=["/interfaces", "/interfaces/*/secondaryIps"],
+    )
+
+    assert before == after
 
 
 def test_snapshot_ignores_configured_volatile_keys(
@@ -758,7 +834,7 @@ def test_snapshot_ignores_configured_volatile_keys(
                 }
             ]
         },
-        unordered=True,
+        unordered_paths=["/interfaces"],
         ignore_keys=["operData"],
     )
     after = action_plugin._normalize_snapshot(
@@ -771,7 +847,7 @@ def test_snapshot_ignores_configured_volatile_keys(
                 }
             ]
         },
-        unordered=True,
+        unordered_paths=["/interfaces"],
         ignore_keys=["operData"],
     )
 
@@ -791,7 +867,7 @@ def test_snapshot_still_compares_managed_config_when_ignoring_keys(
                 }
             ]
         },
-        unordered=True,
+        unordered_paths=["/interfaces"],
         ignore_keys=["operData"],
     )
     after = action_plugin._normalize_snapshot(
@@ -804,7 +880,7 @@ def test_snapshot_still_compares_managed_config_when_ignoring_keys(
                 }
             ]
         },
-        unordered=True,
+        unordered_paths=["/interfaces"],
         ignore_keys=["operData"],
     )
 

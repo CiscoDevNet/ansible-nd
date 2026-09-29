@@ -53,7 +53,7 @@
                 ~ '/interfaces'
               ),
               'expected_status': 200,
-              'unordered': true,
+              'unordered_paths': ['/interfaces'],
               'ignore_keys': ['operData']
             }
           ]

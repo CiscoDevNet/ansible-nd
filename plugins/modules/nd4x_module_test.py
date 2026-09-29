@@ -68,7 +68,11 @@ options:
       - The normalized before and after states must be equivalent before a real
         apply is allowed.
       - Query entries support C(name), C(path), C(expected_status),
-        C(unordered), and C(ignore_keys). The HTTP method is always C(GET).
+        C(unordered_paths), and C(ignore_keys). The HTTP method is always C(GET).
+      - C(unordered_paths) contains JSON pointers relative to the response in
+        C(current). Only lists at the named paths are treated as unordered;
+        C(*) matches one path component, including a list index. An empty
+        pointer names the response itself when it is a list.
       - C(ignore_keys) contains dictionary key names that are removed recursively
         before comparison. Use it only for volatile operational data, never for
         module-managed configuration fields.
@@ -151,7 +155,8 @@ EXAMPLES = r"""
           /api/v1/manage/fabrics/{{ test_fabric_name
           }}/switches/{{ test_switch_id }}/interfaces
         expected_status: 200
-        unordered: true
+        unordered_paths:
+          - /interfaces
         ignore_keys:
           - operData
     nd_queries:

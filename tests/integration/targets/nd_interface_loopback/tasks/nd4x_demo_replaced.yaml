@@ -58,7 +58,7 @@
               /api/v1/manage/fabrics/{{ test_fabric_name
               }}/switches/{{ test_switch_id }}/interfaces
             expected_status: 200
-            unordered: true
+            unordered_paths: [/interfaces]
             ignore_keys:
               - operData
         nd_queries:
@@ -128,7 +128,7 @@
               /api/v1/manage/fabrics/{{ test_fabric_name
               }}/switches/{{ test_switch_id }}/interfaces
             expected_status: 200
-            unordered: true
+            unordered_paths: [/interfaces]
             ignore_keys:
               - operData
         nd_queries:

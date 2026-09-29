@@ -65,7 +65,7 @@ class ActionModule(ActionBase):
         "name",
         "path",
         "expected_status",
-        "unordered",
+        "unordered_paths",
     }
 
     ALLOWED_ND_EXPECTATION_ARGUMENTS = {
@@ -212,11 +212,29 @@ class ActionModule(ActionBase):
                     "check_mode_queries[%s].expected_status" % query_index,
                 )
 
-            if "unordered" in query:
-                self._parse_bool(
-                    query["unordered"],
-                    "check_mode_queries[%s].unordered" % query_index,
+            unordered_paths = query.get("unordered_paths", [])
+
+            if not isinstance(unordered_paths, list):
+                raise AnsibleActionFail("check_mode_queries[%s].unordered_paths must be a list" % query_index)
+
+            for path_index, unordered_path in enumerate(unordered_paths):
+                argument_name = "check_mode_queries[%s].unordered_paths[%s]" % (
+                    query_index,
+                    path_index,
                 )
+
+                if not isinstance(unordered_path, str):
+                    raise AnsibleActionFail("%s must be a JSON pointer string" % argument_name)
+
+                if unordered_path and not unordered_path.startswith("/"):
+                    raise AnsibleActionFail("%s must be an empty string or start with '/'" % argument_name)
+
+                if any(
+                    token == "~"
+                    and (index + 1 == len(unordered_path) or unordered_path[index + 1] not in "01")
+                    for index, token in enumerate(unordered_path)
+                ):
+                    raise AnsibleActionFail("%s contains an invalid JSON pointer escape" % argument_name)
 
             ignore_keys = query.get("ignore_keys", [])
 
@@ -239,10 +257,7 @@ class ActionModule(ActionBase):
                         query.get("expected_status", 200),
                         "check_mode_queries[%s].expected_status" % query_index,
                     ),
-                    "unordered": self._parse_bool(
-                        query.get("unordered", False),
-                        "check_mode_queries[%s].unordered" % query_index,
-                    ),
+                    "unordered_paths": list(query.get("unordered_paths", [])),
                     "ignore_keys": sorted(
                         {
                             key.strip()
@@ -545,9 +560,18 @@ class ActionModule(ActionBase):
     def _normalize_snapshot(
         self,
         value,
-        unordered=False,
+        unordered_paths=None,
         ignore_keys=None,
+        path=(),
     ):
+        if unordered_paths is None:
+            unordered_paths = ()
+        elif isinstance(unordered_paths, list):
+            unordered_paths = tuple(
+                tuple(pointer.split("/")[1:]) if pointer else ()
+                for pointer in unordered_paths
+            )
+
         if ignore_keys is None:
             ignore_keys = frozenset()
         elif not isinstance(ignore_keys, frozenset):
@@ -557,21 +581,28 @@ class ActionModule(ActionBase):
             return {
                 key: self._normalize_snapshot(
                     value[key],
-                    unordered=unordered,
+                    unordered_paths=unordered_paths,
                     ignore_keys=ignore_keys,
+                    path=path + (str(key).replace("~", "~0").replace("/", "~1"),),
                 )
                 for key in sorted(value)
                 if key not in ignore_keys
             }
 
         if isinstance(value, list):
+            unordered = any(
+                len(pointer) == len(path)
+                and all(expected == "*" or expected == actual for expected, actual in zip(pointer, path))
+                for pointer in unordered_paths
+            )
             normalized = [
                 self._normalize_snapshot(
                     item,
-                    unordered=unordered,
+                    unordered_paths=unordered_paths,
                     ignore_keys=ignore_keys,
+                    path=path + (str(index),),
                 )
-                for item in value
+                for index, item in enumerate(value)
             ]
 
             if unordered:
@@ -730,7 +761,7 @@ class ActionModule(ActionBase):
 
             normalized_snapshot = self._normalize_snapshot(
                 query_result["current"],
-                unordered=query["unordered"],
+                unordered_paths=query["unordered_paths"],
                 ignore_keys=query["ignore_keys"],
             )
 
