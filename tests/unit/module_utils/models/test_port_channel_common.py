@@ -18,6 +18,7 @@ each concrete model inherits it through `PortChannelInterfaceBaseModel`.
 from __future__ import annotations
 
 import pytest
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import PortChannelAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import normalize_port_channel_interface_name
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_routed_interface import PortChannelRoutedInterfaceModel
@@ -40,6 +41,18 @@ def build(model_key: str, interface_name, network_os_type: str | None = None):
     if network_os_type is not None:
         network_os["network_os_type"] = network_os_type
     return model_class.from_config({"switch_ip": "192.168.1.1", "interface_name": interface_name, "config_data": {"network_os": network_os}})
+
+
+def build_from_module_args(model_key: str, interface_name):
+    """
+    Build the concrete model named by `model_key` from a playbook item that has been through the module's Ansible argument spec first,
+    so `interface_name` reaches the model as Ansible delivers it (`type="str"`: a YAML integer or boolean arrives as a string).
+    """
+    model_class, config_data = MODEL_CONFIGS[model_key]
+    item = {"switch_ip": "192.168.1.1", "interface_name": interface_name, "config_data": config_data}
+    result = ArgumentSpecValidator(model_class.get_argument_spec()).validate({"fabric_name": "fabric-1", "config": [item]})
+    assert result.error_messages == []
+    return model_class.from_config(result.validated_parameters["config"][0])
 
 
 # =============================================================================
@@ -111,6 +124,11 @@ def test_port_channel_common_00010(value):
         ("port-channel501.5", "port-channel501.5"),
         ("Ethernet1/1", "ethernet1/1"),
         ("", ""),
+        ("-", "-"),
+        ("port-channel-", "port-channel-"),
+        ("--1", "--1"),
+        ("\u0663", "\u0663"),
+        ("port-channel\u00b2", "port-channel\u00b2"),
     ],
 )
 def test_port_channel_common_00020(value, expected):
@@ -123,6 +141,7 @@ def test_port_channel_common_00020(value, expected):
     ## Test
 
     - `po501`, a spaced name, a bare prefix, a subinterface-style name, another family and the empty string are only lowercased
+    - A sign with no digits, a doubled sign and non-ASCII digits carry no extractable ID
 
     ## Classes and Methods
 
@@ -198,6 +217,77 @@ def test_port_channel_common_00030(value):
     assert normalize_port_channel_interface_name(value) is value
 
 
+@pytest.mark.parametrize("value", [-1, "-1", " -1 ", "port-channel-1", "Port-Channel-1", " port-channel-1 ", "-0", "-5000", "+0", "port-channel+5000"])
+def test_port_channel_common_00040(value):
+    """
+    # Summary
+
+    Verify a signed ID is extracted and range-checked (PR #578 review). Ansible delivers the YAML integer `-1` as the string `"-1"`, so a
+    sign must not turn an out-of-range ID into a name with no extractable ID.
+
+    ## Test
+
+    - Bare and prefixed negative IDs, and signed IDs of 0 and 5000, raise `ValueError` naming the range and the offending ID
+
+    ## Classes and Methods
+
+    - normalize_port_channel_interface_name()
+    """
+    with pytest.raises(ValueError, match=r"Port-channel ID must be in the range 1-4096, got -?\d+\."):
+        normalize_port_channel_interface_name(value)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("0001", "port-channel1"),
+        (" 0001 ", "port-channel1"),
+        ("port-channel0001", "port-channel1"),
+        ("Port-Channel0501", "port-channel501"),
+        ("04096", "port-channel4096"),
+        ("+5", "port-channel5"),
+        ("port-channel+5", "port-channel5"),
+    ],
+)
+def test_port_channel_common_00050(value, expected):
+    """
+    # Summary
+
+    Verify the name is rebuilt from the parsed ID (PR #578 review), so leading zeros and a plus sign do not survive into a name that
+    differs from the `port-channel<N>` ND stores.
+
+    ## Test
+
+    - Bare and prefixed IDs with leading zeros -> `port-channel<N>` without them
+    - A plus-signed ID -> `port-channel<N>`
+
+    ## Classes and Methods
+
+    - normalize_port_channel_interface_name()
+    """
+    with does_not_raise():
+        assert normalize_port_channel_interface_name(value) == expected
+
+
+@pytest.mark.parametrize("value", ["00000", "04097", "port-channel0000", "port-channel04097"])
+def test_port_channel_common_00051(value):
+    """
+    # Summary
+
+    Verify leading zeros do not affect the range check.
+
+    ## Test
+
+    - Zero-padded IDs of 0 and 4097 raise `ValueError` naming the range and the parsed ID
+
+    ## Classes and Methods
+
+    - normalize_port_channel_interface_name()
+    """
+    with pytest.raises(ValueError, match=r"Port-channel ID must be in the range 1-4096, got \d+\."):
+        normalize_port_channel_interface_name(value)
+
+
 # =============================================================================
 # Test: every concrete port-channel model inherits the normalizer
 # =============================================================================
@@ -250,3 +340,82 @@ def test_port_channel_common_00110(model_key):
     instance = build(model_key, "101", network_os_type="ios-xe")
     assert instance.interface_name == "port-channel101"
     assert instance.to_payload()["interfaceName"] == "Port-channel101"
+
+
+# =============================================================================
+# Test: the normalizer at the module boundary (after the Ansible argument spec)
+# =============================================================================
+
+
+@pytest.mark.parametrize("model_key", list(MODEL_CONFIGS))
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (1, "port-channel1"),
+        (4096, "port-channel4096"),
+        ("0001", "port-channel1"),
+        ("port-channel0001", "port-channel1"),
+    ],
+)
+def test_port_channel_common_00200(model_key, value, expected):
+    """
+    # Summary
+
+    Verify the boundary IDs and a zero-padded ID normalize to the canonical name when the playbook item goes through the module's
+    argument spec first (PR #578 review).
+
+    ## Test
+
+    - `interface_name: 1` / `4096` (YAML integers) -> `port-channel1` / `port-channel4096`
+    - `interface_name: "0001"` / `port-channel0001` -> `port-channel1` in the model, the config dump and the payload
+
+    ## Classes and Methods
+
+    - PortChannelInterfaceBaseModel.normalize_interface_name()
+    """
+    instance = build_from_module_args(model_key, value)
+    assert instance.interface_name == expected
+    assert instance.to_config()["interface_name"] == expected
+    assert instance.to_payload()["interfaceName"] == expected
+
+
+@pytest.mark.parametrize("model_key", list(MODEL_CONFIGS))
+@pytest.mark.parametrize("value, port_channel_id", [(-1, -1), ("port-channel-1", -1), (0, 0), (4097, 4097)])
+def test_port_channel_common_00210(model_key, value, port_channel_id):
+    """
+    # Summary
+
+    Verify an out-of-range ID is rejected when the playbook item goes through the module's argument spec first (PR #578 review). The
+    argument spec declares `interface_name` as `str`, so the YAML integer `-1` reaches the model as `"-1"`.
+
+    ## Test
+
+    - `interface_name: -1`, `port-channel-1`, `0` and `4097` raise `ValidationError` naming the range and the offending ID
+
+    ## Classes and Methods
+
+    - PortChannelInterfaceBaseModel.normalize_interface_name()
+    """
+    with pytest.raises(ValidationError, match=rf"Port-channel ID must be in the range 1-4096, got {port_channel_id}\."):
+        build_from_module_args(model_key, value)
+
+
+@pytest.mark.parametrize("model_key", list(MODEL_CONFIGS))
+@pytest.mark.parametrize("value, expected", [(True, "true"), (False, "false")])
+def test_port_channel_common_00220(model_key, value, expected):
+    """
+    # Summary
+
+    Verify a YAML boolean is never read as port-channel ID 1 or 0 at the module boundary. The argument spec converts it to the string
+    `"True"` / `"False"`, which carries no extractable ID and so is only lowercased, like any other such name.
+
+    ## Test
+
+    - `interface_name: true` / `false` -> `true` / `false`, not `port-channel1` and not a range error
+
+    ## Classes and Methods
+
+    - PortChannelInterfaceBaseModel.normalize_interface_name()
+    """
+    instance = build_from_module_args(model_key, value)
+    assert instance.interface_name == expected

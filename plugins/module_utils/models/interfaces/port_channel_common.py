@@ -33,6 +33,10 @@ _PORT_CHANNEL_PREFIX = "port-channel"
 _PORT_CHANNEL_ID_MIN = 1
 _PORT_CHANNEL_ID_MAX = 4096
 
+# A port-channel ID, bare or behind the lowercase prefix. The sign is captured so that a negative ID is range-checked instead of
+# being read as a name with no extractable ID (Ansible delivers the YAML integer `-1` as the string `"-1"`). ASCII digits only.
+_PORT_CHANNEL_ID_RE = re.compile(rf"(?:{_PORT_CHANNEL_PREFIX})?([+-]?[0-9]+)")
+
 
 def normalize_port_channel_interface_name(value):
     """
@@ -44,7 +48,9 @@ def normalize_port_channel_interface_name(value):
     model through `PortChannelInterfaceBaseModel` (issue #378; the helper issue #353 consolidates).
 
     When a numeric port-channel ID can be extracted from the input, it is range-checked against 1-4096 so an out-of-range ID fails
-    early with a clear error instead of being rejected by ND. A platform may support fewer (a Catalyst 9000 accepts 1-128); that limit
+    early with a clear error instead of being rejected by ND. A signed ID is extracted too, so `-1` and `port-channel-1` fail the range
+    check. The name is then rebuilt from the parsed ID, so leading zeros do not survive (`0001` and `port-channel0001` ->
+    `port-channel1`, the name ND stores). A platform may support fewer (a Catalyst 9000 accepts 1-128); that limit
     is left to the controller because the name is validated before the network OS is known. An input with no extractable ID (an
     abbreviation such as `po501`, a name with an inner space or a suffix) is only stripped and lowercased; abbreviations are not expanded, for
     parity with the SVI normalizer. Non-string, non-integer input, and `bool` (an `int` subclass), is returned untouched so Pydantic
@@ -62,20 +68,16 @@ def normalize_port_channel_interface_name(value):
         return value
     if isinstance(value, int):
         port_channel_id = value
-        normalized = f"{_PORT_CHANNEL_PREFIX}{value}"
     elif isinstance(value, str):
-        stripped = value.strip()
-        if stripped.isdigit():
-            port_channel_id = int(stripped)
-            normalized = f"{_PORT_CHANNEL_PREFIX}{stripped}"
-        else:
-            normalized = stripped.lower()
-            remainder = normalized[len(_PORT_CHANNEL_PREFIX) :] if normalized.startswith(_PORT_CHANNEL_PREFIX) else ""
-            if remainder.isdigit():
-                port_channel_id = int(remainder)
-    if port_channel_id is not None and not _PORT_CHANNEL_ID_MIN <= port_channel_id <= _PORT_CHANNEL_ID_MAX:
+        normalized = value.strip().lower()
+        match = _PORT_CHANNEL_ID_RE.fullmatch(normalized)
+        if match:
+            port_channel_id = int(match.group(1))
+    if port_channel_id is None:
+        return normalized
+    if not _PORT_CHANNEL_ID_MIN <= port_channel_id <= _PORT_CHANNEL_ID_MAX:
         raise ValueError(f"Port-channel ID must be in the range {_PORT_CHANNEL_ID_MIN}-{_PORT_CHANNEL_ID_MAX}, got {port_channel_id}.")
-    return normalized
+    return f"{_PORT_CHANNEL_PREFIX}{port_channel_id}"
 
 
 class PortChannelInterfaceBaseModel(NDBaseModel):
