@@ -71,10 +71,18 @@
             - never
             - nd4x_demo
             - nd4x_demo_preflight
+            - nd4x_demo_multi_switch
+            - nd4x_demo_replaced_multi_switch
+            - nd4x_demo_deleted_multi_switch
+            - nd4x_demo_overridden_multi_switch
       tags:
         - never
         - nd4x_demo
         - nd4x_demo_preflight
+        - nd4x_demo_multi_switch
+        - nd4x_demo_replaced_multi_switch
+        - nd4x_demo_deleted_multi_switch
+        - nd4x_demo_overridden_multi_switch
 
     - name: Run merged state test using ND 4.x demo harness
       ansible.builtin.include_tasks:
@@ -164,6 +172,69 @@
         - nd4x_demo_negative
       when: nd4x_supported | default(false) | bool
 
+    - name: Run multi-switch test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_multi_switch.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_multi_switch
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_multi_switch
+      when:
+        - nd4x_supported | default(false) | bool
+        - test_switch_b_ip | length > 0
+
+    - name: Run multi-switch replaced-state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced_multi_switch.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_multi_switch
+            - nd4x_demo_replaced_multi_switch
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_multi_switch
+        - nd4x_demo_replaced_multi_switch
+      when:
+        - nd4x_supported | default(false) | bool
+        - test_switch_b_ip | length > 0
+
+    - name: Run multi-switch deleted-state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted_multi_switch.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_multi_switch
+            - nd4x_demo_deleted_multi_switch
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_multi_switch
+        - nd4x_demo_deleted_multi_switch
+      when:
+        - nd4x_supported | default(false) | bool
+        - test_switch_b_ip | length > 0
+
+    - name: Run port-channel member guard test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_port_channel_guard.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo_port_channel_guard
+      tags:
+        - never
+        - nd4x_demo_port_channel_guard
+
     - name: Run overridden state test using ND 4.x demo harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_overridden.yaml
@@ -177,6 +248,22 @@
         - nd4x_demo_overridden
         - nd4x_demo_destructive
       when: nd4x_supported | default(false) | bool
+
+    - name: Run multi-switch overridden state test using ND 4.x demo harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden_multi_switch.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo_overridden_multi_switch
+            - nd4x_demo_destructive
+      tags:
+        - never
+        - nd4x_demo_overridden_multi_switch
+        - nd4x_demo_destructive
+      when:
+        - nd4x_supported | default(false) | bool
+        - test_switch_b_ip | length > 0
 
     - name: Run IOS-XE tests (requires nd_test_xe_switch_ip)
       ansible.builtin.include_tasks: xe.yaml

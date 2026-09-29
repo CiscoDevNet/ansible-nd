@@ -6,6 +6,20 @@
 
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+test_switch_b_ip: "{{ nd_test_vpc_peer2_ip | default('') }}"
+test_switch_b_id: "{{ nd_test_vpc_peer2_id | default('') }}"
+nd4x_multi_switch_interface: Ethernet1/41
+nd4x_overridden_multi_switch_interfaces:
+  - Ethernet1/41
+  - Ethernet1/42
+
+# Optional live fixture for verifying port-channel member protection. This must
+# name an existing member port and its current port-channel ID; the scenario is
+# check-mode-only and never applies its rejected access-VLAN change.
+nd4x_pc_guard_switch_ip: "{{ nd_ethernet_pc_guard_switch_ip | default('') }}"
+nd4x_pc_guard_interface: "{{ nd_ethernet_pc_guard_interface | default('') }}"
+nd4x_pc_guard_port_channel_id: "{{ nd_ethernet_pc_guard_port_channel_id | default(0) | int }}"
+nd4x_pc_guard_confirmed: "{{ nd_ethernet_pc_guard_confirmed | default(false) | bool }}"
 
 
 # Ethernet interfaces used across tests.

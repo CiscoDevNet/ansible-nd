@@ -1,0 +1,181 @@
+---
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_pc_guard_version
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Require ND 4.x"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_version.current.platformVersion is version('4.0.0', '>=')
+    fail_msg: >-
+      The port-channel guard harness requires Nexus Dashboard 4.0.0 or newer.
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_pc_guard_switch_inventory
+  changed_when: false
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Verify switch inventory response"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_switch_inventory.current.switches | default([]) | length > 0
+    fail_msg: >-
+      No switches were returned for fabric {{ test_fabric_name }}; check the
+      fabric name and Nexus Dashboard connectivity.
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Require an explicitly confirmed fixture"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_confirmed | bool
+      - nd4x_pc_guard_switch_ip | length > 0
+      - nd4x_pc_guard_interface | length > 0
+      - nd4x_pc_guard_port_channel_id | int > 0
+      - >-
+        nd4x_pc_guard_switch_ip not in [test_switch_ip, test_switch_b_ip]
+        or nd4x_pc_guard_interface not in nd4x_ethernet_reserved_interfaces
+    fail_msg: >-
+      Set nd_ethernet_pc_guard_confirmed=true and provide a dedicated existing
+      port-channel member with nd_ethernet_pc_guard_switch_ip,
+      nd_ethernet_pc_guard_interface, and
+      nd_ethernet_pc_guard_port_channel_id. The fixture must not overlap the
+      reserved Ethernet-access test ports.
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Resolve fixture switch"
+  ansible.builtin.set_fact:
+    nd4x_pc_guard_switch_matches: >-
+      {{ nd4x_pc_guard_switch_inventory.current.switches | default([])
+         | selectattr('fabricManagementIp', 'equalto', nd4x_pc_guard_switch_ip) | list }}
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Require one matching switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_switch_matches | length == 1
+      - nd4x_pc_guard_switch_matches[0].switchId | string | length > 0
+    fail_msg: >-
+      Expected exactly one switch with management IP
+      {{ nd4x_pc_guard_switch_ip }} in fabric {{ test_fabric_name }}.
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Query fixture interface"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_pc_guard_switch_matches[0].switchId }}/interfaces
+    method: get
+  register: nd4x_pc_guard_interface_inventory
+  changed_when: false
+
+- name: "PORT-CHANNEL GUARD PREFLIGHT: Verify exact port-channel membership"
+  vars:
+    nd4x_pc_guard_matches: >-
+      {{ nd4x_pc_guard_interface_inventory.current.interfaces | default([])
+         | selectattr('interfaceName', 'equalto', nd4x_pc_guard_interface) | list }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_matches | length == 1
+      - >-
+        (nd4x_pc_guard_matches[0].interfaceType | default('') == 'ethernet')
+        if nd4x_pc_guard_matches | length == 1 else false
+      - >-
+        (nd4x_pc_guard_matches[0].get('operData', {}).get('portChannelId', -1) | int
+        == nd4x_pc_guard_port_channel_id | int)
+        if nd4x_pc_guard_matches | length == 1 else false
+    fail_msg: >-
+      {{ nd4x_pc_guard_interface }} must be a live Ethernet member of
+      port-channel {{ nd4x_pc_guard_port_channel_id }} on
+      {{ nd4x_pc_guard_switch_ip }}. The live inventory did not match that
+      exact fixture, so the guard check was not attempted.
+  register: nd4x_pc_guard_member_check
+
+- name: "PORT-CHANNEL GUARD: Snapshot policy before the predictive request"
+  ansible.builtin.set_fact:
+    nd4x_pc_guard_policy_before: >-
+      {{ (nd4x_pc_guard_interface_inventory.current.interfaces
+          | selectattr('interfaceName', 'equalto', nd4x_pc_guard_interface) | first)
+         .get('configData', {}).get('networkOS', {}).get('policy', {}) }}
+
+- name: "PORT-CHANNEL GUARD: Predict an access-VLAN change on a port-channel member"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ nd4x_pc_guard_switch_ip }}"
+        interface_names:
+          - "{{ nd4x_pc_guard_interface }}"
+        config_data:
+          network_os:
+            policy:
+              access_vlan: 4093
+    state: merged
+  check_mode: true
+  register: nd4x_pc_guard_result
+  ignore_errors: true
+
+- name: "PORT-CHANNEL GUARD: Verify the module blocked the forbidden field"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_result.failed | default(false) | bool
+      - (nd4x_pc_guard_result.msg | default('')) is search('member of port-channel')
+      - (nd4x_pc_guard_result.msg | default('')) is search('access_vlan')
+      - (nd4x_pc_guard_result.msg | default('')) is search(nd4x_pc_guard_port_channel_id | string)
+    fail_msg: >-
+      Expected the predictive module call to reject access_vlan on
+      {{ nd4x_pc_guard_interface }} in port-channel
+      {{ nd4x_pc_guard_port_channel_id }}. Result: {{ nd4x_pc_guard_result }}
+
+- name: "PORT-CHANNEL GUARD: Predict a delete on the port-channel member"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ nd4x_pc_guard_switch_ip }}"
+        interface_names:
+          - "{{ nd4x_pc_guard_interface }}"
+    state: deleted
+  check_mode: true
+  register: nd4x_pc_guard_delete_result
+  ignore_errors: true
+
+- name: "PORT-CHANNEL GUARD: Verify normalization was blocked"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_delete_result.failed | default(false) | bool
+      - (nd4x_pc_guard_delete_result.msg | default('')) is search('member of port-channel')
+      - (nd4x_pc_guard_delete_result.msg | default('')) is search('Refusing to normalize')
+      - (nd4x_pc_guard_delete_result.msg | default('')) is search(nd4x_pc_guard_port_channel_id | string)
+    fail_msg: >-
+      Expected the predictive delete to refuse normalization of
+      {{ nd4x_pc_guard_interface }} in port-channel
+      {{ nd4x_pc_guard_port_channel_id }}. Result:
+      {{ nd4x_pc_guard_delete_result }}
+
+- name: "PORT-CHANNEL GUARD: Re-query fixture interface after the check"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_pc_guard_switch_matches[0].switchId }}/interfaces
+    method: get
+  register: nd4x_pc_guard_interface_after
+  changed_when: false
+
+- name: "PORT-CHANNEL GUARD: Verify the live policy was not changed"
+  vars:
+    nd4x_pc_guard_after_matches: >-
+      {{ nd4x_pc_guard_interface_after.current.interfaces | default([])
+         | selectattr('interfaceName', 'equalto', nd4x_pc_guard_interface) | list }}
+    nd4x_pc_guard_policy_after: >-
+      {{ (nd4x_pc_guard_interface_after.current.interfaces
+          | selectattr('interfaceName', 'equalto', nd4x_pc_guard_interface) | first)
+         .get('configData', {}).get('networkOS', {}).get('policy', {}) }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_pc_guard_after_matches | length == 1
+      - >-
+        (nd4x_pc_guard_after_matches[0].get('operData', {}).get('portChannelId', -1) | int
+        == nd4x_pc_guard_port_channel_id | int)
+        if nd4x_pc_guard_after_matches | length == 1 else false
+      - nd4x_pc_guard_policy_after == nd4x_pc_guard_policy_before
+    fail_msg: >-
+      The port-channel member policy or membership changed while testing the
+      check-mode guards. The policy before was {{ nd4x_pc_guard_policy_before }}
+      and after was {{ nd4x_pc_guard_policy_after }}.

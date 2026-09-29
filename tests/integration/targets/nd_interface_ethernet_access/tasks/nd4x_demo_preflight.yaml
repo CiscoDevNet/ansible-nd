@@ -90,7 +90,7 @@
                 ~ '/interfaces'
               ),
               'expected_status': 200,
-              'unordered': true,
+              'unordered_paths': ['/interfaces'],
               'ignore_keys': ['operData']
             }
           ]
@@ -148,6 +148,62 @@
   ansible.builtin.set_fact:
     test_switch_id: "{{ nd4x_switch_matches[0].switchId }}"
   when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require second switch settings for multi-switch tests"
+  ansible.builtin.assert:
+    that:
+      - test_switch_b_id | length > 0
+    fail_msg: >-
+      A second switch IP was configured for the Ethernet-access multi-switch
+      test, but its expected switch ID is missing.
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
+
+- name: "ND4X PREFLIGHT: Find second test switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_switch_b_matches: >-
+      {{
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr('fabricManagementIp', 'equalto', test_switch_b_ip)
+        | list
+      }}
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
+
+- name: "ND4X PREFLIGHT: Require exactly one matching second switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_b_matches | length == 1
+    fail_msg: >-
+      Expected exactly one switch with fabricManagementIp {{ test_switch_b_ip }}
+      in fabric {{ test_fabric_name }}, but found
+      {{ nd4x_switch_b_matches | length }}.
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
+
+- name: "ND4X PREFLIGHT: Verify supplied second switch ID"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_b_matches[0].switchId == test_switch_b_id
+    fail_msg: >-
+      The switch ID configured for {{ test_switch_b_ip }} does not match the
+      switch returned by fabric {{ test_fabric_name }}. Configured ID:
+      {{ test_switch_b_id }}; ND returned ID:
+      {{ nd4x_switch_b_matches[0].switchId }}.
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
+
+- name: "ND4X PREFLIGHT: Record resolved second switch ID"
+  ansible.builtin.set_fact:
+    nd4x_test_switch_b_id: "{{ nd4x_switch_b_matches[0].switchId }}"
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
 
 - name: "ND4X PREFLIGHT: Query interfaces on the test switch"
   cisco.nd.nd_rest:
@@ -210,3 +266,66 @@
   loop_control:
     label: "{{ item }}"
   when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query reserved interface on second test switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_test_switch_b_id }}/interfaces
+    method: get
+  register: nd4x_test_switch_b_interface_inventory
+  changed_when: false
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
+
+- name: "ND4X PREFLIGHT: Verify reserved interface exists on second switch"
+  vars:
+    matching_second_test_interfaces: >-
+      {{
+        nd4x_test_switch_b_interface_inventory.current.interfaces
+        | default([])
+        | selectattr('interfaceName', 'equalto', nd4x_multi_switch_interface)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - matching_second_test_interfaces | length == 1
+    fail_msg: >-
+      Expected exactly one {{ nd4x_multi_switch_interface }} interface on
+      second test switch {{ test_switch_b_ip }}, but found
+      {{ matching_second_test_interfaces | length }}.
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0
+
+- name: "ND4X PREFLIGHT: Validate reserved interface safety on second switch"
+  vars:
+    second_test_interface: >-
+      {{
+        nd4x_test_switch_b_interface_inventory.current.interfaces
+        | default([])
+        | selectattr('interfaceName', 'equalto', nd4x_multi_switch_interface)
+        | list
+        | first
+      }}
+    second_test_port_channel_id: >-
+      {{
+        second_test_interface
+        .get('operData', {})
+        .get('portChannelId', -1)
+        | int
+      }}
+  ansible.builtin.assert:
+    that:
+      - second_test_interface.interfaceType | default('') == 'ethernet'
+      - (second_test_port_channel_id | int) < 1
+    fail_msg: >-
+      Reserved interface {{ nd4x_multi_switch_interface }} on second test
+      switch {{ test_switch_b_ip }} is not safe. It must be Ethernet and must
+      not belong to a port-channel. The reported interface type is
+      {{ second_test_interface.interfaceType | default('missing') }} and
+      portChannelId is {{ second_test_port_channel_id }}.
+  when:
+    - nd4x_supported | bool
+    - test_switch_b_ip | length > 0

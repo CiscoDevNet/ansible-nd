@@ -1,0 +1,115 @@
+---
+- name: Run nd_interface_ethernet_access multi-switch replaced test
+  block:
+    - name: "MULTI-SWITCH REPLACED SETUP: Normalize both reserved ports"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+        state: deleted
+
+    - name: "MULTI-SWITCH REPLACED SETUP: Seed both ports with access policies"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 701
+                  description: "ND4X multi-switch replaced baseline A"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 702
+                  description: "ND4X multi-switch replaced baseline B"
+        state: merged
+
+    - name: "MULTI-SWITCH REPLACED: Replace policies on both switches in one call"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 711
+                  description: "ND4X multi-switch replaced A"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 712
+                  description: "ND4X multi-switch replaced B"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced access policy on switch A
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/{{ nd4x_multi_switch_interface | replace('/', '%2F') }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 711
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: ND4X multi-switch replaced A
+          - name: Validate replaced access policy on switch B
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_test_switch_b_id }}/interfaces/{{ nd4x_multi_switch_interface | replace('/', '%2F') }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 712
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: ND4X multi-switch replaced B
+      register: multi_switch_replaced
+
+    - name: "MULTI-SWITCH REPLACED: Verify both targets and idempotency"
+      vars:
+        matching_after_interfaces: >-
+          {{ multi_switch_replaced.first_run_result.after | default([])
+             | selectattr('interface_name', 'equalto', nd4x_multi_switch_interface) | list }}
+      ansible.builtin.assert:
+        that:
+          - multi_switch_replaced.check_mode_result.changed | bool
+          - multi_switch_replaced.first_run_result.changed | bool
+          - multi_switch_replaced.idempotency_attempts == 1
+          - not multi_switch_replaced.second_run_result.changed | bool
+          - multi_switch_replaced.nd_query_results | length == 2
+          - matching_after_interfaces | length == 2
+          - matching_after_interfaces | map(attribute='config_data.network_os.policy.access_vlan') | list | sort == [711, 712]
+
+  always:
+    - name: "MULTI-SWITCH REPLACED CLEANUP: Normalize both reserved ports"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+        state: deleted

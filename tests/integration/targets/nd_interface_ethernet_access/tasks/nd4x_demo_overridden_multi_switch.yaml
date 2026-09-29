@@ -1,0 +1,361 @@
+---
+- name: "MULTI-SWITCH OVERRIDDEN SAFETY: Require destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_ethernet_destructive_tests_enabled | bool
+      - test_switch_b_ip | length > 0
+      - nd4x_test_switch_b_id | length > 0
+      - test_switch_b_ip != test_switch_ip
+    fail_msg: >-
+      Multi-switch overridden tests require explicit destructive-test opt-in
+      and two distinct, preflight-resolved test switches. Set
+      nd_ethernet_destructive_tests_enabled=true and configure the second
+      switch IP and ID in the inventory.
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Query interfaces on every fabric switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ item.switchId }}/interfaces
+    method: get
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default(item.switchId) }}"
+  register: nd4x_overridden_multi_fabric_interfaces
+  changed_when: false
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Initialize accessHost inventory"
+  ansible.builtin.set_fact:
+    nd4x_overridden_multi_existing_access_hosts: []
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Collect fabric accessHost interfaces"
+  ansible.builtin.set_fact:
+    nd4x_overridden_multi_existing_access_hosts: >-
+      {{
+        nd4x_overridden_multi_existing_access_hosts
+        + [
+            {
+              'switch_ip': fabric_interface.0.item.fabricManagementIp,
+              'interface_name': fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_overridden_multi_fabric_interfaces.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{ fabric_interface.0.item.fabricManagementIp }}
+      {{ fabric_interface.1.interfaceName | default('unknown') }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'ethernet'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'accessHost'
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Reject accessHost state outside the four-port test scope"
+  vars:
+    existing_access_host_switches: >-
+      {{ nd4x_overridden_multi_existing_access_hosts
+         | map(attribute='switch_ip') | unique | list }}
+    existing_access_host_interfaces: >-
+      {{ nd4x_overridden_multi_existing_access_hosts
+         | map(attribute='interface_name') | unique | list }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        existing_access_host_switches
+        | difference([test_switch_ip, test_switch_b_ip]) | length == 0
+      - >-
+        existing_access_host_interfaces
+        | difference(nd4x_overridden_multi_switch_interfaces) | length == 0
+    fail_msg: >-
+      Unsafe multi-switch overridden testbed. Existing accessHost policy was
+      found on another switch or outside Ethernet1/41 and Ethernet1/42. Since
+      overridden is fabric-wide, no test changes were made.
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Query the second switch reserved ports"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_test_switch_b_id }}/interfaces
+    method: get
+  register: nd4x_overridden_multi_switch_b_interfaces
+  changed_when: false
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Verify second-switch ports are safe"
+  vars:
+    matching_interface: >-
+      {{ nd4x_overridden_multi_switch_b_interfaces.current.interfaces
+         | default([]) | selectattr('interfaceName', 'equalto', item) | list }}
+    member_port_channel_id: >-
+      {{ matching_interface[0].get('operData', {}).get('portChannelId', -1) | int
+         if matching_interface | length == 1 else -1 }}
+  ansible.builtin.assert:
+    that:
+      - matching_interface | length == 1
+      - >-
+        matching_interface[0].interfaceType | default('') == 'ethernet'
+        if matching_interface | length == 1 else false
+      - member_port_channel_id | int < 1
+    fail_msg: >-
+      {{ item }} on second switch {{ test_switch_b_ip }} must exist exactly
+      once as an Ethernet interface and must not belong to a port-channel.
+      The live result reported portChannelId={{ member_port_channel_id }}.
+  loop: "{{ nd4x_overridden_multi_switch_interfaces }}"
+  loop_control:
+    label: "{{ test_switch_b_ip }} {{ item }}"
+
+- name: "MULTI-SWITCH OVERRIDDEN PREFLIGHT: Verify second-switch sentinel exists"
+  vars:
+    matching_sentinel: >-
+      {{ nd4x_overridden_multi_switch_b_interfaces.current.interfaces
+         | default([]) | selectattr('interfaceName', 'equalto', 'Ethernet1/48') | list }}
+  ansible.builtin.assert:
+    that:
+      - matching_sentinel | length == 1
+      - >-
+        matching_sentinel[0].interfaceType | default('') == 'ethernet'
+        if matching_sentinel | length == 1 else false
+      - >-
+        matching_sentinel[0].get('operData', {}).get('portChannelId', -1) | int < 1
+        if matching_sentinel | length == 1 else false
+    fail_msg: >-
+      Ethernet1/48 must exist as a non-port-channel Ethernet interface on
+      second switch {{ test_switch_b_ip }} for the non-accessHost sentinel.
+
+- name: "MULTI-SWITCH OVERRIDDEN: Capture non-accessHost sentinel on switch A"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48
+    method: get
+  register: nd4x_overridden_multi_sentinel_a_before
+  changed_when: false
+
+- name: "MULTI-SWITCH OVERRIDDEN: Capture non-accessHost sentinel on switch B"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_test_switch_b_id }}/interfaces/Ethernet1%2F48
+    method: get
+  register: nd4x_overridden_multi_sentinel_b_before
+  changed_when: false
+
+- name: "MULTI-SWITCH OVERRIDDEN: Verify sentinels are outside managed accessHost scope"
+  ansible.builtin.assert:
+    that:
+      - nd4x_overridden_multi_sentinel_a_before.current.interfaceName == 'Ethernet1/48'
+      - nd4x_overridden_multi_sentinel_b_before.current.interfaceName == 'Ethernet1/48'
+      - >-
+        nd4x_overridden_multi_sentinel_a_before.current.get('configData', {})
+        .get('networkOS', {}).get('policy', {}).get('policyType', '') != 'accessHost'
+      - >-
+        nd4x_overridden_multi_sentinel_b_before.current.get('configData', {})
+        .get('networkOS', {}).get('policy', {}).get('policyType', '') != 'accessHost'
+    fail_msg: >-
+      Ethernet1/48 must be a present non-accessHost sentinel on both test
+      switches before the fabric-wide override begins.
+
+- name: Run nd_interface_ethernet_access multi-switch overridden harness test
+  block:
+    - name: "MULTI-SWITCH OVERRIDDEN SETUP: Normalize the four reserved test ports"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_overridden_multi_switch_interfaces }}"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: "{{ nd4x_overridden_multi_switch_interfaces }}"
+        state: deleted
+
+    - name: "MULTI-SWITCH OVERRIDDEN SETUP: Seed two access ports per switch"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/41]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 731
+                  description: "ND4X multi-switch overridden retain A"
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/42]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 732
+                  description: "ND4X multi-switch overridden omit A"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: [Ethernet1/41]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 741
+                  description: "ND4X multi-switch overridden omit B"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: [Ethernet1/42]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 742
+                  description: "ND4X multi-switch overridden retain B"
+        state: merged
+      register: nd4x_overridden_multi_seed
+
+    - name: "MULTI-SWITCH OVERRIDDEN SETUP: Verify all four seed policies"
+      ansible.builtin.assert:
+        that:
+          - nd4x_overridden_multi_seed.after | length == 4
+          - >-
+            nd4x_overridden_multi_seed.after
+            | map(attribute='config_data.network_os.policy.access_vlan')
+            | list | sort == [731, 732, 741, 742]
+
+    - name: "MULTI-SWITCH OVERRIDDEN: Retain Ethernet1/41 on A and Ethernet1/42 on B"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/41]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 731
+                  description: "ND4X multi-switch overridden retain A"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: [Ethernet1/42]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 742
+                  description: "ND4X multi-switch overridden retain B"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Verify retained access policy on switch A
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 731
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: ND4X multi-switch overridden retain A
+          - name: Verify retained access policy on switch B
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_test_switch_b_id }}/interfaces/Ethernet1%2F42
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.accessVlan"
+                equals: 742
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: ND4X multi-switch overridden retain B
+          - name: Verify omitted access policy on switch A was normalized
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/42' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+          - name: Verify omitted access policy on switch B was normalized
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_test_switch_b_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == 'Ethernet1/41' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+      register: nd4x_overridden_multi_result
+
+    - name: "MULTI-SWITCH OVERRIDDEN: Verify retained and omitted interfaces"
+      vars:
+        retained_after: "{{ nd4x_overridden_multi_result.first_run_result.after | default([]) }}"
+        retained_vlans: >-
+          {{ retained_after | map(attribute='config_data.network_os.policy.access_vlan')
+             | list | sort }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_overridden_multi_result.check_mode_result.changed | bool
+          - nd4x_overridden_multi_result.first_run_result.changed | bool
+          - nd4x_overridden_multi_result.idempotency_attempts == 1
+          - not nd4x_overridden_multi_result.second_run_result.changed | bool
+          - nd4x_overridden_multi_result.nd_query_results | length == 4
+          - nd4x_overridden_multi_result.first_run_result.before | length == 4
+          - retained_after | length == 2
+          - retained_vlans == [731, 742]
+
+    - name: "MULTI-SWITCH OVERRIDDEN: Re-query non-accessHost sentinel on switch A"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48
+        method: get
+      register: nd4x_overridden_multi_sentinel_a_after
+      changed_when: false
+
+    - name: "MULTI-SWITCH OVERRIDDEN: Re-query non-accessHost sentinel on switch B"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ nd4x_test_switch_b_id }}/interfaces/Ethernet1%2F48
+        method: get
+      register: nd4x_overridden_multi_sentinel_b_after
+      changed_when: false
+
+    - name: "MULTI-SWITCH OVERRIDDEN: Verify both sentinels are unchanged"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_overridden_multi_sentinel_a_after.current.configData
+            == nd4x_overridden_multi_sentinel_a_before.current.configData
+          - >-
+            nd4x_overridden_multi_sentinel_b_after.current.configData
+            == nd4x_overridden_multi_sentinel_b_before.current.configData
+
+  always:
+    - name: "MULTI-SWITCH OVERRIDDEN CLEANUP: Normalize the four reserved test ports"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_overridden_multi_switch_interfaces }}"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: "{{ nd4x_overridden_multi_switch_interfaces }}"
+        state: deleted
