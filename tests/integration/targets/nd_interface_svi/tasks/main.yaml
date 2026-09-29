@@ -48,6 +48,9 @@
     - name: Run nd_interface_svi merged state tests
       ansible.builtin.include_tasks: merged.yaml
 
+    - name: Run nd_interface_svi gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run nd_interface_svi replaced state tests
       ansible.builtin.include_tasks: replaced.yaml
 
