@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 try:
     from jsonpath_ng.ext import parse
@@ -64,8 +65,15 @@ class ActionModule(ActionBase):
         "ignore_keys",
         "name",
         "path",
+        "pagination",
         "expected_status",
         "unordered_paths",
+    }
+
+    ALLOWED_PAGINATION_ARGUMENTS = {
+        "page_size",
+        "collection_key",
+        "max_pages",
     }
 
     ALLOWED_ND_EXPECTATION_ARGUMENTS = {
@@ -212,6 +220,31 @@ class ActionModule(ActionBase):
                     "check_mode_queries[%s].expected_status" % query_index,
                 )
 
+            pagination = query.get("pagination")
+            if pagination is not None:
+                if not isinstance(pagination, dict):
+                    raise AnsibleActionFail("check_mode_queries[%s].pagination must be a dictionary" % query_index)
+                self._reject_unknown_keys(
+                    pagination,
+                    self.ALLOWED_PAGINATION_ARGUMENTS,
+                    "check_mode_queries[%s].pagination" % query_index,
+                )
+                page_size = self._parse_int(
+                    pagination.get("page_size"),
+                    "check_mode_queries[%s].pagination.page_size" % query_index,
+                )
+                if page_size <= 0:
+                    raise AnsibleActionFail("check_mode_queries[%s].pagination.page_size must be greater than zero" % query_index)
+                collection_key = pagination.get("collection_key")
+                if not isinstance(collection_key, str) or not collection_key.strip():
+                    raise AnsibleActionFail("check_mode_queries[%s].pagination.collection_key must be a non-empty string" % query_index)
+                max_pages = self._parse_int(
+                    pagination.get("max_pages", 10000),
+                    "check_mode_queries[%s].pagination.max_pages" % query_index,
+                )
+                if max_pages <= 0:
+                    raise AnsibleActionFail("check_mode_queries[%s].pagination.max_pages must be greater than zero" % query_index)
+
             unordered_paths = query.get("unordered_paths", [])
 
             if not isinstance(unordered_paths, list):
@@ -264,6 +297,15 @@ class ActionModule(ActionBase):
                                 [],
                             )
                         }
+                    ),
+                    "pagination": (
+                        {
+                            "page_size": self._parse_int(query["pagination"]["page_size"], "pagination.page_size"),
+                            "collection_key": query["pagination"]["collection_key"].strip(),
+                            "max_pages": self._parse_int(query["pagination"].get("max_pages", 10000), "pagination.max_pages"),
+                        }
+                        if query.get("pagination") is not None
+                        else None
                     ),
                 }
             )
@@ -692,72 +734,76 @@ class ActionModule(ActionBase):
 
         for query in queries:
             query_label = query.get("name") or query["path"]
-            original_check_mode = self._task.check_mode
+            pagination = query.get("pagination")
+            page_size = pagination["page_size"] if pagination else None
+            max_pages = pagination["max_pages"] if pagination else 1
+            collection_key = pagination["collection_key"] if pagination else None
+            combined_rows = []
+            first_current = None
+            actual_status = None
 
-            try:
-                # nd_rest skips its HTTP request when it receives
-                # check mode. Temporarily disable check mode so this
-                # read-only GET actually queries the controller.
-                self._task.check_mode = False
+            for page_index in range(max_pages):
+                page_path = query["path"]
+                if pagination:
+                    page_path = self._pagination_path(query["path"], page_size, page_index * page_size)
+                original_check_mode = self._task.check_mode
 
-                query_result = self._execute_module(
-                    module_name="cisco.nd.nd_rest",
-                    module_args={
-                        "path": query["path"],
-                        "method": "get",
-                    },
-                    task_vars=task_vars,
-                )
-            finally:
-                self._task.check_mode = original_check_mode
+                try:
+                    # nd_rest skips its HTTP request when it receives
+                    # check mode. Temporarily disable check mode so this
+                    # read-only GET actually queries the controller.
+                    self._task.check_mode = False
 
-            actual_status = query_result.get("status")
-            expected_status = query["expected_status"]
-            expected_statuses = expected_status if isinstance(expected_status, list) else [expected_status]
-
-            if actual_status is None:
-                raise AnsibleActionFail("Check-mode snapshot query %s did not " "return a status" % query_label)
-
-            try:
-                status_matches = int(actual_status) in [int(status) for status in expected_statuses]
-            except (TypeError, ValueError):
-                raise AnsibleActionFail(
-                    "Check-mode snapshot query %s returned "
-                    "invalid status %s"
-                    % (
-                        query_label,
-                        actual_status,
+                    query_result = self._execute_module(
+                        module_name="cisco.nd.nd_rest",
+                        module_args={
+                            "path": page_path,
+                            "method": "get",
+                        },
+                        task_vars=task_vars,
                     )
-                )
+                finally:
+                    self._task.check_mode = original_check_mode
 
-            if not status_matches:
-                if query_result.get("failed", False):
-                    raise AnsibleActionFail(
-                        "Check-mode snapshot query %s failed: %s"
-                        % (
-                            query_label,
-                            query_result.get("msg", "unknown error"),
-                        )
-                    )
+                actual_status = query_result.get("status")
+                expected_status = query["expected_status"]
+                expected_statuses = expected_status if isinstance(expected_status, list) else [expected_status]
 
-                raise AnsibleActionFail(
-                    "Check-mode snapshot query %s expected "
-                    "status %s but got %s"
-                    % (
-                        query_label,
-                        expected_status,
-                        actual_status,
-                    )
-                )
+                if actual_status is None:
+                    raise AnsibleActionFail("Check-mode snapshot query %s did not return a status" % query_label)
 
-            if "current" not in query_result:
-                raise AnsibleActionFail("Check-mode snapshot query %s did not " "return current state" % query_label)
+                try:
+                    status_matches = int(actual_status) in [int(status) for status in expected_statuses]
+                except (TypeError, ValueError):
+                    raise AnsibleActionFail("Check-mode snapshot query %s returned invalid status %s" % (query_label, actual_status))
 
-            normalized_snapshot = self._normalize_snapshot(
-                query_result["current"],
-                unordered_paths=query["unordered_paths"],
-                ignore_keys=query["ignore_keys"],
-            )
+                if not status_matches:
+                    if query_result.get("failed", False):
+                        raise AnsibleActionFail("Check-mode snapshot query %s failed: %s" % (query_label, query_result.get("msg", "unknown error")))
+                    raise AnsibleActionFail("Check-mode snapshot query %s expected status %s but got %s" % (query_label, expected_status, actual_status))
+
+                if "current" not in query_result:
+                    raise AnsibleActionFail("Check-mode snapshot query %s did not return current state" % query_label)
+
+                current = query_result["current"]
+                if not pagination:
+                    first_current = current
+                    break
+                if not isinstance(current, dict) or not isinstance(current.get(collection_key), list):
+                    raise AnsibleActionFail("Check-mode snapshot query %s expected current.%s to be a list" % (query_label, collection_key))
+                if first_current is None:
+                    first_current = current
+                rows = current[collection_key]
+                combined_rows.extend(rows)
+                if len(rows) < page_size:
+                    break
+            else:
+                raise AnsibleActionFail("Check-mode snapshot query %s reached pagination.max_pages=%s without a final short page" % (query_label, max_pages))
+
+            if pagination:
+                first_current = {collection_key: combined_rows}
+
+            normalized_snapshot = self._normalize_snapshot(first_current, unordered_paths=query["unordered_paths"], ignore_keys=query["ignore_keys"])
 
             snapshots.append(
                 {
@@ -769,6 +815,14 @@ class ActionModule(ActionBase):
             )
 
         return snapshots
+
+    @staticmethod
+    def _pagination_path(path, page_size, offset):
+        """Set max/offset on a list endpoint while preserving other query parameters."""
+        parsed = urlsplit(path)
+        query = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key not in ("max", "offset")]
+        query.extend((("max", str(page_size)), ("offset", str(offset))))
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
 
     def _assert_check_mode_snapshots_unchanged(
         self,

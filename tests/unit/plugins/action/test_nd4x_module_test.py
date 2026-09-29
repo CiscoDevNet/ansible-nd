@@ -269,6 +269,20 @@ def test_invalid_check_mode_query_status_list_rejected(action_plugin, value):
         )
 
 
+def test_check_mode_query_pagination_must_be_valid(action_plugin):
+    with pytest.raises(AnsibleActionFail, match="pagination must be a dictionary"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "pagination": "yes"}])
+
+    with pytest.raises(AnsibleActionFail, match="page_size must be greater than zero"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "pagination": {"page_size": 0, "collection_key": "items"}}])
+
+    with pytest.raises(AnsibleActionFail, match="collection_key must be a non-empty string"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "pagination": {"page_size": 10, "collection_key": " "}}])
+
+    with pytest.raises(AnsibleActionFail, match="Unsupported keys"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "pagination": {"page_size": 10, "collection_key": "items", "limit": 2}}])
+
+
 @pytest.mark.parametrize("unordered_paths", [None, "", {}, 1])
 def test_invalid_check_mode_query_unordered_paths_must_be_list(action_plugin, unordered_paths):
     with pytest.raises(AnsibleActionFail, match="unordered_paths must be a list"):
@@ -361,8 +375,115 @@ def test_prepare_check_mode_queries_applies_defaults(
             "expected_status": 200,
             "unordered_paths": [],
             "ignore_keys": [],
+            "pagination": None,
         }
     ]
+
+
+def test_prepare_check_mode_queries_prepares_pagination(action_plugin):
+    prepared = action_plugin._prepare_check_mode_queries(
+        [
+            {
+                "path": "/api/v1/test?clusterName=CLUSTER",
+                "pagination": {"page_size": 100, "collection_key": "routeMaps"},
+            }
+        ]
+    )
+
+    assert prepared[0]["pagination"] == {"page_size": 100, "collection_key": "routeMaps", "max_pages": 10000}
+    assert action_plugin._pagination_path(prepared[0]["path"], 100, 200) == "/api/v1/test?clusterName=CLUSTER&max=100&offset=200"
+
+
+def test_paginated_snapshot_aggregates_all_pages(action_plugin):
+    query = {
+        "name": "Snapshot route maps",
+        "path": "/api/v1/manage/fabrics/FAB/routeMaps",
+        "expected_status": 200,
+        "unordered_paths": ["/routeMaps"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 2, "collection_key": "routeMaps", "max_pages": 3},
+    }
+    action_plugin._execute_module.side_effect = [
+        snapshot_response({"routeMaps": [{"name": "RM1"}, {"name": "RM2"}]}),
+        snapshot_response({"routeMaps": [{"name": "RM3"}]}),
+    ]
+
+    snapshots = action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    assert [call.kwargs["module_args"]["path"] for call in action_plugin._execute_module.call_args_list] == [
+        "/api/v1/manage/fabrics/FAB/routeMaps?max=2&offset=0",
+        "/api/v1/manage/fabrics/FAB/routeMaps?max=2&offset=2",
+    ]
+    assert snapshots[0]["snapshot"] == {"routeMaps": [{"name": "RM1"}, {"name": "RM2"}, {"name": "RM3"}]}
+
+
+def test_paginated_snapshot_fetches_empty_sentinel_after_full_page(action_plugin):
+    query = {
+        "name": "Snapshot route maps",
+        "path": "/api/v1/manage/fabrics/FAB/routeMaps?clusterName=C1",
+        "expected_status": 200,
+        "unordered_paths": ["/routeMaps"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 2, "collection_key": "routeMaps", "max_pages": 3},
+    }
+    action_plugin._execute_module.side_effect = [
+        snapshot_response({"routeMaps": [{"name": "RM1"}, {"name": "RM2"}]}),
+        snapshot_response({"routeMaps": []}),
+    ]
+
+    snapshots = action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    assert len(action_plugin._execute_module.call_args_list) == 2
+    assert action_plugin._execute_module.call_args_list[1].kwargs["module_args"]["path"].endswith("clusterName=C1&max=2&offset=2")
+    assert len(snapshots[0]["snapshot"]["routeMaps"]) == 2
+
+
+def test_paginated_snapshot_fails_closed_on_page_error(action_plugin):
+    query = {
+        "name": "Snapshot route maps",
+        "path": "/api/v1/manage/fabrics/FAB/routeMaps",
+        "expected_status": 200,
+        "unordered_paths": ["/routeMaps"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 1, "collection_key": "routeMaps", "max_pages": 2},
+    }
+    action_plugin._execute_module.side_effect = [
+        snapshot_response({"routeMaps": [{"name": "RM1"}]}),
+        snapshot_response({}, status=500, failed=True, msg="page failed"),
+    ]
+
+    with pytest.raises(AnsibleActionFail, match="page failed"):
+        action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+
+def test_paginated_snapshot_fails_if_collection_key_is_missing(action_plugin):
+    query = {
+        "name": "Snapshot route maps",
+        "path": "/api/v1/manage/fabrics/FAB/routeMaps",
+        "expected_status": 200,
+        "unordered_paths": ["/routeMaps"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 1, "collection_key": "routeMaps", "max_pages": 2},
+    }
+    action_plugin._execute_module.return_value = snapshot_response({"other": []})
+
+    with pytest.raises(AnsibleActionFail, match="expected current.routeMaps to be a list"):
+        action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+
+def test_paginated_snapshot_fails_if_page_limit_does_not_prove_completion(action_plugin):
+    query = {
+        "name": "Snapshot route maps",
+        "path": "/api/v1/manage/fabrics/FAB/routeMaps",
+        "expected_status": 200,
+        "unordered_paths": ["/routeMaps"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 1, "collection_key": "routeMaps", "max_pages": 1},
+    }
+    action_plugin._execute_module.return_value = snapshot_response({"routeMaps": [{"name": "RM1"}]})
+
+    with pytest.raises(AnsibleActionFail, match="reached pagination.max_pages=1"):
+        action_plugin._capture_check_mode_snapshots([query], task_vars={})
 
 
 def test_prepare_check_mode_queries_renders_path(action_plugin):
