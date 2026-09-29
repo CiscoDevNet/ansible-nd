@@ -122,7 +122,7 @@ def test_nd_state_machine_campus_fabric_00010() -> None:
     instance = _run("merged", [_minimal_config()], [])
 
     calls = instance.model_orchestrator._calls
-    assert [name for name, _ in calls] == ["create"]
+    assert [operation_name for operation_name, _model in calls] == ["create"]
     created = calls[0][1]
     assert created.get_identifier_value() == "campus1"
     assert created.to_payload()["management"]["siteId"] == "65001"
@@ -138,7 +138,7 @@ def test_nd_state_machine_campus_fabric_00020() -> None:
     instance = _run("replaced", [config], [_fabric_response()])
 
     calls = instance.model_orchestrator._calls
-    assert [name for name, _ in calls] == ["update"]
+    assert [operation_name for operation_name, _model in calls] == ["update"]
     updated = calls[0][1]
     assert updated.license_tier == "premier"
     assert len(instance.sent) == 1
@@ -174,7 +174,7 @@ def test_nd_state_machine_campus_fabric_00040() -> None:
     )
 
     calls = instance.model_orchestrator._calls
-    assert [name for name, _ in calls] == ["delete"]
+    assert [operation_name for operation_name, _model in calls] == ["delete"]
     deleted = calls[0][1]
     assert deleted.get_identifier_value() == "campus2"
     assert len(instance.sent) == 0
@@ -187,7 +187,7 @@ def test_nd_state_machine_campus_fabric_00050() -> None:
     instance = _run("deleted", [{"fabric_name": "campus1"}], [_fabric_response()])
 
     calls = instance.model_orchestrator._calls
-    assert [name for name, _ in calls] == ["delete"]
+    assert [operation_name for operation_name, _model in calls] == ["delete"]
     deleted = calls[0][1]
     assert deleted.get_identifier_value() == "campus1"
     assert len(instance.sent) == 0
