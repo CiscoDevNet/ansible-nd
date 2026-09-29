@@ -1,0 +1,157 @@
+---
+- name: Run trunk-host storm-control harness scenarios
+  block:
+    - name: "STORM SETUP: Normalize Ethernet1/48"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+        state: deleted
+
+    - name: "STORM SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "STORM READ-BACK: Configure percentage threshold"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_48_storm_control }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate percentage storm-control read-back
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevel", equals: 50.0}
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevelPps", exists: false}
+      register: storm_percentage
+
+    - name: "STORM READ-BACK: Verify field round-trip"
+      ansible.builtin.assert:
+        that:
+          - storm_percentage.first_run_result.changed | bool
+          - (storm_percentage.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.storm_control_broadcast_level == 50.0
+          - not storm_percentage.second_run_result.changed | bool
+
+    - name: "STORM PCT-TO-PPS: Switch representation"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_48_storm_control_pps }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate pps storm-control representation
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevelPps", equals: 1000}
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevel", exists: false}
+      register: storm_pct_to_pps
+
+    - name: "STORM PCT-TO-PPS: Verify percentage was cleared"
+      ansible.builtin.assert:
+        that:
+          - storm_pct_to_pps.first_run_result.changed | bool
+          - (storm_pct_to_pps.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.storm_control_broadcast_level_pps == 1000
+          - not storm_pct_to_pps.second_run_result.changed | bool
+
+    - name: "STORM PPS-TO-PCT: Switch representation back"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_48_storm_control_pct_switch_back }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate percentage storm-control restored
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevel", equals: "42.5"}
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevelPps", exists: false}
+      register: storm_pps_to_pct
+
+    - name: "STORM PPS-TO-PCT: Verify pps was cleared"
+      ansible.builtin.assert:
+        that:
+          - storm_pps_to_pct.first_run_result.changed | bool
+          - (storm_pps_to_pct.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.storm_control_broadcast_level == 42.5
+          - not storm_pps_to_pct.second_run_result.changed | bool
+
+    - name: "STORM DUAL SETUP: Seed the exact dual-valued ND intent"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+        method: put
+        content: "{{ ethernet_48_dual_seed_payload | combine({'switchId': test_switch_id}) }}"
+      register: storm_dual_seed
+
+    - name: "STORM DUAL SETUP: Verify ND accepted both variants"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+        method: get
+      register: storm_dual_readback
+      changed_when: false
+
+    - name: "STORM DUAL SETUP: Assert exact controller pre-state"
+      ansible.builtin.assert:
+        that:
+          - storm_dual_readback.current.configData.networkOS.policy.stormControlBroadcastLevel == 50.0
+          - storm_dual_readback.current.configData.networkOS.policy.stormControlBroadcastLevelPps == 12345
+
+    - name: "STORM DUAL: Remediate with matching pps intent"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_48_storm_control_pps_remediate }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate dual-state remediation
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevelPps", equals: 12345}
+              - {jsonpath: "$.current.configData.networkOS.policy.stormControlBroadcastLevel", exists: false}
+      register: storm_dual_remediation
+
+    - name: "STORM DUAL: Verify remediation and idempotency"
+      ansible.builtin.assert:
+        that:
+          - storm_dual_remediation.first_run_result.changed | bool
+          - (storm_dual_remediation.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.storm_control_broadcast_level_pps == 12345
+          - "'storm_control_broadcast_level' not in (storm_dual_remediation.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy"
+          - not storm_dual_remediation.second_run_result.changed | bool
+
+  always:
+    - name: "STORM CLEANUP: Normalize Ethernet1/48"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+        state: deleted

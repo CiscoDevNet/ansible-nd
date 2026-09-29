@@ -1,0 +1,86 @@
+---
+- name: "OVERRIDDEN SAFETY: Fetch route-map inventory page {{ nd4x_route_map_inventory_offset }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps?max={{ nd4x_route_map_inventory_page_size }}&offset={{ nd4x_route_map_inventory_offset }}
+    method: get
+  register: nd4x_route_map_inventory_page
+  changed_when: false
+
+- name: "OVERRIDDEN SAFETY: Validate route-map inventory page"
+  ansible.builtin.assert:
+    that:
+      - nd4x_route_map_inventory_page.status | int == 200
+      - nd4x_route_map_inventory_page.current is mapping
+      - nd4x_route_map_inventory_page.current.routeMaps is defined
+      - nd4x_route_map_inventory_page.current.routeMaps is sequence
+      - nd4x_route_map_inventory_page.current.routeMaps is not string
+      - nd4x_route_map_inventory_page.current.routeMaps | length <= nd4x_route_map_inventory_page_size
+      - nd4x_route_map_inventory_page.current.meta.counts.total is defined
+      - nd4x_route_map_inventory_page.current.meta.counts.total is number
+      - nd4x_route_map_inventory_page.current.meta.counts.total >= 0
+    fail_msg: >-
+      Could not verify route-map inventory page at offset
+      {{ nd4x_route_map_inventory_offset }}. Refusing the fabric-wide
+      overridden test.
+
+- name: "OVERRIDDEN SAFETY: Accumulate route-map inventory page"
+  ansible.builtin.set_fact:
+    nd4x_route_map_inventory: >-
+      {{ nd4x_route_map_inventory + nd4x_route_map_inventory_page.current.routeMaps }}
+    nd4x_route_map_inventory_offset: >-
+      {{ nd4x_route_map_inventory_offset + nd4x_route_map_inventory_page_size }}
+    nd4x_route_map_inventory_pages: "{{ nd4x_route_map_inventory_pages + 1 }}"
+    nd4x_route_map_inventory_total: >-
+      {{ nd4x_route_map_inventory_page.current.meta.counts.total
+         if nd4x_route_map_inventory_pages == 0
+         else nd4x_route_map_inventory_total }}
+
+- name: "OVERRIDDEN SAFETY: Verify route-map total is stable across pages"
+  ansible.builtin.assert:
+    that:
+      - nd4x_route_map_inventory_page.current.meta.counts.total == nd4x_route_map_inventory_total
+      - nd4x_route_map_inventory | length <= nd4x_route_map_inventory_total
+    fail_msg: >-
+      The route-map inventory total changed while paging or more rows were
+      returned than the advertised total. Refusing the fabric-wide overridden
+      test.
+
+- name: "OVERRIDDEN SAFETY: Reject repeated route-map pages"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          nd4x_route_map_inventory
+          | map(attribute='name')
+          | list
+          | unique
+          | list
+          | length
+        ) == (nd4x_route_map_inventory | length)
+    fail_msg: >-
+      Route-map pagination returned duplicate names; inventory completeness
+      cannot be established. Refusing the fabric-wide overridden test.
+
+- name: "OVERRIDDEN SAFETY: Require a final route-map inventory page"
+  ansible.builtin.assert:
+    that:
+      - nd4x_route_map_inventory_pages < nd4x_route_map_inventory_max_pages
+    fail_msg: >-
+      Route-map inventory exceeded {{ nd4x_route_map_inventory_max_pages }}
+      pages. Refusing the fabric-wide overridden test.
+  when: nd4x_route_map_inventory_page.current.routeMaps | length == nd4x_route_map_inventory_page_size
+
+- name: "OVERRIDDEN SAFETY: Verify route-map inventory count"
+  ansible.builtin.assert:
+    that:
+      - nd4x_route_map_inventory | length == nd4x_route_map_inventory_total
+    fail_msg: >-
+      Retrieved {{ nd4x_route_map_inventory | length }} route maps but the
+      controller advertised {{ nd4x_route_map_inventory_total }}. Refusing the
+      fabric-wide overridden test.
+  when: nd4x_route_map_inventory_page.current.routeMaps | length < nd4x_route_map_inventory_page_size
+
+- name: "OVERRIDDEN SAFETY: Fetch the next route-map inventory page"
+  ansible.builtin.include_tasks: nd4x_demo_route_map_inventory_page.yaml
+  when: nd4x_route_map_inventory_page.current.routeMaps | length == nd4x_route_map_inventory_page_size

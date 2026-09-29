@@ -6,12 +6,27 @@
 #   nd_test_route_map_primary_name   - primary disposable route map name
 #   nd_test_route_map_secondary_name - secondary disposable route map name
 #   nd_test_route_map_tertiary_name  - tertiary disposable route map name
+#   nd_test_tenant_name_a / nd_test_tenant_name_b - tenants for identity coverage
+#   nd_test_route_map_tenant_identity_name - tenant-scoped route map test name
 #   nd_test_route_map_enable_overridden=true to run the destructive overridden-state test
 
 test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
 test_route_map_primary_name: "{{ nd_test_route_map_primary_name | default('ANSIBLE_RM_PRIMARY') }}"
 test_route_map_secondary_name: "{{ nd_test_route_map_secondary_name | default('ANSIBLE_RM_SECONDARY') }}"
 test_route_map_tertiary_name: "{{ nd_test_route_map_tertiary_name | default('ANSIBLE_RM_TERTIARY') }}"
+test_route_map_tenant_identity_name: "{{ nd_test_route_map_tenant_identity_name | default('ANSIBLE_RM_TENANT_IDENTITY') }}"
+
+# ND 4.x harness settings. Route-map overridden is fabric-wide and can delete
+# every route map not present in the supplied configuration.
+nd4x_route_map_destructive_tests_enabled: >-
+  {{ nd_route_map_destructive_tests_enabled
+     | default(nd_test_route_map_enable_overridden | default(false))
+     | bool }}
+
+nd4x_route_map_reserved_names:
+  - "{{ test_route_map_primary_name }}"
+  - "{{ test_route_map_secondary_name }}"
+  - "{{ test_route_map_tertiary_name }}"
 
 route_map_primary:
   name: "{{ test_route_map_primary_name }}"

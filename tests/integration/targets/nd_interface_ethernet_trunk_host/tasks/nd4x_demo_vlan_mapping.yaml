@@ -1,0 +1,54 @@
+---
+- name: Run trunk-host VLAN-mapping harness scenario
+  block:
+    - name: "VLAN-MAPPING SETUP: Normalize Ethernet1/48"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+        state: deleted
+
+    - name: "VLAN-MAPPING SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "VLAN-MAPPING: Configure Ethernet1/48"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_48_vlan_mapping }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate VLAN mapping on Ethernet1/48
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.vlanMapping", equals: true}
+              - {jsonpath: "$.current.configData.networkOS.policy.vlanMappingEntries", exists: true}
+      register: vlan_mapping
+
+    - name: "VLAN-MAPPING: Verify exact returned entries and idempotency"
+      ansible.builtin.assert:
+        that:
+          - vlan_mapping.first_run_result.changed | bool
+          - (vlan_mapping.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.vlan_mapping is true
+          - (vlan_mapping.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.vlan_mapping_entries | length == 2
+          - not vlan_mapping.second_run_result.changed | bool
+
+  always:
+    - name: "VLAN-MAPPING CLEANUP: Normalize Ethernet1/48"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+        state: deleted

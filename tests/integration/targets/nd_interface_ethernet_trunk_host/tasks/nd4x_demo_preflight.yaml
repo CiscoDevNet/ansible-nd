@@ -1,0 +1,114 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: "{{ nd4x_version.current.platformVersion is version('4.0.0', '>=') }}"
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping the Ethernet trunk-host harness because controller version
+      {{ nd4x_version.current.platformVersion }} is older than 4.0.0.
+  when: not nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require reserved Ethernet test ports"
+  ansible.builtin.assert:
+    that:
+      - nd4x_ethernet_reserved_ports_confirmed | bool
+    fail_msg: >-
+      Ethernet1/41 through Ethernet1/48 must be dedicated integration-test
+      ports. Set nd_ethernet_reserved_ports_confirmed=true in inventory.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify switch inventory"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_inventory.current.switches | default([]) | length > 0
+      - nd4x_switch_inventory.current.switches | selectattr('switchId', 'defined') | list | length == nd4x_switch_inventory.current.switches | length
+    fail_msg: "Fabric {{ test_fabric_name }} returned no complete switch inventory."
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Initialize complete fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: []
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Build one snapshot query per fabric switch"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: >-
+      {{ nd4x_fabric_check_mode_queries + [
+        {
+          'name': 'Snapshot trunk-host scope on ' ~ (item.fabricManagementIp | default(item.switchId)),
+          'path': '/api/v1/manage/fabrics/' ~ test_fabric_name ~ '/switches/' ~ item.switchId ~ '/interfaces',
+          'expected_status': 200,
+          'unordered': true,
+          'ignore_keys': ['operData']
+        }
+      ] }}
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default(item.switchId) }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Select test switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_switch_matches: >-
+      {{ nd4x_switch_inventory.current.switches | default([])
+         | selectattr('fabricManagementIp', 'equalto', test_switch_ip) | list }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require exactly one test switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_matches | length == 1
+      - nd4x_switch_matches[0].switchId | string | length > 0
+    fail_msg: >-
+      Expected exactly one switch with fabricManagementIp {{ test_switch_ip }};
+      found {{ nd4x_switch_matches | length }}.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record discovered test switch ID"
+  ansible.builtin.set_fact:
+    test_switch_id: "{{ nd4x_switch_matches[0].switchId }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query reserved interfaces"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+    method: get
+  register: nd4x_test_switch_interface_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Validate every reserved interface is safe"
+  vars:
+    matching_interface: >-
+      {{ nd4x_test_switch_interface_inventory.current.interfaces | default([])
+         | selectattr('interfaceName', 'equalto', item) | list }}
+    test_interface: "{{ matching_interface | first }}"
+    test_port_channel_id: >-
+      {{ test_interface.get('operData', {}).get('portChannelId', -1) | int }}
+  ansible.builtin.assert:
+    that:
+      - matching_interface | length == 1
+      - test_interface.interfaceType | default('') == 'ethernet'
+      - test_port_channel_id | int < 1
+    fail_msg: >-
+      Reserved interface {{ item }} must exist, be Ethernet, and not be a
+      port-channel member.
+  loop: "{{ nd4x_ethernet_reserved_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool
