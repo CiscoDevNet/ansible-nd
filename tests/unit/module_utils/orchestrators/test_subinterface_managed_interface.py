@@ -54,8 +54,9 @@ def _build_rest_send(
 ) -> RestSend:
     """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
 
-    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
-    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    `state` and `config` populate `rest_send.params` so `query_all` switch
+    scoping can be exercised. Overridden and gathered are fabric-wide;
+    other mutation states are scoped to switches in config.
     """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -149,17 +150,21 @@ def test_subinterface_managed_orchestrator_00020() -> None:
 # =============================================================================
 
 
-def test_subinterface_managed_orchestrator_00400() -> None:
+@pytest.mark.parametrize("state", ["overridden", "gathered"])
+def test_subinterface_managed_orchestrator_00400(state) -> None:
     """
     # Summary
 
-    Verify `query_all` validates the fabric, iterates all switches (`state: overridden` is fabric-wide per
-    `_switches_to_query`), filters to interfaceType=subInterface AND managed policyType=subinterface, and
-    injects `switchIp` onto each kept interface.
+    Verify `query_all` validates the fabric and queries all switches for `state: overridden` and
+    `state: gathered`. Overridden resolves the full switch map through `_switches_to_query`,
+    while gathered reads the fabric switch map directly. Both paths filter for managed
+    subinterfaces and inject `switchIp`.
 
     ## Test
 
-    - state is `overridden`, so `_switches_to_query` returns the full switch map
+    - `state` and `config` populate `rest_send.params` so `query_all` switch
+      scoping can be exercised. Overridden and gathered are fabric-wide;
+      mutation states other than overridden are scoped by config.
     - Fabric summary returns 200
     - Two switches in the switch list
     - Switch 1 returns: managed subinterface (kept), ethernet (filtered by interfaceType),
@@ -182,7 +187,7 @@ def test_subinterface_managed_orchestrator_00400() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses, state="overridden")
+        orchestrator = _build_orchestrator(gen_responses, state=state)
         result = orchestrator.query_all()
 
     assert isinstance(result, list)
