@@ -73,8 +73,10 @@ _PARENT_NAME_RE = re.compile(r"^([A-Za-z][A-Za-z-]*)(\d.*)$")
 
 # Wire-canonical parent prefixes a managed subinterface can sit on: the NX-OS `Ethernet`, the Port-channel parent, and the Catalyst
 # IOS-XE physical families. A user-supplied prefix that is a case-insensitive prefix of exactly ONE canonical name is expanded to it
-# (`eth1/3`, `gi1/0/2`, `te1/0/1`, `po10`); an ambiguous abbreviation (`t1/0/1`) or an unknown family passes through verbatim so a
-# correctly typed name is never corrupted. Same rule as `ethernet_common.normalize_ethernet_interface_name`, with a wider family list.
+# (`eth1/3`, `gi1/0/2`, `te1/0/1`, `po10`). On user input an ambiguous abbreviation (`t1/0/1`) or a family that is not listed here
+# (`Loopback0`, `Vlan10`, `Tunnel1`, ...) is rejected before any controller call; on the read path both pass through verbatim, so a
+# record the model cannot classify never fails a query. A physical family missing from this table is therefore refused on input: add
+# it here.
 #
 # TODO(4.2.1) xe-subinterface-remove-leaves-switch-interface
 # ND generates `no interface <parent>.<sub>` for an IOS-XE subinterface only when `interfaceActions/remove` names the switch-canonical
@@ -93,6 +95,13 @@ _CANONICAL_PARENT_PREFIXES = (
     "FortyGigabitEthernet",
     "HundredGigE",
     "AppGigabitEthernet",
+    # UNVERIFIED: the three families below are the Catalyst 9500X / 9600X names as IOS-XE documents them. No lab switch has these ports,
+    # so neither the spelling nor the capitalization ND uses for them has been observed. They are listed so a user with that hardware
+    # is not refused; revisit against a real switch, since a capitalization that differs from the switch's would reintroduce the
+    # removal problem described in the marker above for an abbreviated or lowercase name.
+    "FiftyGigE",
+    "TwoHundredGigE",
+    "FourHundredGigE",
 )
 
 
@@ -484,7 +493,7 @@ class SubinterfaceManagedInterfaceModel(NDBaseModel):
 
     @field_validator("interface_name", mode="before")
     @classmethod
-    def normalize_interface_name(cls, value):
+    def normalize_interface_name(cls, value, info):
         """
         # Summary
 
@@ -494,15 +503,21 @@ class SubinterfaceManagedInterfaceModel(NDBaseModel):
 
         The parent prefix is normalized to its wire-canonical form when it is a case-insensitive prefix of exactly one of
         `_CANONICAL_PARENT_PREFIXES` (`ethernet1/3`, `eth1/3` -> `Ethernet1/3`; `gi1/0/2` -> `GigabitEthernet1/0/2`; `te1/0/1` ->
-        `TenGigabitEthernet1/0/1`; `po10` -> `Port-channel10`); an ambiguous abbreviation or an unknown family passes through verbatim so
-        a correctly typed name is never corrupted, and ND validates the parent itself. The canonical spelling is what ND needs on the
-        delete side for IOS-XE (see the `_CANONICAL_PARENT_PREFIXES` marker).
+        `TenGigabitEthernet1/0/1`; `po10` -> `Port-channel10`). The canonical spelling is what ND needs on the delete side for IOS-XE
+        (see the `_CANONICAL_PARENT_PREFIXES` marker).
+
+        User input is validated strictly, so an unsupported parent fails before any controller call, in check mode too. A controller
+        record (validation `context={"mode": "response"}`, set by `NDBaseModel.from_response`) is read tolerantly: a parent the model
+        cannot classify, or a sub-id that is not a number, is stored as the controller returned it.
 
         ## Raises
 
         ### ValueError
 
         - If `value` is a string without a `.<sub>` segment.
+        - On user input, if the `.<sub>` segment is not a number.
+        - On user input, if the parent is malformed, abbreviates more than one supported family, or is not a supported family (see
+          `_normalize_parent`).
         """
         if not isinstance(value, str) or not value:
             return value
@@ -510,31 +525,54 @@ class SubinterfaceManagedInterfaceModel(NDBaseModel):
         if "." not in stripped:
             raise ValueError(f"interface_name must include a dot-separated subinterface id (e.g. 'Ethernet1/3.2'); got {value!r}")
         parent, sub = stripped.rsplit(".", 1)
+        strict = not (info.context and info.context.get("mode") == "response")
+        if strict and not (sub.isascii() and sub.isdigit()):
+            raise ValueError(f"interface_name subinterface id (after '.') must be a number (e.g. 'Ethernet1/3.2'); got {value!r}")
         # TODO(4.2.1) ND accepts canonical-case parents on POST (`Ethernet1/3.2`) but returns the same name lowercased
         # on GET (`ethernet1/3.2`, `port-channel10.5`). Normalize both inputs to canonical case so idempotency
         # comparisons work without re-implementing case-insensitive equality everywhere.
-        return f"{cls._normalize_parent(parent)}.{sub}"
+        return f"{cls._normalize_parent(parent, strict=strict)}.{sub}"
 
     @staticmethod
-    def _normalize_parent(parent: str) -> str:
+    def _normalize_parent(parent: str, strict: bool = False) -> str:
         """
         # Summary
 
         Expand the alphabetic prefix of `parent` to the one canonical name in `_CANONICAL_PARENT_PREFIXES` it is a case-insensitive
-        prefix of; return `parent` unchanged when the prefix is ambiguous, unknown, or the name has no numeric remainder.
+        prefix of. When the prefix is ambiguous or unknown, or the name has no numeric remainder, return `parent` unchanged unless
+        `strict` is set, in which case the name is rejected.
 
         ## Raises
 
-        None
+        ### ValueError
+
+        - If `strict` and `parent` is not an interface family followed by a port or channel number.
+        - If `strict` and the family prefix abbreviates more than one name in `_CANONICAL_PARENT_PREFIXES`.
+        - If `strict` and the family prefix abbreviates no name in `_CANONICAL_PARENT_PREFIXES`.
         """
         match = _PARENT_NAME_RE.match(parent)
         if not match:
+            if strict:
+                raise ValueError(
+                    f"interface_name parent {parent!r} is malformed; expected an interface family followed by a port or channel number "
+                    "(e.g. 'Ethernet1/3', 'GigabitEthernet1/0/2', 'Port-channel10')"
+                )
             return parent
         prefix, rest = match.groups()
         expansions = [canonical for canonical in _CANONICAL_PARENT_PREFIXES if canonical.lower().startswith(prefix.lower())]
         if len(expansions) == 1:
             return expansions[0] + rest
-        return parent
+        if not strict:
+            return parent
+        if expansions:
+            raise ValueError(
+                f"interface_name parent {parent!r} is ambiguous: {prefix!r} abbreviates {', '.join(expansions)}; "
+                "spell out enough of the interface family to select one"
+            )
+        raise ValueError(
+            f"interface_name parent {parent!r} is not a supported subinterface parent; a managed subinterface is created on a physical "
+            f"interface or a Port-channel: {', '.join(_CANONICAL_PARENT_PREFIXES)}"
+        )
 
     # --- Argument Spec ---
 

@@ -698,27 +698,131 @@ def test_subinterface_managed_interface_00710():
 
 @pytest.mark.parametrize(
     "value",
-    ["Loopback0.1", "Vlan10.2", "mgmt0.3", "Tunnel1.4", "HundredGigE1/0/25.7"],
-    ids=["loopback", "vlan", "mgmt", "tunnel", "hundredgig"],
+    ["Loopback0.1", "Vlan10.2", "mgmt0.3", "Tunnel1.4", "nve1.5", "FastEthernet0/1.6"],
+    ids=["loopback", "vlan", "mgmt", "tunnel", "nve", "unlisted_family"],
 )
-def test_subinterface_managed_interface_00720(value):
+@pytest.mark.parametrize("source", ["direct", "config"])
+def test_subinterface_managed_interface_00720(value, source):
     """
     # Summary
 
-    Verify `normalize_interface_name` passes a parent that is not a case-insensitive prefix of exactly one canonical name
-    (`Ethernet`, `GigabitEthernet`, `Port-channel`) through verbatim rather than re-casing or rejecting it, so correctly typed
-    Catalyst families the canonical list does not know (e.g. `HundredGigE`) are never corrupted; ND validates the parent itself.
+    Verify `normalize_interface_name` rejects user input whose parent is not a supported subinterface parent (a physical interface
+    family or a Port-channel) before any controller call, naming the supported families.
 
     ## Test
 
-    - A dotted name on any other parent is stored unchanged
+    - A dotted name on a Loopback, VLAN, management, Tunnel or NVE parent, or on a family the canonical list does not know, raises
+      ValidationError both on direct construction and through `from_config`
 
     ## Classes and Methods
 
     - SubinterfaceManagedInterfaceModel.normalize_interface_name()
+    - SubinterfaceManagedInterfaceModel._normalize_parent()
     """
-    instance = SubinterfaceManagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
-    assert instance.interface_name == value
+    with pytest.raises(ValidationError, match="is not a supported subinterface parent.*Ethernet, Port-channel, GigabitEthernet"):
+        if source == "config":
+            SubinterfaceManagedInterfaceModel.from_config({"switch_ip": "1.2.3.4", "interface_name": value})
+        else:
+            SubinterfaceManagedInterfaceModel(switch_ip="1.2.3.4", interface_name=value)
+
+
+@pytest.mark.parametrize(
+    "value,candidates",
+    [
+        ("t1/0/1.5", "TwoGigabitEthernet, TenGigabitEthernet, TwentyFiveGigE, TwoHundredGigE"),
+        ("T1/0/1.5", "TwoGigabitEthernet, TenGigabitEthernet, TwentyFiveGigE, TwoHundredGigE"),
+        ("tw1/0/1.5", "TwoGigabitEthernet, TwentyFiveGigE, TwoHundredGigE"),
+        ("two1/0/1.5", "TwoGigabitEthernet, TwoHundredGigE"),
+        ("f1/0/1.5", "FiveGigabitEthernet, FortyGigabitEthernet, FiftyGigE, FourHundredGigE"),
+        ("fi1/0/1.5", "FiveGigabitEthernet, FiftyGigE"),
+        ("fo1/0/1.5", "FortyGigabitEthernet, FourHundredGigE"),
+    ],
+    ids=["t", "t_uppercase", "tw", "two", "f", "fi", "fo"],
+)
+def test_subinterface_managed_interface_00721(value, candidates):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` rejects an abbreviation that is a prefix of more than one supported parent family rather than
+    passing it through, naming the families it could mean.
+
+    ## Test
+
+    - An ambiguous abbreviation raises ValidationError listing every family it abbreviates
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceModel.normalize_interface_name()
+    - SubinterfaceManagedInterfaceModel._normalize_parent()
+    """
+    with pytest.raises(ValidationError, match=f"is ambiguous.*{candidates}"):
+        SubinterfaceManagedInterfaceModel.from_config({"switch_ip": "1.2.3.4", "interface_name": value})
+
+
+@pytest.mark.parametrize(
+    "value,match",
+    [
+        ("Ethernet.2", "is malformed"),
+        ("ethernetfoo.1", "is malformed"),
+        ("1/3.2", "is malformed"),
+        (".2", "is malformed"),
+        ("Ethernet1/3.", "subinterface id \\(after '.'\\) must be a number"),
+        ("Ethernet1/3.abc", "subinterface id \\(after '.'\\) must be a number"),
+        ("GigabitEthernet1/0/2.1a", "subinterface id \\(after '.'\\) must be a number"),
+    ],
+    ids=["no_port_number", "alpha_remainder", "no_family", "empty_parent", "empty_sub_id", "alpha_sub_id", "alnum_sub_id"],
+)
+def test_subinterface_managed_interface_00722(value, match):
+    """
+    # Summary
+
+    Verify `normalize_interface_name` rejects user input with a malformed parent (no family, or no port / channel number after the
+    family) or a sub-id that is not a number.
+
+    ## Test
+
+    - Each malformed name raises ValidationError with the matching message
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceModel.normalize_interface_name()
+    - SubinterfaceManagedInterfaceModel._normalize_parent()
+    """
+    with pytest.raises(ValidationError, match=match):
+        SubinterfaceManagedInterfaceModel.from_config({"switch_ip": "1.2.3.4", "interface_name": value})
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("FastEthernet0/1.6", "FastEthernet0/1.6"),
+        ("Loopback0.1", "Loopback0.1"),
+        ("t1/0/1.5", "t1/0/1.5"),
+        ("ethernet1/3.2", "Ethernet1/3.2"),
+        ("gigabitethernet1/0/2.100", "GigabitEthernet1/0/2.100"),
+    ],
+    ids=["unlisted_family", "unsupported_family", "ambiguous", "ethernet_lowercase", "gig_lowercase"],
+)
+def test_subinterface_managed_interface_00723(value, expected):
+    """
+    # Summary
+
+    Verify the read path stays tolerant: `from_response` still canonicalizes a parent it recognizes, and stores any other name the
+    controller returns unchanged instead of raising, so one subinterface the model cannot classify never fails a whole query.
+
+    ## Test
+
+    - A controller record on an unlisted, unsupported or ambiguous parent is stored verbatim
+    - A controller record on a recognized parent is canonicalized
+
+    ## Classes and Methods
+
+    - SubinterfaceManagedInterfaceModel.from_response()
+    - SubinterfaceManagedInterfaceModel.normalize_interface_name()
+    """
+    with does_not_raise():
+        instance = SubinterfaceManagedInterfaceModel.from_response({"switchIp": "1.2.3.4", "interfaceName": value, "interfaceType": "subInterface"})
+    assert instance.interface_name == expected
 
 
 # =============================================================================
@@ -1301,9 +1405,16 @@ def test_subinterface_managed_interface_02050(field, value, should_raise):
         ("TenGigabitEthernet1/0/1.5", "TenGigabitEthernet1/0/1.5"),
         ("te1/0/1.5", "TenGigabitEthernet1/0/1.5"),
         ("twe1/0/1.5", "TwentyFiveGigE1/0/1.5"),
-        ("fo1/0/1.2", "FortyGigabitEthernet1/0/1.2"),
+        ("for1/0/1.2", "FortyGigabitEthernet1/0/1.2"),
+        ("fiv1/0/1.2", "FiveGigabitEthernet1/0/1.2"),
+        ("twog1/0/1.2", "TwoGigabitEthernet1/0/1.2"),
         ("hu1/0/25.7", "HundredGigE1/0/25.7"),
-        ("t1/0/1.5", "t1/0/1.5"),
+        ("HundredGigE1/0/25.7", "HundredGigE1/0/25.7"),
+        ("fiftygige1/0/1.6", "FiftyGigE1/0/1.6"),
+        ("fif1/0/1.6", "FiftyGigE1/0/1.6"),
+        ("twoh1/0/1.8", "TwoHundredGigE1/0/1.8"),
+        ("FourHundredGigE1/0/29.9", "FourHundredGigE1/0/29.9"),
+        ("fou1/0/29.9", "FourHundredGigE1/0/29.9"),
         ("eth1/3.2", "Ethernet1/3.2"),
         ("po10.5", "Port-channel10.5"),
     ],
@@ -1315,8 +1426,15 @@ def test_subinterface_managed_interface_02050(field, value, should_raise):
         "tengig_short",
         "twentyfivegig_short",
         "fortygig_short",
+        "fivegig_short",
+        "twogig_short",
         "hundredgig_short",
-        "ambiguous_t_verbatim",
+        "hundredgig_canonical",
+        "fiftygig_lowercase",
+        "fiftygig_short",
+        "twohundredgig_short",
+        "fourhundredgig_canonical",
+        "fourhundredgig_short",
         "eth_short",
         "po_short",
     ],
@@ -1326,9 +1444,9 @@ def test_subinterface_managed_interface_02060(value, expected):
     # Summary
 
     Verify `normalize_interface_name` accepts the Catalyst IOS-XE parent families: a prefix that is a case-insensitive prefix of exactly
-    one canonical name (`Ethernet`, `Port-channel` and the Catalyst `...GigabitEthernet` / `...GigE` families) is expanded to it, an
-    ambiguous abbreviation (`t` matches several) passes through verbatim, and the dot-separated sub-id is preserved. ND removes an
-    IOS-XE subinterface from the switch only under its canonical spelling (lab 2026-09-16), so the expansion is what makes delete work.
+    one canonical name (`Ethernet`, `Port-channel` and the Catalyst `...GigabitEthernet` / `...GigE` families) is expanded to it and the
+    dot-separated sub-id is preserved. ND removes an IOS-XE subinterface from the switch only under its canonical spelling (lab
+    2026-09-16), so the expansion is what makes delete work.
 
     ## Test
 

@@ -50,9 +50,15 @@ options:
         description:
         - The full subinterface name, including the dot-separated sub-id (e.g. C(Ethernet1/3.2), C(GigabitEthernet1/0/2.100),
           C(Port-channel10.5)).
-        - The parent kind is inferred from the prefix. Abbreviated C(Ethernet), C(GigabitEthernet) and C(Port-channel) parents
-          (e.g. C(eth1/3.2), C(gi1/0/2.100), C(po10.5)) are expanded to their canonical spelling; other Catalyst interface families
-          (e.g. C(TenGigabitEthernet1/0/1.5)) are passed through as typed.
+        - The parent kind is inferred from the prefix. The parent must be a physical interface or a Port-channel, one of
+          C(Ethernet), C(Port-channel), C(GigabitEthernet), C(TwoGigabitEthernet), C(FiveGigabitEthernet), C(TenGigabitEthernet),
+          C(TwentyFiveGigE), C(FortyGigabitEthernet), C(FiftyGigE), C(HundredGigE), C(TwoHundredGigE), C(FourHundredGigE) or
+          C(AppGigabitEthernet). Any other parent (e.g. C(Loopback0.1), C(Vlan10.2), C(Tunnel1.4)) is rejected before any request is sent
+          to the controller.
+        - The parent may be abbreviated and written in any case (e.g. C(eth1/3.2), C(gi1/0/2.100), C(te1/0/1.5), C(po10.5)); it is
+          expanded to its canonical spelling. An abbreviation that matches more than one parent kind (e.g. C(t1/0/1.5), C(fo1/0/1.5))
+          is rejected.
+        - The sub-id must be a number.
         type: str
         required: true
       config_data:
