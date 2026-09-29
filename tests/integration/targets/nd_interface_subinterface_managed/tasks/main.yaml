@@ -16,7 +16,8 @@
 #   nd_test_xe_parent_interface=<Catalyst front-panel port used as the routed parent, default GigabitEthernet1/0/2>
 #
 # The parent port must be a plain host port (not a port-channel member or a fabric link); xe.yaml converts it to a routed port for
-# the duration of the run and resets it to the fabric-default trunk host afterwards. Sub-ids 100-103 on it must be free.
+# the duration of the run and xe_teardown.yaml resets it to the fabric-default trunk host afterwards, also when the run fails.
+# Sub-ids 100-103 on it must be free.
 #
 # --- Optional test variables ---
 #
@@ -55,8 +56,15 @@
     - name: Run deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
 
+    # xe.yaml converts a Catalyst front-panel port to a routed port and creates subinterfaces on it. The teardown runs from `always`
+    # so a failed scenario still leaves the testbed as it found it; Ansible reports the scenario's failure after the teardown.
     - name: Run IOS-XE tests (requires nd_test_xe_switch_ip)
-      ansible.builtin.include_tasks: xe.yaml
       when: nd_test_xe_switch_ip is defined and nd_test_xe_switch_ip | length > 0
+      block:
+        - name: Run the IOS-XE scenario
+          ansible.builtin.include_tasks: xe.yaml
+      always:
+        - name: Remove the IOS-XE test subinterfaces and reset the parent port
+          ansible.builtin.include_tasks: xe_teardown.yaml
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"

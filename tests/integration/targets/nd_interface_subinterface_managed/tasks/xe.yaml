@@ -7,8 +7,10 @@
 # Requires nd_test_xe_switch_ip; gated in tasks/main.yaml. Exercises the iosXeSubinterface template (VLAN tag, L3 addressing) and the
 # admin-state-only iosXeSubinterfaceShutNoshut template through every state, plus the cross-platform rejection. ND creates a
 # subinterface only on a parent whose DISCOVERED mode is routed, so the scenario first converts the parent port to an IOS-XE routed
-# host with nd_interface_ethernet_routed, deploys it and waits for rediscovery; the teardown resets the parent to the fabric-default
-# trunk host. Lab-verified on CAMPUS1 Catalyst 9000v leaves against ND 4.2.1.10 and 4.3.1.175 (see the PR body).
+# host with nd_interface_ethernet_routed, deploys it and waits for rediscovery. The teardown lives in xe_teardown.yaml, which
+# tasks/main.yaml runs from an `always` section, so the test subinterfaces are removed and the parent is reset to the fabric-default
+# trunk host whether or not this scenario passes. Lab-verified on CAMPUS1 Catalyst 9000v leaves against ND 4.2.1.10 and 4.3.1.175
+# (see the PR body).
 
 # --- XE SETUP ---
 
@@ -351,57 +353,4 @@
     and ('interface ' ~ xe_parent ~ '.101') not in running
     and ('interface ' ~ xe_parent ~ '.102') not in running
   retries: 12
-  delay: 10
-
-# --- XE TEARDOWN: reset the parent to the fabric-default trunk host ---
-
-# The trunk-host module manages only interfaces that already carry a trunk-host policy, so the routed parent is first converged back
-# into an IOS-XE trunk host (replaced) and then reset to the defaults-only fabric default (deleted), both deployed.
-
-- name: "XE TEARDOWN: Convert the parent port back to an IOS-XE trunk host and deploy it"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_xe_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_xe_switch_ip }}"
-        interface_names:
-          - "{{ xe_parent }}"
-        config_data:
-          network_os:
-            network_os_type: ios-xe
-            policy:
-              admin_state: true
-    config_actions:
-      deploy: true
-    state: replaced
-  register: xe_parent_teardown
-
-- name: "XE TEARDOWN: Reset the parent port to the fabric-default IOS-XE trunk host and deploy it"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_xe_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_xe_switch_ip }}"
-        interface_names:
-          - "{{ xe_parent }}"
-    config_actions:
-      deploy: true
-    state: deleted
-  register: xe_parent_reset
-# TODO(4.3.1) xe-interface-removal-requires-discovery
-# ND's discovered mode of the parent lags the trunk-host reset deploy; on 2026-09-21 it read `routed` for more than three minutes after
-# the deploy on an otherwise idle controller, on both releases. Wait for up to ten minutes so the next target starts from a discovered
-# trunk parent.
-- name: "XE TEARDOWN: Wait until ND has discovered the parent as a trunk again"
-  cisco.nd.nd_rest:
-    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
-    method: get
-  register: xe_parent_rediscovery
-  until: >-
-    xe_parent_rediscovery.jsondata.interfaces | default([])
-    | selectattr('interfaceName', 'equalto', xe_parent)
-    | selectattr('operData.mode', 'defined')
-    | selectattr('operData.mode', 'equalto', 'trunk')
-    | list | length == 1
-  retries: 60
   delay: 10
