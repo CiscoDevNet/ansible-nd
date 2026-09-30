@@ -170,6 +170,20 @@ class CommunityListEntryModel(NDNestedModel):
         return v
 
 
+class CommunityListGatheredFilterModel(NDNestedModel):
+    """Validate scalar fields supported by partial gathered filters."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=115)
+    type: CommunityListTypeEnum | None = Field(default=None)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[a-zA-Z0-9~_-]+", value):
+            raise ValueError(f"name '{value}' contains invalid characters. Allowed: [a-zA-Z0-9~_-].")
+        return value
+
+
 class CommunityListModel(NDBaseModel):
     """
     Model for a Nexus Dashboard community list resource.
@@ -195,6 +209,27 @@ class CommunityListModel(NDBaseModel):
         "numberOfAssociations",
         "associations",
     ]
+
+    # --- Gathered Filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "name",
+        "type",
+    )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state filter."""
+        validated = CommunityListGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # --- Fields ---
     name: str = Field(
@@ -361,9 +396,9 @@ class CommunityListModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    name=dict(type="str", required=True),
+                    name=dict(type="str", required=False),
                     type=dict(
                         type="str",
                         choices=["standard", "expanded"],
@@ -420,6 +455,6 @@ class CommunityListModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

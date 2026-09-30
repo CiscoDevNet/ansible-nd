@@ -1149,3 +1149,105 @@ def test_manage_prefix_list_00230() -> None:
     assert rest_send.path.endswith("/ipv4PrefixLists/TENANT1~PL-IPV4-BORDERS")
     assert result["ipVersion"] == "ipv4"
     assert result["tenantName"] == "TENANT1"
+
+
+# =============================================================================
+# Test: Gathered state — orchestrator ClassVars and query routing
+# =============================================================================
+
+
+def test_manage_prefix_list_00300_gathered_server_filtering_classvars() -> None:
+    """
+    # Summary
+
+    Verify gathered filters are passed to the orchestrator so it can safely
+    scope requests by address-family endpoint.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.supports_gathered_server_filtering
+    """
+    assert ManagePrefixListOrchestrator.supports_gathered_server_filtering is True
+
+
+def test_manage_prefix_list_00310_query_all_routes_gathered(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify ``query_all(gathered_filters=...)`` routes through ``_query_all_for_gathered``.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    gathered_called = {"value": False}
+
+    def fake_gathered(self, filters):
+        gathered_called["value"] = True
+        return [{"name": "PL1", "ipVersion": "ipv4"}]
+
+    monkeypatch.setattr(ManagePrefixListOrchestrator, "_query_all_for_gathered", fake_gathered)
+
+    result = instance.query_all(gathered_filters=[{"name": "PL1"}])
+    assert gathered_called["value"] is True
+    assert len(result) == 1
+
+
+def test_manage_prefix_list_00320_unscoped_or_filter_queries_both_versions(monkeypatch) -> None:
+    """Verify one unscoped OR item prevents another item's ip_version from narrowing the whole query."""
+
+    def responses():
+        yield {}
+
+    instance = ManagePrefixListOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    calls = []
+    monkeypatch.setattr(instance, "_query_all_for_version", lambda version, expression=None: calls.append((version, expression)) or [])
+
+    result = instance._query_all_for_gathered([{"ip_version": "ipv4", "name": "PL4"}, {"name": "SHARED"}])
+
+    assert result == []
+    assert calls == [("ipv4", None), ("ipv6", None)]
+
+
+def test_manage_prefix_list_00330_name_filter_uses_safe_collection_queries(monkeypatch) -> None:
+    """Verify name filtering does not use exact GETs that omit tenant-qualified resources."""
+
+    def responses():
+        yield {}
+
+    instance = ManagePrefixListOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    calls = []
+    monkeypatch.setattr(instance, "_query_all_for_version", lambda version, expression=None: calls.append((version, expression)) or [])
+
+    assert instance._query_all_for_gathered([{"ip_version": "ipv4", "name": "PL1"}]) == []
+    assert calls == [("ipv4", None)]
+
+
+def test_manage_prefix_list_00340_pagination_limit_fails_closed(monkeypatch) -> None:
+    """Verify a controller that never terminates pagination raises instead of returning partial data."""
+
+    def responses():
+        yield {}
+
+    instance = ManagePrefixListOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    call_count = 0
+
+    def fake_request(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {"ipv4PrefixLists": [{"name": f"PL{call_count}"}], "meta": {"counts": {"remaining": 1}}}
+
+    monkeypatch.setattr(ManagePrefixListOrchestrator, "query_all_max_pages", 2)
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    with pytest.raises(RuntimeError, match="Pagination limit reached"):
+        instance._query_all_for_version("ipv4")
+    assert call_count == 2
