@@ -1384,9 +1384,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             all_interfaces.extend(managed)
         if self.rest_send.params.get("state") == "overridden":
             named = self._named_interfaces()
-            all_interfaces = [
-                iface for iface in all_interfaces if not self._is_ios_xe(iface) or (iface.get("switchIp"), iface.get("interfaceName")) in named
-            ]
+            all_interfaces = [iface for iface in all_interfaces if not self._is_ios_xe(iface) or (iface.get("switchIp"), iface.get("interfaceName")) in named]
         return all_interfaces
 
     def _query_all_for_gathered(self, gathered_filters: list[dict], managed_types: set[str]) -> list[dict]:
