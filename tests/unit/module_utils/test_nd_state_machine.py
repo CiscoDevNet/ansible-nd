@@ -2277,7 +2277,7 @@ def test_nd_state_machine_00580(monkeypatch) -> None:
         "fabric-update-execution-invalid",
     ],
 )
-def test_nd_state_machine_00390(monkeypatch, model_class, filter_item) -> None:
+def test_nd_state_machine_00590(monkeypatch, model_class, filter_item) -> None:
     """Verify invalid child-branch filters fail before the resource query."""
     monkeypatch.setattr(state_machine_module, "NDBaseOrchestrator", _FakeOrchestratorBase)
     monkeypatch.setattr(state_machine_module, "RestSend", _FakeRestSend)
