@@ -86,7 +86,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `_check_port_channel_restrictions` if a non-whitelisted field is modified on a port-channel member.
     - Via `create` if the create API request fails.
@@ -112,7 +113,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     # template body (InterfaceDefaultConfig), which resets the interface and drops it from type-specific query filters.
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesNormalize
 
-    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
+    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {
+        "description",
+        "admin_state",
+        "extra_config",
+    }
 
     # Policy types a create/update may OVERWRITE on an existing interface: the host-facing ethernet policy types a user can create
     # through the ND 4.2.1 create-side OpenAPI discriminators (`createInterfaceEthernet{Trunk,Access,Routed,Pvlan,Dot1qTunnel,
@@ -1312,15 +1317,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: ModelType | None = None, gathered_filters: list[dict] | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
         Validate the fabric context and query interfaces, filtering for ethernet interfaces with policy types
         managed by this orchestrator (as defined by `_managed_policy_types()`).
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
+        For management states, switches are determined by `_switches_to_query`: fabric-wide for
+        `state: overridden`, config-scoped for others. For `state: gathered`, the query plan is
+        built from gathered filters via `_build_gathered_query_plan`.
 
         Under `state: overridden`, IOS-XE interfaces that are not named in the task config are dropped (IOS-XE is merge-only:
         a Catalyst or C8000V port can carry fabric-link intent with no ownership marker on the interface record, so a fabric-wide
@@ -1341,29 +1347,78 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
-            all_interfaces = []
-            for switch_ip, switch_id in self._switches_to_query().items():
-                interfaces = list(self._switch_interfaces(switch_id).values())
-                ethernet_interfaces = [iface for iface in interfaces if iface.get("interfaceType") == "ethernet"]
+
+            if gathered_filters is not None and self.gathered_lucene_spec is not None:
+                return self._query_all_for_gathered(gathered_filters, managed_types)
+
+            return self._query_all_for_management_states(managed_types)
+        except Exception as e:
+            raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self, managed_types: set[str]) -> list[dict]:
+        """
+        # Summary
+
+        Preserve the existing list-all behaviour used by merged, replaced, overridden, and deleted states.
+
+        ## Raises
+
+        ### RuntimeError
+        - Via `_switch_interfaces` if the interface-list API request fails.
+        """
+        all_interfaces = []
+        for switch_ip, switch_id in self._switches_to_query().items():
+            interfaces = list(self._switch_interfaces(switch_id).values())
+            ethernet_interfaces = [iface for iface in interfaces if iface.get("interfaceType") == "ethernet"]
+            managed = [
+                iface for iface in ethernet_interfaces if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
+            ]
+            for iface in managed:
+                iface["switchIp"] = switch_ip
+            all_interfaces.extend(managed)
+        if self.rest_send.params.get("state") == "overridden":
+            named = self._named_interfaces()
+            all_interfaces = [iface for iface in all_interfaces if not self._is_ios_xe(iface) or (iface.get("switchIp"), iface.get("interfaceName")) in named]
+        return all_interfaces
+
+    def _query_all_for_gathered(self, gathered_filters: list[dict], managed_types: set[str]) -> list[dict]:
+        """
+        # Summary
+
+        Run server-filtered gathered requests using Lucene expressions built from the orchestrator's
+        ``gathered_lucene_spec``. Each expression targets one switch with one Lucene filter. Results
+        are post-filtered by ``policyType`` and enriched with ``switchIp``.
+
+        ## Raises
+
+        ### ValueError
+
+        - Via `_build_gathered_query_plan` if a filter references a non-existent switch_ip.
+
+        ### RuntimeError
+
+        - Via `_query_interfaces_with_lucene` if pagination limits are exceeded.
+        """
+        query_plan = self._build_gathered_query_plan(gathered_filters)
+
+        all_interfaces = []
+        for switch_ip, (switch_id, expressions) in query_plan.items():
+            for expression in sorted(expressions):
+                candidates = self._query_interfaces_with_lucene(
+                    switch_id=switch_id,
+                    expression=expression,
+                )
                 managed = [
-                    iface
-                    for iface in ethernet_interfaces
-                    if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
+                    iface for iface in candidates if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
                 ]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_interfaces.extend(managed)
-            if self.rest_send.params.get("state") == "overridden":
-                named = self._named_interfaces()
-                all_interfaces = [
-                    iface for iface in all_interfaces if not self._is_ios_xe(iface) or (iface.get("switchIp"), iface.get("interfaceName")) in named
-                ]
-            return all_interfaces
-        except Exception as e:
-            raise RuntimeError(f"Query all failed: {e}") from e
+
+        return all_interfaces

@@ -18,9 +18,15 @@ from typing import Any
 
 import pytest
 import yaml
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import validate_gathered_filters
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
+    EthernetAccessInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.modules import nd_interface_ethernet_access
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_access import (
     expand_config,
+    expand_gathered_filters,
     validate_across_item_duplicates,
     validate_interface_names,
     validate_within_item_duplicates,
@@ -354,11 +360,12 @@ def test_validate_interface_names_00000_all_strings():
         ([None], "null", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is null"),
         (["Ethernet1/1", None], "null", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is null"),
         ([""], "empty", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
+        (["   "], "whitespace_only", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
         (["Ethernet1/1", ""], "empty", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is empty"),
         ([5], "non_string", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
         (["Ethernet1/1", 5], "non_string", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
     ],
-    ids=["null_only", "null_after_valid", "empty_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
+    ids=["null_only", "null_after_valid", "empty_only", "whitespace_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
 )
 def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interface_names, offender, expected_match):
     """
@@ -420,6 +427,28 @@ def test_expand_config_00102_null_entry_raises_value_error_via_expand():
         expand_config(config)
 
 
+@pytest.mark.parametrize("invalid_name", [None, "", "   ", 5], ids=["null", "empty", "whitespace_only", "non_string"])
+def test_expand_gathered_filters_00100_rejects_invalid_interface_names(invalid_name):
+    """
+    # Summary
+
+    Verify gathered-filter expansion rejects invalid interface names before the state machine and
+    controller-query paths are entered.
+
+    ## Test
+
+    - A null, empty, or non-string gathered interface name raises ValueError
+
+    ## Classes and Methods
+
+    - expand_gathered_filters()
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": [invalid_name]}]
+    with pytest.raises(ValueError, match=r"interface_names\[0\]"):
+        expand_gathered_filters(config)
+
+
 # --- config_actions.deploy default ---
 
 
@@ -473,3 +502,43 @@ def test_nd_interface_ethernet_access_00200_deploy_default_matches_documentation
         nd_interface_ethernet_access.main()
     argument_spec = exc_info.value.args[0]
     assert argument_spec["config_actions"]["options"]["deploy"]["default"] is False
+
+
+def test_gathered_policy_filter_00300_does_not_inject_network_os_type():
+    """Verify an omitted write-state discriminator does not become a gathered criterion."""
+    validator = ArgumentSpecValidator(EthernetAccessInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"policy": {"admin_state": True}}}}],
+        }
+    )
+
+    assert result.error_messages == []
+    network_os = result.validated_parameters["config"][0]["config_data"]["network_os"]
+    assert network_os["network_os_type"] is None
+    validate_gathered_filters(
+        filters=result.validated_parameters["config"],
+        normalize_filter=EthernetAccessInterfaceModel.normalize_gathered_filter,
+        supported_properties=EthernetAccessInterfaceModel.gathered_filter_properties,
+    )
+
+
+def test_gathered_policy_filter_00310_rejects_explicit_network_os_type():
+    """Verify an explicit discriminator remains outside the gathered-property allowlist."""
+    validator = ArgumentSpecValidator(EthernetAccessInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"admin_state": True}}}}],
+        }
+    )
+
+    with pytest.raises(ValueError, match="config_data.network_os.network_os_type"):
+        validate_gathered_filters(
+            filters=result.validated_parameters["config"],
+            normalize_filter=EthernetAccessInterfaceModel.normalize_gathered_filter,
+            supported_properties=EthernetAccessInterfaceModel.gathered_filter_properties,
+        )

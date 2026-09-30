@@ -105,6 +105,7 @@ class _FakeAnsibleModule:
             "output_level": "normal",
         }
         self.check_mode = check_mode
+        self._verbosity = 0
 
     def fail_json(self, **kwargs: Any) -> None:
         """

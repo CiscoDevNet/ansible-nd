@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     TrunkHostPolicyTypeEnum,
@@ -56,6 +57,14 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("interfaceType", "ethernet"),),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -138,13 +147,16 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
                 return False
         return True
 
-    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: NDBaseModel | None = None, gathered_filters: list[dict] | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
         Query all trunkHost interfaces in the fabric via the base orchestrator, then filter out interfaces
         that match the unconfigured `int_trunk_host` default signature. This keeps default-configured
         interfaces out of `before`, so `state: overridden` idempotency holds across re-runs.
+
+        For `state: gathered`, every unconfigured default is excluded so gathered output contains only
+        user-managed trunkHost interfaces.
 
         An interface the task names explicitly is retained even when it matches the default signature, for every state except
         `deleted` (PR #558 review). A deliberately defaults-only desired config must read back as existing so the state machine
@@ -158,8 +170,10 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
 
         - Propagated from `EthernetBaseOrchestrator.query_all` on query failure.
         """
-        result = super().query_all(model_instance=model_instance, **kwargs)
+        result = super().query_all(model_instance=model_instance, gathered_filters=gathered_filters, **kwargs)
         if not isinstance(result, list):
             return result
+        if self.rest_send.params.get("state") == "gathered":
+            return [iface for iface in result if not self._is_unconfigured_default(iface)]
         named = self._named_interfaces() if self.rest_send.params.get("state") != "deleted" else set()
         return [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
