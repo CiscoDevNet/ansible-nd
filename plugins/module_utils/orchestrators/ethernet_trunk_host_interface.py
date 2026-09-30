@@ -162,6 +162,9 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         that match the unconfigured `int_trunk_host` default signature. This keeps default-configured
         interfaces out of `before`, so `state: overridden` idempotency holds across re-runs.
 
+        For `state: gathered`, every unconfigured default is excluded so gathered output contains only
+        user-managed trunkHost interfaces.
+
         An interface the task names explicitly is retained even when it matches the default signature, for every state except
         `deleted` (PR #558 review). A deliberately defaults-only desired config must read back as existing so the state machine
         classifies it as converged; hiding it would classify the same intent as a create on every run, re-post it, and report a
