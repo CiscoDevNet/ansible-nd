@@ -1781,7 +1781,8 @@ def test_ethernet_trunk_host_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - `network_os_type` is exposed (optional, default `nx-os`) and `policy_type` is exposed (optional, derived from `network_os_type`)
+    - `network_os_type` is exposed without an argument-spec default and `policy_type` is exposed (optional, derived from
+      `network_os_type`); the model supplies the backward-compatible `nx-os` default for configuration states
 
     ## Classes and Methods
 
@@ -1805,7 +1806,7 @@ def test_ethernet_trunk_host_interface_01100():
     assert "mode" not in config_data_spec
     network_os_spec = config_data_spec["network_os"]["options"]
     assert network_os_spec["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
-    assert network_os_spec["network_os_type"]["default"] == "nx-os"
+    assert "default" not in network_os_spec["network_os_type"]
     assert network_os_spec["network_os_type"].get("required") is not True
     policy_spec = network_os_spec["policy"]["options"]
     assert policy_spec["policy_type"]["choices"] == ["trunkHost", "iosXeTrunkHost"]
