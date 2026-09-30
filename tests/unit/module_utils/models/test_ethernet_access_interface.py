@@ -1441,6 +1441,7 @@ SAMPLE_XE_API_RESPONSE = {
     },
 }
 
+
 def test_ethernet_access_interface_01200():
     """
     # Summary
