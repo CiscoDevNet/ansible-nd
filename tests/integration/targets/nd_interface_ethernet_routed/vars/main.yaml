@@ -112,7 +112,7 @@ routed_34_configured:
 # even when its interface record reads as a plain iosXeRoutedHost, so pick a
 # free port (check GET /api/v1/manage/links?fabricName=<xe fabric>).
 test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
-test_xe_interface_name: "{{ nd_test_xe_interface_name | default('GigabitEthernet3') }}"
+test_xe_interface_name: "{{ nd_test_xe_interface_name | default('GigabitEthernet1/0/1') }}"
 
 xe_routed:
   switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
@@ -148,3 +148,25 @@ cleanup_interface_names:
   - Ethernet1/32
   - Ethernet1/33
   - Ethernet1/34
+
+# --- IOS-XE fabric-link ownership guard (PR #558) ---
+# Set nd_test_xe_fabric_link_switch_ip and nd_test_xe_fabric_link_interface_name
+# in inventory/extra-vars to enable xe_fabric_link_guard.yaml (skipped when
+# either is unset). The interface must be an IOS-XE port that is the src or dst
+# endpoint of an ND fabric link carrying a link policy (e.g. the leaf side of a
+# Catalyst leaf-spine link). Every module call in that file is expected to be
+# refused in preflight, so no deploy or reset ever reaches the port.
+test_xe_fabric_link_switch_ip: "{{ nd_test_xe_fabric_link_switch_ip | default('') }}"
+test_xe_fabric_link_interface_name: "{{ nd_test_xe_fabric_link_interface_name | default('') }}"
+
+xe_routed_fabric_link:
+  switch_ip: "{{ test_xe_fabric_link_switch_ip }}"
+  interface_name: "{{ test_xe_fabric_link_interface_name }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        ip: "10.99.204.1"
+        prefix: 30
+        description: "Ansible integration test XE fabric-link guard"

@@ -41,6 +41,9 @@ jobs:
           # Ansible 2.19: supports Python 3.11 - 3.13
           - ansible_version: "stable-2.19"
             python_version: "3.13"
+            # Coverage is a property of the code, not the interpreter, so only this cell
+            # generates and uploads it (see the units job). Keep this on exactly one entry.
+            coverage: true
           - ansible_version: "stable-2.19"
             python_version: "3.12"
           - ansible_version: "stable-2.19"
@@ -195,11 +198,16 @@ jobs:
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
   units:
-    name: Unit Tests
+    # Explicit name so the coverage matrix key does not appear in the job name.
+    name: Unit Tests (${{ matrix.ansible_version }}, ${{ matrix.python_version }})
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
     strategy: *ansible_strategy
+    permissions:
+      contents: read
+      actions: read
+      id-token: write  # Codecov OIDC upload; no CODECOV_TOKEN secret needed
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -210,9 +218,6 @@ jobs:
       - name: Install ansible-base (${{ matrix.ansible_version }})
         run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
 
-      - name: Install coverage (v4.5.4)
-        run: pip install coverage==4.5.4
-
       - name: Download migrated collection artifacts
         uses: actions/download-artifact@v8
         with:
@@ -222,17 +227,32 @@ jobs:
       - name: Install the collection tarball
         run: ansible-galaxy collection install .cache/collection-tarballs/*.tar.gz
 
+      # ansible-test runs every test in its own fork, so --coverage writes one data file per test and the
+      # combine in "Generate coverage report" scales with the test count. Only the matrix.coverage cell pays that.
       - name: Run unit tests
-        run: ansible-test units --docker -v --color --truncate 0 --python ${{ matrix.python_version }} --coverage
+        run: >-
+          ansible-test units --docker -v --color --truncate 0
+          --python ${{ matrix.python_version }}
+          ${{ matrix.coverage && '--coverage' || '' }}
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
       - name: Generate coverage report
-        run: ansible-test coverage xml -v --requirements --group-by command --group-by version
+        if: matrix.coverage
+        run: ansible-test coverage xml -v --requirements
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
+      - name: Check out code (gives the Codecov uploader the commit and file list)
+        if: matrix.coverage
+        uses: actions/checkout@v6
+
       - name: Push coverage report to codecov.io
-        run: bash <(curl -s https://codecov.io/bash) -s 'tests/output/reports/' -F unit
-        working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
+        if: matrix.coverage
+        uses: codecov/codecov-action@v7
+        with:
+          directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd/tests/output/reports/
+          flags: unit
+          use_oidc: true
+          fail_ci_if_error: true
 
   integration:
     name: Integration Tests
@@ -242,6 +262,10 @@ jobs:
       - ansible-test
     runs-on: ubuntu-latest
     strategy: *ansible_strategy
+    permissions:
+      contents: read
+      actions: read
+      id-token: write  # Codecov OIDC upload; no CODECOV_TOKEN secret needed
 
     env:
       MUTEX_URL: https://8v7s765ibh.execute-api.us-west-1.amazonaws.com
@@ -253,9 +277,6 @@ jobs:
 
       - name: Install ansible-base (${{ matrix.ansible_version }})
         run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
-
-      - name: Install coverage (v4.5.4)
-        run: pip install coverage==4.5.4
 
       - name: Download migrated collection artifacts
         uses: actions/download-artifact@v8
@@ -289,10 +310,18 @@ jobs:
 
       - name: Generate coverage report
         if: always()
-        run: ansible-test coverage xml -v --requirements --group-by command --group-by version
+        run: ansible-test coverage xml -v --requirements
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
+
+      - name: Check out code (gives the Codecov uploader the commit and file list)
+        if: always()
+        uses: actions/checkout@v6
 
       - name: Push coverage report to codecov.io
         if: always()
-        run: bash <(curl -s https://codecov.io/bash) -s 'tests/output/reports/' -F integration
-        working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
+        uses: codecov/codecov-action@v7
+        with:
+          directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd/tests/output/reports/
+          flags: integration
+          use_oidc: true
+          fail_ci_if_error: true
