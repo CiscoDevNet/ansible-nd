@@ -38,7 +38,7 @@ routing tag, MTU, PIM, ip-redirects, admin-state, and netflow. The "unmanaged" s
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -65,6 +65,19 @@ class SubinterfaceManagedPolicyModel(NDNestedModel):
 
     None
     """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_subif` template defaults (schema-sourced via nd-openapi `intSubifTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "ipRedirects": False,
+        "mtu": 9216,
+        "netflow": False,
+        "pimDrPriority": 1,
+        "pimSparse": False,
+    }
 
     policy_type: SubinterfaceManagedPolicyTypeEnum = Field(
         default=SubinterfaceManagedPolicyTypeEnum.SUBINTERFACE,

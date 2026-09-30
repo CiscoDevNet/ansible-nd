@@ -3,7 +3,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-SVI (switched virtual interface) orchestrator for Nexus Dashboard.
+SVI (switched virtual interface) orchestrator for Nexus Dashboard (NX-OS `svi`, IOS-XE `iosXeSvi` / `iosXeSviShutNoShut`; issue #540).
 
 This module provides `SviInterfaceOrchestrator`, which implements CRUD operations for SVI interfaces via the ND
 Manage Interfaces API. Supports configuring SVIs across multiple switches in a single task.
@@ -18,7 +18,6 @@ Unlike physical ethernet interfaces, SVIs support both `interfaceActions/remove`
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -30,7 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SviPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SviPolicyTypeEnum, XeSviPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.svi_interface import SviInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -40,7 +39,8 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     """
     # Summary
 
-    Orchestrator for SVI interface CRUD operations on Nexus Dashboard.
+    Orchestrator for SVI interface CRUD operations on Nexus Dashboard. Manages the NX-OS `svi` policy type and the IOS-XE `iosXeSvi`
+    and `iosXeSviShutNoShut` policy types (issue #540).
 
     Supports configuring SVIs across multiple switches in a single task. Each config item includes a `switch_ip`
     that is resolved to a `switchId` via `FabricContext`.
@@ -68,8 +68,14 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = SviInterfaceModel
+
+    # Capability preflight (PR #571 review): `capableSwitches?interfaceType=svi&mode=managed` lists every switch of a VXLAN and a
+    # Campus VXLAN fabric, Catalyst included (lab-verified 2026-09-21 on ND 4.2.1.10 and 4.3.1.175).
+    interface_type: ClassVar[str] = "svi"
+    interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    xe_removal_requires_discovery: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -150,9 +156,11 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         """
         # Summary
 
-        Create multiple SVI interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
-        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Queues deploys for all
-        created interfaces for later bulk execution via `deploy_pending`.
+        Create multiple SVI interfaces in bulk. Groups interfaces by `(switch, policyType)` through the shared `bulk_create_groups`
+        (issue #409) and sends one POST per group with all of its interfaces in the `interfaces` array: ND rejects an array that mixes
+        policy types, which an IOS-XE switch carrying both `iosXeSvi` and `iosXeSviShutNoShut` SVIs would otherwise produce. Queues
+        deploys for all created interfaces for later bulk execution via `deploy_pending`; inside a group that fails with a mixed 207,
+        the SVIs the controller accepted are still queued (`_post_bulk_create_group`).
 
         ## Raises
 
@@ -161,22 +169,10 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         - If any create API request fails.
         """
         try:
-            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-            for model_instance in model_instances:
-                switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                payload = model_instance.to_payload()
-                payload["switchId"] = switch_id
-                groups[switch_id].append((model_instance.interface_name, payload))
-
+            groups = self.bulk_create_groups(model_instances)
             results = []
-            for switch_id, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [payload for interface_name, payload in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
-                for interface_name, payload in items:
-                    self._queue_deploy(interface_name, switch_id)
+            for group_key, items in groups.items():
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
@@ -222,9 +218,11 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         """
         # Summary
 
-        Validate the fabric context and query interfaces, filtering for SVI interfaces with `policyType: "svi"`.
-        Other policy types (e.g. underlay-managed VLAN interfaces with different policy types) are excluded so this
-        orchestrator does not interfere with fabric-managed SVIs.
+        Validate the fabric context and query interfaces, filtering for SVI interfaces whose `policyType` is one this
+        orchestrator manages (NX-OS `svi`; IOS-XE `iosXeSvi`, `iosXeSviShutNoShut`). Other policy types (fabric-managed
+        `vpcBackupSvi` / `underlaySvi`, `userDefined`) are excluded so this orchestrator does not interfere with fabric-managed SVIs.
+        A Catalyst switch list also carries discovered SVI records with `policy: null` (e.g. `Vlan1`) or no `configData`; those are
+        skipped rather than raised on.
 
         The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
         and limited to switches named in the user config for all other states.
@@ -242,19 +240,46 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         - If the fabric is in deployment-freeze mode.
         - If the query API request fails.
         """
-        managed_policy_types = {e.value for e in SviPolicyTypeEnum}
+        managed_policy_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
             all_svis = []
             for switch_ip, switch_id in self._switches_to_query().items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 svis = [iface for iface in interfaces if iface.get("interfaceType") == "svi"]
-                managed = [
-                    iface for iface in svis if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types
-                ]
+                managed = [iface for iface in svis if self._policy_type_of(iface) in managed_policy_types]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_svis.extend(managed)
             return all_svis
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    @staticmethod
+    def _managed_policy_types() -> set[str]:
+        """
+        # Summary
+
+        Return the set of API-side policy type values managed by this orchestrator: the NX-OS `svi` and the IOS-XE `iosXeSvi` /
+        `iosXeSviShutNoShut` policy types (issue #540).
+
+        ## Raises
+
+        None
+        """
+        return {e.value for e in SviPolicyTypeEnum} | {e.value for e in XeSviPolicyTypeEnum}
+
+    @staticmethod
+    def _policy_type_of(iface: dict) -> str | None:
+        """
+        # Summary
+
+        Return the `configData.networkOS.policy.policyType` of an interface record, or `None` when any level is absent or `null`
+        (a discovered, policy-less record).
+
+        ## Raises
+
+        None
+        """
+        policy = ((iface.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        return policy.get("policyType")

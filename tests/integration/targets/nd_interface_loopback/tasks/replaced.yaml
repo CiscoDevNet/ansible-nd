@@ -5,32 +5,34 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # --- SETUP ---
-# At this point loopback100 (updated), loopback101, loopback102 exist from merged tests.
+# At this point loopback200 (updated), loopback201, loopback202 exist from merged tests.
 
 # --- REPLACED: FULL REPLACE ---
 
-- name: "REPLACED: Replace loopback100 config entirely (check mode)"
+- name: "REPLACED: Replace loopback200 config entirely (check mode)"
   cisco.nd.nd_interface_loopback: &replace_lb100
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
+        interface_name: loopback200
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
-              ip: "10.100.100.3"
-              description: "Replaced loopback100"
+              ip: "10.100.200.3"
+              description: "Replaced loopback200"
     state: replaced
   check_mode: true
   register: cm_replaced_100
 
-- name: "REPLACED: Replace loopback100 config entirely (normal mode)"
+- name: "REPLACED: Replace loopback200 config entirely (normal mode)"
   cisco.nd.nd_interface_loopback: *replace_lb100
   register: nm_replaced_100
 
-- name: "REPLACED: Verify loopback100 was replaced"
+- name: "REPLACED: Verify loopback200 was replaced"
   ansible.builtin.assert:
     that:
       - cm_replaced_100 is changed
@@ -38,11 +40,11 @@
 
 - name: "REPLACED: Verify replaced values"
   vars:
-    lb100_after: "{{ nm_replaced_100.after | selectattr('interface_name', 'equalto', 'loopback100') | first }}"
+    lb100_after: "{{ nm_replaced_100.after | selectattr('interface_name', 'equalto', 'loopback200') | first }}"
   ansible.builtin.assert:
     that:
-      - lb100_after.config_data.network_os.policy.ip == "10.100.100.3"
-      - lb100_after.config_data.network_os.policy.description == "Replaced loopback100"
+      - lb100_after.config_data.network_os.policy.ip == "10.100.200.3"
+      - lb100_after.config_data.network_os.policy.description == "Replaced loopback200"
 
 # --- REPLACED: IDEMPOTENCY ---
 
@@ -57,25 +59,27 @@
 
 # --- REPLACED: MULTIPLE INTERFACES ---
 
-- name: "REPLACED MULTI: Replace loopback100 and loopback101 (check mode)"
+- name: "REPLACED MULTI: Replace loopback200 and loopback201 (check mode)"
   cisco.nd.nd_interface_loopback: &replace_lb100_101
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
+        interface_name: loopback200
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
-              ip: "10.100.100.4"
-              description: "Replaced again loopback100"
-      - "{{ loopback_101_updated }}"
+              ip: "10.100.200.4"
+              description: "Replaced again loopback200"
+      - "{{ loopback_201_updated }}"
     state: replaced
   check_mode: true
   register: cm_replaced_multi
 
-- name: "REPLACED MULTI: Replace loopback100 and loopback101 (normal mode)"
+- name: "REPLACED MULTI: Replace loopback200 and loopback201 (normal mode)"
   cisco.nd.nd_interface_loopback: *replace_lb100_101
   register: nm_replaced_multi
 
@@ -87,11 +91,11 @@
 
 - name: "REPLACED MULTI: Verify replaced values for both interfaces"
   vars:
-    lb100_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'loopback100') | first }}"
-    lb101_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'loopback101') | first }}"
+    lb100_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'loopback200') | first }}"
+    lb101_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'loopback201') | first }}"
   ansible.builtin.assert:
     that:
-      - lb100_after.config_data.network_os.policy.ip == "10.100.100.4"
-      - lb100_after.config_data.network_os.policy.description == "Replaced again loopback100"
-      - lb101_after.config_data.network_os.policy.ip == "10.100.101.2"
+      - lb100_after.config_data.network_os.policy.ip == "10.100.200.4"
+      - lb100_after.config_data.network_os.policy.description == "Replaced again loopback200"
+      - lb101_after.config_data.network_os.policy.ip == "10.100.201.2"
       - lb101_after.config_data.network_os.policy.admin_state == false

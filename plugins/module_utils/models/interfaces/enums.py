@@ -26,6 +26,18 @@ class AccessHostPolicyTypeEnum(str, Enum):
     ACCESS_HOST = "accessHost"
 
 
+class XeAccessHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_access` (issue #534): the `iosXeAccess` member of the ND create-side
+    `createInterfaceEthernetAccessXeType` mapping (`ios_xe_int_access_host` template). `iosXeAccessPoMember` is a port-channel
+    member type provisioned through the port-channel modules and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS = "iosXeAccess"
+
+
 class AccessPoHostPolicyTypeEnum(str, Enum):
     """
     # Summary
@@ -44,6 +56,30 @@ class TrunkPoHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_PO_HOST = "trunkPoHost"
+
+
+class XeAccessPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_access` (issue #536): the `iosXeAccessPoHost` member of the ND create-side
+    `createInterfacePortChannelAccessXeType` mapping (`ios_xe_int_port_channel_access_host` template). `iosXeAccessPoMember` is the
+    member type ND provisions on the port-channel's ethernet members and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS_PO_HOST = "iosXeAccessPoHost"
+
+
+class XeTrunkPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_trunk_host` (issue #537): the `iosXeTrunkPoHost` member of the ND create-side
+    `createInterfacePortChannelTrunkXeType` mapping (`ios_xe_int_port_channel_trunk_host` template). `iosXeTrunkPoMember` is the member
+    type ND provisions on the port-channel's ethernet members and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_TRUNK_PO_HOST = "iosXeTrunkPoHost"
 
 
 class AccessVpcHostPolicyTypeEnum(str, Enum):
@@ -163,6 +199,21 @@ class PortChannelModeEnum(str, Enum):
     PASSIVE = "passive"
 
 
+class XePortChannelModeEnum(str, Enum):
+    """
+    # Summary
+
+    Port-channel mode on IOS-XE (`iosXeIntPortChannel{Access,Trunk}HostTemplate.portChannelMode`): LACP `on` / `active` / `passive`
+    plus PAgP `auto` / `desirable`, which the NX-OS `PortChannelModeEnum` does not offer.
+    """
+
+    ON = "on"
+    ACTIVE = "active"
+    PASSIVE = "passive"
+    AUTO = "auto"
+    DESIRABLE = "desirable"
+
+
 class SpeedEnum(str, Enum):
     """
     # Summary
@@ -208,14 +259,40 @@ class TrunkHostPolicyTypeEnum(str, Enum):
     TRUNK_HOST = "trunkHost"
 
 
+class XeTrunkHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_trunk_host` (issue #535): the `iosXeTrunkHost` member of the ND
+    create-side `createInterfaceEthernetTrunkXeType` mapping (`ios_xe_int_trunk_host` template). `iosXeTrunkPoMember` is a
+    port-channel member type provisioned through the port-channel modules and `userDefined` is intentionally excluded.
+    """
+
+    IOS_XE_TRUNK_HOST = "iosXeTrunkHost"
+
+
 class SviPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for SVI (switched virtual interface) interfaces.
+    NX-OS policy type managed by `nd_interface_svi`: the `svi` member of the ND create-side `createInterfaceSviManagedNexus` mapping
+    (`int_vlan` template). `vpcBackupSvi` / `underlaySvi` are fabric-provisioned and `userDefined` is intentionally excluded.
     """
 
     SVI = "svi"
+
+
+class XeSviPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_svi` (issue #540): the `iosXeSvi` (`ios_xe_int_vlan` template) and `iosXeSviShutNoShut`
+    (`ios_xe_int_vlan_admin_state` template, admin state only) members of the ND create-side `createInterfaceSviManagedXe` mapping.
+    `userDefined` is intentionally excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SVI = "iosXeSvi"
+    IOS_XE_SVI_SHUT_NO_SHUT = "iosXeSviShutNoShut"
 
 
 class SubinterfaceManagedPolicyTypeEnum(str, Enum):
@@ -242,3 +319,104 @@ class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
     """
 
     MONITOR_SUBINTERFACE = "monitorSubinterface"
+
+
+class EthernetRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed NX-OS ethernet routed-mode policy types owned by the `nd_interface_ethernet_routed` module (issue #447).
+
+    Initial scope is `routedHost` (`int_routed_host` template) only. The remaining create-side types (`endPointLocator`,
+    `ipfmL3Port`, `dataBrokerL3Host`) are feature-gated follow-up branches; system-provisioned routed types (`numbered`,
+    `vrfLiteLinkMember`, `multiSiteLinkMember`, `vpcPeerKeepAlive`, `mplsUplink`, ...) and `userDefined` are intentionally
+    excluded so `overridden` can never touch fabric underlay intent.
+
+    ## Raises
+
+    None
+    """
+
+    ROUTED_HOST = "routedHost"
+
+
+class XeEthernetRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed IOS-XE ethernet routed-mode policy types owned by the `nd_interface_ethernet_routed` module (issue #447).
+
+    Initial scope is `iosXeRoutedHost` (`ios_xe_int_routed_host` template) only. `iosXeNumbered`, `csrMultisiteIfcMember`,
+    and `iosXeInternalL3PoMember` are fabric-link / system-provisioned; `userDefined` is intentionally excluded.
+
+    ## Raises
+
+    None
+    """
+
+    IOS_XE_ROUTED_HOST = "iosXeRoutedHost"
+
+
+class XeEthernetSpeedEnum(str, Enum):
+    """
+    # Summary
+
+    Interface speed setting for IOS-XE ethernet templates (`ios_xe_int_routed_host`). Diverges from the Nexus `SpeedEnum`:
+    adds `noNegotiate`, lacks 200/400/800Gb.
+
+    ## Raises
+
+    None
+    """
+
+    AUTO = "auto"
+    TEN_MB = "10Mb"
+    HUNDRED_MB = "100Mb"
+    ONE_GB = "1Gb"
+    TEN_GB = "10Gb"
+    TWO_POINT_FIVE_GB = "2.5Gb"
+    FIVE_GB = "5Gb"
+    TWENTY_FIVE_GB = "25Gb"
+    FORTY_GB = "40Gb"
+    HUNDRED_GB = "100Gb"
+    NO_NEGOTIATE = "noNegotiate"
+
+
+class LoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed NX-OS loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    ## Raises
+
+    None
+    """
+
+    LOOPBACK = "loopback"
+    IPFM_LOOPBACK = "ipfmLoopback"
+    MPLS_LOOPBACK = "mplsLoopback"
+
+
+class XeLoopbackPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Managed IOS-XE loopback policy types owned by the `nd_interface_loopback` module. `userDefined` is intentionally excluded.
+
+    The ND 4.2.1 OpenAPI READ schema drifts on the CSR branch: it lists the discriminator as `csrIntLoopback`, but a
+    live-lab probe (2026-07-18) proved the wire echoes the create-side `csrLoopback` on reads too. Only the
+    wire-verified `csrLoopback` is listed here; the drift is recorded in the bug-tracker vault
+    (`csr-loopback-read-schema-name-drift`).
+
+    ## Raises
+
+    None
+    """
+
+    IOS_XE_LOOPBACK = "iosXeLoopback"
+    IOS_XE_LOOPBACK_SHUT_NOSHUT = "iosXeLoopbackShutNoshut"
+    IOS_XE_UNDERLAY_LOOPBACK = "iosXeUnderlayLoopback"
+    IOS_XE_INTERNAL_LOOPBACK = "iosXeInternalLoopback"
+    CSR_LOOPBACK = "csrLoopback"
+    CSR1KV_LOOPBACK = "csr1kvLoopback"

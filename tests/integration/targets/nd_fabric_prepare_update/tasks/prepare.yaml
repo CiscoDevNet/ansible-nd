@@ -1,0 +1,74 @@
+---
+# Prepare (stage) tests for nd_fabric_prepare_update
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# --- PRE-FLIGHT: a mixed-role update group is rejected before any staging ---
+
+- name: "PREFLIGHT: Prepare a mixed-role update group (must fail)"
+  cisco.nd.nd_fabric_prepare_update:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    update_groups:
+      - "{{ test_mixed_group_name }}"
+    state: merged
+  register: nm_preflight_mixed
+  ignore_errors: true
+
+- name: "PREFLIGHT: Verify the mixed-role group was rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_preflight_mixed is failed
+      - "'mix of switch roles' in nm_preflight_mixed.msg"
+
+# --- CHECK MODE: a required prepare reports changed without staging ---
+
+- name: "PREPARE CHECK: Prepare the leaf group (check mode)"
+  cisco.nd.nd_fabric_prepare_update: &prepare_leaf
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    update_groups:
+      - "{{ test_leaf_group_name }}"
+    wait: true
+    wait_timeout: 1800
+    # Poll well inside the persistent-connection idle window (default 30s) so the
+    # ansible-connection daemon is never idle long enough to reap itself mid-wait.
+    wait_interval: 10
+    state: merged
+  check_mode: true
+  register: cm_prepare_leaf
+
+- name: "PREPARE CHECK: Verify a change is reported in check mode"
+  ansible.builtin.assert:
+    that:
+      - cm_prepare_leaf is changed
+
+# --- PREPARE: stage and validate the leaf group (this can take 10+ minutes) ---
+
+- name: "PREPARE: Stage and validate the leaf group (normal mode)"
+  cisco.nd.nd_fabric_prepare_update: *prepare_leaf
+  register: nm_prepare_leaf
+
+- name: "PREPARE: Verify every switch staged and validated"
+  ansible.builtin.assert:
+    that:
+      - nm_prepare_leaf is changed
+      - nm_prepare_leaf.after | length == 1
+      - nm_prepare_leaf.after[0].switches | rejectattr('image_staged_status', 'in', ['success', 'skipped']) | list | length == 0
+      - nm_prepare_leaf.after[0].switches | rejectattr('image_validated_status', 'in', ['success', 'skipped']) | list | length == 0
+
+# --- IDEMPOTENCY: re-preparing an already-staged group reports no change ---
+
+- name: "PREPARE IDEMPOTENT: Re-prepare the leaf group (check mode)"
+  cisco.nd.nd_fabric_prepare_update: *prepare_leaf
+  check_mode: true
+  register: cm_prepare_idem
+
+- name: "PREPARE IDEMPOTENT: Re-prepare the leaf group (normal mode)"
+  cisco.nd.nd_fabric_prepare_update: *prepare_leaf
+  register: nm_prepare_idem
+
+- name: "PREPARE IDEMPOTENT: Verify no change on re-prepare"
+  ansible.builtin.assert:
+    that:
+      - cm_prepare_idem is not changed
+      - nm_prepare_idem is not changed

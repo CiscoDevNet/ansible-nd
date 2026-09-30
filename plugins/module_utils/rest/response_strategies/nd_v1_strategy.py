@@ -29,7 +29,25 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Optional, TypeVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
 T = TypeVar("T")
+
+# 4xx codes that are transient for every verb and therefore stay retryable: 408 Request Timeout and 421 Misdirected Request
+# (RFC 9110 sections 15.5.9 / 15.5.20), 425 Too Early (RFC 8470 section 5.2), and 429 Too Many Requests (rate limiting).
+# ND 4.2.1 documents none of 408/421/425 for any endpoint, so retaining them simply preserves the pre-#502 retry behavior for
+# codes ND is not expected to send. RFC 9110 calls for retrying 421 on a *different* connection; connection lifecycle belongs
+# to Ansible's persistent httpapi transport (which re-establishes a dropped connection transparently), so the retry rides
+# whatever connection that layer provides.
+_TRANSIENT_CLIENT_ERROR_CODES = frozenset({408, 421, 425, 429})
+
+# 4xx codes that are additionally transient for GET. The ND 4.2.1 OpenAPI documents 409 Conflict on safe GETs (manage v1.1.411:
+# /links, /links/{linkId}, /logicalLinks, /remoteFabrics, /anomalyRules/postProcessingRules; onemanage documents three more)
+# where the conflict is with the resource's *current* state and can clear on its own (e.g. topology reconciliation after a
+# switch add), so GET keeps retrying/polling through it. For mutations 409 remains terminal: the documented mutation 409s are
+# create/update conflicts (resource already exists), which an identical replay cannot resolve — retrying them would reintroduce
+# the full-retry-budget stall that issue #457 removes.
+_TRANSIENT_GET_CLIENT_ERROR_CODES = frozenset({409})
 
 # Per-item status literals that mark a failure inside a Multi-Status body. ND sends these
 # on HTTP 207 and, for some endpoints, on HTTP 200 as well, so the body is scanned on any
@@ -182,6 +200,43 @@ def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
     return _multistatus_items_with_status(response, _MULTISTATUS_FAILURE_STATUSES)
 
 
+def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
+    """
+    # Summary
+
+    Return the per-item entries in a Multi-Status body whose `status` is anything other than an exact `success`.
+
+    ## Description
+
+    Allowlist counterpart to `_failed_multistatus_items`, used for HTTP 207 responses only: on a 207 the per-item `status` vocabulary is unreliable —
+    `failed`, `error`, `Failed`, softer literals like `warning`/`notexecuted`, or the key absent entirely (vault:
+    `multi-status-207-status-field-inconsistent`; issue #397) — so only an exact `success` (case/whitespace-tolerant) may be trusted. A missing or
+    empty `status` counts as non-success. Scans the same envelope arrays as `_failed_multistatus_items` (`DATA.results[]`, `DATA.switchIds[]`,
+    `DATA.links[]`). NOT for plain-200 bodies: ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope), which the
+    failure-literal denylist correctly ignores.
+
+    ## Parameters
+
+    - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
+
+    ## Returns
+
+    - List of item dicts whose `status` is not exactly `success` (empty list when every item reports `success` or no envelope array is present)
+
+    ## Raises
+
+    None
+    """
+    non_success: list[dict[str, Any]] = []
+    data = _get_typed_value(response, "DATA", dict, {})
+    for key in _MULTISTATUS_ITEM_KEYS:
+        items = _get_typed_value(data, key, list, [])
+        non_success.extend(
+            item for item in items if isinstance(item, dict) and str(item.get("status") or "").strip().lower() not in _MULTISTATUS_SUCCESS_STATUSES
+        )
+    return non_success
+
+
 class NdV1Strategy:
     """
     # Summary
@@ -191,7 +246,7 @@ class NdV1Strategy:
     ## Description
 
     Implements status code validation and error message extraction
-    for ND API v1 (ND 4.2+).
+    for ND API v1 (ND 4.2+). Satisfies `ResponseValidationStrategy` and the optional `TerminalClientErrorPolicy` capability.
 
     ## Status Codes
 
@@ -271,6 +326,10 @@ class NdV1Strategy:
           `DATA.switchIds[]`, or `DATA.links[]` (status `failed`/`failure`/`error`). This is
           checked on any success code, not only 207: ND sends per-item statuses on HTTP 200
           for some endpoints (e.g. the L3Out batch POST).
+        - On `RETURN_CODE` 207 specifically, any envelope item whose `status` is not exactly `success` — softer literals like
+          `warning`/`notexecuted`, unknown literals, or the `status` key absent entirely — because the 207 per-item status vocabulary is
+          unreliable (issue #397; vault: `multi-status-207-status-field-inconsistent`). Plain-200 bodies keep the failure-literal denylist
+          because ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope).
 
         ## Parameters
 
@@ -297,6 +356,12 @@ class NdV1Strategy:
         # indicate every item succeeded -- ND sends these bodies on 207 and, for some endpoints,
         # on plain 200 -- so any success-code response with a failing item must not be
         # classified as success. See issue #295.
+        # On a 207 specifically, the per-item status vocabulary is unreliable (softer literals,
+        # or the key absent entirely), so only an exact `success` is trusted there (issue #397;
+        # vault: multi-status-207-status-field-inconsistent). Plain-200 bodies keep the
+        # failure-literal denylist because ND ships legitimately status-less item arrays on 200.
+        if response.get("RETURN_CODE") == 207 and _non_success_multistatus_items(response):
+            return False
         if _failed_multistatus_items(response):
             return False
         return True
@@ -350,6 +415,45 @@ class NdV1Strategy:
         None
         """
         return return_code == self.not_found_code
+
+    def is_terminal_client_error(self, return_code: int, verb: HttpVerbEnum) -> bool:
+        """
+        # Summary
+
+        Check whether `return_code` is a 4xx client error that is terminal (not retryable) for `verb` (v1).
+
+        ## Description
+
+        A 4xx response proves the request reached the application and was rejected, so replaying the identical request is deterministic and the
+        failure is terminal — except for the transient codes below, which stay retryable (see issue #457):
+
+        - For every verb: 408 Request Timeout and 421 Misdirected Request (RFC 9110), 425 Too Early (RFC 8470), and 429 Too Many Requests.
+        - For GET only: 409 Conflict, which the ND 4.2.1 OpenAPI documents on safe GETs where the conflict is with the resource's current state and
+          can clear on its own (GET retries also serve eventual-consistency polling). For mutations 409 is a deterministic create/update conflict
+          and stays terminal.
+
+        Non-4xx codes always return False; this method classifies only client errors, leaving success and 5xx policy to the caller.
+
+        ## Parameters
+
+        - return_code: HTTP status code to check
+        - verb: The HTTP verb of the request the response answers
+
+        ## Returns
+
+        - True if the code is a 4xx client error that is terminal for `verb`, False otherwise
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(return_code, int) or not 400 <= return_code <= 499:
+            return False
+        if return_code in _TRANSIENT_CLIENT_ERROR_CODES:
+            return False
+        if verb == HttpVerbEnum.GET and return_code in _TRANSIENT_GET_CLIENT_ERROR_CODES:
+            return False
+        return True
 
     def is_changed(self, response: dict) -> bool:
         """
@@ -528,9 +632,11 @@ class NdV1Strategy:
             if errors:
                 msg = f"ND Error: {'; '.join(str(e) for e in errors)}"
 
-        # Multi-Status per-item failures (results[]/switchIds[]/links[])
+        # Multi-Status per-item failures (results[]/switchIds[]/links[]). Mirrors is_success:
+        # on a 207 every non-exact-success item is reported (including status-less items), so the
+        # message names the item ND rejected rather than falling through to the generic fallback.
         if msg is None:
-            failed_items = _failed_multistatus_items(response)
+            failed_items = _non_success_multistatus_items(response) if return_code == 207 else _failed_multistatus_items(response)
             if failed_items:
                 parts = [self._format_multistatus_failure(item) for item in failed_items]
                 msg = f"ND Error: {'; '.join(parts)}"
