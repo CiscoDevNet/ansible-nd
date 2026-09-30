@@ -18,6 +18,11 @@ from typing import Any
 
 import pytest
 import yaml
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import validate_gathered_filters
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
+    EthernetAccessInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.modules import nd_interface_ethernet_access
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_access import (
     expand_config,
@@ -497,3 +502,43 @@ def test_nd_interface_ethernet_access_00200_deploy_default_matches_documentation
         nd_interface_ethernet_access.main()
     argument_spec = exc_info.value.args[0]
     assert argument_spec["config_actions"]["options"]["deploy"]["default"] is False
+
+
+def test_gathered_policy_filter_00300_does_not_inject_network_os_type():
+    """Verify an omitted write-state discriminator does not become a gathered criterion."""
+    validator = ArgumentSpecValidator(EthernetAccessInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"policy": {"admin_state": True}}}}],
+        }
+    )
+
+    assert result.error_messages == []
+    network_os = result.validated_parameters["config"][0]["config_data"]["network_os"]
+    assert network_os["network_os_type"] is None
+    validate_gathered_filters(
+        filters=result.validated_parameters["config"],
+        normalize_filter=EthernetAccessInterfaceModel.normalize_gathered_filter,
+        supported_properties=EthernetAccessInterfaceModel.gathered_filter_properties,
+    )
+
+
+def test_gathered_policy_filter_00310_rejects_explicit_network_os_type():
+    """Verify an explicit discriminator remains outside the gathered-property allowlist."""
+    validator = ArgumentSpecValidator(EthernetAccessInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"admin_state": True}}}}],
+        }
+    )
+
+    with pytest.raises(ValueError, match="config_data.network_os.network_os_type"):
+        validate_gathered_filters(
+            filters=result.validated_parameters["config"],
+            normalize_filter=EthernetAccessInterfaceModel.normalize_gathered_filter,
+            supported_properties=EthernetAccessInterfaceModel.gathered_filter_properties,
+        )

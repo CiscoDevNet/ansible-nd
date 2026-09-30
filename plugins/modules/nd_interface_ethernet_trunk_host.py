@@ -73,8 +73,8 @@ options:
                 - The network OS (platform) type of the target switch. This is a discriminator that determines which
                   policy templates are applicable.
                 - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                - When omitted for configuration states, V(nx-os) is selected for backward compatibility.
                 type: str
-                default: nx-os
                 choices: [ nx-os, ios-xe ]
               policy:
                 description:
