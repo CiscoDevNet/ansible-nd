@@ -60,7 +60,7 @@ class FabricConfigActionsOwner(Protocol):
         - Raised by the implementation when the deploy request fails.
         """
 
-    def deploy_switch_ids(self, fabric_name: str, switch_ids: list[str]) -> Any:
+    def deploy_switch_ids(self, fabric_name: str, switch_ids: list[str], *, deadline: float | None = None) -> Any:
         """
         # Summary
 
@@ -86,12 +86,18 @@ class FabricConfigActionsOwner(Protocol):
         - Raised by the implementation when the switches query fails.
         """
 
-    def verify_deploy(self, fabric_name: str, switch_ids: Collection[str] | None = None) -> None:
+    def deploy_verification_deadline(self) -> float:
+        """Return an absolute monotonic deadline for the complete deploy verification flow."""
+
+    def resolve_redeploy_targets(self, fabric_name: str, switch_ids: Collection[str], *, deadline: float) -> list[str]:
+        """Re-resolve affected identifiers for the one permitted bounded redeploy."""
+
+    def verify_deploy(self, fabric_name: str, switch_ids: Collection[str], *, deadline: float, allow_redeploy: bool) -> Any:
         """
         # Summary
 
-        Confirm a deploy of `switch_ids` in `fabric_name` landed, checking `switch_ids` only when
-        given and the whole fabric otherwise.
+        Confirm a deploy of `switch_ids` in `fabric_name` landed, or return the identifiers
+        eligible for the one permitted bounded redeploy when `allow_redeploy` is true.
 
         ## Raises
 

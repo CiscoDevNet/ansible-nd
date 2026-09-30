@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from functools import wraps
 from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDRequestError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
@@ -118,16 +119,32 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         # both successful and failed calls are captured for troubleshooting.
         self._register_api_call(path, verb, operation_type, self.rest_send.committed_payload)
 
-        # Check not_found_ok before success because ResponseHandler treats
-        # GET 404 as success=True (found=False).  Without this early return,
-        # a GET 404 would fall through and return the raw 404 DATA body.
-        if not_found_ok and self.rest_send.return_code == 404:
-            return {}
+        # ResponseHandler treats GET 404 as success=True (found=False), but
+        # this API promises that callers must explicitly opt in to accepting
+        # an absent resource.
+        if self.rest_send.return_code == 404:
+            if not_found_ok:
+                return {}
+            raise self._request_error()
 
         if not self.rest_send.success:
-            raise Exception(f"Request failed {self.rest_send.error_summary}")
+            raise self._request_error()
 
         return self.rest_send.response_current.get("DATA", {})
+
+    def _request_error(self) -> NDRequestError:
+        """Build the structured error for the most recently registered request."""
+        response_data = self.rest_send.response_current.get("DATA")
+        raw = response_data.get("raw_response") if isinstance(response_data, dict) else None
+        response_payload = response_data if isinstance(response_data, dict) and raw is None else None
+        return NDRequestError(
+            msg=f"Request failed {self.rest_send.error_summary}",
+            status=self.rest_send.return_code,
+            request_payload=self.rest_send.committed_payload,
+            response_payload=response_payload,
+            raw=raw,
+            retryable=self.rest_send.result_current.get("retryable"),
+        )
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """

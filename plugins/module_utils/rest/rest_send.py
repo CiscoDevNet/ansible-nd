@@ -18,6 +18,7 @@ import logging
 from time import sleep
 from typing import Any, Optional, Union
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
@@ -255,6 +256,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 self._commit_check_mode()
             else:
                 self._commit_normal_mode()
+        except NDTransportError:
+            raise
         except (TypeError, ValueError) as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Error during commit. "
@@ -347,6 +350,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
 
             try:
                 self.sender.commit()
+            except NDTransportError:
+                raise
             except ValueError as error:
                 raise ValueError(error) from error
 
@@ -383,13 +388,13 @@ class RestSend:  # pylint: disable=too-many-public-methods
                     msg += f"verb {self.verb}, path {self.path}."
                     self.log.debug(msg)
                     break
-                if self.unit_test is False:
-                    sleep(self.send_interval)
                 timeout -= self.send_interval
                 msg = f"{self.class_name}.{method_name}: "
                 msg += f"Subtracted {self.send_interval} from timeout. "
                 msg += f"timeout: {timeout}."
                 self.log.debug(msg)
+                if timeout > 0 and self.unit_test is False:
+                    sleep(self.send_interval)
 
         self._response.append(self.response_current)
         self._result.append(self.result_current)

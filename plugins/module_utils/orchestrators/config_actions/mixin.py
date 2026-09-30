@@ -49,9 +49,11 @@ Then from the module, after parsing ``config_actions`` with the shared parser::
 from __future__ import annotations
 
 from collections.abc import Collection
+from dataclasses import dataclass
 from time import monotonic, sleep
-from typing import ClassVar
+from typing import ClassVar, Mapping
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDRequestError, NDTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import ConfigActionsController
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
@@ -65,19 +67,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types impo
     NotIssued,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
-    EpFabricConfigSavePost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
-    EpFabricDeployPost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
-    EpManageFabricsSwitchesGet,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
-    EpManageFabricsSwitchActionsDeployPost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import EpFabricConfigSavePost
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import EpFabricDeployPost
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import EpManageFabricsSwitchActionsDeployPost
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import EpManageFabricsSwitchesGet
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.fabric import FabricConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -85,8 +79,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 # docs/openapi/4.2.1/manage.json and docs/openapi/4.3.1/manage.json:
 #   deployed, deploymentInProgress, failed, inProgress, inSync, notApplicable, outOfSync, pending,
 #   previewInProgress, success
-# Nothing needs pushing in these: the switch either matches intent or has no intent to match.
+# Nothing needs pushing in these before a deploy: the switch either matches intent or has no
+# intent to match. Post-deploy verification deliberately uses the narrower
+# `_SWITCH_SYNC_VERIFY_SUCCESS`: live ND briefly reports `success` before `inSync`, so accepting
+# every pre-deploy settled state as proof of convergence would stop the poll too early.
 _SWITCH_SYNC_SETTLED = frozenset({"inSync", "deployed", "success", "notApplicable"})
+_SWITCH_SYNC_VERIFY_SUCCESS = frozenset({"inSync", "notApplicable"})
 
 # An operation is already running on the switch, so a save or deploy should wait rather than be issued
 # into it. Measured on ND 4.2.1: a normal save/deploy cycle never reports any of these -- switches go
@@ -101,6 +99,7 @@ _SWITCH_SYNC_IN_FLIGHT = frozenset({"inProgress", "deploymentInProgress", "previ
 # Documented statuses that a deploy is meant to resolve. Used to report what a deploy left behind; an
 # unknown status is treated as a deploy target separately so a new ND status is never silently skipped.
 _SWITCH_SYNC_NEEDS_DEPLOY = frozenset({"outOfSync", "pending", "failed"})
+_SWITCH_SYNC_REDEPLOYABLE = frozenset({"outOfSync", "pending"})
 
 # ND refuses a config action that collides with one already running, and this is the ONLY signal for it:
 # measured on ND 4.2.1, neither the per-switch nor the fabric-level `configSyncStatus` reports an
@@ -115,6 +114,15 @@ _CONTENTION_SIGNATURES = ("while recalculate and deploy is in progress",)
 
 class ConfigActionsPreconditionError(Exception):
     """A config-action precondition that re-reading cannot resolve, so it is not retried."""
+
+
+@dataclass(frozen=True)
+class DeployPollResult:
+    """Observed result of one post-deploy convergence phase."""
+
+    statuses: Mapping[str, str]
+    converged_ids: tuple[str, ...]
+    redeploy_ids: tuple[str, ...] = ()
 
 
 class ConfigActionsMixin:
@@ -153,11 +161,10 @@ class ConfigActionsMixin:
     config_actions_retry_interval: ClassVar[int] = 5
 
     # Post-deploy convergence. A total-duration budget would have to scale with fabric size, so the
-    # limit is instead "no switch has come into sync for this long", which means the same at any
-    # scale: switches settle incrementally (measured live: 14 -> 11 -> 0 outstanding over ~5s), so a
-    # falling count of unsettled switches is real progress. `max_wait` is the backstop, because the
-    # stall timer alone is not bounded -- one switch settling just before each expiry would reset it
-    # forever, giving switches x stall in the worst case.
+    # limit is instead "no expected switch has come into sync for this long", which means the same
+    # at any scale. Switches settle incrementally (measured live: 14 -> 11 -> 0 outstanding over
+    # ~5s), so only a new low count of unsettled switches resets the stall timer. Status churn among
+    # non-converged states is not progress. `max_wait` remains the absolute backstop.
     config_actions_converge_stall: ClassVar[int] = 120
     config_actions_converge_max_wait: ClassVar[int] = 1800
     config_actions_converge_interval: ClassVar[int] = 5
@@ -212,19 +219,12 @@ class ConfigActionsMixin:
         if not actions.save and not actions.deploy_requested():
             return None
         context = self.build_config_actions_context(
-            fabric_names,
-            state=state,
-            check_mode=check_mode,
-            only_switch_ids=only_switch_ids,
+            fabric_names, state=state, check_mode=check_mode, only_switch_ids=only_switch_ids if actions.type == "switch" else None
         )
         return self.execute_config_actions_plan(actions=actions, context=context)
 
     def build_config_actions_context(
-        self,
-        fabric_names: list[str],
-        state: str | None = None,
-        check_mode: bool = False,
-        only_switch_ids: Collection[str] | None = None,
+        self, fabric_names: list[str], state: str | None = None, check_mode: bool = False, only_switch_ids: Collection[str] | None = None
     ) -> ConfigActionsContext:
         """
         # Summary
@@ -263,18 +263,10 @@ class ConfigActionsMixin:
             if allowlist is not None:
                 candidates = [switch_id for switch_id in candidates if switch_id in allowlist]
             switch_ids_by_fabric[fabric_name] = tuple(candidates)
-        return ConfigActionsContext(
-            fabric_names=tuple(eligible_fabrics),
-            state=state,
-            check_mode=check_mode,
-            switch_ids_by_fabric=switch_ids_by_fabric,
-        )
+        return ConfigActionsContext(fabric_names=tuple(eligible_fabrics), state=state, check_mode=check_mode, switch_ids_by_fabric=switch_ids_by_fabric)
 
     def execute_config_actions_plan(
-        self,
-        actions: ConfigActions,
-        context: ConfigActionsContext,
-        backend: ConfigActionsBackend | None = None,
+        self, actions: ConfigActions, context: ConfigActionsContext, backend: ConfigActionsBackend | None = None
     ) -> ConfigActionsResult:
         """
         # Summary
@@ -299,10 +291,7 @@ class ConfigActionsMixin:
                 raise ValueError("No config actions backend is configured for this orchestrator.")
             selected_backend = self.config_actions_backend_class(self)
 
-        controller = ConfigActionsController(
-            policy=self.config_actions_policy,
-            backend=selected_backend,
-        )
+        controller = ConfigActionsController(policy=self.config_actions_policy, backend=selected_backend)
         result = controller.execute(actions, context)
         self._warn_skipped_config_actions(result)
         if result.status == "failed":
@@ -362,6 +351,7 @@ class ConfigActionsMixin:
         data: dict | None = None,
         operation_type: OperationType = OperationType.UPDATE,
         not_found_ok: bool = False,
+        deadline: float | None = None,
     ) -> ResponseType:
         """Issue one config-action request with the RestSend retry window collapsed.
 
@@ -381,28 +371,39 @@ class ConfigActionsMixin:
         - Via `_request` when the controller rejects the request for any other reason, or when
           contention outlasts `config_actions_retry_timeout`.
         """
-        remaining = self.config_actions_retry_timeout
+        retry_deadline = monotonic() + self.config_actions_retry_timeout
+        if deadline is not None:
+            retry_deadline = min(retry_deadline, deadline)
+        checkpoint = self.results.checkpoint() if self.results is not None else None
+        retried = False
         while True:
+            if deadline is not None and monotonic() >= deadline:
+                raise TimeoutError(f"Config action deadline expired before requesting {endpoint.path}.")
             self.rest_send.save_settings()
             self.rest_send.timeout = self.config_actions_request_timeout
             try:
-                return self._request(
-                    path=endpoint.path,
-                    verb=endpoint.verb,
-                    data=data,
-                    not_found_ok=not_found_ok,
-                    operation_type=operation_type,
-                )
-            except Exception as error:  # pylint: disable=broad-exception-caught
-                if not self._is_contention_error(error) or remaining <= 0:
+                response = self._request(path=endpoint.path, verb=endpoint.verb, data=data, not_found_ok=not_found_ok, operation_type=operation_type)
+            except NDRequestError as error:
+                now = monotonic()
+                if not self._is_contention_error(error) or now >= retry_deadline:
                     raise
-                self.rest_send.warn(f"Another operation is running on the fabric; retrying {endpoint.path} in {self.config_actions_retry_interval}s.")
+                delay = min(self.config_actions_retry_interval, retry_deadline - now)
+                self.rest_send.warn(f"Another operation is running on the fabric; retrying {endpoint.path} in {delay:g}s.")
+                retried = True
+                retry_error = error
+            else:
+                if retried and checkpoint is not None:
+                    self.results.mark_recovered_attempts(
+                        checkpoint, path=endpoint.path, verb=endpoint.verb, reason="config action request eventually succeeded"
+                    )
+                return response
             finally:
                 self.rest_send.restore_settings()
 
-            if not getattr(self.rest_send, "unit_test", False):
-                sleep(self.config_actions_retry_interval)
-            remaining -= self.config_actions_retry_interval
+            if delay > 0:
+                sleep(delay)
+            if monotonic() >= retry_deadline:
+                raise retry_error
 
     @staticmethod
     def _is_contention_error(error: Exception) -> bool:
@@ -418,7 +419,7 @@ class ConfigActionsMixin:
         """Deploy entire fabric configuration (no request body)."""
         return self._config_action_request(self.deploy_global_endpoint(fabric_name))
 
-    def deploy_switch_ids(self, fabric_name: str, switch_ids: list[str]) -> ResponseType | NotIssued:
+    def deploy_switch_ids(self, fabric_name: str, switch_ids: list[str], *, deadline: float | None = None) -> ResponseType | NotIssued:
         """Deploy the given switch identifiers.
 
         Returns `NOT_ISSUED` when `switch_ids` is empty so the controller records a
@@ -427,7 +428,7 @@ class ConfigActionsMixin:
         if not switch_ids:
             return NOT_ISSUED
 
-        return self._config_action_request(self.switch_deploy_endpoint(fabric_name), data={"switchIds": list(switch_ids)})
+        return self._config_action_request(self.switch_deploy_endpoint(fabric_name), data={"switchIds": list(switch_ids)}, deadline=deadline)
 
     def resolve_switch_deploy_targets(self, fabric_name: str) -> list[str]:
         """Return switches needing deployment, queried fresh after config save.
@@ -437,7 +438,46 @@ class ConfigActionsMixin:
         """
         return self._filter_switches_needing_deploy(self.read_fabric_switches(fabric_name))
 
-    def read_fabric_switches(self, fabric_name: str) -> list[dict]:
+    def deploy_verification_deadline(self) -> float:
+        """Return the absolute deadline shared by both deploy verification phases."""
+        return monotonic() + self.config_actions_converge_max_wait
+
+    def resolve_redeploy_targets(self, fabric_name: str, switch_ids: Collection[str], *, deadline: float) -> list[str]:
+        """Re-resolve the affected switches before the one permitted bounded redeploy.
+
+        The first verification phase has already confirmed that these switches were
+        stably ``pending`` or ``outOfSync``. This fresh read closes the race between
+        that observation and deploy #2: a switch that converged meanwhile is omitted,
+        while a missing, failed, or still-transitional switch is never submitted.
+        """
+        expected = tuple(dict.fromkeys(switch_ids))
+        if not expected:
+            return []
+
+        while True:
+            statuses = self._expected_switch_statuses(self.read_fabric_switches(fabric_name, deadline=deadline), expected)
+            failed = [switch_id for switch_id in expected if statuses.get(switch_id) == "failed"]
+            if failed:
+                raise Exception(f"Deploy failed on switch(es) {', '.join(failed)} in fabric '{fabric_name}'.")
+
+            missing = [switch_id for switch_id in expected if switch_id not in statuses]
+            transitional = [
+                switch_id
+                for switch_id in expected
+                if switch_id in statuses
+                and statuses[switch_id] not in _SWITCH_SYNC_VERIFY_SUCCESS
+                and statuses[switch_id] not in _SWITCH_SYNC_REDEPLOYABLE
+                and statuses[switch_id] != "failed"
+            ]
+            if not missing and not transitional:
+                return [switch_id for switch_id in expected if statuses[switch_id] in _SWITCH_SYNC_REDEPLOYABLE]
+
+            waiting = [f"{switch_id} (<missing>)" for switch_id in missing]
+            waiting.extend(f"{switch_id} ({statuses[switch_id]})" for switch_id in transitional)
+            if not self._wait_before_deadline(deadline, self.config_actions_converge_interval):
+                raise Exception(f"Could not safely re-resolve switch(es) {', '.join(waiting)} in fabric " f"'{fabric_name}' before the deploy deadline.")
+
+    def read_fabric_switches(self, fabric_name: str, *, deadline: float | None = None) -> list[dict]:
         """Read `fabric_name`'s switches, retrying a transient read failure.
 
         This is the only retry the read itself gets: `_get_fabric_switches` runs with the RestSend
@@ -456,28 +496,47 @@ class ConfigActionsMixin:
           when retrying is disabled. A read failure is never downgraded to an empty result, which
           callers would read as a switchless fabric and silently skip.
         """
-        remaining = self.config_actions_retry_timeout
+        retry_deadline = monotonic() + self.config_actions_retry_timeout
+        if deadline is not None:
+            retry_deadline = min(retry_deadline, deadline)
+        checkpoint = self.results.checkpoint() if self.results is not None else None
+        retried = False
+        read_path = self.switches_endpoint(fabric_name).path
         while True:
             try:
-                return self._get_fabric_switches(fabric_name)
+                request_deadline = deadline
+                if request_deadline is None and self.config_actions_retry_timeout > 0:
+                    request_deadline = retry_deadline
+                switches = self._get_fabric_switches(fabric_name, deadline=request_deadline)
             except ConfigActionsPreconditionError:
                 raise
-            except Exception as error:  # pylint: disable=broad-exception-caught
-                if self.config_actions_retry_timeout <= 0 or remaining <= 0:
+            except (NDRequestError, NDTransportError) as error:
+                now = monotonic()
+                if error.retryable is not True or self.config_actions_retry_timeout <= 0 or now >= retry_deadline:
                     raise
-                self.rest_send.warn(f"Could not read switch state for '{fabric_name}' ({error}); retrying in {self.config_actions_retry_interval}s.")
+                delay = min(self.config_actions_retry_interval, retry_deadline - now)
+                self.rest_send.warn(f"Could not read switch state for '{fabric_name}' ({error}); retrying in {delay:g}s.")
+                retried = True
+                retry_error = error
+            else:
+                if deadline is not None and monotonic() >= deadline:
+                    raise TimeoutError(f"Switch state read for fabric '{fabric_name}' completed after the deploy deadline.")
+                if retried and checkpoint is not None:
+                    self.results.mark_recovered_attempts(checkpoint, path=read_path, verb=HttpVerbEnum.GET, reason="switch state read eventually succeeded")
+                return switches
 
-            if not getattr(self.rest_send, "unit_test", False):
-                sleep(self.config_actions_retry_interval)
-            remaining -= self.config_actions_retry_interval
+            if delay > 0:
+                sleep(delay)
+            if monotonic() >= retry_deadline:
+                raise retry_error
 
-    def verify_deploy(self, fabric_name: str, switch_ids: Collection[str] | None = None) -> None:
-        """Poll until every deployed switch has settled, failing if any did not.
+    def verify_deploy(self, fabric_name: str, switch_ids: Collection[str], *, deadline: float | None = None, allow_redeploy: bool = False) -> DeployPollResult:
+        """Poll until deployed switches converge or one bounded redeploy is justified.
 
-        ND answers `switchActions/deploy` with a Multi-Status body whose per-item ``notExecuted``
-        is not treated as a failure, and answers the fabric-wide deploy with a bare status, so a
-        deploy that changed nothing can still report success. `switch_ids` limits the check to the
-        switches the caller deployed; omit it to check the whole fabric.
+        Every expected identifier must be returned before success can be reported. During
+        phase one, a stable set of switches in ``pending`` or ``outOfSync`` is returned for
+        one explicit, switch-bounded deploy #2. During phase two, the same condition fails;
+        this method can never authorize deploy #3.
 
         Polling is only meaningful here: switch status is frozen for the whole recalculation
         phase, but moves incrementally after a deploy.
@@ -486,53 +545,89 @@ class ConfigActionsMixin:
 
         ### Exception
 
-        - If a switch reports ``failed``; if no switch has come into sync for
-          `config_actions_converge_stall`; or if `config_actions_converge_max_wait` is reached.
+        - If a switch reports ``failed``; an expected identifier is never observed; no
+          switch makes progress for `config_actions_converge_stall`; or the absolute
+          deploy deadline is reached.
         """
-        scope = set(switch_ids) if switch_ids is not None else None
-        deadline = monotonic() + self.config_actions_converge_max_wait
-        fewest_unsettled: int | None = None
-        stalled_for = 0
+        expected = tuple(dict.fromkeys(switch_ids))
+        if not expected:
+            raise ConfigActionsPreconditionError(f"Cannot verify deploy for fabric '{fabric_name}' without explicit switch identifiers.")
+
+        verify_deadline = deadline if deadline is not None else self.deploy_verification_deadline()
+        started_at = monotonic()
+        last_progress_at = started_at
+        fewest_unsettled = len(expected)
+        stable_redeploy_signature: tuple[tuple[str, str], ...] | None = None
+        stable_redeploy_since: float | None = None
 
         while True:
-            statuses = {
-                switch_id: self._switch_sync_status(switch)
-                for switch in self.read_fabric_switches(fabric_name)
-                if (switch_id := self._switch_identifier(switch)) and (scope is None or switch_id in scope)
-            }
+            statuses = self._expected_switch_statuses(self.read_fabric_switches(fabric_name, deadline=verify_deadline), expected)
+            now = monotonic()
 
-            failed = sorted(switch_id for switch_id, status in statuses.items() if status == "failed")
+            failed = [switch_id for switch_id in expected if statuses.get(switch_id) == "failed"]
             if failed:
                 raise Exception(f"Deploy failed on switch(es) {', '.join(failed)} in fabric '{fabric_name}'.")
+            if now >= verify_deadline:
+                raise TimeoutError(f"Deploy verification deadline expired for fabric '{fabric_name}' after {now - started_at:g}s.")
 
-            # An undocumented status counts as unsettled rather than settled: the bailouts below cap the
-            # wait, and their message names the status, which beats passing a switch ND is unhappy about.
-            # `pending` is exempt -- a deploy can legitimately stage fresh intent.
-            unsettled = sorted(
-                f"{switch_id} ({status})" for switch_id, status in statuses.items() if status != "pending" and status not in _SWITCH_SYNC_SETTLED
-            )
-            if not unsettled:
-                pending = sorted(switch_id for switch_id, status in statuses.items() if status == "pending")
-                if pending:
-                    self.rest_send.warn(f"Deploy left switch(es) in fabric '{fabric_name}' with configuration pending: {', '.join(pending)}.")
-                return
+            converged = tuple(switch_id for switch_id in expected if statuses.get(switch_id) in _SWITCH_SYNC_VERIFY_SUCCESS)
+            unsettled_ids = tuple(switch_id for switch_id in expected if switch_id not in converged)
+            if not unsettled_ids:
+                return DeployPollResult(statuses=statuses, converged_ids=converged)
 
-            # Switches settle incrementally, so a falling count is progress; it cannot churn the way
-            # a set of identifiers can.
-            progressed = fewest_unsettled is None or len(unsettled) < fewest_unsettled
-            stalled_for = 0 if progressed else stalled_for + self.config_actions_converge_interval
-            fewest_unsettled = len(unsettled) if fewest_unsettled is None else min(fewest_unsettled, len(unsettled))
+            if len(unsettled_ids) < fewest_unsettled:
+                fewest_unsettled = len(unsettled_ids)
+                last_progress_at = now
 
+            missing = tuple(switch_id for switch_id in unsettled_ids if switch_id not in statuses)
+            redeployable = not missing and all(statuses[switch_id] in _SWITCH_SYNC_REDEPLOYABLE for switch_id in unsettled_ids)
+            if redeployable:
+                signature = tuple((switch_id, statuses[switch_id]) for switch_id in unsettled_ids)
+                if signature != stable_redeploy_signature:
+                    stable_redeploy_signature = signature
+                    stable_redeploy_since = now
+                stable_for = now - (stable_redeploy_since if stable_redeploy_since is not None else now)
+                if allow_redeploy and stable_for >= self.config_actions_converge_stall:
+                    return DeployPollResult(statuses=statuses, converged_ids=converged, redeploy_ids=unsettled_ids)
+            else:
+                stable_redeploy_signature = None
+                stable_redeploy_since = None
+
+            unsettled = self._format_unsettled(expected, statuses)
+            stalled_for = now - last_progress_at
             if stalled_for >= self.config_actions_converge_stall:
-                raise Exception(f"No switch in fabric '{fabric_name}' has come into sync for {stalled_for}s; still waiting on {', '.join(unsettled)}.")
-            if monotonic() >= deadline:
-                raise Exception(
-                    f"Switch(es) {', '.join(unsettled)} in fabric '{fabric_name}' did not come into sync " f"within {self.config_actions_converge_max_wait}s."
-                )
-            if not getattr(self.rest_send, "unit_test", False):
-                sleep(self.config_actions_converge_interval)
+                raise Exception(f"No switch in fabric '{fabric_name}' has come into sync for {stalled_for:g}s; " f"still waiting on {', '.join(unsettled)}.")
+            if not self._wait_before_deadline(verify_deadline, self.config_actions_converge_interval):
+                now = monotonic()
+                raise Exception(f"Switch(es) {', '.join(unsettled)} in fabric '{fabric_name}' did not come into sync " f"within {now - started_at:g}s.")
 
-    def _get_fabric_switches(self, fabric_name: str) -> list[dict]:
+    def _wait_before_deadline(self, deadline: float, interval: float) -> bool:
+        """Wait no longer than the remaining deadline and report whether time remained."""
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return False
+        delay = min(interval, remaining)
+        sleep(delay)
+        return monotonic() < deadline
+
+    @classmethod
+    def _expected_switch_statuses(cls, switches: list[dict], expected: Collection[str]) -> dict[str, str]:
+        """Return statuses for expected identifiers that were actually present."""
+        expected_set = set(expected)
+        return {
+            switch_id: cls._switch_sync_status(switch) for switch in switches if (switch_id := cls._switch_identifier(switch)) and switch_id in expected_set
+        }
+
+    @staticmethod
+    def _format_unsettled(expected: Collection[str], statuses: Mapping[str, str]) -> list[str]:
+        """Format expected switches that have not reached a verified success state."""
+        return [
+            (f"{switch_id} ({statuses[switch_id]})" if switch_id in statuses else f"{switch_id} (<missing>)")
+            for switch_id in expected
+            if statuses.get(switch_id) not in _SWITCH_SYNC_VERIFY_SUCCESS
+        ]
+
+    def _get_fabric_switches(self, fabric_name: str, *, deadline: float | None = None) -> list[dict]:
         """Return the fabric's switches from the controller (empty list if none).
 
         ND rejects configSave/deploy on a switchless fabric ("Fabric ... cannot be
@@ -548,33 +643,45 @@ class ConfigActionsMixin:
           silently drops deploy targets and hides a failed switch from `verify_deploy`.
         """
         ep = self.switches_endpoint(fabric_name)
-        result = self._config_action_request(ep, operation_type=OperationType.QUERY, not_found_ok=True)
+        result = self._config_action_request(ep, operation_type=OperationType.QUERY, deadline=deadline)
         if not result:
             return []
         switches = result.get("switches", [])
-        withheld = self._withheld_count(result)
-        if withheld:
+        pagination_problem = self._pagination_problem(result, len(switches))
+        if pagination_problem:
             raise ConfigActionsPreconditionError(
-                f"ND returned only {len(switches)} of {len(switches) + withheld} switches for fabric '{fabric_name}'. "
+                f"ND returned an incomplete switch list for fabric '{fabric_name}' ({pagination_problem}). "
                 f"Config actions need the full list, so deploy targeting and post-deploy verification would be "
                 f"incomplete. Reduce the fabric size or raise the controller's page limit."
             )
         return switches
 
     @staticmethod
-    def _withheld_count(result: dict) -> int:
-        """Return how many entries ND paginated away, 0 when the response is complete.
+    def _pagination_problem(result: dict, returned: int) -> str | None:
+        """Describe incomplete or contradictory pagination metadata, if present.
 
         ND is inconsistent about where it puts the counter: `meta.counts.remaining` on
-        `/fabrics/{n}/switches`, `meta.remaining` on `/fabrics`. A response without one at all
-        is taken as complete.
+        `/fabrics/{n}/switches`, `meta.remaining` on `/fabrics`, and sometimes only
+        `meta.links.next`. Config actions cannot safely consume any partial form.
         """
         meta = result.get("meta")
         if not isinstance(meta, dict):
-            return 0
+            meta = result.get("metadata")
+        if not isinstance(meta, dict):
+            return None
         counts = meta.get("counts") if isinstance(meta.get("counts"), dict) else meta
         remaining = counts.get("remaining")
-        return remaining if isinstance(remaining, int) and remaining > 0 else 0
+        total = counts.get("total")
+        links = meta.get("links") if isinstance(meta.get("links"), dict) else {}
+        next_link = links.get("next")
+        problems = []
+        if isinstance(remaining, int) and remaining > 0:
+            problems.append(f"remaining={remaining}")
+        if next_link:
+            problems.append("links.next is present")
+        if isinstance(total, int) and total != returned:
+            problems.append(f"counts.total={total}, returned={returned}")
+        return ", ".join(problems) or None
 
     @staticmethod
     def _switch_identifier(switch: dict) -> str:

@@ -15,7 +15,7 @@ from __future__ import annotations
 # fmt: on
 # isort: on
 
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -49,9 +49,10 @@ class NDErrorData(BaseModel):
 
     msg: str
     status: Optional[int] = None
-    request_payload: Optional[dict[str, Any]] = None
+    request_payload: Optional[Union[dict[str, Any], list[Any]]] = None
     response_payload: Optional[dict[str, Any]] = None
     raw: Optional[Any] = None
+    retryable: Optional[bool] = None
 
 
 class NDModuleError(Exception):
@@ -88,9 +89,10 @@ class NDModuleError(Exception):
         self,
         msg: str,
         status: Optional[int] = None,
-        request_payload: Optional[dict[str, Any]] = None,
+        request_payload: Optional[Union[dict[str, Any], list[Any]]] = None,
         response_payload: Optional[dict[str, Any]] = None,
         raw: Optional[Any] = None,
+        retryable: Optional[bool] = None,
     ) -> None:
         self.error_data = NDErrorData(
             msg=msg,
@@ -98,6 +100,7 @@ class NDModuleError(Exception):
             request_payload=request_payload,
             response_payload=response_payload,
             raw=raw,
+            retryable=retryable,
         )
         super().__init__(msg)
 
@@ -112,7 +115,7 @@ class NDModuleError(Exception):
         return self.error_data.status
 
     @property
-    def request_payload(self) -> Optional[dict[str, Any]]:
+    def request_payload(self) -> Optional[Union[dict[str, Any], list[Any]]]:
         """Request payload that was sent."""
         return self.error_data.request_payload
 
@@ -125,6 +128,11 @@ class NDModuleError(Exception):
     def raw(self) -> Optional[Any]:
         """Raw response content for non-JSON responses."""
         return self.error_data.raw
+
+    @property
+    def retryable(self) -> Optional[bool]:
+        """Whether retrying this failed request is safe and potentially useful."""
+        return self.error_data.retryable
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -139,6 +147,24 @@ class NDModuleError(Exception):
         - None
         """
         return self.error_data.model_dump(exclude_none=True)
+
+
+class NDRequestError(NDModuleError):
+    """A controller response rejected a request.
+
+    The inherited structured fields describe the controller response.  In
+    particular, ``retryable`` is populated from the response handler so a
+    caller can distinguish a transient response from a terminal request
+    rejection without parsing an error message.
+    """
+
+
+class NDTransportError(NDModuleError, ValueError):
+    """The request could not reach the controller.
+
+    This remains a ``ValueError`` subclass for callers of ``Sender`` and
+    ``RestSend`` that historically catch transport failures as ``ValueError``.
+    """
 
 
 class NDStateMachineError(Exception):

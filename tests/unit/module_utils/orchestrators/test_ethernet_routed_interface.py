@@ -37,11 +37,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     XeEthernetRoutedNetworkOSModel,
     XeEthernetRoutedPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import (
     EthernetRoutedInterfaceOrchestrator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
@@ -1524,6 +1526,7 @@ def test_ethernet_routed_orchestrator_00990() -> None:
     - `remove_pending` does not raise; `_pending_normalizes` is empty; `_pending_deploys` still holds both pairs
     - The last committed payload carries no `description`; `_normalize_omits_description` is set for the rest of the run
     - Exactly three responses were consumed (switch list, rejection, resend)
+    - The rejected first POST is marked recovered, so verbosity-2 output does not report the successful operation as failed
 
     ## Classes and Methods
 
@@ -1531,6 +1534,8 @@ def test_ethernet_routed_orchestrator_00990() -> None:
     - EthernetBaseOrchestrator._normalize_interfaces()
     - EthernetBaseOrchestrator._post_normalize()
     - EthernetBaseOrchestrator._rejected_empty_description()
+    - Results.mark_recovered_attempts()
+    - NDOutput.format_with_verbosity()
     """
 
     def responses():
@@ -1539,6 +1544,9 @@ def test_ethernet_routed_orchestrator_00990() -> None:
         yield responses_ethernet_routed("test_remove_pending_00990c")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.results = Results()
+    orchestrator.results.state = "deleted"
+    orchestrator.results.check_mode = False
     orchestrator.deploy = True
     with does_not_raise():
         orchestrator.delete_bulk([_nx_model("Ethernet1/31"), _nx_model("Ethernet1/32")], existing_data={"interfaceName": "probe"})
@@ -1560,6 +1568,8 @@ def test_ethernet_routed_orchestrator_00990() -> None:
         {"interfaceName": "Ethernet1/31", "switchId": "FDO11111AAA"},
         {"interfaceName": "Ethernet1/32", "switchId": "FDO11111AAA"},
     ]
+    output = NDOutput(output_level="normal", state="deleted").format_with_verbosity(2, orchestrator.results)
+    assert output.get("failed", False) is False
 
 
 def test_ethernet_routed_orchestrator_01000() -> None:

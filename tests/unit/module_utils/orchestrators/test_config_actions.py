@@ -27,21 +27,23 @@ __metaclass__ = type  # pylint: disable=invalid-name
 from typing import ClassVar, Literal, Optional
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDRequestError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
     NOT_ISSUED,
-    ConfigActionStepResult,
     ConfigActionsContext,
     ConfigActionsFailed,
     ConfigActionsResult,
+    ConfigActionStepResult,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions import mixin as config_actions_mixin
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.fabric import FabricConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin, ConfigActionsPreconditionError
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -50,6 +52,29 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import RecordingSender
+
+
+class _FakeClock:
+    """Monotonic clock whose sleeps advance time without slowing the suite."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+@pytest.fixture(autouse=True)
+def _fake_config_actions_clock(monkeypatch):
+    """Exercise deadline behavior deterministically in every config-actions test."""
+    clock = _FakeClock()
+    monkeypatch.setattr(config_actions_mixin, "monotonic", clock.monotonic)
+    monkeypatch.setattr(config_actions_mixin, "sleep", clock.sleep)
+    return clock
+
 
 # =============================================================================
 # Test doubles: minimal concrete Endpoint and Model subclasses
@@ -234,24 +259,27 @@ def _payload_for(rest_send, path_fragment):
 
 def _success_response(data=None, method="POST", path="/api/v1/stub"):
     """Standard 200 OK response dict."""
-    return {
-        "RETURN_CODE": 200,
-        "METHOD": method,
-        "REQUEST_PATH": path,
-        "MESSAGE": "OK",
-        "DATA": data or {},
-    }
+    return {"RETURN_CODE": 200, "METHOD": method, "REQUEST_PATH": path, "MESSAGE": "OK", "DATA": data or {}}
+
+
+def _multi_status_response(data, path="/api/v1/stub"):
+    """Documented switchActions/deploy HTTP 207 response."""
+    return {"RETURN_CODE": 207, "METHOD": "POST", "REQUEST_PATH": path, "MESSAGE": "Multi-Status", "DATA": data}
 
 
 def _error_response(method="POST", path="/api/v1/stub", message="Internal Server Error"):
     """Standard 500 failure response dict."""
-    return {
-        "RETURN_CODE": 500,
-        "METHOD": method,
-        "REQUEST_PATH": path,
-        "MESSAGE": message,
-        "DATA": {},
-    }
+    return {"RETURN_CODE": 500, "METHOD": method, "REQUEST_PATH": path, "MESSAGE": message, "DATA": {}}
+
+
+def _http_error_response(status, *, method="GET", path="/api/v1/stub", message="Request failed"):
+    """HTTP error response with a caller-selected status."""
+    return {"RETURN_CODE": status, "METHOD": method, "REQUEST_PATH": path, "MESSAGE": message, "DATA": {}}
+
+
+def _not_found_response(method="GET", path="/api/v1/stub"):
+    """Standard 404 response dict."""
+    return {"RETURN_CODE": 404, "METHOD": method, "REQUEST_PATH": path, "MESSAGE": "Not Found", "DATA": {"error": "fabric not found"}}
 
 
 def _make_orchestrator(rest_send, results=None, orchestrator_class=None):
@@ -300,11 +328,7 @@ class TestConfigSave:
 
         - ConfigActionsMixin.config_save()
         """
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"status": "Config save is completed"}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"status": "Config save is completed"})])
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -331,11 +355,7 @@ class TestConfigSave:
         - ConfigActionsMixin.config_save()
         - NDBaseOrchestrator._register_api_call()
         """
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"status": "Config save is completed"}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"status": "Config save is completed"})])
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -355,11 +375,7 @@ class TestDeployGlobal:
 
     def test_deploy_global_calls_correct_endpoint(self):
         """Verify _deploy_global POSTs to the fabric deploy endpoint with no body."""
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"status": "Configuration deployment completed"}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"status": "Configuration deployment completed"})])
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -384,11 +400,7 @@ class TestDeploySwitchIds:
 
     def test_deploy_switch_ids_posts_switch_endpoint(self):
         """Verify _deploy_switch_ids POSTs the pre-filtered switchIds."""
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"switchIds": []}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"switchIds": []})])
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
@@ -439,12 +451,7 @@ class TestSwitchIdentifier:
 
     def test_extract_switch_ids_mixed_sources(self):
         """Verify _extract_switch_ids resolves each switch independently and drops unidentifiable ones."""
-        switches = [
-            {"switchId": "NODE-101", "serialNumber": "FOC111AAA"},
-            {"serialNumber": "FOC222BBB"},
-            {"switchId": "NODE-103"},
-            {"hostname": "leaf9"},
-        ]
+        switches = [{"switchId": "NODE-101", "serialNumber": "FOC111AAA"}, {"serialNumber": "FOC222BBB"}, {"switchId": "NODE-103"}, {"hostname": "leaf9"}]
 
         assert ConfigActionsMixin._extract_switch_ids(switches) == ["NODE-101", "FOC222BBB", "NODE-103"]
 
@@ -478,19 +485,16 @@ class TestFabricConfigActionsBackend:
         assert "FAB1" in rest_send.path
 
     def test_deploy_global_delegates(self):
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"status": "deployed"}),
-                _switches({"FOC111AAA": "inSync"}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"status": "deployed"}), _switches({"FOC111AAA": "inSync"})])
         orch = _make_orchestrator(rest_send, _make_results())
         backend = FabricConfigActionsBackend(orch)
 
-        backend.deploy_global(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1")
+        result = backend.deploy_global(ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("FOC111AAA",)), "FAB1")
 
         assert any("actions/deploy" in path for path in _paths(rest_send))
         assert not any("switchActions" in path for path in _paths(rest_send))
+        assert result["verified_switch_ids"] == ["FOC111AAA"]
+        assert result["submissions"][0]["scope"] == "global"
 
     def test_deploy_switches_intersects_candidates_with_post_save_targets(self):
         """Verify deploy_switches re-resolves post-save and keeps only context candidates."""
@@ -533,6 +537,108 @@ class TestFabricConfigActionsBackend:
         assert result is NOT_ISSUED
         assert "switchActions/deploy" not in rest_send.path
 
+    def test_switch_deploy_retries_only_stably_affected_switches_once(self):
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "outOfSync", "S2": "outOfSync"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}, {"switchId": "S2", "status": "success"}]}),
+                _switches({"S1": "inSync", "S2": "pending"}),
+                _switches({"S1": "inSync", "S2": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S2", "status": "success"}]}),
+                _switches({"S2": "inSync"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImmediateRedeployOrchestrator)
+        backend = FabricConfigActionsBackend(orch)
+
+        result = backend.deploy_switches(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1", ("S1", "S2"))
+
+        deploy_requests = [request for request in rest_send.sender.requests if "switchActions/deploy" in request["path"]]
+        assert [request["payload"] for request in deploy_requests] == [{"switchIds": ["S1", "S2"]}, {"switchIds": ["S2"]}]
+        assert [submission["switch_ids"] for submission in result["submissions"]] == [["S1", "S2"], ["S2"]]
+        assert result["verified_switch_ids"] == ["S1", "S2"]
+
+    def test_global_second_pass_uses_bounded_switch_endpoint(self):
+        rest_send = _make_rest_send(
+            [
+                _success_response(data={"status": "accepted"}),
+                _switches({"S1": "inSync", "S2": "pending"}),
+                _switches({"S1": "inSync", "S2": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S2", "status": "success"}]}),
+                _switches({"S2": "inSync"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImmediateRedeployOrchestrator)
+        backend = FabricConfigActionsBackend(orch)
+
+        result = backend.deploy_global(ConfigActionsContext(fabric_names=("FAB1",), state="merged", switch_ids=("S1", "S2")), "FAB1")
+
+        deploy_requests = [request for request in rest_send.sender.requests if "deploy" in request["path"]]
+        assert "switchActions" not in deploy_requests[0]["path"]
+        assert deploy_requests[0]["payload"] is None
+        assert "switchActions/deploy" in deploy_requests[1]["path"]
+        assert deploy_requests[1]["payload"] == {"switchIds": ["S2"]}
+        assert [submission["scope"] for submission in result["submissions"]] == ["global", "switch"]
+
+    def test_second_pass_never_authorizes_a_third_deploy(self):
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "pending"}),
+                _switches({"S1": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "pending"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImmediateRedeployOrchestrator)
+        backend = FabricConfigActionsBackend(orch)
+
+        with pytest.raises(Exception, match=r"still waiting on S1 \(pending\)"):
+            backend.deploy_switches(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1", ("S1",))
+
+        deploy_requests = [request for request in rest_send.sender.requests if "switchActions/deploy" in request["path"]]
+        assert len(deploy_requests) == 2
+
+    def test_normal_status_transition_uses_only_the_accepted_first_deploy(self):
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "pending"}),
+                _switches({"S1": "outOfSync"}),
+                _switches({"S1": "success"}),
+                _switches({"S1": "inSync"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results())
+        backend = FabricConfigActionsBackend(orch)
+
+        result = backend.deploy_switches(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1", ("S1",))
+
+        deploy_requests = [request for request in rest_send.sender.requests if "switchActions/deploy" in request["path"]]
+        assert len(deploy_requests) == 1
+        assert len(result["submissions"]) == 1
+
+    def test_switch_converging_during_reresolution_is_omitted_from_deploy_two(self):
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "pending"}),
+                _switches({"S1": "inSync"}),
+                _switches({"S1": "inSync"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImmediateRedeployOrchestrator)
+        backend = FabricConfigActionsBackend(orch)
+
+        result = backend.deploy_switches(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1", ("S1",))
+
+        deploy_requests = [request for request in rest_send.sender.requests if "switchActions/deploy" in request["path"]]
+        assert len(deploy_requests) == 1
+        assert len(result["submissions"]) == 1
+
     def test_deploy_resources_not_supported(self):
         orch = _make_orchestrator(_make_rest_send([]))
         backend = FabricConfigActionsBackend(orch)
@@ -553,28 +659,14 @@ class TestBuildConfigActionsContext:
         """Verify switchless fabrics are excluded and eligible fabrics are seeded with full membership."""
         switches_response = {
             "switches": [
-                {
-                    "serialNumber": "FOC111AAA",
-                    "additionalData": {"configSyncStatus": "outOfSync"},
-                },
-                {
-                    "serialNumber": "FOC222BBB",
-                    "additionalData": {"configSyncStatus": "inSync"},
-                },
+                {"serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "outOfSync"}},
+                {"serialNumber": "FOC222BBB", "additionalData": {"configSyncStatus": "inSync"}},
             ]
         }
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"switches": []}, method="GET"),
-                _success_response(data=switches_response, method="GET"),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"switches": []}, method="GET"), _success_response(data=switches_response, method="GET")])
         orch = _make_orchestrator(rest_send, _make_results())
 
-        context = orch.build_config_actions_context(
-            ["switchless-fabric", "fabric-with-switches"],
-            state="merged",
-        )
+        context = orch.build_config_actions_context(["switchless-fabric", "fabric-with-switches"], state="merged")
 
         assert context.fabric_names == ("fabric-with-switches",)
         # Membership, not the pre-save out-of-sync filter; real targets resolve after save.
@@ -607,14 +699,7 @@ class TestRunConfigActions:
         assert len(results._tasks) == 0
 
     def test_save_and_global_deploy(self):
-        switches_response = {
-            "switches": [
-                {
-                    "serialNumber": "FOC111AAA",
-                    "additionalData": {"configSyncStatus": "outOfSync"},
-                },
-            ]
-        }
+        switches_response = {"switches": [{"serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "outOfSync"}}]}
         rest_send = _make_rest_send(
             [
                 _success_response(data=switches_response, method="GET"),
@@ -639,14 +724,7 @@ class TestRunConfigActions:
         assert any("actions/deploy" in path for path in _paths(rest_send))
 
     def test_save_and_switch_deploy(self):
-        switches_response = {
-            "switches": [
-                {
-                    "serialNumber": "FOC111AAA",
-                    "additionalData": {"configSyncStatus": "outOfSync"},
-                },
-            ]
-        }
+        switches_response = {"switches": [{"serialNumber": "FOC111AAA", "additionalData": {"configSyncStatus": "outOfSync"}}]}
         rest_send = _make_rest_send(
             [
                 _success_response(data=switches_response, method="GET"),
@@ -722,11 +800,7 @@ class TestRunConfigActions:
 
     def test_switch_deploy_skips_post_save_when_all_in_sync(self):
         """Verify no deploy POST is issued when nothing is out of sync after save."""
-        switches_response = {
-            "switches": [
-                {"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "inSync"}},
-            ]
-        }
+        switches_response = {"switches": [{"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "inSync"}}]}
         rest_send = _make_rest_send(
             [
                 _success_response(data=switches_response, method="GET"),
@@ -753,11 +827,7 @@ class TestRunConfigActions:
         assert any("no_targets" in warning for warning in rest_send.sender.ansible_module.warnings)
 
     def test_switchless_fabric_skips_actions(self):
-        rest_send = _make_rest_send(
-            [
-                _success_response(data={"switches": []}, method="GET"),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data={"switches": []}, method="GET")])
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
         actions = parse_config_actions(
@@ -813,12 +883,7 @@ class TestOnlySwitchIdsScoping:
         )
         orch = _make_orchestrator(rest_send, _make_results())
 
-        orch.run_config_actions(
-            actions=self._switch_actions(),
-            fabric_names=["FAB1"],
-            state="merged",
-            only_switch_ids={"leaf1", "leaf3"},
-        )
+        orch.run_config_actions(actions=self._switch_actions(), fabric_names=["FAB1"], state="merged", only_switch_ids={"leaf1", "leaf3"})
 
         assert any("switchActions/deploy" in path for path in _paths(rest_send))
         assert _payload_for(rest_send, "switchActions/deploy") == {"switchIds": ["leaf1", "leaf3"]}
@@ -848,12 +913,7 @@ class TestOnlySwitchIdsScoping:
         )
         orch = _make_orchestrator(rest_send, _make_results())
 
-        orch.run_config_actions(
-            actions=self._switch_actions(),
-            fabric_names=["FAB1"],
-            state="merged",
-            only_switch_ids={"leaf1"},
-        )
+        orch.run_config_actions(actions=self._switch_actions(), fabric_names=["FAB1"], state="merged", only_switch_ids={"leaf1"})
 
         assert _payload_for(rest_send, "switchActions/deploy") == {"switchIds": ["leaf1"]}
 
@@ -874,32 +934,19 @@ class TestOnlySwitchIdsScoping:
             policy=FABRIC_CONFIG_ACTIONS,
         )
 
-        orch.run_config_actions(
-            actions=actions,
-            fabric_names=["FAB1"],
-            state="merged",
-            only_switch_ids={"does-not-exist"},
-        )
+        result = orch.run_config_actions(actions=actions, fabric_names=["FAB1"], state="merged", only_switch_ids={"does-not-exist"})
 
         assert any("actions/deploy" in path for path in _paths(rest_send))
         assert "switchActions" not in rest_send.path
+        assert result.actions[-1].response["submissions"][0]["switch_ids"] == ["leaf1"]
+        assert result.targets["switches"] == ("leaf1",)
 
     def test_no_matching_serials_skips_deploy(self):
         switches_response = {"switches": [{"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "outOfSync"}}]}
-        rest_send = _make_rest_send(
-            [
-                _success_response(data=switches_response, method="GET"),
-                _success_response(data={"status": "saved"}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data=switches_response, method="GET"), _success_response(data={"status": "saved"})])
         orch = _make_orchestrator(rest_send, _make_results())
 
-        result = orch.run_config_actions(
-            actions=self._switch_actions(),
-            fabric_names=["FAB1"],
-            state="merged",
-            only_switch_ids={"not-in-this-fabric"},
-        )
+        result = orch.run_config_actions(actions=self._switch_actions(), fabric_names=["FAB1"], state="merged", only_switch_ids={"not-in-this-fabric"})
 
         assert "switchActions/deploy" not in rest_send.path
         assert any("no_targets" in w for w in rest_send.sender.ansible_module.warnings)
@@ -921,12 +968,7 @@ class TestConfigActionsFailurePropagation:
 
     def test_save_failure_raises(self):
         switches_response = {"switches": [{"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "outOfSync"}}]}
-        rest_send = _make_rest_send(
-            [
-                _success_response(data=switches_response, method="GET"),
-                _error_response(message="Config save failed"),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data=switches_response, method="GET"), _error_response(message="Config save failed")])
         orch = _make_orchestrator(rest_send, _make_results())
         actions = parse_config_actions(
             params={"config_actions": {"save": True, "deploy": False}},
@@ -940,11 +982,7 @@ class TestConfigActionsFailurePropagation:
     def test_deploy_failure_raises(self):
         switches_response = {"switches": [{"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "outOfSync"}}]}
         rest_send = _make_rest_send(
-            [
-                _success_response(data=switches_response, method="GET"),
-                _success_response(data={"status": "saved"}),
-                _error_response(message="Deploy failed"),
-            ]
+            [_success_response(data=switches_response, method="GET"), _success_response(data={"status": "saved"}), _error_response(message="Deploy failed")]
         )
         orch = _make_orchestrator(rest_send, _make_results())
         actions = parse_config_actions(
@@ -981,12 +1019,7 @@ class TestConfigActionsFailurePropagation:
 
     def test_successful_run_does_not_raise(self):
         switches_response = {"switches": [{"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "outOfSync"}}]}
-        rest_send = _make_rest_send(
-            [
-                _success_response(data=switches_response, method="GET"),
-                _success_response(data={"status": "saved"}),
-            ]
-        )
+        rest_send = _make_rest_send([_success_response(data=switches_response, method="GET"), _success_response(data={"status": "saved"})])
         orch = _make_orchestrator(rest_send, _make_results())
         actions = parse_config_actions(
             params={"config_actions": {"save": True, "deploy": False}},
@@ -1015,13 +1048,7 @@ def _make_counting_rest_send(status_code, method="POST"):
     def responses():
         while True:
             attempts["count"] += 1
-            yield {
-                "RETURN_CODE": status_code,
-                "METHOD": method,
-                "REQUEST_PATH": "/api/v1/stub",
-                "MESSAGE": "Internal Server Error",
-                "DATA": {},
-            }
+            yield {"RETURN_CODE": status_code, "METHOD": method, "REQUEST_PATH": "/api/v1/stub", "MESSAGE": "Internal Server Error", "DATA": {}}
 
     sender = RecordingSender()
     sender.ansible_module = MockAnsibleModule()
@@ -1103,19 +1130,13 @@ class TestContentionIsRetried:
         }
 
     def test_contention_is_retried_until_it_clears(self):
-        rest_send = _make_rest_send(
-            [
-                self._contention_response(),
-                self._contention_response(),
-                _success_response(data={"status": "Config save is completed"}),
-            ]
-        )
+        rest_send = _make_rest_send([self._contention_response(), _success_response(data={"status": "Config save is completed"})])
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         orch.config_save("FAB1")
 
-        assert len(_paths(rest_send)) == 3
-        assert sum("retrying" in warning for warning in rest_send.sender.ansible_module.warnings) == 2
+        assert len(_paths(rest_send)) == 2
+        assert sum("retrying" in warning for warning in rest_send.sender.ansible_module.warnings) == 1
 
     def test_contention_beyond_the_budget_fails(self):
         rest_send = _make_rest_send([self._contention_response()] * 5)
@@ -1124,8 +1145,8 @@ class TestContentionIsRetried:
         with pytest.raises(Exception, match="recalculate and deploy is in progress"):
             orch.config_save("FAB1")
 
-        # Budget of 10s at 5s intervals allows the initial attempt plus two retries.
-        assert len(_paths(rest_send)) == 3
+        # Attempts start at 0s and 5s; no request may start at the 10s deadline.
+        assert len(_paths(rest_send)) == 2
 
     def test_a_plain_403_is_not_retried(self):
         """A real authorization failure must still fail immediately."""
@@ -1136,6 +1157,16 @@ class TestContentionIsRetried:
             orch.config_save("FAB1")
 
         assert attempts["count"] == 1
+
+    def test_bounded_second_deploy_cannot_retry_past_its_deadline(self, _fake_config_actions_clock):
+        rest_send = _make_rest_send([self._contention_response()] * 3)
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(NDRequestError, match="recalculate and deploy is in progress"):
+            orch.deploy_switch_ids("FAB1", ["S1"], deadline=7)
+
+        assert len(_paths(rest_send)) == 2
+        assert _fake_config_actions_clock.now == 7
 
 
 # =============================================================================
@@ -1184,6 +1215,12 @@ class ImpatientOrchestrator(ConfigActionsOrchestrator):
     config_actions_retry_interval: ClassVar[int] = 5
     config_actions_converge_stall: ClassVar[int] = 10
     config_actions_converge_interval: ClassVar[int] = 5
+
+
+class ImmediateRedeployOrchestrator(ImpatientOrchestrator):
+    """Confirm a stable retryable state on its first observation."""
+
+    config_actions_converge_stall: ClassVar[int] = 0
 
 
 class NoCeilingOrchestrator(ConfigActionsOrchestrator):
@@ -1240,22 +1277,76 @@ class TestReadFabricSwitches:
         with pytest.raises(Exception, match="Request failed"):
             orch.read_fabric_switches("FAB1")
 
-        # One read per retry: three tries spend the ten-second budget.
-        assert attempts["count"] == 3
+        # Requests start at 0s and 5s; none starts at the 10s deadline.
+        assert attempts["count"] == 2
 
     def test_a_transient_read_failure_is_ridden_out(self):
-        rest_send = _make_rest_send(
-            [
-                _error_response(method="GET", message="Failed to check fabric type"),
-                _switches({"S1": "outOfSync"}),
-            ]
-        )
+        rest_send = _make_rest_send([_error_response(method="GET", message="Failed to check fabric type"), _switches({"S1": "outOfSync"})])
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         switches = orch.read_fabric_switches("FAB1")
 
         assert ConfigActionsMixin._filter_switches_needing_deploy(switches) == ["S1"]
         assert any("retrying" in warning for warning in rest_send.sender.ansible_module.warnings)
+
+    @pytest.mark.parametrize("status", [400, 401, 403])
+    def test_terminal_http_errors_are_not_retried(self, status):
+        rest_send = _make_rest_send([_http_error_response(status)])
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(NDRequestError) as raised:
+            orch.read_fabric_switches("FAB1")
+
+        assert raised.value.status == status
+        assert len(_paths(rest_send)) == 1
+
+    @pytest.mark.parametrize("status", [429, 500])
+    def test_retryable_http_errors_are_retried(self, status):
+        rest_send = _make_rest_send([_http_error_response(status), _switches({"S1": "outOfSync"})])
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        switches = orch.read_fabric_switches("FAB1")
+
+        assert ConfigActionsMixin._filter_switches_needing_deploy(switches) == ["S1"]
+        assert len(_paths(rest_send)) == 2
+
+    def test_local_programming_error_is_not_retried(self, monkeypatch):
+        orch = _make_orchestrator(_make_rest_send([]), _make_results(), orchestrator_class=ImpatientOrchestrator)
+        calls = {"count": 0}
+
+        def fail_once(*_args, **_kwargs):
+            calls["count"] += 1
+            raise TypeError("bad local parser")
+
+        monkeypatch.setattr(orch, "_get_fabric_switches", fail_once)
+
+        with pytest.raises(TypeError, match="bad local parser"):
+            orch.read_fabric_switches("FAB1")
+
+        assert calls["count"] == 1
+
+    def test_read_never_starts_an_attempt_at_or_after_the_caller_deadline(self, _fake_config_actions_clock):
+        rest_send, attempts = _make_counting_rest_send(500, method="GET")
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(NDRequestError):
+            orch.read_fabric_switches("FAB1", deadline=7)
+
+        assert attempts["count"] == 2
+        assert _fake_config_actions_clock.now == 7
+
+    def test_read_finishing_after_the_caller_deadline_is_rejected(self, monkeypatch, _fake_config_actions_clock):
+        """A late successful read cannot let re-resolution submit deploy #2 past the shared deadline."""
+        orch = _make_orchestrator(_make_rest_send([]), _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        def late_read(*_args, **_kwargs):
+            _fake_config_actions_clock.now = 11
+            return [{"switchId": "S1", "additionalData": {"configSyncStatus": "pending"}}]
+
+        monkeypatch.setattr(orch, "_get_fabric_switches", late_read)
+
+        with pytest.raises(TimeoutError, match=r"completed after the deploy deadline"):
+            orch.read_fabric_switches("FAB1", deadline=10)
 
     def test_a_persistent_read_failure_surfaces_the_controller_error(self):
         rest_send = _make_rest_send([_error_response(method="GET", message="Failed to check fabric type")] * 3)
@@ -1273,6 +1364,16 @@ class TestReadFabricSwitches:
             orch.read_fabric_switches("FAB1")
 
         assert not rest_send.sender.ansible_module.warnings
+
+    def test_a_404_is_not_downgraded_to_an_empty_switch_list(self):
+        rest_send = _make_rest_send([_not_found_response()])
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(NDRequestError) as raised:
+            orch.read_fabric_switches("FAB1")
+
+        assert raised.value.status == 404
+        assert len(_paths(rest_send)) == 1
 
 
 class TestTruncatedSwitchList:
@@ -1293,7 +1394,7 @@ class TestTruncatedSwitchList:
         rest_send = _make_rest_send([self._paginated(2, 12)])
         orch = _make_orchestrator(rest_send, _make_results())
 
-        with pytest.raises(ConfigActionsPreconditionError, match="only 2 of 14 switches"):
+        with pytest.raises(ConfigActionsPreconditionError, match=r"remaining=12, counts.total=14, returned=2"):
             orch.read_fabric_switches("FAB1")
 
     def test_truncation_is_not_retried(self):
@@ -1318,14 +1419,25 @@ class TestTruncatedSwitchList:
 
         assert len(orch.read_fabric_switches("FAB1")) == 1
 
+    def test_next_link_without_remaining_is_rejected(self):
+        response = _switches({"S1": "outOfSync"})
+        response["DATA"]["meta"] = {"links": {"next": "/switches?offset=1"}}
+        orch = _make_orchestrator(_make_rest_send([response]), _make_results())
+
+        with pytest.raises(ConfigActionsPreconditionError, match=r"links.next is present"):
+            orch.read_fabric_switches("FAB1")
+
+    def test_total_mismatch_is_rejected_even_when_remaining_is_zero(self):
+        response = _switches({"S1": "outOfSync"})
+        response["DATA"]["metadata"] = {"counts": {"remaining": 0, "total": 2}}
+        orch = _make_orchestrator(_make_rest_send([response]), _make_results())
+
+        with pytest.raises(ConfigActionsPreconditionError, match=r"counts.total=2, returned=1"):
+            orch.read_fabric_switches("FAB1")
+
     def test_config_actions_read_membership_before_touching_the_fabric(self):
         """The membership read that seeds the context happens before any mutation."""
-        rest_send = _make_rest_send(
-            [
-                _switches({"S1": "outOfSync"}),
-                _success_response(data={"status": "saved"}),
-            ]
-        )
+        rest_send = _make_rest_send([_switches({"S1": "outOfSync"}), _success_response(data={"status": "saved"})])
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
         actions = parse_config_actions(
             params={"config_actions": {"save": True, "deploy": False}},
@@ -1361,27 +1473,22 @@ class TestVerifyDeploy:
 
         assert not rest_send.sender.ansible_module.warnings
 
-    def test_accepts_success_as_settled(self):
+    def test_success_is_transitional_until_in_sync(self):
         """Live ND holds switches at `success` for ~5s before `inSync`."""
-        rest_send = _make_rest_send([_switches({"S1": "success"})])
+        rest_send = _make_rest_send([_switches({"S1": "success"}), _switches({"S1": "inSync"})])
         orch = _make_orchestrator(rest_send, _make_results())
 
         orch.verify_deploy("FAB1", ["S1"])
 
-        assert len(_paths(rest_send)) == 1
+        assert len(_paths(rest_send)) == 2
 
     def test_polls_until_the_switch_converges(self):
-        rest_send = _make_rest_send(
-            [
-                _switches({"S1": "outOfSync"}),
-                _switches({"S1": "success"}),
-            ]
-        )
+        rest_send = _make_rest_send([_switches({"S1": "outOfSync"}), _switches({"S1": "success"}), _switches({"S1": "inSync"})])
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
         orch.verify_deploy("FAB1", ["S1"])
 
-        assert len(_paths(rest_send)) == 2
+        assert len(_paths(rest_send)) == 3
 
     def test_fails_when_a_switch_never_converges(self):
         rest_send = _make_rest_send([_switches({"S1": "outOfSync"})] * 5)
@@ -1407,15 +1514,31 @@ class TestVerifyDeploy:
         # Four polls, well past the 10s stall budget, because each one made progress.
         assert len(_paths(rest_send)) == 4
 
+    def test_non_converged_status_oscillation_does_not_reset_the_stall_timer(self):
+        """Alternating redeployable states must neither look like progress nor authorize deploy #2."""
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "pending"}),
+                _switches({"S1": "outOfSync"}),
+                _switches({"S1": "pending"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(Exception, match=r"has come into sync for 10s; still waiting on S1 \(pending\)"):
+            orch.verify_deploy("FAB1", ["S1"], allow_redeploy=True)
+
+        assert len(_paths(rest_send)) == 3
+
     def test_the_hard_ceiling_stops_a_drip_feed(self):
         """The stall timer alone is unbounded: one switch settling per expiry resets it forever."""
         rest_send = _make_rest_send([_switches({"S1": "outOfSync"})] * 5)
         orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=NoCeilingOrchestrator)
 
-        with pytest.raises(Exception, match=r"did not come into sync within 0s"):
+        with pytest.raises(TimeoutError, match=r"deadline expired before requesting"):
             orch.verify_deploy("FAB1", ["S1"])
 
-        assert len(_paths(rest_send)) == 1
+        assert len(_paths(rest_send)) == 0
 
     def test_an_undocumented_status_keeps_waiting_and_is_named(self):
         rest_send = _make_rest_send([_switches({"S1": "someNewStatus"})] * 5)
@@ -1424,30 +1547,99 @@ class TestVerifyDeploy:
         with pytest.raises(Exception, match=r"still waiting on S1 \(someNewStatus\)"):
             orch.verify_deploy("FAB1", ["S1"])
 
-    def test_pending_warns_rather_than_fails(self):
-        """A deploy can legitimately stage fresh intent, so `pending` is not held against it."""
-        rest_send = _make_rest_send([_switches({"S1": "pending"})])
-        orch = _make_orchestrator(rest_send, _make_results())
+    def test_stable_pending_authorizes_one_bounded_redeploy(self):
+        rest_send = _make_rest_send([_switches({"S1": "pending"})] * 3)
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
 
-        orch.verify_deploy("FAB1", ["S1"])
+        result = orch.verify_deploy("FAB1", ["S1"], allow_redeploy=True)
 
-        assert any("configuration pending" in warning for warning in rest_send.sender.ansible_module.warnings)
+        assert result.redeploy_ids == ("S1",)
 
-    def test_a_deploy_that_reports_success_but_leaves_a_failed_switch_fails_the_task(self):
-        """ND answers switchActions/deploy 207 and does not treat a per-item `notExecuted`
-        as a failure, so the POST status alone can report success over a failed switch."""
+    def test_late_read_cannot_report_success(self, monkeypatch, _fake_config_actions_clock):
+        orch = _make_orchestrator(_make_rest_send([]), _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        def late_success(*_args, **_kwargs):
+            _fake_config_actions_clock.now = 11
+            return [{"switchId": "S1", "additionalData": {"configSyncStatus": "inSync"}}]
+
+        monkeypatch.setattr(ImpatientOrchestrator, "read_fabric_switches", late_success)
+
+        with pytest.raises(TimeoutError, match=r"deadline expired for fabric 'FAB1' after 11s"):
+            orch.verify_deploy("FAB1", ["S1"], deadline=10)
+
+    def test_late_read_cannot_authorize_redeploy(self, monkeypatch, _fake_config_actions_clock):
+        orch = _make_orchestrator(_make_rest_send([]), _make_results(), orchestrator_class=ImmediateRedeployOrchestrator)
+
+        def late_pending(*_args, **_kwargs):
+            _fake_config_actions_clock.now = 11
+            return [{"switchId": "S1", "additionalData": {"configSyncStatus": "pending"}}]
+
+        monkeypatch.setattr(ImmediateRedeployOrchestrator, "read_fabric_switches", late_pending)
+
+        with pytest.raises(TimeoutError, match=r"deadline expired for fabric 'FAB1' after 11s"):
+            orch.verify_deploy("FAB1", ["S1"], deadline=10, allow_redeploy=True)
+
+    def test_pending_then_failed_is_reported(self):
+        rest_send = _make_rest_send([_switches({"S1": "pending"}), _switches({"S1": "failed"})])
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(Exception, match=r"Deploy failed on switch\(es\) S1"):
+            orch.verify_deploy("FAB1", ["S1"], allow_redeploy=True)
+
+    def test_missing_target_is_not_success(self):
+        rest_send = _make_rest_send([_switches({"S2": "inSync"})] * 3)
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(Exception, match=r"S1 \(<missing>\)"):
+            orch.verify_deploy("FAB1", ["S1"], allow_redeploy=True)
+
+    def test_empty_switch_list_is_not_success(self):
+        rest_send = _make_rest_send([_switches({})] * 3)
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        with pytest.raises(Exception, match=r"S1 \(<missing>\)"):
+            orch.verify_deploy("FAB1", ["S1"], allow_redeploy=True)
+
+    def test_missing_target_can_appear_and_converge(self):
+        rest_send = _make_rest_send([_switches({"S2": "inSync"}), _switches({"S1": "inSync", "S2": "inSync"})])
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImpatientOrchestrator)
+
+        result = orch.verify_deploy("FAB1", ["S1"], allow_redeploy=True)
+
+        assert result.converged_ids == ("S1",)
+
+    @pytest.mark.parametrize("item_status", ["failed", "notExecuted", "completed", "started", "warning"])
+    def test_real_207_non_success_fails_before_verification(self, item_status):
+        """A real HTTP 207 accepts only exact per-item `success`."""
         rest_send = _make_rest_send(
             [
                 _switches({"S1": "outOfSync"}),
-                _success_response(data={"switchIds": [{"switchId": "S1", "status": "notExecuted"}]}),
-                _switches({"S1": "failed"}),
+                _multi_status_response(data={"switchIds": [{"switchId": "S1", "status": item_status, "message": f"{item_status} result"}]}),
             ]
         )
         orch = _make_orchestrator(rest_send, _make_results())
         backend = FabricConfigActionsBackend(orch)
 
-        with pytest.raises(Exception, match=r"Deploy failed on switch\(es\) S1"):
+        with pytest.raises(NDRequestError, match=rf"S1: {item_status} result"):
             backend.deploy_switches(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1", ("S1",))
+
+        assert len(_paths(rest_send)) == 2
+
+    def test_real_207_exact_success_reaches_verification(self):
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "outOfSync"}),
+                _multi_status_response(data={"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "inSync"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results())
+        backend = FabricConfigActionsBackend(orch)
+
+        result = backend.deploy_switches(ConfigActionsContext(fabric_names=("FAB1",), state="merged"), "FAB1", ("S1",))
+
+        assert len(_paths(rest_send)) == 3
+        assert result["verified_switch_ids"] == ["S1"]
 
 
 class TestSaveFailureBlocksDeploy:
@@ -1467,12 +1659,7 @@ class TestSaveFailureBlocksDeploy:
 
     @pytest.mark.parametrize("deploy_type", ["switch", "global"])
     def test_a_rejected_save_stops_before_any_deploy(self, deploy_type):
-        rest_send = _make_rest_send(
-            [
-                _switches({"S1": "pending"}),
-                _error_response(message=self._SAVE_REJECTED),
-            ]
-        )
+        rest_send = _make_rest_send([_switches({"S1": "pending"}), _error_response(message=self._SAVE_REJECTED)])
         orch = _make_orchestrator(rest_send, _make_results())
 
         with pytest.raises(ConfigActionsFailed) as raised:
@@ -1509,6 +1696,70 @@ class TestSaveFailureBlocksDeploy:
         assert steps == [("save", "completed"), ("deploy", "failed")]
         assert raised.value.result.to_result()["status"] == "failed"
 
+    def test_failure_after_accepted_deploy_one_preserves_its_submission(self):
+        """A verification failure must retain deploy #1's accepted response."""
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "outOfSync"}),
+                _success_response(data={"status": "Config save is completed"}),
+                _switches({"S1": "outOfSync"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "failed"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results())
+
+        with pytest.raises(ConfigActionsFailed) as raised:
+            orch.run_config_actions(actions=self._actions("switch"), fabric_names=["FAB1"], state="merged")
+
+        deploy_step = raised.value.result.actions[-1]
+        assert deploy_step.status == "failed"
+        assert deploy_step.response == {
+            "submissions": [
+                {
+                    "sequence": 1,
+                    "scope": "switch",
+                    "switch_ids": ["S1"],
+                    "response": {"switchIds": [{"switchId": "S1", "status": "success"}]},
+                }
+            ],
+            "verified_switch_ids": [],
+        }
+        assert raised.value.result.to_result()["actions"][-1]["response"] == deploy_step.response
+
+    def test_failure_after_accepted_deploy_two_preserves_both_submissions(self):
+        """A final poll failure must retain both explicitly bounded deploy submissions."""
+        rest_send = _make_rest_send(
+            [
+                _switches({"S1": "outOfSync"}),
+                _success_response(data={"status": "Config save is completed"}),
+                _switches({"S1": "outOfSync"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "pending"}),
+                _switches({"S1": "pending"}),
+                _multi_status_response({"switchIds": [{"switchId": "S1", "status": "success"}]}),
+                _switches({"S1": "failed"}),
+            ]
+        )
+        orch = _make_orchestrator(rest_send, _make_results(), orchestrator_class=ImmediateRedeployOrchestrator)
+
+        with pytest.raises(ConfigActionsFailed) as raised:
+            orch.run_config_actions(actions=self._actions("switch"), fabric_names=["FAB1"], state="merged")
+
+        deploy_step = raised.value.result.actions[-1]
+        submissions = deploy_step.response["submissions"]
+        assert deploy_step.status == "failed"
+        assert [(submission["sequence"], submission["scope"], submission["switch_ids"]) for submission in submissions] == [
+            (1, "switch", ["S1"]),
+            (2, "switch", ["S1"]),
+        ]
+        assert [submission["response"] for submission in submissions] == [
+            {"switchIds": [{"switchId": "S1", "status": "success"}]},
+            {"switchIds": [{"switchId": "S1", "status": "success"}]},
+        ]
+        assert deploy_step.response["verified_switch_ids"] == []
+        assert len([path for path in _paths(rest_send) if "switchActions/deploy" in path]) == 2
+
 
 class TestConfigActionsControllerFacade:
     """Tests for ConfigActionsMixin.execute_config_actions_plan()."""
@@ -1541,10 +1792,7 @@ class TestConfigActionsControllerFacade:
         assert "config_actions_backend_class" not in ConfiguredBackendOrchestrator.model_fields
         assert len(ConfiguredBackend.instances) == 1
         assert ConfiguredBackend.instances[0].owner is orch
-        assert ConfiguredBackend.instances[0].calls == [
-            ("save", "FAB1", "merged"),
-            ("deploy_switches", "FAB1", ("SER1",)),
-        ]
+        assert ConfiguredBackend.instances[0].calls == [("save", "FAB1", "merged"), ("deploy_switches", "FAB1", ("SER1",))]
         assert result.status == "completed"
         assert result.reason == "actions_executed"
 
@@ -1565,10 +1813,7 @@ class TestConfigActionsControllerFacade:
 
         result = orch.execute_config_actions_plan(actions=actions, context=context, backend=backend)
 
-        assert backend.calls == [
-            ("save", "FAB1", "merged"),
-            ("deploy_switches", "FAB1", ("SER1",)),
-        ]
+        assert backend.calls == [("save", "FAB1", "merged"), ("deploy_switches", "FAB1", ("SER1",))]
         assert result.status == "completed"
         assert result.reason == "actions_executed"
 

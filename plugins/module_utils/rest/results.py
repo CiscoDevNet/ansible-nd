@@ -71,6 +71,7 @@ class ApiCallResult(BaseModel):
     metadata: dict[str, Any]
     changed: bool
     failed: bool
+    recovered: bool = False
 
     @field_validator("verb", mode="before")
     @classmethod
@@ -563,6 +564,54 @@ class Results:
             msg += f"changed={changed}, failed={failed}"
             self.log.debug(msg)
 
+    def checkpoint(self) -> int:
+        """Return a marker for registered calls before a retryable operation starts."""
+        return len(self._tasks)
+
+    def mark_recovered_attempts(
+        self,
+        checkpoint: int,
+        *,
+        path: Optional[str] = None,
+        verb: Optional[Union[HttpVerbEnum, str]] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Mark matching failed calls after ``checkpoint`` as recovered by a later success.
+
+        Recovered attempts retain their original ``failed`` state for accurate
+        verbose troubleshooting, but are excluded from the aggregate failure
+        result. ``path`` and ``verb`` constrain marking to one logical request;
+        ``reason`` records why that failed request was later accepted as
+        recovered. ``checkpoint`` must come from :meth:`checkpoint` on this
+        instance and must not refer past the current task list.
+        """
+        if not isinstance(checkpoint, int):
+            raise TypeError(f"{self.class_name}.mark_recovered_attempts: checkpoint must be an int.")
+        if checkpoint < 0 or checkpoint > len(self._tasks):
+            raise ValueError(f"{self.class_name}.mark_recovered_attempts: checkpoint is outside the registered task range.")
+        if path is not None and not isinstance(path, str):
+            raise TypeError(f"{self.class_name}.mark_recovered_attempts: path must be a str or None.")
+        if verb is not None and not isinstance(verb, (HttpVerbEnum, str)):
+            raise TypeError(f"{self.class_name}.mark_recovered_attempts: verb must be an HttpVerbEnum, str, or None.")
+        if reason is not None and not isinstance(reason, str):
+            raise TypeError(f"{self.class_name}.mark_recovered_attempts: reason must be a str or None.")
+
+        verb_value = verb.value if isinstance(verb, HttpVerbEnum) else verb
+
+        for index, task in enumerate(self._tasks[checkpoint:], start=checkpoint):
+            if not task.failed or task.recovered:
+                continue
+            if path is not None and task.path != path:
+                continue
+            if verb_value is not None and task.verb.upper() != verb_value.upper():
+                continue
+            result = copy.deepcopy(task.result)
+            result["recovered"] = True
+            if reason is not None:
+                result["recovered_reason"] = reason
+            self._tasks[index] = task.model_copy(update={"recovered": True, "result": result})
+        self._final_result = None
+
     def build_final_result(self) -> None:
         """
         # Summary
@@ -862,7 +911,8 @@ class Results:
 
         A set() of boolean values indicating whether any tasks failed.
 
-        Derived from the `failed` attribute of all registered `ApiCallResult` tasks.
+        Derived from the `failed` attribute of all registered `ApiCallResult`
+        tasks, excluding failed attempts that a later matching retry recovered.
 
         - If the set contains True, at least one task failed.
         - If the set contains only False all tasks succeeded.
@@ -875,7 +925,7 @@ class Results:
 
         -  `register_api_call()` method to register tasks.
         """
-        return {task.failed for task in self._tasks}
+        return {task.failed and not task.recovered for task in self._tasks}
 
     @property
     def metadata(self) -> list[dict[str, Any]]:

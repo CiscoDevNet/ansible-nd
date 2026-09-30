@@ -14,7 +14,7 @@ covers the fabric modules, fabric groups, fabric group members and ToR.
 
 from __future__ import annotations
 
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import NOT_ISSUED, ConfigActionsContext, NotIssued
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import NOT_ISSUED, ConfigActionPartialFailure, ConfigActionsContext, NotIssued
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.base import FabricConfigActionsOwner
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -78,9 +78,11 @@ class FabricConfigActionsBackend:
 
         - Via the owner when the deploy API request fails, or when a switch reports `failed` afterwards.
         """
+        expected = tuple(dict.fromkeys(context.switch_ids))
+        if not expected:
+            raise ValueError(f"Global deploy for '{fabric_name}' has no captured switch membership to verify.")
         response = self.owner.deploy_global(fabric_name)
-        self.owner.verify_deploy(fabric_name)
-        return response
+        return self._verify_and_redeploy_once(fabric_name=fabric_name, initial_scope="global", initial_targets=expected, initial_response=response)
 
     def deploy_switches(self, context: ConfigActionsContext, fabric_name: str, switch_ids: tuple[str, ...]) -> ResponseType | NotIssued:
         """
@@ -106,8 +108,32 @@ class FabricConfigActionsBackend:
         if not targets:
             return NOT_ISSUED
         response = self.owner.deploy_switch_ids(fabric_name, targets)
-        self.owner.verify_deploy(fabric_name, targets)
-        return response
+        return self._verify_and_redeploy_once(fabric_name=fabric_name, initial_scope="switch", initial_targets=tuple(targets), initial_response=response)
+
+    def _verify_and_redeploy_once(
+        self, *, fabric_name: str, initial_scope: str, initial_targets: tuple[str, ...], initial_response: ResponseType
+    ) -> ResponseType:
+        """Verify deploy #1, then issue at most one explicitly bounded deploy #2."""
+        deadline = self.owner.deploy_verification_deadline()
+        submissions = [{"sequence": 1, "scope": initial_scope, "switch_ids": list(initial_targets), "response": initial_response}]
+        verified_switch_ids: list[str] = []
+        try:
+            first_poll = self.owner.verify_deploy(fabric_name, initial_targets, deadline=deadline, allow_redeploy=True)
+            verified_switch_ids.extend(first_poll.converged_ids)
+            affected = tuple(first_poll.redeploy_ids)
+            if affected:
+                second_targets = self.owner.resolve_redeploy_targets(fabric_name, affected, deadline=deadline)
+                verified_switch_ids.extend(switch_id for switch_id in affected if switch_id not in second_targets)
+                if second_targets:
+                    second_response = self.owner.deploy_switch_ids(fabric_name, second_targets, deadline=deadline)
+                    if second_response is not NOT_ISSUED:
+                        submissions.append({"sequence": 2, "scope": "switch", "switch_ids": list(second_targets), "response": second_response})
+                self.owner.verify_deploy(fabric_name, affected, deadline=deadline, allow_redeploy=False)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            response = {"submissions": submissions, "verified_switch_ids": list(dict.fromkeys(verified_switch_ids))}
+            raise ConfigActionPartialFailure(exc, response) from exc
+
+        return {"submissions": submissions, "verified_switch_ids": list(initial_targets)}
 
     def deploy_resources(self, context: ConfigActionsContext, fabric_name: str, resources: tuple[str, ...]) -> ResponseType:
         """

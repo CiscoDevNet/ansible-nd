@@ -277,3 +277,24 @@ class ConfigActionsFailed(Exception):
     def __init__(self, message: str, result: ConfigActionsResult) -> None:
         super().__init__(message)
         self.result = result
+
+
+class ConfigActionPartialFailure(Exception):
+    """
+    # Summary
+
+    Raised by a backend when an action fails after producing a response that must
+    remain visible in the action result.
+
+    `error` is the original failure. `response` contains the accepted work and
+    any verified progress completed before that failure.
+
+    ## Raises
+
+    None
+    """
+
+    def __init__(self, error: Exception, response: Any) -> None:
+        super().__init__(getattr(error, "msg", str(error)))
+        self.error = error
+        self.response = response

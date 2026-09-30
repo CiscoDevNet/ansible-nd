@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend im
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
     NOT_ISSUED,
     ConfigActionStepResult,
+    ConfigActionPartialFailure,
     ConfigActions,
     ConfigActionsContext,
     ConfigActionsPolicy,
@@ -166,17 +167,24 @@ class ConfigActionsController:
 
         None
         """
+        response = None
+        failure = exc
+        if isinstance(exc, ConfigActionPartialFailure):
+            response = exc.response
+            failure = exc.error
+
         return ConfigActionStepResult(
             action=action,
             scope=scope,
             status="failed",
             target=target,
-            error=getattr(exc, "msg", str(exc)),
-            error_type=exc.__class__.__name__,
-            http_status=getattr(exc, "status", None),
-            request_payload=getattr(exc, "request_payload", None),
-            response_payload=getattr(exc, "response_payload", None),
-            raw=getattr(exc, "raw", None),
+            response=response,
+            error=getattr(failure, "msg", str(failure)),
+            error_type=failure.__class__.__name__,
+            http_status=getattr(failure, "status", None),
+            request_payload=getattr(failure, "request_payload", None),
+            response_payload=getattr(failure, "response_payload", None),
+            raw=getattr(failure, "raw", None),
         )
 
     def _planned_steps(self, actions: ConfigActions, context: ConfigActionsContext) -> tuple[ConfigActionStepResult, ...]:
