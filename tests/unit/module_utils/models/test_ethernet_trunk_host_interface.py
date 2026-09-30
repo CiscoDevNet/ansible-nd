@@ -1973,6 +1973,7 @@ SAMPLE_XE_API_RESPONSE = {
     },
 }
 
+
 def test_ethernet_trunk_host_interface_01200():
     """
     # Summary
@@ -2353,7 +2354,6 @@ def test_ethernet_trunk_host_interface_01260():
     }
 
 
-
 def test_ethernet_trunk_host_interface_02060():
     """
     Verify ``normalize_gathered_filter`` passes through filters without ``interface_name``
@@ -2376,6 +2376,7 @@ def test_ethernet_trunk_host_interface_02060():
     }
 
     assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({}) == {}
+
 
 def test_ethernet_trunk_host_interface_01270():
     """
