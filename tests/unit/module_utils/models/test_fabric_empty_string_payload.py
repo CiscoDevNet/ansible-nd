@@ -11,12 +11,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import FabricAiEbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_routed import FabricAiRoutedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel, VxlanEbgpManagementModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import (
     ExternalConnectivityManagementModel,
     FabricExternalConnectivityModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel, VxlanIbgpManagementModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_routed import FabricRoutedModel, RoutedManagementModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import (
     FabricGroupVxlanModel,
     VxlanFabricGroupManagementModel,
@@ -74,7 +76,14 @@ FREEFORM_KEYS = frozenset(
     }
 )
 
-VXLAN_MODELS = [FabricIbgpModel, FabricEbgpModel, FabricAiIbgpVxlanModel, FabricAiEbgpVxlanModel]
+VXLAN_MODELS = [
+    FabricIbgpModel,
+    FabricEbgpModel,
+    FabricAiIbgpVxlanModel,
+    FabricAiEbgpVxlanModel,
+    FabricRoutedModel,
+    FabricAiRoutedModel,
+]
 ALL_FABRIC_MODELS = VXLAN_MODELS + [FabricExternalConnectivityModel]
 
 
@@ -156,7 +165,7 @@ def test_empty_string_coercion_is_opt_in_by_default():
 
 @pytest.mark.parametrize(
     "model_cls",
-    [VxlanEbgpManagementModel, VxlanIbgpManagementModel, ExternalConnectivityManagementModel, VxlanFabricGroupManagementModel],
+    [VxlanEbgpManagementModel, VxlanIbgpManagementModel, RoutedManagementModel, ExternalConnectivityManagementModel, VxlanFabricGroupManagementModel],
     ids=lambda c: c.__name__,
 )
 def test_fabric_management_models_opt_in(model_cls):

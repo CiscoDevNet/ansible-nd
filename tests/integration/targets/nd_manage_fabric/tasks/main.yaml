@@ -13,3 +13,9 @@
 
 - name: Run nd_manage_fabric AI eBGP VXLAN tests
   ansible.builtin.include_tasks: fabric_ai_ebgp.yaml
+
+- name: Run nd_manage_fabric Routed tests
+  ansible.builtin.include_tasks: fabric_routed.yaml
+
+- name: Run nd_manage_fabric AI Routed tests
+  ansible.builtin.include_tasks: fabric_ai_routed.yaml
