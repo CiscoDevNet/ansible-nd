@@ -263,6 +263,9 @@ class FabricBaseModel(NDBaseModel):
     # ── ClassVars (shared across all fabric models) ──
     identifiers: ClassVar[list[str] | None] = ["fabric_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "location": {"latitude": 37.33939, "longitude": -121.89496},
+    }
 
     # Subclass must set this to the appropriate FabricTypeEnum member
     _fabric_type: ClassVar[FabricTypeEnum]

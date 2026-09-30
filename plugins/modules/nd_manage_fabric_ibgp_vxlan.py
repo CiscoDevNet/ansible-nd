@@ -1162,6 +1162,16 @@ options:
             - The VRF lite subnet target mask.
             type: int
             default: 30
+          vrf_lite_ipv6_subnet_range:
+            description:
+            - The IPv6 address range for VRF Lite point-to-point connections.
+            - When omitted, Nexus Dashboard owns the default.
+            type: str
+          vrf_lite_ipv6_subnet_target_mask:
+            description:
+            - The IPv6 VRF Lite subnet mask length (112-127).
+            - When omitted, Nexus Dashboard owns the default.
+            type: int
           auto_unique_vrf_lite_ip_prefix:
             description:
             - Enable auto unique VRF lite IP prefix.
@@ -1552,10 +1562,12 @@ options:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new fabrics and update existing ones as defined in the configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-    - Use O(state=replaced) to replace the fabric configuration specified in the configuration.
-      Any settings not explicitly provided will revert to their defaults.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      Any fabric existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=replaced) to replace the supported configuration of each fabric specified in O(config).
+      Omitted settings revert to their documented defaults except for dynamic or controller-owned settings identified
+      by the module for preservation; those settings retain their existing values. Explicitly supplied values take precedence.
+    - Use O(state=overridden) to apply the same per-fabric replacement behavior and enforce O(config) as the complete
+      inventory for this fabric type. Existing fabrics of this type that are absent from O(config) are deleted.
+      Use with extra caution.
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
@@ -1593,7 +1605,8 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only iBGP VXLAN fabric type (C(vxlanIbgp)) is supported by this module.
-- When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
+- With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
+  dynamic or controller-owned values, which are preserved from an existing fabric.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 """
@@ -1771,7 +1784,7 @@ EXAMPLES = r"""
           management_ipv6_prefix: 64
   register: result
 
-- name: Replace fabric with only required fields (all optional settings revert to defaults)
+- name: Replace fabric with only required fields
   cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: replaced
     config:
@@ -1859,15 +1872,15 @@ changed:
     sample: true
 before:
     description:
-    - iBGP VXLAN fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported iBGP VXLAN fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - iBGP VXLAN fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported iBGP VXLAN fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "fabric_east", "management": {"bgp_asn": "65002"}}]

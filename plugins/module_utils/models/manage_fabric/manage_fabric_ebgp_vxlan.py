@@ -97,6 +97,57 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
+    # Settings returned by supported ND releases but intentionally not exposed
+    # as Ansible parameters. Preserve them across full replacement and hide them
+    # from normalized module output. The VRF Lite IPv6 pair is preserved here
+    # because only the iBGP family currently exposes it.
+    _opaque_replacement_fields: ClassVar[set[str]] = {
+        "aiLoadSharingOpcode",
+        "aiLoadSharingPacketSequenceNumber",
+        "aiLoadSharingQueuepair",
+        "allowSmartSwitchHA",
+        "autoSmartSwitchVpcPairHA",
+        "bfdMinRxInterval",
+        "bfdMultiplier",
+        "bfdPim",
+        "bfdTxInterval",
+        "bgpAllowAsIn",
+        "borderCount",
+        "breakoutSpineInterfaces",
+        "designerUseRobotPassword",
+        "dlbAllInterfaces",
+        "dlbModeInQosPolicy",
+        "enableSecureDefaultVrf",
+        "fabricDesignSettings",
+        "fabricDesigner",
+        "hypershieldHAPeerLinkSubnet",
+        "hypershieldHAPeerLinkSubnetGranularity",
+        "hypershieldHASourceIntf",
+        "hypershieldHASourceSubnet",
+        "hypershieldHAVlan",
+        "leafCount",
+        "ntpAuthAlgorithm",
+        "ntpAuthEnable",
+        "ntpAuthKey",
+        "ntpAuthKeyId",
+        "ntpAuthKeyType",
+        "perVrfUniqueLoopbackAutoProvision",
+        "perVrfUniqueLoopbackAutoProvisionV6",
+        "perVrfUniqueLoopbackIpRange",
+        "perVrfUniqueLoopbackIpv6Range",
+        "pimAuthKeychainName",
+        "pimAuthUseKeychain",
+        "pimKeys",
+        "spineCount",
+        "systemQosClassification",
+        "useHypershieldSourceLoopbackForHA",
+        "vrfLiteIpv6SubnetRange",
+        "vrfLiteIpv6SubnetTargetMask",
+    }
+    replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields | {"bgpAsnRange"}
+    replacement_preserve_secret_fields: ClassVar[set[str]] = {"ntpAuthKey", "pimKeys"}
+    config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
+
     empty_string_means_unset: ClassVar[bool] = True
 
     # Fabric Type (required for discriminated union)

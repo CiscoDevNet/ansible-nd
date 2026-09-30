@@ -74,6 +74,28 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
+    # ND 4.3.x settings not yet exposed by this module. They are writable
+    # fabric state, so full replacement must carry controller-returned values
+    # forward while normal Ansible output keeps them hidden.
+    _opaque_replacement_fields: ClassVar[set[str]] = {
+        "aiMonitoring",
+        "allowSmartSwitchHA",
+        "autoSmartSwitchVpcPairHA",
+        "enableRemoteSwitchBackup",
+        "hypershieldHAPeerLinkSubnet",
+        "hypershieldHAPeerLinkSubnetGranularity",
+        "hypershieldHASourceIntf",
+        "hypershieldHASourceSubnet",
+        "hypershieldHAVlan",
+        "iosXeTorBootstrapVlan",
+        "remoteStorageServer",
+        "softwareUpdateInMonitoredMode",
+        "strictConfigComplianceMode",
+        "useHypershieldSourceLoopbackForHA",
+    }
+    replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields
+    config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
+
     empty_string_means_unset: ClassVar[bool] = True
 
     # Fabric Type (required for discriminated union)
