@@ -54,6 +54,8 @@ options:
       interface_name:
         description:
         - The port-channel interface name (e.g. C(port-channel20)).
+        - A bare port-channel ID is also accepted and expanded, so V(501) means C(port-channel501).
+        - The port-channel ID must be in the range 1-4096.
         type: str
         required: true
       config_data:
