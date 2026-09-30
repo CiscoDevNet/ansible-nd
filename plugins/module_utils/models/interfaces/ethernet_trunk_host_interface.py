@@ -726,7 +726,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os", "ios-xe"]),
+                                    network_os_type=dict(type="str", choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(

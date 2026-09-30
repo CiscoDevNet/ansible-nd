@@ -15,6 +15,11 @@ integrated `expand_config` flatten step. Live ND interaction is exercised by the
 from __future__ import absolute_import, division, print_function
 
 import pytest
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import validate_gathered_filters
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+    EthernetTrunkHostInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_trunk_host import (
     expand_config,
     expand_gathered_filters,
@@ -438,3 +443,43 @@ def test_expand_gathered_filters_00100_rejects_invalid_interface_names(invalid_n
     config = [{"switch_ip": "1.1.1.1", "interface_names": [invalid_name]}]
     with pytest.raises(ValueError, match=r"interface_names\[0\]"):
         expand_gathered_filters(config)
+
+
+def test_gathered_policy_filter_00300_does_not_inject_network_os_type():
+    """Verify an omitted write-state discriminator does not become a gathered criterion."""
+    validator = ArgumentSpecValidator(EthernetTrunkHostInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"policy": {"admin_state": True}}}}],
+        }
+    )
+
+    assert result.error_messages == []
+    network_os = result.validated_parameters["config"][0]["config_data"]["network_os"]
+    assert network_os["network_os_type"] is None
+    validate_gathered_filters(
+        filters=result.validated_parameters["config"],
+        normalize_filter=EthernetTrunkHostInterfaceModel.normalize_gathered_filter,
+        supported_properties=EthernetTrunkHostInterfaceModel.gathered_filter_properties,
+    )
+
+
+def test_gathered_policy_filter_00310_rejects_explicit_network_os_type():
+    """Verify an explicit discriminator remains outside the gathered-property allowlist."""
+    validator = ArgumentSpecValidator(EthernetTrunkHostInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"admin_state": True}}}}],
+        }
+    )
+
+    with pytest.raises(ValueError, match="config_data.network_os.network_os_type"):
+        validate_gathered_filters(
+            filters=result.validated_parameters["config"],
+            normalize_filter=EthernetTrunkHostInterfaceModel.normalize_gathered_filter,
+            supported_properties=EthernetTrunkHostInterfaceModel.gathered_filter_properties,
+        )
