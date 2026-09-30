@@ -1,14 +1,10 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function, annotations
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, Dict, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
@@ -23,9 +19,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 This module provides Pydantic models for creating, updating, and deleting
 AI Routed fabrics through the Nexus Dashboard (ND) API.
 
-The AI Routed fabric type (aimlRouted) is structurally identical to
-the standard Routed fabric type (routed) — they share the same
-management properties. The only difference is the type discriminator value.
+The AI Routed fabric type (aimlRouted) shares the standard Routed management
+contract and adds the fixed AI QoS invariant alongside its type discriminator.
 
 ## Models
 
@@ -40,8 +35,8 @@ class AimlRoutedManagementModel(RoutedManagementModel):
 
     AI Routed fabric management configuration.
 
-    Inherits all properties from RoutedManagementModel and overrides
-    the type discriminator to `aimlRouted`.
+    Inherits all properties from RoutedManagementModel, changes the type
+    discriminator to `aimlRouted`, and fixes AI QoS on.
 
     ## Raises
 
@@ -80,12 +75,3 @@ class FabricAiRoutedModel(FabricRoutedModel):
 
     # Core Management Configuration
     management: AimlRoutedManagementModel | None = Field(description="AI Routed management configuration", default=None)
-
-    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
-        """Export for diff comparison, excluding fields that ND overrides for routed fabrics."""
-        d = super().to_diff_dict(**kwargs)
-        # ND always returns nxapiHttp=True for routed fabrics regardless of the configured value,
-        # so exclude it from diff comparison to prevent a persistent false-positive diff.
-        if "management" in d:
-            d["management"].pop("nxapiHttp", None)
-        return d

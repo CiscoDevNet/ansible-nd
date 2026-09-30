@@ -21,6 +21,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabr
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import (
     ManageAiIbgpVxlanFabricOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_routed import (
+    ManageAiRoutedFabricOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import (
     ManageEbgpFabricOrchestrator,
 )
@@ -29,6 +32,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabr
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import (
     ManageIbgpFabricOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_routed import (
+    ManageRoutedFabricOrchestrator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
@@ -69,6 +75,14 @@ FABRIC_CASES = (
         "borderCount",
         0,
     ),
+    ("routed", ManageRoutedFabricOrchestrator, "routed", "borderCount", 0),
+    (
+        "ai_routed",
+        ManageAiRoutedFabricOrchestrator,
+        "aimlRouted",
+        "borderCount",
+        0,
+    ),
 )
 
 
@@ -78,7 +92,7 @@ def _existing_response(fabric_type: str, opaque_key: str, opaque_value) -> dict:
         "bgpAsn": "65001",
         opaque_key: opaque_value,
     }
-    if fabric_type.endswith("Ebgp"):
+    if fabric_type.endswith("Ebgp") or fabric_type in {"routed", "aimlRouted"}:
         management["bgpAsnRange"] = "3001-4000"
     if fabric_type != "externalConnectivity":
         management["ntpAuthKey"] = "encrypted-controller-secret"
@@ -230,7 +244,7 @@ def test_nd_state_machine_fabric_replacement_00020(
     management_config = updated.to_config()["management"]
     assert management_payload[opaque_key] == opaque_value
     assert opaque_key not in management_config
-    if fabric_type.endswith("Ebgp"):
+    if fabric_type.endswith("Ebgp") or fabric_type in {"routed", "aimlRouted"}:
         assert updated.management.bgp_asn_range == "3001-4000"
     if fabric_type != "externalConnectivity":
         assert management_payload["ntpAuthKey"] == "encrypted-controller-secret"

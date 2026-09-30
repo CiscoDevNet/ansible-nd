@@ -533,10 +533,46 @@ fabric_config_ai_ibgp:
     management_gateway: ""
     management_ipv4_prefix: 24
 
-# Routed fabrics share management properties with eBGP VXLAN fabrics; the module
-# injects the fabric type, so the eBGP configs are reused for the routed tests.
-fabric_config_routed: "{{ fabric_config_ebgp }}"
-fabric_config_ai_routed: "{{ fabric_config_ai_ebgp }}"
+# Routed fabrics share the eBGP property set, with controller-enforced defaults
+# for settings that do not apply to a non-EVPN fabric.
+fabric_config_routed_unsupported_options:
+  - auto_configure_ebgp_evpn_peering
+  - tenant_dhcp
+  - next_generation_oam
+
+fabric_config_routed_management_overrides:
+  assign_ipv4_to_loopback0: false
+  network_template: Routed_Network_Universal
+  network_extension_template: Routed_Network_Universal
+
+fabric_config_routed: >-
+  {{
+    fabric_config_ebgp
+    | combine({
+        'management': (
+          fabric_config_ebgp.management
+          | dict2items
+          | rejectattr('key', 'in', fabric_config_routed_unsupported_options)
+          | list
+          | items2dict
+          | combine(fabric_config_routed_management_overrides)
+        )
+      })
+  }}
+fabric_config_ai_routed: >-
+  {{
+    fabric_config_ai_ebgp
+    | combine({
+        'management': (
+          fabric_config_ai_ebgp.management
+          | dict2items
+          | rejectattr('key', 'in', fabric_config_routed_unsupported_options)
+          | list
+          | items2dict
+          | combine(fabric_config_routed_management_overrides)
+        )
+      })
+  }}
 
 # Common AI eBGP VXLAN fabric configuration for all AI eBGP tests
 # Uses aimlVxlanEbgp type which shares management properties with vxlanEbgp

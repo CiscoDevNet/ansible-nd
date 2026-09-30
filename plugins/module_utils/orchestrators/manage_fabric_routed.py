@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from typing import ClassVar
 
@@ -21,7 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_routed import FabricRoutedModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions_mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 

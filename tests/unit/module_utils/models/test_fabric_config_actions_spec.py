@@ -11,9 +11,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_s
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import FabricAiEbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_routed import FabricAiRoutedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_routed import FabricRoutedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
 
@@ -22,6 +24,8 @@ FABRIC_MODELS = [
     FabricEbgpModel,
     FabricAiIbgpVxlanModel,
     FabricAiEbgpVxlanModel,
+    FabricRoutedModel,
+    FabricAiRoutedModel,
     FabricExternalConnectivityModel,
     FabricGroupVxlanModel,
     FabricGroupMemberModel,

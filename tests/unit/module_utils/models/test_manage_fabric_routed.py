@@ -4,9 +4,7 @@
 
 """Unit tests for Routed and AI/ML Routed fabric models."""
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +12,7 @@ from pydantic import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_routed import (
     FabricRoutedModel,
+    RoutedManagementModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_routed import (
     FabricAiRoutedModel,
@@ -35,6 +34,7 @@ def test_manage_fabric_routed_00010() -> None:
     assert model._fabric_type == FabricTypeEnum.ROUTED
     assert model.management is not None
     assert model.management.type == FabricTypeEnum.ROUTED
+    assert model.management.evpn is False
     assert model.management.name == "routed_fabric"
     assert model.management.site_id == "65001"
     assert model.telemetry_collection is False
@@ -55,6 +55,7 @@ def test_manage_fabric_routed_00020() -> None:
     assert model._fabric_type == FabricTypeEnum.AIML_ROUTED
     assert model.management is not None
     assert model.management.type == "aimlRouted"
+    assert model.management.evpn is False
     assert model.management.name == "ai_routed_fabric"
     assert model.management.site_id == "65002"
     assert model.management.aiml_qos is True
@@ -85,6 +86,9 @@ def test_manage_fabric_routed_00030() -> None:
         return False
 
     assert contains_option(spec, "aiml_qos") is False
+    for fixed_option in ("evpn", "auto_configure_ebgp_evpn_peering", "tenant_dhcp", "next_generation_oam"):
+        assert contains_option(FabricRoutedModel.get_argument_spec(), fixed_option) is False
+        assert contains_option(FabricAiRoutedModel.get_argument_spec(), fixed_option) is False
 
 
 def test_manage_fabric_routed_00040() -> None:
@@ -105,3 +109,151 @@ def test_manage_fabric_routed_00040() -> None:
             fabric_name="ai_routed_fabric",
             management={"type": "aimlRouted", "bgp_asn": "65002", "aimlQos": False},
         )
+
+
+@pytest.mark.parametrize(
+    "model_class,fabric_type",
+    ((FabricRoutedModel, "routed"), (FabricAiRoutedModel, "aimlRouted")),
+)
+@pytest.mark.parametrize(
+    "field",
+    ("evpn", "auto_configure_ebgp_evpn_peering", "tenant_dhcp", "next_generation_oam"),
+)
+def test_manage_fabric_routed_00045(model_class, fabric_type, field) -> None:
+    """Verify Routed-only false invariants cannot be enabled through config."""
+    with pytest.raises(ValidationError):
+        model_class.from_config(
+            {
+                "fabric_name": "routed_fabric",
+                "management": {
+                    "type": fabric_type,
+                    "bgp_asn": "65001",
+                    field: True,
+                },
+            }
+        )
+
+
+def test_manage_fabric_routed_00050() -> None:
+    """Verify Routed inherits the complete current eBGP management contract."""
+    from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
+        VxlanEbgpManagementModel,
+    )
+
+    assert issubclass(RoutedManagementModel, VxlanEbgpManagementModel)
+    assert set(RoutedManagementModel.model_fields) == set(VxlanEbgpManagementModel.model_fields)
+    assert "bgpAsnRange" in RoutedManagementModel.replacement_preserve_fields
+    assert "fabricPlatformType" in RoutedManagementModel.replacement_preserve_fields
+    assert "fabricPlatformType" in RoutedManagementModel.config_exclude_fields
+    assert RoutedManagementModel.empty_string_means_unset is True
+
+    management = RoutedManagementModel(bgp_asn="65001")
+    assert management.evpn is False
+    assert management.auto_configure_ebgp_evpn_peering is False
+    assert management.assign_ipv4_to_loopback0 is False
+    assert management.network_template == "Routed_Network_Universal"
+    assert management.network_extension_template == "Routed_Network_Universal"
+    assert management.tenant_dhcp is False
+    assert management.next_generation_oam is False
+
+
+@pytest.mark.parametrize(
+    "model_class,fabric_type",
+    ((FabricRoutedModel, "routed"), (FabricAiRoutedModel, "aimlRouted")),
+)
+def test_manage_fabric_routed_00060(model_class, fabric_type) -> None:
+    """Verify both Routed families inherit eBGP secret masking and no-log metadata."""
+    model = model_class.from_config(
+        {
+            "fabric_name": "routed_fabric",
+            "management": {
+                "type": fabric_type,
+                "bgp_asn": "65001",
+                "bgp_authentication_key": "ROUTED_SECRET",
+            },
+        }
+    )
+
+    assert model.to_payload()["management"]["bgpAuthenticationKey"] == "ROUTED_SECRET"
+    assert model.to_config()["management"]["bgp_authentication_key"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+    management_spec = model_class.get_argument_spec()["config"]["options"]["management"]["options"]
+    assert management_spec["bgp_authentication_key"]["no_log"] is True
+
+
+@pytest.mark.parametrize(
+    "model_class,fabric_type,aiml_qos",
+    (
+        (FabricRoutedModel, "routed", False),
+        (FabricAiRoutedModel, "aimlRouted", True),
+    ),
+)
+def test_manage_fabric_routed_00070(model_class, fabric_type, aiml_qos) -> None:
+    """Verify both routed models accept and normalize the live ND Routed defaults."""
+    model = model_class.from_response(
+        {
+            "name": "routed_fabric",
+            "category": "fabric",
+            "management": {
+                "type": fabric_type,
+                "bgpAsn": "65001",
+                "evpn": False,
+                "aimlQos": aiml_qos,
+                "networkTemplate": "Routed_Network_Universal",
+                "networkExtensionTemplate": "Routed_Network_Universal",
+                "nextGenerationOAM": False,
+                "tenantDhcp": False,
+                "nxapiHttp": False,
+                "fabricPlatformType": "nx-os",
+            },
+        }
+    )
+
+    assert model.management is not None
+    assert model.management.evpn is False
+    assert model.management.network_template == "Routed_Network_Universal"
+    assert model.management.network_extension_template == "Routed_Network_Universal"
+    assert model.management.next_generation_oam is False
+    assert model.management.tenant_dhcp is False
+    assert model.management.nxapi_http is False
+    assert "fabricPlatformType" not in model.to_config()["management"]
+
+    proposed = model_class.from_config(
+        {
+            "fabric_name": "routed_fabric",
+            "management": {"type": fabric_type, "bgp_asn": "65001"},
+        }
+    )
+    prepared = proposed.prepare_for_replacement(model)
+    assert prepared.to_payload()["management"]["fabricPlatformType"] == "nx-os"
+
+
+@pytest.mark.parametrize(
+    "model_class,fabric_type",
+    ((FabricRoutedModel, "routed"), (FabricAiRoutedModel, "aimlRouted")),
+)
+def test_manage_fabric_routed_00080(model_class, fabric_type) -> None:
+    """Verify NX-API HTTP drift remains visible for both routed families."""
+    existing = model_class.from_response(
+        {
+            "name": "routed_fabric",
+            "category": "fabric",
+            "management": {
+                "type": fabric_type,
+                "bgpAsn": "65001",
+                "evpn": False,
+                "nxapiHttp": True,
+            },
+        }
+    )
+    proposed = model_class.from_config(
+        {
+            "fabric_name": "routed_fabric",
+            "management": {
+                "type": fabric_type,
+                "bgp_asn": "65001",
+                "nxapi_http": False,
+            },
+        }
+    )
+
+    assert existing.get_diff(proposed, exclude_unset=True) is False

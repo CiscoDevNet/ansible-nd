@@ -1,13 +1,9 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -120,6 +116,8 @@ options:
             description:
             - The BGP ASN range to use for automatic ASN allocation (e.g. C(65000-65535)).
             - Required when O(config.management.bgp_asn_auto_allocation) is C(true).
+            - When O(state=replaced) or O(state=overridden) targets an existing fabric, omitting this option preserves
+              the range allocated by Nexus Dashboard.
             type: str
           bgp_as_mode:
             description:
@@ -144,11 +142,6 @@ options:
             - Enable BGP underlay failure protection.
             type: bool
             default: false
-          auto_configure_ebgp_evpn_peering:
-            description:
-            - Automatically configure eBGP EVPN overlay peering between leaf and spine switches.
-            type: bool
-            default: true
           allow_leaf_same_as:
             description:
             - Allow leaf switches to have the same BGP ASN even when AS mode is Multi-AS.
@@ -156,15 +149,10 @@ options:
             default: false
           assign_ipv4_to_loopback0:
             description:
-            - In an IPv6 routed fabric or VXLAN EVPN fabric with IPv6 underlay, assign IPv4 address
-              used for BGP Router ID to the routing loopback interface.
+            - In an IPv6 routed fabric, assign an IPv4 address used for the BGP Router ID
+              to the routing loopback interface.
             type: bool
-            default: true
-          evpn:
-            description:
-            - Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric.
-            type: bool
-            default: true
+            default: false
           route_map_tag:
             description:
             - Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min 0, Max 4294967295).
@@ -556,9 +544,9 @@ options:
             default: Default_VRF_Universal
           network_template:
             description:
-            - Default overlay network template for leafs.
+            - Default Routed network template for leaf switches.
             type: str
-            default: Default_Network_Universal
+            default: Routed_Network_Universal
           vrf_extension_template:
             description:
             - Default overlay VRF template for borders.
@@ -566,20 +554,15 @@ options:
             default: Default_VRF_Extension_Universal
           network_extension_template:
             description:
-            - Default overlay network template for borders.
+            - Default Routed network template for border switches.
             type: str
-            default: Default_Network_Extension_Universal
+            default: Routed_Network_Universal
           performance_monitoring:
             description:
             - If enabled, switch metrics are collected through periodic SNMP polling.
               Alternative to real-time telemetry.
             type: bool
             default: false
-          tenant_dhcp:
-            description:
-            - Enable tenant DHCP.
-            type: bool
-            default: true
           advertise_physical_ip:
             description:
             - For primary VTEP IP advertisement as next-hop of prefix routes.
@@ -606,7 +589,6 @@ options:
             description:
             - Encrypted BGP authentication key based on type.
             type: str
-            default: ""
           bfd:
             description:
             - Enable BFD. Valid for IPv4 underlay only.
@@ -631,7 +613,6 @@ options:
             description:
             - Encrypted SHA1 secret value.
             type: str
-            default: ""
           pim_hello_authentication:
             description:
             - Enable PIM hello authentication. Valid for IPv4 underlay only.
@@ -641,7 +622,6 @@ options:
             description:
             - PIM hello authentication key. 3DES encrypted.
             type: str
-            default: ""
           nxapi:
             description:
             - Enable NX-API over HTTPS.
@@ -714,17 +694,14 @@ options:
             description:
             - DHCP scope start address for switch POAP.
             type: str
-            default: ""
           dhcp_end_address:
             description:
             - DHCP scope end address for switch POAP.
             type: str
-            default: ""
           management_gateway:
             description:
             - Default gateway for management VRF on the switch.
             type: str
-            default: ""
           management_ipv4_prefix:
             description:
             - Switch management IP subnet prefix for IPv4.
@@ -836,7 +813,6 @@ options:
             description:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
             type: str
-            default: ""
           leaf_tor_id_range:
             description:
             - Use specific vPC/Port-channel ID range for leaf-tor pairings.
@@ -963,12 +939,6 @@ options:
             - NVE source interface hold-down time in seconds.
             type: int
             default: 180
-          next_generation_oam:
-            description:
-            - Enable the Next Generation (NG) OAM feature for all switches in the fabric
-              to aid in troubleshooting VXLAN EVPN fabrics.
-            type: bool
-            default: true
           ngoam_south_bound_loop_detect:
             description:
             - Enable the Next Generation (NG) OAM southbound loop detection.
@@ -1071,7 +1041,6 @@ options:
               (af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43,
               cs1, cs2, cs3, cs4, cs5, cs6, cs7, default, ef).
             type: str
-            default: "26"
           cnp:
             description:
             - DSCP value for Congestion Notification. Numeric (0-63) with ranges/comma, or named values
@@ -1128,7 +1097,6 @@ options:
             - Flowlet aging timer in microseconds. Valid range depends on platform.
               Cloud Scale (CS) 1-2000000 (default 500), Silicon One (S1) 1-1024 (default 256).
             type: int
-            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values
@@ -1153,7 +1121,6 @@ options:
             - Acceptable values from 101 to 1000 (milliseconds).
               Leave blank for system default (100ms).
             type: int
-            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1195,7 +1162,6 @@ options:
             description:
             - MACsec primary key string. Cisco Type 7 encrypted octet string.
             type: str
-            default: ""
           macsec_algorithm:
             description:
             - MACsec primary cryptographic algorithm. AES_128_CMAC or AES_256_CMAC.
@@ -1206,7 +1172,6 @@ options:
             description:
             - MACsec fallback key string. Cisco Type 7 encrypted octet string.
             type: str
-            default: ""
           macsec_fallback_algorithm:
             description:
             - MACsec fallback cryptographic algorithm. AES_128_CMAC or AES_256_CMAC.
@@ -1358,10 +1323,13 @@ options:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new fabrics and update existing ones as defined in the configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-    - Use O(state=replaced) to replace the fabric configuration specified in the configuration.
-      Any settings not explicitly provided will revert to their defaults.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      Any fabric existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=replaced) to replace the supported configuration of each fabric specified in O(config).
+      Omitted settings revert to their documented defaults except for dynamic or controller-owned settings identified
+      by the module for preservation; those settings retain their existing values. Explicitly supplied values take precedence.
+    - See O(config.management.bgp_asn_range) for option-specific preservation behavior.
+    - Use O(state=overridden) to apply the same per-fabric replacement behavior and enforce O(config) as the complete
+      inventory for this fabric type. Existing fabrics of this type that are absent from O(config) are deleted.
+      Use with extra caution.
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
@@ -1399,7 +1367,8 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only AI/ML Routed fabric type (C(aimlRouted)) is supported by this module.
-- When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
+- With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
+  dynamic or controller-owned values, which are preserved from an existing fabric.
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 - The default O(config.management.vpc_peer_keep_alive_option) for Routed fabrics is C(management), unlike iBGP fabrics.
 """
@@ -1409,7 +1378,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ai_routed:
     state: merged
     config:
-      - fabric_name: my_ai_ebgp_fabric
+      - fabric_name: my_ai_routed_fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1418,6 +1387,7 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
+          bgp_asn: "65001"
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65535"
           bgp_as_mode: multiAS
@@ -1442,13 +1412,12 @@ EXAMPLES = r"""
           bgp_loopback_id: 0
           nve_loopback_id: 1
           vrf_template: Default_VRF_Universal
-          network_template: Default_Network_Universal
+          network_template: Routed_Network_Universal
           vrf_extension_template: Default_VRF_Extension_Universal
-          network_extension_template: Default_Network_Extension_Universal
+          network_extension_template: Routed_Network_Universal
           l3_vni_no_vlan_default_option: false
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
-          tenant_dhcp: true
           nxapi: false
           nxapi_https_port: 443
           nxapi_http: false
@@ -1478,9 +1447,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
   register: result
 
@@ -1488,7 +1454,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ai_routed:
     state: merged
     config:
-      - fabric_name: my_ai_ebgp_fabric_static
+      - fabric_name: my_ai_routed_fabric_static
         management:
           bgp_asn: "65001"
           bgp_asn_auto_allocation: false
@@ -1512,8 +1478,9 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ai_routed:
     state: merged
     config:
-      - fabric_name: my_ai_ebgp_fabric
+      - fabric_name: my_ai_routed_fabric
         management:
+          bgp_asn: "65001"
           bgp_asn_range: "65100-65199"
           anycast_gateway_mac: "2020.0000.00bb"
           performance_monitoring: true
@@ -1523,7 +1490,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ai_routed:
     state: replaced
     config:
-      - fabric_name: my_ai_ebgp_fabric
+      - fabric_name: my_ai_routed_fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1552,7 +1519,6 @@ EXAMPLES = r"""
           vpc_domain_id_range: "1-800"
           fabric_mtu: 9000
           l2_host_interface_mtu: 9000
-          tenant_dhcp: false
           snmp_trap: false
           anycast_border_gateway_advertise_physical_ip: true
           greenfield_debug_flag: disable
@@ -1570,11 +1536,11 @@ EXAMPLES = r"""
           banner: "^ Managed by Ansible ^"
   register: result
 
-- name: Replace fabric with only required fields (all optional settings revert to defaults)
+- name: Replace fabric with only required fields
   cisco.nd.nd_manage_fabric_ai_routed:
     state: replaced
     config:
-      - fabric_name: my_ai_ebgp_fabric
+      - fabric_name: my_ai_routed_fabric
         management:
           bgp_asn: "65004"
           bgp_asn_auto_allocation: false
@@ -1642,7 +1608,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ai_routed:
     state: deleted
     config:
-      - fabric_name: my_ai_ebgp_fabric
+      - fabric_name: my_ai_routed_fabric
   register: result
 
 - name: Delete multiple AI/ML Routed fabrics in a single task
@@ -1663,28 +1629,28 @@ changed:
     sample: true
 before:
     description:
-    - AI/ML Routed fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported AI/ML Routed fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
-    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65001"}}]
+    sample: [{"fabric_name": "ai_routed_fabric", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - AI/ML Routed fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported AI/ML Routed fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
-    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_routed_fabric", "management": {"bgp_asn": "65002"}}]
 diff:
     description: Configuration differences between before and after states.
     type: list
     returned: always
-    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_routed_fabric", "management": {"bgp_asn": "65002"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
     returned: info or debug output_level
-    sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
+    sample: [{"fabric_name": "ai_routed_fabric", "management": {"bgp_asn": "65002"}}]
 output_level:
     description: The output level set for the module.
     type: str
@@ -1699,7 +1665,7 @@ api_paths:
     description: API endpoint paths used during operations.
     type: list
     returned: verbosity >= 2 (-vv)
-    sample: ["/api/v1/manage/fabrics/ai_ebgp_fabric"]
+    sample: ["/api/v1/manage/fabrics/ai_routed_fabric"]
 api_verbs:
     description: HTTP methods used during operations.
     type: list
@@ -1736,6 +1702,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_routed import ManageAiRoutedFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 
 
 def main():
@@ -1752,14 +1721,14 @@ def main():
     # Parse and validate config_actions BEFORE any state mutation so invalid
     # input fails deterministically on every run, including idempotent no-drift
     # runs, and never mutates ND before failing.
-    config_actions = module.params.get("config_actions") or {}
-    save = config_actions.get("save", False)
-    deploy = config_actions.get("deploy", False)
-    deploy_type = config_actions.get("type", "switch")
     state = module.params.get("state", "merged")
-
     try:
-        ManageAiRoutedFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
     except ValueError as e:
         module.fail_json(msg=str(e))
 
@@ -1774,7 +1743,7 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        # Execute config save/deploy actions via the shared controller (only on real changes)
         if state != "deleted" and len(nd_state_machine.sent) > 0:
             fabric_names = []
             for item in nd_state_machine.sent:
@@ -1782,11 +1751,11 @@ def main():
                 if name and name not in fabric_names:
                     fabric_names.append(name)
             if fabric_names:
-                nd_state_machine.model_orchestrator.execute_config_actions(
+                nd_state_machine.model_orchestrator.run_config_actions(
+                    actions=config_actions,
                     fabric_names=fabric_names,
-                    save=save,
-                    deploy=deploy,
-                    deploy_type=deploy_type,
+                    state=state,
+                    check_mode=module.check_mode,
                 )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0

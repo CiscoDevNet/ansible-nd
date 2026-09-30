@@ -19,6 +19,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import (
     FabricAiIbgpVxlanModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_routed import (
+    FabricAiRoutedModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
     FabricEbgpModel,
 )
@@ -28,6 +31,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import (
     FabricIbgpModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_routed import (
+    FabricRoutedModel,
+)
 
 FABRIC_CASES = (
     (FabricExternalConnectivityModel, "externalConnectivity", "aiMonitoring", True),
@@ -35,11 +41,15 @@ FABRIC_CASES = (
     (FabricEbgpModel, "vxlanEbgp", "borderCount", 0),
     (FabricAiIbgpVxlanModel, "aimlVxlanIbgp", "borderCount", 0),
     (FabricAiEbgpVxlanModel, "aimlVxlanEbgp", "borderCount", 0),
+    (FabricRoutedModel, "routed", "borderCount", 0),
+    (FabricAiRoutedModel, "aimlRouted", "borderCount", 0),
 )
 
 EBGP_CASES = (
     (FabricEbgpModel, "vxlanEbgp"),
     (FabricAiEbgpVxlanModel, "aimlVxlanEbgp"),
+    (FabricRoutedModel, "routed"),
+    (FabricAiRoutedModel, "aimlRouted"),
 )
 
 IBGP_CASES = (
@@ -87,7 +97,7 @@ def test_manage_fabric_replacement_00010(model_class, fabric_type, opaque_key, o
     - NDBaseModel.to_config()
     """
     management = {opaque_key: opaque_value}
-    if "Ebgp" in model_class.__name__:
+    if "Ebgp" in model_class.__name__ or "Routed" in model_class.__name__:
         management["bgpAsnRange"] = "3001-4000"
     if "Ibgp" in model_class.__name__:
         management.update(
