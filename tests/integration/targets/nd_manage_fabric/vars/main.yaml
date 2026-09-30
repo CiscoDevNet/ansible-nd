@@ -539,11 +539,15 @@ fabric_config_routed_unsupported_options:
   - auto_configure_ebgp_evpn_peering
   - tenant_dhcp
   - next_generation_oam
+  - per_vrf_loopback_auto_provision
+  - per_vrf_loopback_auto_provision_ipv6
 
 fabric_config_routed_management_overrides:
   assign_ipv4_to_loopback0: false
   network_template: Routed_Network_Universal
   network_extension_template: Routed_Network_Universal
+
+fabric_config_ai_routed_unsupported_options: "{{ fabric_config_routed_unsupported_options + ['nxapi_http'] }}"
 
 fabric_config_routed: >-
   {{
@@ -566,7 +570,7 @@ fabric_config_ai_routed: >-
         'management': (
           fabric_config_ai_ebgp.management
           | dict2items
-          | rejectattr('key', 'in', fabric_config_routed_unsupported_options)
+          | rejectattr('key', 'in', fabric_config_ai_routed_unsupported_options)
           | list
           | items2dict
           | combine(fabric_config_routed_management_overrides)

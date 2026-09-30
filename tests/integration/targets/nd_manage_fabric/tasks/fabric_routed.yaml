@@ -75,7 +75,6 @@
       - fabric_name: "{{ routed_test_fabric_merged }}"
         management:
           bgp_asn: "65001"
-          anycast_gateway_mac: "2020.0000.00bb"
           performance_monitoring: true
   register: merged_result_3
   tags: [test_merged, test_merged_update]
@@ -132,18 +131,16 @@
     merged_fabric_config: "{{ merged_fabric_query.json }}"
   tags: [test_merged, test_merged_validation]
 
-- name: "VALIDATION: Verify fabric type is routed and changed properties applied"
+- name: "VALIDATION: Verify fabric type and mutable update were applied"
   assert:
     that:
       - merged_fabric_config.management.type == "routed"
-      - merged_fabric_config.management.anycastGatewayMac == "2020.0000.00bb"
       - merged_fabric_config.management.performanceMonitoring == true
     fail_msg: >-
       Routed fabric validation failed.
       type: {{ merged_fabric_config.management.type }} (expected routed),
-      anycastGatewayMac: {{ merged_fabric_config.management.anycastGatewayMac }} (expected 2020.0000.00bb),
       performanceMonitoring: {{ merged_fabric_config.management.performanceMonitoring }} (expected true)
-    success_msg: "Routed fabric type and changed properties validated"
+    success_msg: "Routed fabric type and mutable update validated"
   tags: [test_merged, test_merged_validation]
 
 #############################################################################

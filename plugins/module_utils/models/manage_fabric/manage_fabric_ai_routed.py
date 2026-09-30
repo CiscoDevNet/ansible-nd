@@ -20,7 +20,8 @@ This module provides Pydantic models for creating, updating, and deleting
 AI Routed fabrics through the Nexus Dashboard (ND) API.
 
 The AI Routed fabric type (aimlRouted) shares the standard Routed management
-contract and adds the fixed AI QoS invariant alongside its type discriminator.
+contract and adds fixed AI QoS and NX-API HTTP invariants alongside its type
+discriminator.
 
 ## Models
 
@@ -36,7 +37,7 @@ class AimlRoutedManagementModel(RoutedManagementModel):
     AI Routed fabric management configuration.
 
     Inherits all properties from RoutedManagementModel, changes the type
-    discriminator to `aimlRouted`, and fixes AI QoS on.
+    discriminator to `aimlRouted`, and fixes AI QoS and NX-API HTTP on.
 
     ## Raises
 
@@ -50,6 +51,12 @@ class AimlRoutedManagementModel(RoutedManagementModel):
     aiml_qos: Literal[True] = Field(
         alias="aimlQos",
         description="Always enabled for AI Routed fabrics.",
+        default=True,
+        frozen=True,
+    )
+    nxapi_http: Literal[True] = Field(
+        alias="nxapiHttp",
+        description="NX-API over HTTP is always enabled for AI Routed fabrics.",
         default=True,
         frozen=True,
     )

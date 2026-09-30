@@ -75,7 +75,6 @@
       - fabric_name: "{{ ai_routed_test_fabric_merged }}"
         management:
           bgp_asn: "65001"
-          anycast_gateway_mac: "2020.0000.00bb"
           performance_monitoring: true
   register: merged_result_3
   tags: [test_merged, test_merged_update]
@@ -137,13 +136,11 @@
     that:
       - merged_fabric_config.management.type == "aimlRouted"
       - merged_fabric_config.management.aimlQos == true
-      - merged_fabric_config.management.anycastGatewayMac == "2020.0000.00bb"
       - merged_fabric_config.management.performanceMonitoring == true
     fail_msg: >-
       AI Routed fabric validation failed.
       type: {{ merged_fabric_config.management.type }} (expected aimlRouted),
       aimlQos: {{ merged_fabric_config.management.aimlQos }} (expected true),
-      anycastGatewayMac: {{ merged_fabric_config.management.anycastGatewayMac }} (expected 2020.0000.00bb),
       performanceMonitoring: {{ merged_fabric_config.management.performanceMonitoring }} (expected true)
     success_msg: "AI Routed fabric type and AI QoS validated"
   tags: [test_merged, test_merged_validation]

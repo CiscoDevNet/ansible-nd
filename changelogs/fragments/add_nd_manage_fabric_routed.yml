@@ -2,4 +2,4 @@
 minor_changes:
   - Add ``nd_manage_fabric_routed`` module to manage Routed (``routed``) fabrics on Nexus Dashboard.
   - Add ``nd_manage_fabric_ai_routed`` module to manage AI/ML Routed (``aimlRouted``) fabrics on Nexus Dashboard.
-  - Align both Routed fabric modules with the shared fabric config-action, replacement-preservation, secret-masking, and documentation contracts, including Routed-specific non-EVPN defaults.
+  - Align both Routed fabric modules with the shared fabric config-action, replacement-preservation, secret-masking, and documentation contracts, including controller-enforced non-EVPN and per-VRF loopback defaults, preservation of the immutable ND 4.3 anycast gateway MAC, and the AI Routed NX-API HTTP invariant.

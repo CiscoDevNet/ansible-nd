@@ -97,6 +97,7 @@ options:
         description:
         - The AI/ML Routed management configuration for the fabric.
         - AI QoS (aimlQos) is always enabled for AI/ML fabrics and is not user-configurable in this module.
+        - NX-API over HTTP (nxapiHttp) is always enabled by Nexus Dashboard and is not user-configurable in this module.
         - Properties are grouped by template section for readability in the module documentation source.
         type: dict
         suboptions:
@@ -375,6 +376,7 @@ options:
           anycast_gateway_mac:
             description:
             - Shared anycast gateway MAC address for all VTEPs in xxxx.xxxx.xxxx format.
+            - Live ND 4.3 treats this value as immutable after fabric creation.
             type: str
             default: 2020.0000.00aa
           fabric_mtu:
@@ -515,23 +517,11 @@ options:
             - Enable the vPC peer-switch feature on ToR switches.
             type: bool
             default: false
-          per_vrf_loopback_auto_provision:
-            description:
-            - Auto provision an IPv4 loopback on a VTEP on VRF attachment.
-            - Enabling this option auto-provisions loopback on existing VRF attachments and also
-              when Edit, QuickAttach, or Multiattach actions are performed.
-            type: bool
-            default: false
           per_vrf_loopback_ip_range:
             description:
             - Prefix pool to assign IPv4 addresses to loopbacks on VTEPs on a per VRF basis.
             type: str
             default: "10.5.0.0/22"
-          per_vrf_loopback_auto_provision_ipv6:
-            description:
-            - Auto provision an IPv6 loopback on a VTEP on VRF attachment.
-            type: bool
-            default: false
           per_vrf_loopback_ipv6_range:
             description:
             - Prefix pool to assign IPv6 addresses to loopbacks on VTEPs on a per VRF basis.
@@ -627,11 +617,6 @@ options:
             - Enable NX-API over HTTPS.
             type: bool
             default: true
-          nxapi_http:
-            description:
-            - Enable NX-API over HTTP.
-            type: bool
-            default: false
           nxapi_https_port:
             description:
             - HTTPS port for NX-API (1-65535).
@@ -1420,7 +1405,6 @@ EXAMPLES = r"""
           l2_host_interface_mtu: 9216
           nxapi: false
           nxapi_https_port: 443
-          nxapi_http: false
           nxapi_http_port: 80
           snmp_trap: true
           anycast_border_gateway_advertise_physical_ip: false
@@ -1441,7 +1425,6 @@ EXAMPLES = r"""
           vrf_lite_subnet_range: "10.33.0.0/16"
           vrf_lite_subnet_target_mask: 30
           auto_unique_vrf_lite_ip_prefix: false
-          per_vrf_loopback_auto_provision: true
           per_vrf_loopback_ip_range: "10.5.0.0/22"
           banner: ""
           day0_bootstrap: false
@@ -1482,7 +1465,6 @@ EXAMPLES = r"""
         management:
           bgp_asn: "65001"
           bgp_asn_range: "65100-65199"
-          anycast_gateway_mac: "2020.0000.00bb"
           performance_monitoring: true
   register: result
 
@@ -1504,7 +1486,6 @@ EXAMPLES = r"""
           site_id: "65004"
           bgp_as_mode: multiAS
           target_subnet_mask: 30
-          anycast_gateway_mac: "2020.0000.00dd"
           performance_monitoring: true
           replication_mode: multicast
           multicast_group_subnet: "239.1.3.0/25"
