@@ -474,6 +474,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             if name in names_now and name not in names_before:
                 created.append(item.interface_name)
         return created
+
     def _enforce_gathered_query_limits(
         self,
         query_plan: dict[str, tuple[str, set[str]]],
