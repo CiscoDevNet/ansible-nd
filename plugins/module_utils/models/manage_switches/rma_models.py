@@ -52,10 +52,10 @@ class RMASwitchModel(NDBaseModel):
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
-    image_policy: str | None = Field(
+    software_image: str | None = Field(
         default=None,
-        alias="imagePolicy",
-        description="Image policy associated with the switch during bootstrap",
+        alias="softwareImage",
+        description="Software image file for the bootstrap switch",
     )
     switch_role: SwitchRole | None = Field(default=None, alias="switchRole")
 
@@ -143,7 +143,7 @@ class RMASwitchModel(NDBaseModel):
 
     def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
-        return self.model_dump(by_alias=True, exclude_none=True)
+        return self.model_dump(by_alias=True, exclude_none=True, exclude={"old_switch_id"})
 
     @classmethod
     def from_response(cls, response: dict[str, Any]) -> "RMASwitchModel":

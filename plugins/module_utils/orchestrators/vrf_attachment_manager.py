@@ -35,6 +35,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_at
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
+    DeleteReadinessPolicy,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -54,8 +57,12 @@ class VrfAttachmentManager:
     """
 
     clear_vlan_id_intent_key = "_clearVlanId"
-    delete_wait_delay = 5
+    delete_wait_delay = 15
     delete_wait_chunk_size = 30
+    delete_wait_base_timeout = 600
+    delete_wait_extra_chunk_timeout = 30
+    delete_wait_max_timeout = 900
+    undeploy_retry_attempts = 3
     attachment_query_page_size = 10000
 
     def __init__(self, coordinator: Any):
@@ -246,14 +253,7 @@ class VrfAttachmentManager:
     @staticmethod
     def attachment_has_pending_delete_work(attachment: dict[str, Any]) -> bool:
         """Return True for an already-detached row that still needs deploy."""
-        pending_statuses = {
-            "deploymentInProgress",
-            "failed",
-            "inProgress",
-            "outOfSync",
-            "pending",
-            "previewInProgress",
-        }
+        pending_statuses = {"deploymentinprogress", "failed", "inprogress", "outofsync", "pending", "previewinprogress"}
         for key in (
             "status",
             "configStatus",
@@ -262,9 +262,35 @@ class VrfAttachmentManager:
             "attachmentStatus",
         ):
             status = attachment.get(key)
-            if status is not None and str(status).strip() in pending_statuses:
+            if status is not None and VrfAttachmentManager._status_value(status).lower() in pending_statuses:
                 return True
         return False
+
+    @staticmethod
+    def attachment_status(attachment: dict[str, Any]) -> str:
+        """Return the first attachment status value exposed by the controller."""
+        for key in ("status", "configStatus", "deploymentStatus", "vrfStatus", "attachmentStatus"):
+            status = attachment.get(key)
+            if status is not None:
+                return VrfAttachmentManager._status_value(status)
+        return ""
+
+    @staticmethod
+    def _status_value(status: Any) -> str:
+        """Return the plain API status string from raw strings or enum values."""
+        return str(getattr(status, "value", status) or "").strip()
+
+    @staticmethod
+    def attachment_blocks_delete(attachment: dict[str, Any]) -> bool:
+        """Return True when an attachment row still prevents VRF deletion."""
+        attach = attachment.get("attach")
+        if attach is True or str(attach).strip().lower() == "true":
+            return True
+        status = VrfAttachmentManager.attachment_status(attachment).lower()
+        if not status:
+            return False
+        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
+        return status not in terminal_statuses
 
     def desired_attachment_map(
         self,
@@ -279,7 +305,7 @@ class VrfAttachmentManager:
         for vrf in config:
             vrf_name = vrf.get("vrf_name") or vrf.get("vrfName")
             for attachment in vrf.get("attach") or []:
-                ip_address = attachment.get("ip_address") or attachment.get("ipAddress")
+                ip_address = attachment.get("ip_address")
                 switch_id = ip_to_switch.get(ip_address)
                 if not vrf_name or not switch_id:
                     continue
@@ -323,7 +349,7 @@ class VrfAttachmentManager:
         wanted_ips: set[str] = set()
         for vrf in config:
             for attachment in vrf.get("attach") or []:
-                ip_address = attachment.get("ip_address") or attachment.get("ipAddress")
+                ip_address = attachment.get("ip_address")
                 if ip_address:
                     wanted_ips.add(ip_address)
 
@@ -798,18 +824,46 @@ class VrfAttachmentManager:
         strategy: BaseVrfStrategy,
         vrf_names: list[str] | None = None,
     ) -> None:
-        """Wait until configured VRFs are absent or in notApplicable state."""
+        """Wait until VRF attachments and VRF definitions no longer block deletion."""
         pending_vrf_names = set(vrf_names if vrf_names is not None else configured_vrf_names(module_args.get("config") or []))
         if not pending_vrf_names:
             return
 
-        timeout = self._delete_wait_timeout(module_args, len(pending_vrf_names))
-        deadline = time.time() + timeout
-        ready_statuses = {"notApplicable", "NA", "na", ""}
+        deadline, timeout = self._delete_wait_deadline(len(pending_vrf_names))
+        started_at = DeleteReadinessPolicy.now()
+        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
+        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress"}
         last_statuses: dict[str, str] = {}
+        last_blockers: dict[str, list[dict[str, Any]]] = {}
+        retried_targets: dict[tuple[str, str, str], int] = {}
+        retried_vrfs: dict[str, int] = {}
 
         while pending_vrf_names:
-            vrfs = self.coordinator._query_current_vrfs(module_args, strategy)
+            attachments = self.current_attachment_details_ignore_missing(module_args, strategy, sorted(pending_vrf_names))
+            blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending_vrf_names}
+            attachment_retry_targets: dict[str, set[str]] = {}
+            for attachment in attachments:
+                vrf_name = attachment.get("vrfName")
+                if vrf_name not in pending_vrf_names:
+                    continue
+                if self.attachment_blocks_delete(attachment):
+                    switch_id = attachment.get("switchId")
+                    status = self.attachment_status(attachment)
+                    blockers.setdefault(vrf_name, []).append(
+                        {
+                            "switchId": switch_id,
+                            "attach": attachment.get("attach"),
+                            "status": status,
+                        }
+                    )
+                    retry_key = (vrf_name, switch_id or "", status.lower())
+                    if retried_targets.get(retry_key, 0) < self.undeploy_retry_attempts:
+                        attachment_retry_targets.setdefault(vrf_name, set())
+                        if switch_id:
+                            attachment_retry_targets[vrf_name].add(switch_id)
+                        retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
+
+            vrfs = self.coordinator._query_current_vrfs_by_names(module_args, strategy, sorted(pending_vrf_names))
             last_statuses = {}
             for vrf in vrfs:
                 name = vrf.get("vrf_name") or vrf.get("vrfName")
@@ -817,20 +871,61 @@ class VrfAttachmentManager:
                     status = vrf.get("vrf_status") or vrf.get("vrfStatus") or ""
                     last_statuses[name] = str(status)
 
-            ready_vrf_names = {name for name in pending_vrf_names if name not in last_statuses or last_statuses[name] in ready_statuses}
+            vrf_retry_targets = {
+                name: set()
+                for name, status in last_statuses.items()
+                if (name in pending_vrf_names and retried_vrfs.get(name, 0) < self.undeploy_retry_attempts and str(status).strip().lower() in retry_statuses)
+            }
+            retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, vrf_retry_targets)
+            if retry_targets:
+                for deploy_payload in self.build_deploy_payloads(module_args.get("config") or [], retry_targets):
+                    self.deploy_vrf_attachments(module_args, strategy, deploy_payload)
+                for vrf_name in vrf_retry_targets:
+                    retried_vrfs[vrf_name] = retried_vrfs.get(vrf_name, 0) + 1
+
+            ready_vrf_names = {
+                name
+                for name in pending_vrf_names
+                if not blockers.get(name) and (name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses)
+            }
             pending_vrf_names.difference_update(ready_vrf_names)
             if not pending_vrf_names:
                 return
+            last_blockers = {name: values for name, values in blockers.items() if name in pending_vrf_names and values}
 
-            if time.time() >= deadline:
+            if DeleteReadinessPolicy.now() >= deadline:
                 self.coordinator.module.fail_json(
-                    msg=("Timed out waiting for VRFs to become deletable after " f"detach deployment on fabric '{strategy.fabric_name}': " f"{last_statuses}")
+                    msg=("Timed out waiting for VRFs to become deletable after " f"detach deployment on fabric '{strategy.fabric_name}'."),
+                    pending_vrf_names=sorted(pending_vrf_names),
+                    last_statuses=last_statuses,
+                    last_attachment_blockers=last_blockers,
+                    elapsed_seconds=int(DeleteReadinessPolicy.now() - started_at),
+                    timeout_seconds=timeout,
                 )
             time.sleep(self.delete_wait_delay)
 
-    def _delete_wait_timeout(self, module_args: dict, item_count: int) -> int:
-        extra_chunks = max(0, (max(item_count, 1) - 1) // self.delete_wait_chunk_size)
-        return min(900, 30 + (extra_chunks * self.delete_wait_delay))
+    @staticmethod
+    def _merge_deploy_target_maps(*target_maps: dict[str, set[str]]) -> dict[str, set[str]]:
+        merged: dict[str, set[str]] = {}
+        for target_map in target_maps:
+            for vrf_name, switch_ids in target_map.items():
+                merged.setdefault(vrf_name, set()).update(switch_ids)
+        return merged
+
+    def _delete_wait_timeout(self, item_count: int) -> int:
+        return self._delete_wait_policy().timeout_for(item_count)
+
+    def _delete_wait_deadline(self, item_count: int) -> tuple[float, int]:
+        return self._delete_wait_policy().deadline_for(item_count)
+
+    def _delete_wait_policy(self) -> DeleteReadinessPolicy:
+        return DeleteReadinessPolicy(
+            poll_interval=self.delete_wait_delay,
+            chunk_size=self.delete_wait_chunk_size,
+            base_timeout=self.delete_wait_base_timeout,
+            extra_chunk_timeout=self.delete_wait_extra_chunk_timeout,
+            max_timeout=self.delete_wait_max_timeout,
+        )
 
     def deploy_vrf_attachments(
         self,

@@ -144,6 +144,7 @@ options:
                 - Bootstrap POAP config for the switch.
                 - C(serial_number) and C(hostname) are mandatory.
                 - Model, version, and config data are sourced from the bootstrap API at runtime.
+                - C(software_image) can be provided to select the software image used during POAP import.
                 - If the bootstrap API reports a different hostname or role, the API value
                   overrides the user-provided value and a warning is logged.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
@@ -171,9 +172,10 @@ options:
                         description:
                         - Password for device discovery during POAP.
                         type: str
-                    image_policy:
+                    software_image:
                         description:
-                        - Name of the image policy to be applied on the switch.
+                        - Software image file to use during POAP import.
+                        - When omitted, no software image override is requested.
                         type: str
             preprovision:
                 description:
@@ -214,10 +216,6 @@ options:
                         - Hostname for the switch during pre-provision.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Image policy to apply during pre-provision.
-                        type: str
                     config_data:
                         description:
                         - Basic configuration data for the switch during Pre-provision.
@@ -252,10 +250,6 @@ options:
                         - Serial number of the replacement switch in the POAP/bootstrap loop.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Name of the image policy to be applied on the replacement switch.
-                        type: str
                     discovery_username:
                         description:
                         - Username for device discovery during RMA bootstrap.
@@ -353,7 +347,6 @@ EXAMPLES = """
           model: N9K-C93180YC-EX
           version: "10.3(1)"
           hostname: leaf-preprov
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
           config_data:
@@ -373,9 +366,9 @@ EXAMPLES = """
         poap:
           serial_number: SAL5678EFGH
           hostname: leaf-bootstrap
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
+          software_image: nxos64-cs.10.6.4.M.bin
     state: merged
 
 - name: Swap serial number on a pre-provisioned switch (POAP swap)
@@ -400,7 +393,6 @@ EXAMPLES = """
         password: "{{ switch_password }}"
         rma:
           - new_serial_number: SAL9999ZZZZ
-            image_policy: my-image-policy
             discovery_username: root
             discovery_password: "{{ discovery_password }}"
     state: merged
@@ -421,6 +413,132 @@ EXAMPLES = """
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed switch inventory, credentials, role, save, or deploy state.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+    - Switch inventory present in the fabric before the operation.
+    - Structured in the same user-facing form as O(config) where possible.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+after:
+  description:
+    - Switch inventory present in the fabric after the operation.
+    - In check mode, the inventory that would result had the module run outside check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+diff:
+  description: Switch inventory changes calculated by the module.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      _action: added
+proposed:
+  description: Switch configuration proposed by the module before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug), and in check mode when proposed switch changes exist
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+gathered:
+  description: Switch inventory returned by the controller in user-facing config format.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample:
+    - "Handling merged state"
+msg:
+  description: Human-readable status or failure message.
+  returned: on failure and on selected no-op paths
+  type: str
+  sample: "No switches to merge - fabric already matches desired config"
+api_paths:
+  description: REST API paths called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+  sample:
+    - /api/v1/manage/fabrics/fab1/switches
+api_verbs:
+  description: REST API verbs called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+  sample:
+    - POST
+api_payload:
+  description: REST request payloads sent to ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - switches:
+        - switchRole: leaf
+          preserveConfig: false
+api_response:
+  description: Raw normalized REST responses returned by ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - RETURN_CODE: 200
+      MESSAGE: OK
+api_result:
+  description: Response-handler result for each REST call.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - success: true
+      changed: true
+api_diff:
+  description: Per-REST-call diff data recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+api_metadata:
+  description: Per-REST-call metadata recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - action: discover
+      state: merged
 """
 
 import logging
