@@ -1,0 +1,9 @@
+# Consul-managed patch template.
+#
+# Replace this file with a valid unified Git diff generated from the
+# ansible-nd checkout before enabling ENABLE_PATCH in Jenkins. For example:
+#
+#   git diff --binary > patch.git.diff
+#
+# The Jenkins patch mode validates and applies the diff with `git apply`.
+# A comment-only template is intentionally rejected when patch mode is enabled.

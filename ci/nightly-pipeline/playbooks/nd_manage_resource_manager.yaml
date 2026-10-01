@@ -1,0 +1,58 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_resource_manager.
+# Resource gather/create is pool- and scope-specific (pool_name/pool_type must
+# match your fabric's pools), so this is opt-in. Set rm_pool_name + rm_pool_type
+# to gather a fabric-scoped resource; see the commented create/delete example.
+- name: cisco.nd nightly - nd_manage_resource_manager
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_resource_manager
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    # rm_pool_name: L3_VNI
+    # rm_pool_type: ID
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Note when resource pool vars are not set
+      ansible.builtin.debug:
+        msg: "Set rm_pool_name / rm_pool_type to exercise nd_manage_resource_manager. Skipping."
+      when: rm_pool_name is not defined
+
+    - name: Gather a fabric-scoped resource
+      cisco.nd.nd_manage_resource_manager:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+        config:
+          - entity_name: ANSIBLE_NIGHTLY_RES
+            pool_type: "{{ rm_pool_type }}"
+            pool_name: "{{ rm_pool_name }}"
+            scope_type: fabric
+      when: rm_pool_name is defined
+
+    # Real create/delete (fabric-scoped ID resource). Enable with valid pool values.
+    # - name: Create a fabric-scoped ID resource
+    #   cisco.nd.nd_manage_resource_manager:
+    #     fabric_name: "{{ nd_fabric_name }}"
+    #     state: merged
+    #     config:
+    #       - entity_name: ANSIBLE_NIGHTLY_RES
+    #         pool_type: ID
+    #         pool_name: L3_VNI
+    #         scope_type: fabric
+    #         resource: "51999"
+    # - name: Delete the resource
+    #   cisco.nd.nd_manage_resource_manager:
+    #     fabric_name: "{{ nd_fabric_name }}"
+    #     state: deleted
+    #     config:
+    #       - entity_name: ANSIBLE_NIGHTLY_RES
+    #         pool_type: ID
+    #         pool_name: L3_VNI
+    #         scope_type: fabric

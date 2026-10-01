@@ -1,0 +1,83 @@
+---
+# admin_up_interface: ensure ONE physical interface is administratively up (no-shutdown).
+#
+# Reusable, idempotent, best-effort helper included by the link/interface prerequisites
+# so that a module which needs an inter-fabric link (e.g. l3out / ext_l3_dci_link) can
+# self-heal an accidentally-shut endpoint before failing on "physical link not found".
+#
+# NDFC has no dedicated admin-state endpoint: admin state lives in the interface POLICY
+# as the `ADMIN_STATE` nvPair. So we GET the interface's current policy, flip ADMIN_STATE
+# to "true" while preserving every other nvPair (via `combine`), PUT it back through the
+# globalInterface API and deploy. Re-applying an already-up interface is a no-op.
+#
+# Contract -- the caller passes a single dict `_auif`:
+#   _auif.serial  : switch serial number (e.g. 9PICV0LTD7C)
+#   _auif.ifname  : interface name       (e.g. Ethernet1/1)
+#   _auif.label   : human label for logs (e.g. vxlan_leaf_1/Ethernet1/1)
+#
+# Non-fatal: if the interface has no policy object (undiscovered port) it is skipped with
+# a debug note; deploy/PUT are not hard-asserted (the caller re-probes the link and owns
+# the final verdict).
+
+- name: "admin_up guard {{ _auif.label }} is an allowlisted physical interface"
+  ansible.builtin.assert:
+    that:
+      - _auif.ifname is match('^Ethernet[0-9]+/[0-9]+$')
+    fail_msg: "Refusing to admin-up a non-physical/allowlisted interface: {{ _auif.label }}"
+
+- name: "admin_up GET current policy for {{ _auif.label }}"
+  cisco.nd.nd_rest:
+    path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{ _auif.serial }}&ifName={{ _auif.ifname }}"
+    method: get
+  register: _auif_get
+  no_log: true
+
+- name: "admin_up normalize the returned policy object for {{ _auif.label }}"
+  ansible.builtin.set_fact:
+    _auif_list: >-
+      {{ (_auif_get.current)
+         if (_auif_get.current is not mapping)
+         else (_auif_get.current.DATA | default(_auif_get.current.response | default([]))) }}
+
+- name: "admin_up resolve the single policy block for {{ _auif.label }}"
+  ansible.builtin.set_fact:
+    _auif_obj: "{{ _auif_list[0] if ((_auif_list | default([])) | length) > 0 else {} }}"
+
+- name: "admin_up skip {{ _auif.label }} (no policy object -- undiscovered/unmanaged port)"
+  ansible.builtin.debug:
+    msg: >-
+      No interface policy returned for {{ _auif.label }}; cannot admin-up via globalInterface
+      (the port is likely undiscovered). Skipping -- physical cabling is still required.
+  when: (_auif_obj | length) == 0
+
+- name: "admin_up apply ADMIN_STATE=true (no-shutdown) for {{ _auif.label }}"
+  when: (_auif_obj | length) > 0
+  block:
+    - name: "admin_up PUT globalInterface (preserve policy, force ADMIN_STATE=true) {{ _auif.label }}"
+      cisco.nd.nd_rest:
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/globalInterface"
+        method: put
+        content:
+          - policy: "{{ _auif_obj.policy }}"
+            interfaces:
+              - serialNumber: "{{ _auif.serial }}"
+                ifName: "{{ _auif.ifname }}"
+                nvPairs: "{{ _auif_obj.interfaces[0].nvPairs | combine({'ADMIN_STATE': 'true'}) }}"
+      register: _auif_put
+      failed_when: false
+
+    - name: "admin_up POST globalInterface/deploy for {{ _auif.label }}"
+      cisco.nd.nd_rest:
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/globalInterface/deploy"
+        method: post
+        content:
+          - serialNumber: "{{ _auif.serial }}"
+            ifName: "{{ _auif.ifname }}"
+      register: _auif_deploy
+      failed_when: false
+
+    - name: "admin_up result for {{ _auif.label }}"
+      ansible.builtin.debug:
+        msg: >-
+          admin-up {{ _auif.label }}: PUT status {{ _auif_put.status | default('n/a') }},
+          deploy status {{ _auif_deploy.status | default('n/a') }} (ADMIN_STATE forced true).

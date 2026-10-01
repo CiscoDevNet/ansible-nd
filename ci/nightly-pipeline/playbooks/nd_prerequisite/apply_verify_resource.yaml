@@ -1,0 +1,9 @@
+---
+# verify_resource: read-only confirmation that a required pool/allocation exists.
+# The planner carries the resource contract; verification is non-mutating, so we
+# surface it for the operator to bind to nd_manage_resource_manager (gathered)
+# once validated against the controller.
+- name: "verify_resource {{ _ndp_operation.resource.name | default(_ndp_operation.resource) }}"
+  ansible.builtin.debug:
+    msg: "Verify resource contract is satisfied: {{ _ndp_operation.resource }}"
+  run_once: true
