@@ -36,14 +36,14 @@ fabric_config_ibgp:
   security_domain: all
   telemetry_collection: false
   management:
-    bgp_asn: "65001.55"
+    bgp_asn: "65001"
     site_id: "65001"
     overlay_mode: cli
     underlay_ipv6: false
     fabric_interface_type: p2p
     link_state_routing_protocol: ospf
     ospf_area_id: "0.0.0.0"
-    route_reflector_count: 4
+    route_reflector_count: 2
     target_subnet_mask: 30
     anycast_gateway_mac: "2020.0000.00aa"
     fabric_mtu: 9216
@@ -344,14 +344,14 @@ fabric_config_ai_ibgp:
   security_domain: all
   telemetry_collection: false
   management:
-    bgp_asn: "65001.55"
+    bgp_asn: "65001"
     site_id: "65001"
     overlay_mode: cli
     underlay_ipv6: false
     fabric_interface_type: p2p
     link_state_routing_protocol: ospf
     ospf_area_id: "0.0.0.0"
-    route_reflector_count: 4
+    route_reflector_count: 2
     target_subnet_mask: 30
     anycast_gateway_mac: "2020.0000.00aa"
     fabric_mtu: 9216
