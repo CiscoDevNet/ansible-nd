@@ -14,6 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MethodType
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -205,6 +206,7 @@ class _Controller:
     inventories: dict[str, list[dict[str, Any]]]
     pair_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[dict[str, Any]] = field(default_factory=list)
+    inventory_pages: dict[str, dict[int, dict[str, Any]]] = field(default_factory=dict)
 
     def request(
         self,
@@ -220,7 +222,10 @@ class _Controller:
         self.calls.append({"path": path, "verb": verb_value, "data": deepcopy(data)})
         if verb_value == HttpVerbEnum.GET.value:
             for switch_id, records in self.inventories.items():
-                if path.endswith(f"/switches/{switch_id}/interfaces"):
+                if path.split("?", 1)[0].endswith(f"/switches/{switch_id}/interfaces"):
+                    if switch_id in self.inventory_pages:
+                        offset = int(parse_qs(urlsplit(path).query).get("offset", ["0"])[0])
+                        return deepcopy(self.inventory_pages[switch_id][offset])
                     return {"interfaces": deepcopy(records)}
             if path.endswith("/vpcPair"):
                 for switch_id, record in self.pair_records.items():
@@ -312,7 +317,11 @@ def _writes(controller: _Controller) -> list[dict[str, Any]]:
 
 
 def _inventory_gets(controller: _Controller, switch_id: str) -> list[dict[str, Any]]:
-    return [call for call in controller.calls if call["verb"] == HttpVerbEnum.GET.value and call["path"].endswith(f"/switches/{switch_id}/interfaces")]
+    return [
+        call
+        for call in controller.calls
+        if call["verb"] == HttpVerbEnum.GET.value and call["path"].split("?", 1)[0].endswith(f"/switches/{switch_id}/interfaces")
+    ]
 
 
 def _pair_gets(controller: _Controller) -> list[dict[str, Any]]:
@@ -366,6 +375,39 @@ def test_pair_aware_safe_merge_preserves_authentic_member_payload(
     assert "ptp" not in policy
     assert "operData" not in payload
     assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_pair_aware_update_uses_reciprocal_evidence_from_peer_second_page(case: _VpcCase) -> None:
+    """The peer parent and member remain authoritative when both arrive after a short first page."""
+
+    inventories = _inventories(case)
+    state_machine, controller = _state_machine(
+        case,
+        requested_policy={"description": "peer evidence paginated"},
+        inventories=inventories,
+    )
+    peer_parent, peer_side_port_channel, peer_member = inventories[PEER_SERIAL]
+    controller.inventory_pages[PEER_SERIAL] = {
+        0: {
+            "interfaces": [peer_side_port_channel],
+            "meta": {"counts": {"total": 3, "remaining": 2}},
+        },
+        1: {
+            "interfaces": [peer_parent, peer_member],
+            "meta": {"counts": {"total": 3, "remaining": 0}},
+        },
+    }
+
+    state_machine.manage_state()
+
+    peer_gets = _inventory_gets(controller, PEER_SERIAL)
+    assert [parse_qs(urlsplit(call["path"]).query)["offset"] for call in peer_gets] == [["0"], ["1"]]
+    assert [call["verb"] for call in _writes(controller)] == [HttpVerbEnum.PUT.value]
+    ownership = state_machine.model_orchestrator._validated_member_ownership[(LOCAL_SERIAL, "ethernet1/24")]
+    assert ownership.pair_validated is True
+    assert ownership.peer_owner is not None
+    assert ownership.peer_owner.switch_id == PEER_SERIAL
 
 
 @pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)

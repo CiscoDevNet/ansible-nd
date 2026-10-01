@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import FrozenInstanceError
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    MEMBER_POLICY_BY_MEMBER_TYPE,
+    MEMBER_POLICY_BY_PARENT_TYPE,
     MEMBER_POLICY_DESCRIPTORS,
     EthernetMemberInterfaceModel,
     MemberPolicyDisposition,
@@ -19,6 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     build_member_update_payload,
     classify_member_policy,
     get_member_policy_descriptor,
+    get_member_policy_descriptor_for_parent,
     is_member_policy,
     is_supported_member_policy,
     normalize_port_channel_id,
@@ -97,6 +101,28 @@ def member_record(policy_type="poMember", *, mode="trunk", network_os="nx-os"):
         ),
         ("l3PoMember", "routed", "nx-os", "routed", "portChannel", "l3Po", "routed", "nx-os", False),
         (
+            "iosXeAccessPoMember",
+            "access",
+            "ios-xe",
+            "access",
+            "portChannel",
+            "iosXeAccessPoHost",
+            "access",
+            "ios-xe",
+            False,
+        ),
+        (
+            "iosXeTrunkPoMember",
+            "trunk",
+            "ios-xe",
+            "trunk",
+            "portChannel",
+            "iosXeTrunkPoHost",
+            "trunk",
+            "ios-xe",
+            False,
+        ),
+        (
             "iosXeL3PoMember",
             "routed",
             "ios-xe",
@@ -156,13 +182,40 @@ def test_member_policy_classification_fails_closed():
 
 
 @pytest.mark.parametrize(
+    "parent_policy,member_policy,required_host,conversion_module",
+    [
+        ("iosXeAccessPoHost", "iosXeAccessPoMember", "iosXeAccess", "nd_interface_ethernet_access"),
+        ("iosXeTrunkPoHost", "iosXeTrunkPoMember", "iosXeTrunkHost", "nd_interface_ethernet_trunk_host"),
+        ("iosXeL3PortChannel", "iosXeL3PoMember", "iosXeRoutedHost", "nd_interface_ethernet_routed"),
+    ],
+)
+def test_ios_xe_parent_and_member_lookups_share_one_relationship(parent_policy, member_policy, required_host, conversion_module):
+    descriptor = get_member_policy_descriptor(member_policy)
+
+    assert descriptor is get_member_policy_descriptor_for_parent(parent_policy)
+    assert descriptor is not None
+    assert descriptor.required_host_policy_type == required_host
+    assert descriptor.conversion_module == conversion_module
+
+
+def test_member_relationship_registry_is_immutable():
+    descriptor = MEMBER_POLICY_BY_MEMBER_TYPE["iosXeAccessPoMember"]
+
+    with pytest.raises(TypeError):
+        MEMBER_POLICY_BY_MEMBER_TYPE["futureMember"] = descriptor
+    with pytest.raises(TypeError):
+        MEMBER_POLICY_BY_PARENT_TYPE["futureParent"] = descriptor
+    with pytest.raises(FrozenInstanceError):
+        descriptor.policy_type = "futureMember"
+
+
+@pytest.mark.parametrize(
     "value,expected",
     [
         (20, 20),
         ("20", 20),
         ("Port-channel20", 20),
-        ("portchannel20", 20),
-        (" PORT-CHANNEL 20 ", 20),
+        (" PORT-CHANNEL20 ", 20),
         (-1, None),
         ("-1", None),
         (None, None),
@@ -172,7 +225,10 @@ def test_normalize_port_channel_id(value, expected):
     assert normalize_port_channel_id(value) == expected
 
 
-@pytest.mark.parametrize("value", [True, "Ethernet1/1", "Port-channel4097", 4097, 0, "0", -2, "-2", object()])
+@pytest.mark.parametrize(
+    "value",
+    [True, "Ethernet1/1", "portchannel20", "PORT-CHANNEL 20", "Port-channel4097", 4097, 0, "0", -2, "-2", object()],
+)
 def test_normalize_port_channel_id_rejects_invalid_values(value):
     with pytest.raises(ValueError):
         normalize_port_channel_id(value)
@@ -184,6 +240,8 @@ def test_normalize_port_channel_id_rejects_invalid_values(value):
         ("poMember", "trunk", "nx-os"),
         ("accessPoMember", "access", "nx-os"),
         ("l3PoMember", "routed", "nx-os"),
+        ("iosXeAccessPoMember", "access", "ios-xe"),
+        ("iosXeTrunkPoMember", "trunk", "ios-xe"),
         ("iosXeL3PoMember", "routed", "ios-xe"),
         ("vpcMember", "trunk", "nx-os"),
         ("accessVpcPoMember", "access", "nx-os"),
@@ -293,6 +351,25 @@ def test_safe_overlay_preserves_declared_fields_and_strips_response_only_data():
     assert "ptp" not in policy
 
 
+@pytest.mark.parametrize(
+    "policy_type,mode,forbidden_defaults",
+    [
+        ("iosXeAccessPoMember", "access", {"mtu"}),
+        ("iosXeTrunkPoMember", "trunk", {"allowedVlans", "mtu"}),
+        ("iosXeL3PoMember", "routed", {"mtu"}),
+    ],
+)
+def test_host_payload_defaults_never_leak_into_ios_xe_member_put(policy_type, mode, forbidden_defaults):
+    payload = build_member_update_payload(
+        member_record(policy_type, mode=mode, network_os="ios-xe"),
+        {"description": "member-only update"},
+    )
+
+    policy = payload["configData"]["networkOS"]["policy"]
+    assert policy["policyType"] == policy_type
+    assert forbidden_defaults.isdisjoint(policy)
+
+
 def test_safe_overlay_accepts_wire_aliases():
     assert normalize_safe_member_updates({"adminState": False, "extraConfig": "description helper"}) == {
         "admin_state": False,
@@ -385,6 +462,8 @@ def test_pair_aware_payload_requires_validation_attestation():
     [
         ("poMember", "access", "nx-os"),
         ("poMember", "trunk", "ios-xe"),
+        ("iosXeAccessPoMember", "trunk", "ios-xe"),
+        ("iosXeTrunkPoMember", "access", "ios-xe"),
         ("iosXeL3PoMember", "trunk", "ios-xe"),
     ],
 )

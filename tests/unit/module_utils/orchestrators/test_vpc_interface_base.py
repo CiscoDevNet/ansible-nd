@@ -975,12 +975,13 @@ def test_vpc_interface_base_00910() -> None:
     """
     # Summary
 
-    Verify `query_all` skips a managed vPC interface that has no `interfaceName` (it cannot be keyed for dedup).
+    Verify `query_all` fails closed when a managed vPC interface has no `interfaceName` and therefore cannot participate in the
+    complete shared inventory identity.
 
     ## Test
 
     - The single switch returns one managed `accessVpcHost` vPC interface with no `interfaceName`
-    - `query_all` returns `[]` (the nameless entry is skipped, not raised on)
+    - `query_all` raises before publishing or deduplicating the incomplete inventory
 
     `state=overridden` keeps `query_all` fabric-wide so the switch is scanned.
 
@@ -997,11 +998,9 @@ def test_vpc_interface_base_00910() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
-    with does_not_raise():
-        instance = _build_orchestrator(gen_responses, state="overridden")
-        result = instance.query_all()
-
-    assert result == []
+    instance = _build_orchestrator(gen_responses, state="overridden")
+    with pytest.raises(RuntimeError, match=r"Query all failed.*interfaceName must be a non-empty string"):
+        instance.query_all()
 
 
 def test_vpc_interface_base_00930() -> None:
@@ -1151,16 +1150,15 @@ def test_vpc_interface_base_00960() -> None:
     """
     # Summary
 
-    Verify `query_all` tolerates malformed per-switch bodies without aborting the whole run: a `configData: null`
-    interface is filtered out via the null-safe policy-type accessor, and a non-dict interfaces body is skipped via
-    the `isinstance(result, dict)` guard. Neither raises `AttributeError`.
+    Verify `query_all` still tolerates a row with `configData: null`, but fails closed when a later switch returns a non-mapping
+    interface collection body. Malformed collection envelopes cannot be treated as authoritative absence.
 
     ## Test
 
     - `state=overridden` so both switches are scanned
     - Switch A returns a vPC interface with `configData: null` (policy type resolves to None → filtered out)
-    - Switch B returns a bare list as its DATA body (non-dict → skipped by the isinstance guard)
-    - `query_all` returns `[]` rather than raising
+    - Switch B returns a bare list as its DATA body
+    - `query_all` raises a completeness error rather than returning partial/empty state
 
     ## Classes and Methods
 
@@ -1175,11 +1173,9 @@ def test_vpc_interface_base_00960() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
-    with does_not_raise():
-        instance = _build_orchestrator(gen_responses, state="overridden")
-        result = instance.query_all()
-
-    assert result == []
+    instance = _build_orchestrator(gen_responses, state="overridden")
+    with pytest.raises(RuntimeError, match=r"Query all failed.*invalid response type list"):
+        instance.query_all()
 
 
 def test_vpc_interface_base_00970() -> None:
@@ -1307,7 +1303,7 @@ def test_vpc_interface_base_01010() -> None:
 
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
-    assert results.path == [
+    assert [path.split("?", 1)[0] for path in results.path] == [
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
     ]
@@ -1356,7 +1352,7 @@ def test_vpc_interface_base_01020() -> None:
 
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
-    assert results.path == [
+    assert [path.split("?", 1)[0] for path in results.path] == [
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/vpcPair",
@@ -1401,7 +1397,7 @@ def test_vpc_interface_base_01030() -> None:
 
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
-    assert results.path == [
+    assert [path.split("?", 1)[0] for path in results.path] == [
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
         "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",

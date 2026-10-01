@@ -466,7 +466,7 @@ def test_ethernet_access_orchestrator_00510() -> None:
         instance.create(model)
 
     assert rest_send.verb != HttpVerbEnum.POST.value
-    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces"
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc"
     assert instance._pending_deploys == []
 
 

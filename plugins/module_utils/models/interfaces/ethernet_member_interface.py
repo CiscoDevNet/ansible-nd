@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import ClassVar, Literal, Mapping, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -30,12 +31,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     FecEnum,
     LacpRateEnum,
     PortChannelModeEnum,
+    XePortChannelModeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     AllowedVlans,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import (
     InterfacePolicyStrictBase,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import (
+    normalize_port_channel_interface_name,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
@@ -54,7 +59,6 @@ _SAFE_MEMBER_UPDATE_ALIASES = {
 }
 
 _EXTRA_CONFIG_COMMAND_SEPARATOR = re.compile(r"[;\r\n]+")
-_PORT_CHANNEL_ID = re.compile(r"^(?:port-?channel)?\s*(\d+)$", re.IGNORECASE)
 
 
 class MemberPolicyDisposition(str, Enum):
@@ -80,6 +84,14 @@ class MemberPolicyDescriptor:
     parent_network_os: Literal["nx-os", "ios-xe"]
     parent_member_fields: tuple[str, ...] = ("ports",)
     pair_aware: bool = False
+    required_host_policy_type: str | None = None
+    conversion_module: str | None = None
+
+    def __post_init__(self) -> None:
+        """Require IOS-XE pre-attach guidance to be either complete or absent."""
+
+        if (self.required_host_policy_type is None) != (self.conversion_module is None):
+            raise ValueError(f"Member relationship {self.policy_type!r} must define both required_host_policy_type " "and conversion_module, or neither")
 
     @property
     def disposition(self) -> MemberPolicyDisposition:
@@ -181,16 +193,15 @@ class L3PoMemberPolicyModel(InterfacePolicyStrictBase):
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional interface CLI")
 
 
-class IosXeL3PoMemberPolicyModel(InterfacePolicyStrictBase):
-    """IOS-XE standalone routed port-channel member (``iosXeL3PoMember``)."""
+class IosXePortChannelMemberPolicyBase(InterfacePolicyStrictBase):
+    """Fields confirmed on the IOS-XE port-channel member templates."""
 
-    policy_type: Literal["iosXeL3PoMember"] = Field(alias="policyType")
     port_channel_id: str = Field(
         alias="portChannelId",
         min_length=1,
         description="Owning port-channel identifier",
     )
-    port_channel_mode: Literal["on", "active", "passive", "auto", "desirable"] | None = Field(
+    port_channel_mode: XePortChannelModeEnum | None = Field(
         default=None,
         alias="portChannelMode",
         description="LACP or PAgP port-channel mode",
@@ -202,6 +213,24 @@ class IosXeL3PoMemberPolicyModel(InterfacePolicyStrictBase):
         description="Interface description",
     )
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional interface CLI")
+
+
+class IosXeAccessPoMemberPolicyModel(IosXePortChannelMemberPolicyBase):
+    """IOS-XE standalone access port-channel member (``iosXeAccessPoMember``)."""
+
+    policy_type: Literal["iosXeAccessPoMember"] = Field(alias="policyType")
+
+
+class IosXeTrunkPoMemberPolicyModel(IosXePortChannelMemberPolicyBase):
+    """IOS-XE standalone trunk port-channel member (``iosXeTrunkPoMember``)."""
+
+    policy_type: Literal["iosXeTrunkPoMember"] = Field(alias="policyType")
+
+
+class IosXeL3PoMemberPolicyModel(IosXePortChannelMemberPolicyBase):
+    """IOS-XE standalone routed port-channel member (``iosXeL3PoMember``)."""
+
+    policy_type: Literal["iosXeL3PoMember"] = Field(alias="policyType")
 
 
 class VpcMemberPolicyModel(PoMemberPolicyModel):
@@ -226,6 +255,12 @@ NexusMemberPolicyModel = Union[
     AccessVpcPoMemberPolicyModel,
 ]
 
+IosXeMemberPolicyModel = Union[
+    IosXeAccessPoMemberPolicyModel,
+    IosXeTrunkPoMemberPolicyModel,
+    IosXeL3PoMemberPolicyModel,
+]
+
 
 class NexusEthernetMemberNetworkOSModel(NDNestedModel):
     """NX-OS container for an exactly modeled member policy."""
@@ -238,7 +273,7 @@ class IosXeEthernetMemberNetworkOSModel(NDNestedModel):
     """IOS-XE container for an exactly modeled member policy."""
 
     network_os_type: Literal["ios-xe"] = Field(alias="networkOSType")
-    policy: IosXeL3PoMemberPolicyModel = Field(alias="policy")
+    policy: IosXeMemberPolicyModel = Field(alias="policy", discriminator="policy_type")
 
 
 class EthernetMemberConfigDataModel(NDNestedModel):
@@ -304,8 +339,8 @@ class EthernetMemberInterfaceModel(NDBaseModel):
         return self
 
 
-MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
-    "poMember": MemberPolicyDescriptor(
+_MEMBER_POLICY_RELATIONSHIPS = (
+    MemberPolicyDescriptor(
         policy_type="poMember",
         family="trunk",
         network_os="nx-os",
@@ -317,7 +352,7 @@ MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
     ),
     # Captured ND inventory reports accessPoMember intent with wire mode access.  Operational
     # data can independently report mode trunk after the interface joins the port-channel.
-    "accessPoMember": MemberPolicyDescriptor(
+    MemberPolicyDescriptor(
         policy_type="accessPoMember",
         family="access",
         network_os="nx-os",
@@ -327,7 +362,7 @@ MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
         parent_wire_mode="access",
         parent_network_os="nx-os",
     ),
-    "l3PoMember": MemberPolicyDescriptor(
+    MemberPolicyDescriptor(
         policy_type="l3PoMember",
         family="routed",
         network_os="nx-os",
@@ -337,7 +372,31 @@ MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
         parent_wire_mode="routed",
         parent_network_os="nx-os",
     ),
-    "iosXeL3PoMember": MemberPolicyDescriptor(
+    MemberPolicyDescriptor(
+        policy_type="iosXeAccessPoMember",
+        family="access",
+        network_os="ios-xe",
+        wire_mode="access",
+        parent_interface_type="portChannel",
+        parent_policy_types=("iosXeAccessPoHost",),
+        parent_wire_mode="access",
+        parent_network_os="ios-xe",
+        required_host_policy_type="iosXeAccess",
+        conversion_module="nd_interface_ethernet_access",
+    ),
+    MemberPolicyDescriptor(
+        policy_type="iosXeTrunkPoMember",
+        family="trunk",
+        network_os="ios-xe",
+        wire_mode="trunk",
+        parent_interface_type="portChannel",
+        parent_policy_types=("iosXeTrunkPoHost",),
+        parent_wire_mode="trunk",
+        parent_network_os="ios-xe",
+        required_host_policy_type="iosXeTrunkHost",
+        conversion_module="nd_interface_ethernet_trunk_host",
+    ),
+    MemberPolicyDescriptor(
         policy_type="iosXeL3PoMember",
         family="routed",
         network_os="ios-xe",
@@ -346,8 +405,10 @@ MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
         parent_policy_types=("iosXeL3PortChannel",),
         parent_wire_mode="routed",
         parent_network_os="ios-xe",
+        required_host_policy_type="iosXeRoutedHost",
+        conversion_module="nd_interface_ethernet_routed",
     ),
-    "vpcMember": MemberPolicyDescriptor(
+    MemberPolicyDescriptor(
         policy_type="vpcMember",
         family="trunk",
         network_os="nx-os",
@@ -359,7 +420,7 @@ MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
         parent_member_fields=("peer1MemberPorts", "peer2MemberPorts"),
         pair_aware=True,
     ),
-    "accessVpcPoMember": MemberPolicyDescriptor(
+    MemberPolicyDescriptor(
         policy_type="accessVpcPoMember",
         family="access",
         network_os="nx-os",
@@ -371,8 +432,29 @@ MEMBER_POLICY_DESCRIPTORS: dict[str, MemberPolicyDescriptor] = {
         parent_member_fields=("peer1MemberPorts", "peer2MemberPorts"),
         pair_aware=True,
     ),
-}
-"""Exact, modeled member-policy registry consumed by ethernet orchestrators."""
+)
+"""Single immutable source for every supported parent/member relationship."""
+
+
+def _build_member_policy_indexes() -> tuple[Mapping[str, MemberPolicyDescriptor], Mapping[str, MemberPolicyDescriptor]]:
+    """Build immutable member- and parent-keyed views, rejecting duplicate identities."""
+
+    by_member: dict[str, MemberPolicyDescriptor] = {}
+    by_parent: dict[str, MemberPolicyDescriptor] = {}
+    for descriptor in _MEMBER_POLICY_RELATIONSHIPS:
+        if descriptor.policy_type in by_member:
+            raise RuntimeError(f"Duplicate member policy relationship for {descriptor.policy_type!r}")
+        by_member[descriptor.policy_type] = descriptor
+        for parent_policy_type in descriptor.parent_policy_types:
+            if parent_policy_type in by_parent:
+                raise RuntimeError(f"Duplicate parent policy relationship for {parent_policy_type!r}")
+            by_parent[parent_policy_type] = descriptor
+    return MappingProxyType(by_member), MappingProxyType(by_parent)
+
+
+MEMBER_POLICY_BY_MEMBER_TYPE, MEMBER_POLICY_BY_PARENT_TYPE = _build_member_policy_indexes()
+MEMBER_POLICY_DESCRIPTORS = MEMBER_POLICY_BY_MEMBER_TYPE
+"""Compatibility name for the immutable member-keyed relationship registry."""
 
 
 # Fail closed for every currently known internal, fabric-owned, specialized, or unsupported
@@ -387,10 +469,8 @@ PROTECTED_MEMBER_POLICY_TYPES = frozenset(
         "dot1qTunnelVpcMember",
         "dot1qTunnelVpcPoMember",
         "fexPoMember",
-        "iosXeAccessPoMember",
         "iosXeInternalL3PoMember",
         "iosXeStackwiseLinkMember",
-        "iosXeTrunkPoMember",
         "ipfmAccessPoMember",
         "ipfmTrunkPoMember",
         "l2DciLinkMember",
@@ -425,6 +505,14 @@ def get_member_policy_descriptor(policy_type: object) -> MemberPolicyDescriptor 
     return MEMBER_POLICY_DESCRIPTORS.get(policy_type)
 
 
+def get_member_policy_descriptor_for_parent(policy_type: object) -> MemberPolicyDescriptor | None:
+    """Return exact metadata for a modeled parent policy, otherwise ``None``."""
+
+    if not isinstance(policy_type, str):
+        return None
+    return MEMBER_POLICY_BY_PARENT_TYPE.get(policy_type)
+
+
 def classify_member_policy(policy_type: object) -> MemberPolicyDisposition:
     """Classify a policy without ever treating an unknown member template as writable."""
 
@@ -452,7 +540,7 @@ def is_supported_member_policy(policy_type: object, *, include_pair_aware: bool 
 
 
 def normalize_port_channel_id(value: object) -> int | None:
-    """Normalize integer and ``Port-channelN`` identities; operational ``-1`` means unset.
+    """Normalize through the shared port-channel name contract; operational ``-1`` means unset.
 
     Valid configured identities are 1 through 4096. ``None``, an empty string, and ND's
     documented integer/string ``-1`` sentinel return ``None``. Zero and every other
@@ -464,23 +552,15 @@ def normalize_port_channel_id(value: object) -> int | None:
         return None
     if isinstance(value, bool):
         raise ValueError(f"Invalid port-channel identifier {value!r}")
-    if isinstance(value, int):
-        if value == -1:
-            return None
-        number = value
-    elif isinstance(value, str):
-        stripped = value.strip()
-        if stripped in {"", "-1"}:
-            return None
-        match = _PORT_CHANNEL_ID.fullmatch(stripped)
-        if not match:
-            raise ValueError(f"Invalid port-channel identifier {value!r}")
-        number = int(match.group(1))
-    else:
+    if value == -1 or (isinstance(value, str) and value.strip() in {"", "-1"}):
+        return None
+    normalized = normalize_port_channel_interface_name(value)
+    if not isinstance(normalized, str) or not normalized.startswith("port-channel"):
         raise ValueError(f"Invalid port-channel identifier {value!r}")
-    if not 1 <= number <= 4096:
-        raise ValueError(f"Port-channel identifier {number} must be in the range 1..4096")
-    return number
+    suffix = normalized.removeprefix("port-channel")
+    if not suffix.isdigit():
+        raise ValueError(f"Invalid port-channel identifier {value!r}")
+    return int(suffix)
 
 
 def policy_type_from_interface_record(record: Mapping[str, object]) -> str | None:

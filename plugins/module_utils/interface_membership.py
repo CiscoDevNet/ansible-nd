@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     MemberPolicyDisposition,
     classify_member_policy,
     get_member_policy_descriptor,
+    get_member_policy_descriptor_for_parent as _get_member_policy_descriptor_for_parent,
     normalize_port_channel_id,
     parse_member_interface_response,
     policy_type_from_interface_record,
@@ -74,6 +75,12 @@ class MissingPeerIdentityError(MembershipValidationError):
             f"parent {parent_name!r} on switch {switch_id!r} from cached inventory "
             "or pair evidence"
         )
+
+
+def get_member_policy_descriptor_for_parent(policy_type: object) -> MemberPolicyDescriptor | None:
+    """Return the authoritative member relationship keyed by its parent policy."""
+
+    return _get_member_policy_descriptor_for_parent(policy_type)
 
 
 @dataclass(frozen=True)

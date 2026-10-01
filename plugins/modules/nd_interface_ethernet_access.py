@@ -19,7 +19,7 @@ description:
 - Manage ethernet access-mode host interfaces on Cisco Nexus Dashboard, on NX-OS (C(accessHost)) and IOS-XE (C(iosXeAccess)) switches.
 - It supports creating, updating, and deleting access interface configurations on switches within a fabric.
 - Multiple interfaces can share the same configuration via the O(config[].interface_names) list.
-- An NX-OS ethernet interface carrying the C(accessPoMember) or C(accessVpcPoMember) policy can be updated with
+- An ethernet interface carrying the C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) policy can be updated with
   O(state=merged) without changing its port-channel or vPC membership. Only O(config[].config_data.network_os.policy.admin_state),
   O(config[].config_data.network_os.policy.description), and O(config[].config_data.network_os.policy.extra_config)
   may be supplied for such a member.
@@ -354,23 +354,23 @@ options:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-      For C(accessPoMember) and C(accessVpcPoMember), this is the only supported state and only the three documented
+      For C(accessPoMember), C(iosXeAccessPoMember), and C(accessVpcPoMember), this is the only supported state and only the three documented
       member-safe fields may be supplied; all other modeled configurable member-policy fields and membership values
       are preserved.
     - Use O(state=replaced) to replace the resources specified in the configuration. An explicitly named
-      C(accessPoMember) or C(accessVpcPoMember) is rejected; use O(state=merged) for its member-safe fields.
+      C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) is rejected; use O(state=merged) for its member-safe fields.
     - Use O(state=overridden) to enforce the configuration as the single source of truth. Named interfaces are
       modified to exactly match the configuration. For NX-OS, every C(accessHost) interface in the fabric that is not
       present in the configuration is reset to its fabric default (fabric-wide remove-omitted semantics); use with
       extra caution. IOS-XE interfaces are merge-only under this state, so named C(iosXeAccess) interfaces converge
       but omitted IOS-XE interfaces are left untouched and must be reset explicitly with O(state=deleted). Omitted
       member interfaces remain outside the managed C(accessHost) scope, while an explicitly named
-      C(accessPoMember) or C(accessVpcPoMember) is rejected.
+      C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) is rejected.
     - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration. Physical
       ethernet interfaces cannot be truly deleted from a switch. NX-OS interfaces reset via the
       C(interfaceActions/normalize) API, the equivalent of the NX-OS C(default interface) CLI command; IOS-XE
       interfaces reset to a default trunk configuration with all policy fields cleared. An explicitly named
-      C(accessPoMember) or C(accessVpcPoMember) is rejected because resetting it would change its membership.
+      C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) is rejected because resetting it would change its membership.
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
@@ -387,17 +387,17 @@ notes:
   are never reset when absent from it. To reset an IOS-XE interface, name it explicitly under O(state=deleted).
 - The ND 4.3.1 C(deviceTrackingPolicy) and C(flowMonitors) properties of the C(iosXeAccess) policy are intentionally not exposed.
   The module writes one policy shape that both ND 4.2.1 and ND 4.3.1 accept, so these properties cannot be configured through it.
-- Explicitly named C(accessPoMember) and C(accessVpcPoMember) interfaces are also supported under O(state=merged),
+- Explicitly named C(accessPoMember), C(iosXeAccessPoMember), and C(accessVpcPoMember) interfaces are also supported under O(state=merged),
   but only for C(admin_state), C(description), and C(extra_config). The update retains the authentic member policy,
   owning identifier and mode, and every other modeled configurable member-policy field. Qualified controller
   response-only echoes are not replayed; any unrecognized nested configuration field fails closed before mutation
   so a full PUT cannot silently discard future intent.
-- C(accessPoMember) configured intent has mode C(access), even when operational data reports mode C(trunk) after
+- C(accessPoMember) and C(iosXeAccessPoMember) configured intent has mode C(access), even when operational data reports mode C(trunk) after
   the physical interface joins the port-channel.
-- Manage a C(accessPoMember) parent and its C(ports) membership with
+- Manage a C(accessPoMember) or C(iosXeAccessPoMember) parent and its C(ports) membership with
   M(cisco.nd.nd_interface_port_channel_access). Manage a C(accessVpcPoMember) parent and peer membership with
   M(cisco.nd.nd_interface_vpc_access). This module never attaches, detaches, or reparents an ethernet member.
-- Before updating C(accessPoMember), the module requires exactly one compatible access port-channel parent on the
+- Before updating C(accessPoMember) or C(iosXeAccessPoMember), the module requires exactly one compatible access port-channel parent on the
   same switch. The parent must list the member, the member's configured port-channel identifier must match that
   parent, the parent's configured policy, mode, and network OS must be compatible, and any present positive
   operational identifier must also agree. Orphaned, multiply claimed, incompatible, or conflicting evidence fails
@@ -641,10 +641,10 @@ before:
   - For O(state=merged), O(state=replaced), and O(state=deleted), it includes all managed access interfaces on every
     switch named in O(config), not only the explicitly named interfaces. For O(state=overridden), it is fabric-wide.
   - An empty list when no matching access interface configuration existed in that query scope.
-  - For a supported C(accessPoMember) or C(accessVpcPoMember) update, the entry is a host-shaped planning/reporting
-    projection containing the member identity and safe fields. It uses C(accessHost) as the reporting policy and
-    omits the authentic member discriminator, owning identifier, and membership metadata. It does not represent a
-    policy conversion.
+  - For a supported C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) update, the entry is a host-shaped
+    planning/reporting projection containing the member identity and safe fields. It uses C(accessHost) for NX-OS or
+    C(iosXeAccess) for IOS-XE as the reporting policy and omits the authentic member discriminator, owning identifier,
+    and membership metadata. It does not represent a policy conversion.
   returned: always
   type: list
   elements: dict

@@ -14,6 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MethodType
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -53,6 +54,7 @@ class _Controller:
     inventories: dict[str, list[dict[str, Any]]]
     pair_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[dict[str, Any]] = field(default_factory=list)
+    inventory_pages: dict[str, dict[int, dict[str, Any]]] = field(default_factory=dict)
 
     def request(
         self,
@@ -68,7 +70,10 @@ class _Controller:
         self.calls.append({"path": path, "verb": verb_value, "data": deepcopy(data)})
         if verb_value == HttpVerbEnum.GET.value:
             for switch_id, records in self.inventories.items():
-                if path.endswith(f"/switches/{switch_id}/interfaces"):
+                if path.split("?", 1)[0].endswith(f"/switches/{switch_id}/interfaces"):
+                    if switch_id in self.inventory_pages:
+                        offset = int(parse_qs(urlsplit(path).query).get("offset", ["0"])[0])
+                        return deepcopy(self.inventory_pages[switch_id][offset])
                     return {"interfaces": deepcopy(records)}
             if path.endswith("/vpcPair"):
                 for switch_id, record in self.pair_records.items():
@@ -284,7 +289,7 @@ def _state_machine(
 
 
 def _inventory_gets(controller: _Controller) -> list[dict[str, Any]]:
-    return [call for call in controller.calls if call["verb"] == HttpVerbEnum.GET.value and call["path"].endswith("/interfaces")]
+    return [call for call in controller.calls if call["verb"] == HttpVerbEnum.GET.value and call["path"].split("?", 1)[0].endswith("/interfaces")]
 
 
 def _pair_gets(controller: _Controller) -> list[dict[str, Any]]:
@@ -324,6 +329,41 @@ def test_many_distinct_pairs_build_one_index_and_retain_it_across_puts(monkeypat
     assert len(_writes(controller)) == 8
     assert state_machine.model_orchestrator._membership_index_cache is counting_index.instances[0]
     assert len(state_machine.model_orchestrator._validated_member_ownership) == 8
+
+
+def test_peer_prefetch_completes_second_page_before_building_membership_index(monkeypatch) -> None:
+    """Pair-aware prefetch does not publish or index a page-one-only peer inventory."""
+
+    topology = _topology(1)
+    state_machine, controller = _state_machine(topology)
+    counting_index = _install_counting_index(monkeypatch)
+    peer_serial = topology.peer_serials[0]
+    unrelated = {
+        "interfaceName": "Ethernet1/99",
+        "interfaceType": "ethernet",
+        "switchId": peer_serial,
+        "configData": {
+            "mode": "trunk",
+            "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "trunkHost"}},
+        },
+    }
+    controller.inventory_pages[peer_serial] = {
+        0: {
+            "interfaces": [unrelated],
+            "meta": {"counts": {"total": 3, "remaining": 2}},
+        },
+        1: {
+            "interfaces": topology.inventories[peer_serial],
+            "meta": {"counts": {"total": 3, "remaining": 0}},
+        },
+    }
+
+    state_machine.manage_state()
+
+    peer_gets = [call for call in _inventory_gets(controller) if f"/switches/{peer_serial}/interfaces" in call["path"]]
+    assert [parse_qs(urlsplit(call["path"]).query)["offset"] for call in peer_gets] == [["0"], ["1"]]
+    assert counting_index.builds == 1
+    assert len(_writes(controller)) == 1
 
 
 def test_direct_updates_rebuild_only_when_a_new_switch_inventory_is_loaded(monkeypatch) -> None:

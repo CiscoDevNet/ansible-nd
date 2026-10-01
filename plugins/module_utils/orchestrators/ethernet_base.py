@@ -150,7 +150,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     MEMBER_FAMILY: ClassVar[str] = ""
     MEMBER_PLANNING_SHAPES: ClassVar[dict[tuple[str, str], tuple[str, str]]] = {
         ("access", "nx-os"): ("access", "accessHost"),
+        ("access", "ios-xe"): ("access", "iosXeAccess"),
         ("trunk", "nx-os"): ("trunk", "trunkHost"),
+        ("trunk", "ios-xe"): ("trunk", "iosXeTrunkHost"),
         ("routed", "nx-os"): ("routed", "routedHost"),
         ("routed", "ios-xe"): ("routed", "iosXeRoutedHost"),
     }
@@ -1748,96 +1750,37 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
           message names the accepted interfaces.
         """
         try:
-            groups = self._group_by_switch_and_policy_type(model_instances, **kwargs)
+            groups = self.bulk_create_groups(model_instances, **kwargs)
             results = []
-            for (switch_id, _policy_type), items in groups.items():
-                results.append(self._post_bulk_group(switch_id, items))
-                for interface_name, _payload in items:
-                    self._queue_deploy(interface_name, switch_id)
+            for group_key, items in groups.items():
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
 
-    def _group_by_switch_and_policy_type(self, model_instances: list[ModelType], **kwargs) -> dict[tuple[str, str | None], list[tuple[str, dict]]]:
+    def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:
         """
         # Summary
 
-        Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, run the fabric-ownership and port-channel
-        guards against its current wire state, inject the `switchId` into the payload, and group the resulting
-        `(interface_name, payload)` items by `(switch_id, policy_type)`. Group insertion order follows the first model of each group.
+        Run Ethernet's ownership and member guards before the shared bulk grouping serializes an item. Every item is prepared before
+        the first POST, preserving the batch's fail-before-write behavior.
 
         ## Raises
 
         ### RuntimeError
 
-        - Via `_resolve_switch_id`, `_check_fabric_ownership`, or `_check_port_channel_restrictions`.
+        - Via `_check_fabric_ownership` or `_check_port_channel_restrictions`.
         """
-        # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
-        # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is
-        # created), even though the create schema allows mixed arrays. One POST per (switch, policyType) (issue #409).
-        groups: dict[tuple[str, str | None], list[tuple[str, dict]]] = defaultdict(list)
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
-            existing_policy_type = self._existing_policy_type(existing_data)
-            if classify_member_policy(existing_policy_type) != MemberPolicyDisposition.NOT_MEMBER:
-                raise RuntimeError(
-                    f"Interface {model_instance.interface_name} already exists with member "
-                    f"policy '{existing_policy_type}'; a member must never be sent through "
-                    "the create endpoint."
-                )
-            self._check_fabric_ownership(model_instance, existing_data)
-            self._check_port_channel_restrictions(model_instance, existing_data)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            groups[(switch_id, self._desired_policy_type(model_instance))].append((model_instance.interface_name, payload))
-        return groups
-
-    def _post_bulk_group(self, switch_id: str, items: list[tuple[str, dict]]) -> ResponseType:
-        """
-        # Summary
-
-        Send one per-switch bulk create POST for `items` (`(interface_name, payload)` pairs). On failure, queue a deploy for every
-        interface the response reported as accepted (partial HTTP 207, see `_queue_accepted_bulk_items`) before re-raising, naming
-        the accepted subset in the error when there is one.
-
-        ## Raises
-
-        ### Exception
-
-        - Propagated from `_request` when the POST fails (wrapped in `RuntimeError` naming the accepted subset when the failing
-          207 accepted part of the group).
-        """
-        # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-        api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-        request_body = {"interfaces": [payload for _interface_name, payload in items]}
-        try:
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-        except Exception as e:
-            accepted = self._queue_accepted_bulk_items(items, switch_id)
-            if accepted:
-                raise RuntimeError(f"{e}. The controller accepted {accepted} from the same request; their deploy stays queued.") from e
-            raise
-
-    def _queue_accepted_bulk_items(self, items: list[tuple[str, dict]], switch_id: str) -> list[str]:
-        """
-        # Summary
-
-        After a failed per-switch bulk POST, queue a deploy for every interface in `items` that the most recent response
-        reported as an exact `success` (HTTP 207 Multi-Status only; see `_accepted_multistatus_names`). Returns the accepted
-        interface names in request order (empty when the failure was not a partial 207).
-
-        ## Raises
-
-        None
-        """
-        accepted_names = self._accepted_multistatus_names()
-        accepted: list[str] = []
-        for interface_name, _payload in items:
-            if interface_name.lower() in accepted_names:
-                self._queue_deploy(interface_name, switch_id)
-                accepted.append(interface_name)
-        return accepted
+        existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+        existing_policy_type = self._existing_policy_type(existing_data)
+        if classify_member_policy(existing_policy_type) != MemberPolicyDisposition.NOT_MEMBER:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} already exists with member "
+                f"policy '{existing_policy_type}'; a member must never be sent through "
+                "the create endpoint."
+            )
+        self._check_fabric_ownership(model_instance, existing_data)
+        self._check_port_channel_restrictions(model_instance, existing_data)
 
     def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> None:
         """

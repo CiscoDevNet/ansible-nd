@@ -34,6 +34,8 @@ def _member(
         "poMember": ("trunk", "nx-os"),
         "accessPoMember": ("access", "nx-os"),
         "l3PoMember": ("routed", "nx-os"),
+        "iosXeAccessPoMember": ("access", "ios-xe"),
+        "iosXeTrunkPoMember": ("trunk", "ios-xe"),
         "iosXeL3PoMember": ("routed", "ios-xe"),
         "vpcMember": ("trunk", "nx-os"),
         "accessVpcPoMember": ("access", "nx-os"),
@@ -77,6 +79,8 @@ def _parent(
         "trunkPoHost": ("trunk", "nx-os"),
         "accessPoHost": ("access", "nx-os"),
         "l3Po": ("routed", "nx-os"),
+        "iosXeAccessPoHost": ("access", "ios-xe"),
+        "iosXeTrunkPoHost": ("trunk", "ios-xe"),
         "iosXeL3PortChannel": ("routed", "ios-xe"),
     }.get(policy_type, ("trunk", "nx-os"))
     policy = {"policyType": policy_type, "ports": list(member_names)}
@@ -204,6 +208,8 @@ def _valid_vpc_inventories(*, policy_type="vpcMember"):
         ("poMember", "trunkPoHost"),
         ("accessPoMember", "accessPoHost"),
         ("l3PoMember", "l3Po"),
+        ("iosXeAccessPoMember", "iosXeAccessPoHost"),
+        ("iosXeTrunkPoMember", "iosXeTrunkPoHost"),
         ("iosXeL3PoMember", "iosXeL3PortChannel"),
     ],
 )
@@ -351,6 +357,8 @@ def test_parent_must_claim_standalone_member_through_ports():
         ("poMember", "trunkPoHost"),
         ("accessPoMember", "accessPoHost"),
         ("l3PoMember", "l3Po"),
+        ("iosXeAccessPoMember", "iosXeAccessPoHost"),
+        ("iosXeTrunkPoMember", "iosXeTrunkPoHost"),
         ("iosXeL3PoMember", "iosXeL3PortChannel"),
     ],
 )

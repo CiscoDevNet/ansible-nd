@@ -12,7 +12,8 @@ in-memory recorder, but discovery, member projection, diff planning, preflight, 
 payload construction all remain production code.
 
 The fixtures use the real policy discriminators returned by Nexus Dashboard:
-``accessPoMember``, ``poMember``, ``l3PoMember``, and ``iosXeL3PoMember``.  A host
+``accessPoMember``, ``poMember``, ``l3PoMember``, ``iosXeAccessPoMember``,
+``iosXeTrunkPoMember``, and ``iosXeL3PoMember``.  A host
 policy decorated with ``operData.portChannelId`` is not a valid member fixture and
 must never be used to test this feature.
 """
@@ -26,6 +27,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MethodType
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -140,6 +142,30 @@ MEMBER_CASES = (
         preserved_policy={},
         unsafe_policy={"mtu": 9000},
     ),
+    _MemberCase(
+        name="access_iosxe",
+        orchestrator_class=EthernetAccessInterfaceOrchestrator,
+        member_policy_type="iosXeAccessPoMember",
+        parent_policy_type="iosXeAccessPoHost",
+        member_mode="access",
+        parent_mode="access",
+        network_os_type="ios-xe",
+        interface_name="GigabitEthernet1/0/24",
+        preserved_policy={},
+        unsafe_policy={"access_vlan": 200},
+    ),
+    _MemberCase(
+        name="trunk_iosxe",
+        orchestrator_class=EthernetTrunkHostInterfaceOrchestrator,
+        member_policy_type="iosXeTrunkPoMember",
+        parent_policy_type="iosXeTrunkPoHost",
+        member_mode="trunk",
+        parent_mode="trunk",
+        network_os_type="ios-xe",
+        interface_name="GigabitEthernet1/0/25",
+        preserved_policy={},
+        unsafe_policy={"allowed_vlans": "200-300"},
+    ),
 )
 
 
@@ -155,6 +181,7 @@ class _Controller:
     calls: list[dict[str, Any]] = field(default_factory=list)
     fail_put: bool = False
     fail_put_number: int | None = None
+    inventory_pages: dict[int, dict[str, Any]] | None = None
 
     def request(
         self,
@@ -169,7 +196,10 @@ class _Controller:
         del not_found_ok, operation_type
         verb_value = verb.value if isinstance(verb, HttpVerbEnum) else str(verb)
         self.calls.append({"path": path, "verb": verb_value, "data": deepcopy(data)})
-        if verb_value == HttpVerbEnum.GET.value and path.endswith(f"/switches/{SWITCH_ID}/interfaces"):
+        if verb_value == HttpVerbEnum.GET.value and path.split("?", 1)[0].endswith(f"/switches/{SWITCH_ID}/interfaces"):
+            if self.inventory_pages is not None:
+                offset = int(parse_qs(urlsplit(path).query).get("offset", ["0"])[0])
+                return deepcopy(self.inventory_pages[offset])
             return {"interfaces": deepcopy(self.interfaces)}
         if verb_value == HttpVerbEnum.GET.value and "/api/v1/manage/links" in path:
             return {"links": []}
@@ -278,7 +308,7 @@ def _config(
 ) -> dict[str, Any]:
     """Return valid user input for the case's host-facing standalone module."""
     network_os: dict[str, Any] = {"policy": policy or {}}
-    if case.name.startswith("routed_"):
+    if case.name.startswith("routed_") or case.network_os_type == "ios-xe":
         network_os["network_os_type"] = case.network_os_type
     return {
         "switch_ip": SWITCH_IP,
@@ -291,7 +321,9 @@ def _host_record(case: _MemberCase, interface_name: str) -> dict[str, Any]:
     """Return an ordinary host-policy response owned by the tested orchestrator."""
     policy_type = {
         "access_nxos": "accessHost",
+        "access_iosxe": "iosXeAccess",
         "trunk_nxos": "trunkHost",
+        "trunk_iosxe": "iosXeTrunkHost",
         "routed_nxos": "routedHost",
         "routed_iosxe": "iosXeRoutedHost",
     }[case.name]
@@ -340,6 +372,7 @@ def _state_machine(
     fail_put: bool = False,
     fail_put_number: int | None = None,
     deploy: bool = False,
+    inventory_pages: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[NDStateMachine, _Controller]:
     """Construct a state machine backed by authentic member and parent inventory."""
     if config_override is not None:
@@ -366,7 +399,7 @@ def _state_machine(
             operational_port_channel_id=operational_port_channel_id,
         ),
     ]
-    controller = _Controller(inventory, fail_put=fail_put, fail_put_number=fail_put_number)
+    controller = _Controller(inventory, fail_put=fail_put, fail_put_number=fail_put_number, inventory_pages=inventory_pages)
     object.__setattr__(orchestrator, "_fabric_context", _FabricContext(case.network_os_type))
     object.__setattr__(orchestrator, "_request", MethodType(controller.request, orchestrator))
 
@@ -424,9 +457,70 @@ def test_member_merge_is_planned_as_update_and_preserves_member_payload(
     assert "operData" not in payload
     assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
     inventory_gets = [
-        call for call in controller.calls if call["verb"] == HttpVerbEnum.GET.value and call["path"].endswith(f"/switches/{SWITCH_ID}/interfaces")
+        call
+        for call in controller.calls
+        if call["verb"] == HttpVerbEnum.GET.value and call["path"].split("?", 1)[0].endswith(f"/switches/{SWITCH_ID}/interfaces")
     ]
     assert len(inventory_gets) == 1
+
+
+@pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
+def test_member_on_second_inventory_page_uses_put_and_never_host_post(case: _MemberCase) -> None:
+    """A named member omitted from page one remains an exact member-policy update."""
+
+    pages = {
+        0: {
+            "interfaces": [_parent_record(case)],
+            "meta": {"counts": {"total": 2, "remaining": 1}},
+        },
+        1: {
+            "interfaces": [_member_record(case)],
+            "meta": {"counts": {"total": 2, "remaining": 0}},
+        },
+    }
+    state_machine, controller = _state_machine(
+        case,
+        state="merged",
+        policy={"description": "member discovered on page two"},
+        inventory_pages=pages,
+    )
+
+    state_machine.manage_state()
+
+    writes = _write_calls(controller)
+    assert [call["verb"] for call in writes] == [HttpVerbEnum.PUT.value]
+    assert writes[0]["data"]["configData"]["networkOS"]["policy"]["policyType"] == case.member_policy_type
+    assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
+    inventory_gets = [call for call in controller.calls if call["verb"] == HttpVerbEnum.GET.value and "/switches/FDO11111AAA/interfaces?" in call["path"]]
+    assert [parse_qs(urlsplit(call["path"]).query)["offset"] for call in inventory_gets] == [["0"], ["1"]]
+
+
+@pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
+def test_parent_on_second_inventory_page_proves_member_ownership(case: _MemberCase) -> None:
+    """Ownership validation waits for a parent record returned on the next page."""
+
+    pages = {
+        0: {
+            "interfaces": [_member_record(case)],
+            "meta": {"counts": {"total": 2, "remaining": 1}},
+        },
+        1: {
+            "interfaces": [_parent_record(case)],
+            "meta": {"counts": {"total": 2, "remaining": 0}},
+        },
+    }
+    state_machine, controller = _state_machine(
+        case,
+        state="merged",
+        policy={"description": "parent discovered on page two"},
+        inventory_pages=pages,
+    )
+
+    state_machine.manage_state()
+
+    writes = _write_calls(controller)
+    assert [call["verb"] for call in writes] == [HttpVerbEnum.PUT.value]
+    assert writes[0]["data"]["configData"]["networkOS"]["policy"]["policyType"] == case.member_policy_type
 
 
 @pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
