@@ -141,7 +141,7 @@ class ParentMembershipClaim:
 
 @dataclass(frozen=True)
 class _VpcParentCopy:
-    """One valid, literal vPC parent signature used for O(1) peer inference."""
+    """One valid, pair-equivalent vPC parent signature used for O(1) peer inference."""
 
     switch_id: str
     signature: VpcParentSignature
@@ -444,10 +444,11 @@ class EthernetMembershipIndex:
 
     @classmethod
     def _optional_vpc_parent_signature(cls, record: InterfaceRecord) -> VpcParentSignature | None:
-        """Return a literal signature for a structurally valid vPC parent.
+        """Return a pair-equivalent signature for a structurally valid vPC parent.
 
-        ND preserves peer1/peer2 meaning in both switch-scoped echoes.  The record
-        switchId and policy peerSwitchId reverse, but peer1*/peer2* fields do not.
+        ND may orient each switch-scoped echo with its local side in ``peer1``.
+        A complete peer1/peer2 slot swap is therefore equivalent, while any drift
+        within one slot or in pair-wide configuration remains a mismatch.
         """
 
         if record.get("interfaceType") != "vpc":
@@ -490,13 +491,38 @@ class EthernetMembershipIndex:
 
     @classmethod
     def _vpc_parent_fingerprint(cls, record: InterfaceRecord) -> tuple[Any, ...] | None:
-        """Return hashable pair-comparable configData with only echo metadata removed."""
+        """Return pair-comparable configData with complete peer slots canonicalized."""
 
         config_data = record.get("configData")
         if not isinstance(config_data, Mapping):
             return None
-        frozen = cls._freeze_vpc_value(config_data)
-        return frozen if isinstance(frozen, tuple) else None
+        network_os = config_data.get("networkOS")
+        if not isinstance(network_os, Mapping):
+            return None
+        policy = network_os.get("policy")
+        if not isinstance(policy, Mapping):
+            return None
+
+        config_common = cls._freeze_vpc_value({key: value for key, value in config_data.items() if key != "networkOS"})
+        network_os_common = cls._freeze_vpc_value({key: value for key, value in network_os.items() if key != "policy"})
+        policy_common = cls._freeze_vpc_value(
+            {key: value for key, value in policy.items() if not (isinstance(key, str) and (key.startswith("peer1") or key.startswith("peer2")))}
+        )
+        peer_slots = tuple(sorted((cls._vpc_peer_slot_fingerprint(policy, 1), cls._vpc_peer_slot_fingerprint(policy, 2)), key=repr))
+        return config_common, network_os_common, policy_common, peer_slots
+
+    @classmethod
+    def _vpc_peer_slot_fingerprint(cls, policy: Mapping[str, Any], number: int) -> tuple[Any, ...]:
+        """Return every field in one literal ND peer slot with its prefix removed."""
+
+        prefix = f"peer{number}"
+        return tuple(
+            sorted(
+                (key[len(prefix) :], cls._freeze_vpc_value(value, field_name=key))
+                for key, value in policy.items()
+                if isinstance(key, str) and key.startswith(prefix) and len(key) > len(prefix)
+            )
+        )
 
     @classmethod
     def _freeze_vpc_value(cls, value: Any, *, field_name: str = "") -> Any:
@@ -514,7 +540,7 @@ class EthernetMembershipIndex:
         return value
 
     def _infer_vpc_peer_switch_id(self, switch_id: str, parent_name: str, record: InterfaceRecord) -> str | None:
-        """Infer one peer from an identical literal cached parent signature."""
+        """Infer one peer from an equivalent cached parent signature."""
 
         signature = self._required_vpc_parent_signature(record, switch_id, parent_name)
         candidates: set[str] = set()
@@ -834,19 +860,42 @@ class EthernetMembershipIndex:
         peer_signature = self._required_vpc_parent_signature(peer_parent_record, peer_switch_id, peer_parent_name)
         if local_signature != peer_signature:
             raise MembershipValidationError(
-                f"vPC parent copies for {claim.interface_name!r} have inconsistent literal configured data; "
-                "ND peer1/peer2 fields must retain the same meaning in both switch echoes"
+                f"vPC parent copies for {claim.interface_name!r} have inconsistent configured data after " "normalizing a complete peer1/peer2 slot swap"
             )
 
         slots = self._vpc_parent_slots(claim.record, member.switch_id, claim.interface_name)
-        orientations = (
-            {pair_ids[0]: slots[0], pair_ids[1]: slots[1]},
-            {pair_ids[0]: slots[1], pair_ids[1]: slots[0]},
-        )
+        peer_slots = self._vpc_parent_slots(peer_parent_record, peer_switch_id, peer_parent_name)
+        slots_by_switch = {
+            member.switch_id: slots,
+            peer_switch_id: peer_slots,
+        }
+        slot_fingerprints = tuple(slot.fingerprint for slot in slots)
+        peer_slot_fingerprints = tuple(slot.fingerprint for slot in peer_slots)
+        switch_local_peer1 = peer_slot_fingerprints == tuple(reversed(slot_fingerprints)) and peer_slot_fingerprints != slot_fingerprints
+        if switch_local_peer1:
+            # ND 4.3.1 orients each switch-scoped copy with that switch's local
+            # side in peer1.  Reciprocal, completely reversed slot fingerprints
+            # make this orientation explicit even when IDs and member names are
+            # otherwise symmetric.
+            orientations = ({member.switch_id: slots[0], peer_switch_id: peer_slots[0]},)
+        else:
+            orientations = (
+                {pair_ids[0]: slots[0], pair_ids[1]: slots[1]},
+                {pair_ids[0]: slots[1], pair_ids[1]: slots[0]},
+            )
         valid_orientations: list[tuple[dict[str, _VpcParentSlot], dict[str, tuple[_ValidatedVpcSlotMember, ...]]]] = []
         orientation_errors: list[str] = []
         for orientation in orientations:
             try:
+                switch_oriented_slots = {}
+                for switch_id, pair_slot in orientation.items():
+                    matching_slots = [slot for slot in slots_by_switch[switch_id] if slot.fingerprint == pair_slot.fingerprint]
+                    if not matching_slots:
+                        raise MembershipValidationError(
+                            f"vPC parent {claim.interface_name!r} on switch {switch_id!r} does not contain "
+                            "the complete pair slot assigned by its reciprocal parent copy"
+                        )
+                    switch_oriented_slots[switch_id] = matching_slots[0]
                 validated_by_switch = {
                     switch_id: self._validate_vpc_members_for_parent(
                         switch_id=switch_id,
@@ -856,15 +905,15 @@ class EthernetMembershipIndex:
                         expected_port_channel_id=slot.port_channel_id,
                         expected_member_field=slot.member_field,
                     )
-                    for switch_id, slot in orientation.items()
+                    for switch_id, slot in switch_oriented_slots.items()
                 }
-                valid_orientations.append((orientation, validated_by_switch))
+                valid_orientations.append((switch_oriented_slots, validated_by_switch))
             except MembershipValidationError as exc:
                 orientation_errors.append(str(exc))
 
         if not valid_orientations:
             raise MembershipValidationError(
-                f"Cannot map literal peer1/peer2 slots for vPC parent {claim.interface_name!r} "
+                f"Cannot map pair-equivalent peer1/peer2 slots for vPC parent {claim.interface_name!r} "
                 f"onto switches {list(pair_ids)!r}: {'; '.join(orientation_errors)}"
             )
         if len(valid_orientations) > 1 and slots[0].fingerprint != slots[1].fingerprint:
@@ -957,13 +1006,7 @@ class EthernetMembershipIndex:
                         switch_id,
                         parent_name,
                     ),
-                    fingerprint=tuple(
-                        sorted(
-                            (key[5:], self._freeze_vpc_value(value, field_name=key))
-                            for key, value in policy.items()
-                            if isinstance(key, str) and key.startswith(f"peer{number}") and len(key) > 5
-                        )
-                    ),
+                    fingerprint=self._vpc_peer_slot_fingerprint(policy, number),
                 )
             )
         return slots[0], slots[1]

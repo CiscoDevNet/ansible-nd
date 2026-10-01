@@ -378,6 +378,47 @@ def test_pair_aware_safe_merge_preserves_authentic_member_payload(
 
 
 @pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_pair_aware_update_accepts_switch_local_peer_slot_orientation(case: _VpcCase) -> None:
+    """A complete ND 4.3.1 peer-slot swap still proves one coherent pair."""
+
+    inventories = _inventories(case)
+    local_policy = inventories[LOCAL_SERIAL][0]["configData"]["networkOS"]["policy"]
+    peer_policy = inventories[PEER_SERIAL][0]["configData"]["networkOS"]["policy"]
+    local_policy.update(
+        {
+            "peer1PortChannelDescription": "local side",
+            "peer2PortChannelDescription": "peer side",
+        }
+    )
+    peer_policy.update(
+        {
+            "peer1PortChannelId": 30,
+            "peer2PortChannelId": 20,
+            "peer1MemberPorts": ["Ethernet1/25"],
+            "peer2MemberPorts": ["Ethernet1/24"],
+            "peer1PortChannelDescription": "peer side",
+            "peer2PortChannelDescription": "local side",
+        }
+    )
+    inventories[LOCAL_SERIAL][2]["configData"]["networkOS"]["policy"]["ptp"] = "false"
+    inventories[PEER_SERIAL][2]["configData"]["networkOS"]["policy"]["ptp"] = "false"
+    state_machine, controller = _state_machine(
+        case,
+        requested_policy={"description": "updated from local-slot echoes"},
+        inventories=inventories,
+    )
+
+    state_machine.manage_state()
+
+    writes = _writes(controller)
+    assert [call["verb"] for call in writes] == [HttpVerbEnum.PUT.value]
+    policy = writes[0]["data"]["configData"]["networkOS"]["policy"]
+    assert policy["description"] == "updated from local-slot echoes"
+    assert policy["primaryInterface"] == VPC_NAME
+    assert "ptp" not in policy
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
 def test_pair_aware_update_uses_reciprocal_evidence_from_peer_second_page(case: _VpcCase) -> None:
     """The peer parent and member remain authoritative when both arrive after a short first page."""
 
@@ -472,7 +513,7 @@ def test_missing_or_inconsistent_peer_evidence_rejects_before_write(case: _VpcCa
     else:
         peer_parent = inventories[PEER_SERIAL][0]
         peer_parent["configData"]["networkOS"]["policy"]["peer2MemberPorts"] = ["Ethernet1/99"]
-        error = r"(?i)inconsistent literal configured data"
+        error = r"(?i)inconsistent configured data"
     state_machine, controller = _state_machine(
         case,
         requested_policy={"description": "must not write"},

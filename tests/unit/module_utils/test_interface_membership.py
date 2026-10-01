@@ -448,7 +448,7 @@ def test_vpc_parent_copies_require_identical_literal_port_channel_ids():
     peer_parent = inventories["SERIAL2"]["vpc100"]
     peer_parent["configData"]["networkOS"]["policy"]["peer2PortChannelId"] = 21
 
-    with pytest.raises(MembershipValidationError, match="inconsistent literal configured data"):
+    with pytest.raises(MembershipValidationError, match="inconsistent configured data"):
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
 
 
@@ -457,7 +457,7 @@ def test_vpc_parent_copies_require_identical_literal_member_lists():
     peer_parent = inventories["SERIAL2"]["vpc100"]
     peer_parent["configData"]["networkOS"]["policy"]["peer2MemberPorts"] = ["Ethernet1/99"]
 
-    with pytest.raises(MembershipValidationError, match="inconsistent literal configured data"):
+    with pytest.raises(MembershipValidationError, match="inconsistent configured data"):
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
 
 
@@ -466,8 +466,87 @@ def test_vpc_parent_copies_require_consistent_full_config_data():
     peer_policy = inventories["SERIAL2"]["vpc100"]["configData"]["networkOS"]["policy"]
     peer_policy["nativeVlan"] = 200
 
-    with pytest.raises(MembershipValidationError, match="inconsistent literal configured data"):
+    with pytest.raises(MembershipValidationError, match="inconsistent configured data"):
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
+
+
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+def test_vpc_parent_copies_accept_complete_peer_slot_reorientation(policy_type):
+    """ND may label each switch-local side as peer1 without changing pair intent."""
+
+    inventories = _valid_vpc_inventories(policy_type=policy_type)
+    local_policy = inventories["SERIAL1"]["vpc100"]["configData"]["networkOS"]["policy"]
+    peer_policy = inventories["SERIAL2"]["vpc100"]["configData"]["networkOS"]["policy"]
+    local_policy.update(
+        {
+            "peer1PortChannelDescription": "local side",
+            "peer2PortChannelDescription": "peer side",
+        }
+    )
+    peer_policy.update(
+        {
+            "peer1PortChannelId": 30,
+            "peer2PortChannelId": 20,
+            "peer1MemberPorts": ["Ethernet1/25"],
+            "peer2MemberPorts": ["Ethernet1/24"],
+            "peer1PortChannelDescription": "peer side",
+            "peer2PortChannelDescription": "local side",
+        }
+    )
+
+    result = EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
+
+    assert result.pair_validated is True
+    assert result.owner.switch_id == "SERIAL1"
+    assert result.peer_owner is not None
+    assert result.peer_owner.switch_id == "SERIAL2"
+
+
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+def test_vpc_switch_local_peer1_resolves_symmetric_live_slots(policy_type):
+    """Reciprocal slot reversal resolves ND's otherwise symmetric live shape."""
+
+    inventories = _valid_vpc_inventories(policy_type=policy_type)
+    peer_inventory = inventories["SERIAL2"]
+    peer_member = peer_inventory.pop("ethernet1/25")
+    peer_member["interfaceName"] = "Ethernet1/24"
+    peer_member["configData"]["networkOS"]["policy"]["portChannelId"] = "port-channel20"
+    peer_member["operData"]["portChannelId"] = 20
+    peer_inventory["ethernet1/24"] = peer_member
+    peer_port_channel = peer_inventory.pop("port-channel30")
+    peer_port_channel["interfaceName"] = "port-channel20"
+    peer_port_channel["configData"]["networkOS"]["policy"]["portChannelId"] = "port-channel20"
+    peer_inventory["port-channel20"] = peer_port_channel
+
+    local_policy = inventories["SERIAL1"]["vpc100"]["configData"]["networkOS"]["policy"]
+    peer_policy = peer_inventory["vpc100"]["configData"]["networkOS"]["policy"]
+    local_policy.update(
+        {
+            "peer1PortChannelId": 20,
+            "peer2PortChannelId": 20,
+            "peer1MemberPorts": ["Ethernet1/24"],
+            "peer2MemberPorts": ["Ethernet1/24"],
+            "peer1PortChannelDescription": "local side",
+            "peer2PortChannelDescription": "peer side",
+        }
+    )
+    peer_policy.update(
+        {
+            "peer1PortChannelId": 20,
+            "peer2PortChannelId": 20,
+            "peer1MemberPorts": ["Ethernet1/24"],
+            "peer2MemberPorts": ["Ethernet1/24"],
+            "peer1PortChannelDescription": "peer side",
+            "peer2PortChannelDescription": "local side",
+        }
+    )
+
+    result = EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
+
+    assert result.pair_validated is True
+    assert result.owner.claim_fields == ("peer1MemberPorts",)
+    assert result.peer_owner is not None
+    assert result.peer_owner.claim_fields == ("peer1MemberPorts",)
 
 
 def test_vpc_parent_fingerprint_ignores_echo_metadata_and_member_presentation():
