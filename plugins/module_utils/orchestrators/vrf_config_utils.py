@@ -8,6 +8,8 @@ components.
 
 from __future__ import annotations
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
+
 
 def configured_vrf_names(config: list[dict]) -> list[str]:
     """Return configured VRF names in stable order."""
@@ -21,23 +23,31 @@ def configured_vrf_names(config: list[dict]) -> list[str]:
     return names
 
 
-def deploy_enabled_by_vrf(config: list[dict]) -> dict[str, bool]:
-    """Return per-VRF deploy intent; omitted deploy defaults to True."""
+def deploy_enabled_by_vrf(config: list[dict], actions: ConfigActions | None = None) -> dict[str, bool]:
+    """Return effective per-VRF deploy intent from the shared action plan."""
     deploy_enabled: dict[str, bool] = {}
-    for vrf in config:
+    for index, vrf in enumerate(config):
         name = vrf.get("vrf_name") or vrf.get("vrfName")
         if name:
-            deploy_enabled[name] = vrf.get("deploy", True)
+            if actions is None:
+                deploy_enabled[name] = vrf.get("deploy", True)
+            elif index < len(actions.resource_deploy_overrides):
+                deploy_enabled[name] = actions.resource_deploy_enabled(index)
+            else:
+                deploy_enabled[name] = actions.deploy
     return deploy_enabled
 
 
-def deploy_type_by_vrf(config: list[dict]) -> dict[str, str]:
-    """Return per-VRF deploy scope; omitted deploy_type defaults to switch."""
+def deploy_type_by_vrf(config: list[dict], actions: ConfigActions | None = None) -> dict[str, str]:
+    """Return the shared module-level deploy scope for every configured VRF."""
     deploy_type: dict[str, str] = {}
     for vrf in config:
         name = vrf.get("vrf_name") or vrf.get("vrfName")
         if name:
-            deploy_type[name] = vrf.get("deploy_type") or vrf.get("deployType") or "switch"
+            if actions is None:
+                deploy_type[name] = vrf.get("deploy_type") or vrf.get("deployType") or "switch"
+            else:
+                deploy_type[name] = "vrf" if actions.type == "resource" else "switch"
     return deploy_type
 
 

@@ -129,7 +129,6 @@ def vrf_base_argument_spec():
         nf_monitor=dict(type="str"),
         # Attachment/deploy controls
         deploy=dict(type="bool", default=True),
-        deploy_type=dict(type="str", default="switch", choices=["switch", "vrf"]),
         attach=dict(
             type="list",
             elements="dict",

@@ -182,7 +182,6 @@ class NetworkConfigModel(NDBaseModel):
     network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
     network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     deploy: bool = True
-    deploy_type: str = Field(default="switch", alias="deployType")
     attach: list[NetworkAttachmentConfigModel] | None = None
 
     @model_validator(mode="before")
@@ -315,8 +314,6 @@ class NetworkConfigModel(NDBaseModel):
         set_custom_fields = [field for field, value in custom_fields.items() if value is not None]
         if set_custom_fields and network_type != NetworkType.USER_DEFINED.value:
             raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
-        if self.deploy_type not in ("switch", "network"):
-            raise ValueError("deploy_type must be either 'switch' or 'network'")
         if self.is_l2only is False and not self.vrf_name:
             raise ValueError("vrf_name is required for layer3 networks")
         return self

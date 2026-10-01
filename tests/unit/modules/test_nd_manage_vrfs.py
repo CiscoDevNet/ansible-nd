@@ -14,6 +14,8 @@ __metaclass__ = type  # pylint: disable=invalid-name
 from unittest.mock import patch
 
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_vrfs
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
 
 
 def test_nd_manage_vrfs_requires_pydantic_immediately_after_module_creation():
@@ -66,3 +68,5 @@ def test_nd_manage_vrfs_requires_pydantic_immediately_after_module_creation():
     ]
     assert events[1][1] is events[2][1]
     assert events[0][1].kwargs["supports_check_mode"] is True
+    assert events[0][1].kwargs["argument_spec"]["config_actions"] == config_actions_spec(RESOURCE_CONFIG_ACTIONS)["config_actions"]
+    assert "deploy_type" not in events[0][1].kwargs["argument_spec"]["config"]["options"]

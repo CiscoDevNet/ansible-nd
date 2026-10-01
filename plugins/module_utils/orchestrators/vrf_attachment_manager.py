@@ -115,7 +115,7 @@ class VrfAttachmentManager:
             return {}
 
         vrf_names = configured_vrf_names(config)
-        deploy_enabled = deploy_enabled_by_vrf(config)
+        deploy_enabled = deploy_enabled_by_vrf(config, getattr(self.coordinator, "config_actions", None))
 
         query_all = state == "overridden"
         query_vrf_names = current_vrf_names
@@ -686,6 +686,7 @@ class VrfAttachmentManager:
         self,
         config: list[dict],
         *target_maps: dict[str, set[str]],
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Build deploy requests from one or more VRF/switch maps."""
         deploy_targets: dict[str, set[str]] = {}
@@ -696,7 +697,8 @@ class VrfAttachmentManager:
         if not deploy_targets:
             return []
 
-        deploy_type = deploy_type_by_vrf(config)
+        selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
+        deploy_type = deploy_type_by_vrf(config, selected_actions)
         payloads: list[dict[str, Any]] = []
         vrf_level_names: list[str] = []
         switch_groups: dict[tuple[str, ...], list[str]] = {}
@@ -725,10 +727,12 @@ class VrfAttachmentManager:
         config: list[dict],
         module_args: dict,
         strategy: BaseVrfStrategy,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured VRFs already pending in ND."""
-        deploy_enabled = deploy_enabled_by_vrf(config)
-        deploy_type = deploy_type_by_vrf(config)
+        selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
+        deploy_enabled = deploy_enabled_by_vrf(config, selected_actions)
+        deploy_type = deploy_type_by_vrf(config, selected_actions)
         configured_vrfs = set(configured_vrf_names(config))
         pending_statuses = {"pending", "inProgress"}
         pending_vrfs: set[str] = set()
@@ -790,7 +794,9 @@ class VrfAttachmentManager:
 
         if not deploy_target_map:
             return []
-        return self.coordinator._build_deploy_payloads(config, deploy_target_map)
+        if actions is None:
+            return self.coordinator._build_deploy_payloads(config, deploy_target_map)
+        return self.build_deploy_payloads(config, deploy_target_map, actions=actions)
 
     def wait_for_vrfs_delete_ready(
         self,

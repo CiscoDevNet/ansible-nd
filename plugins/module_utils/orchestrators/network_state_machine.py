@@ -338,20 +338,10 @@ class NetworkStateMachine:
             result["_deferred_deploy_payloads"] = deploy_payloads
             return result
 
-        if self._check_mode():
-            self.coordinator._merge_api_trace(
-                result,
-                {
-                    "changed": True,
-                    "failed": False,
-                    "check_mode_deploy_payloads": deploy_payloads,
-                },
-            )
-            return result
-
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
-            deploy_trace = self.coordinator._deploy_network_attachments(
+            deploy = getattr(self.coordinator, "_run_network_config_actions", self.coordinator._deploy_network_attachments)
+            deploy_trace = deploy(
                 module_args,
                 strategy,
                 deploy_payload,
