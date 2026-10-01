@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot 
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfaceResourcePlan,
+    InterfaceWorkflowOperation,
     InterfaceWorkflowPlan,
     InterfaceWorkflowPlanner,
 )
@@ -418,18 +419,28 @@ class InterfaceWorkflowExecutor:
                 return False
         return True
 
-    def _queue_deletes(self, plan: InterfaceWorkflowPlan) -> bool:
+    def _queue_deletes(
+        self,
+        plan: InterfaceWorkflowPlan,
+        operations: Iterable[InterfaceWorkflowOperation] | None = None,
+    ) -> bool:
+        selected: dict[int, list[NDBaseModel]] | None = None
+        if operations is not None:
+            selected = defaultdict(list)
+            for operation in operations:
+                selected[operation.resource_index].append(operation.model)
         for resource in plan.resources:
-            models = list(resource.operations.deletes)
+            models = list(resource.operations.deletes) if selected is None else selected.get(resource.resource_index, [])
             if not models:
                 continue
             platform_by_identifier = {model.get_identifier_value(): model for model in getattr(resource, "platform_deletes", ())}
             ordinary = [model for model in models if model.get_identifier_value() not in platform_by_identifier]
+            platform = [platform_by_identifier[model.get_identifier_value()] for model in models if model.get_identifier_value() in platform_by_identifier]
             if not self._queue_delete_batch(resource, resource.orchestrator, ordinary):
                 return False
-            if not platform_by_identifier:
+            if not platform:
                 continue
-            if not self._queue_delete_batch(resource, resource.orchestrator, list(platform_by_identifier.values())):
+            if not self._queue_delete_batch(resource, resource.orchestrator, platform):
                 return False
         return True
 
@@ -565,10 +576,18 @@ class InterfaceWorkflowExecutor:
                 return False
         return True
 
-    def _execute_transitions(self, plan: InterfaceWorkflowPlan) -> bool:
+    def _execute_transitions(
+        self,
+        plan: InterfaceWorkflowPlan,
+        operations: Iterable[InterfaceWorkflowOperation] | None = None,
+    ) -> bool:
         """Replace approved foreign policies through destination-family PUTs."""
+        selected = None if operations is None else {operation.key for operation in operations}
         for resource in plan.resources:
             for transition in resource.transitions:
+                operation_key = self._scheduled_key(resource, "transition", transition.desired)
+                if selected is not None and operation_key not in selected:
+                    continue
                 item = self._item(resource, "transition", transition.desired)
                 if not self._call_items(
                     resource.orchestrator,
@@ -579,9 +598,16 @@ class InterfaceWorkflowExecutor:
                     return False
         return True
 
-    def _execute_updates(self, plan: InterfaceWorkflowPlan) -> bool:
+    def _execute_updates(
+        self,
+        plan: InterfaceWorkflowPlan,
+        operations: Iterable[InterfaceWorkflowOperation] | None = None,
+    ) -> bool:
+        selected = None if operations is None else {operation.key for operation in operations}
         for resource in plan.resources:
             for model in resource.operations.updates:
+                if selected is not None and self._scheduled_key(resource, "update", model) not in selected:
+                    continue
                 item = self._item(resource, "update", model)
                 if not self._call_items(
                     resource.orchestrator,
@@ -592,9 +618,21 @@ class InterfaceWorkflowExecutor:
                     return False
         return True
 
-    def _execute_creates(self, plan: InterfaceWorkflowPlan) -> bool:
+    def _execute_creates(
+        self,
+        plan: InterfaceWorkflowPlan,
+        operations: Iterable[InterfaceWorkflowOperation] | None = None,
+    ) -> bool:
+        selected_by_resource: dict[int, set[tuple[int, str, str, str]]] | None = None
+        if operations is not None:
+            selected_by_resource = defaultdict(set)
+            for operation in operations:
+                selected_by_resource[operation.resource_index].add(operation.key)
         for resource in plan.resources:
             models = list(resource.operations.creates)
+            if selected_by_resource is not None:
+                selected = selected_by_resource.get(resource.resource_index, set())
+                models = [model for model in models if self._scheduled_key(resource, "create", model) in selected]
             if not models:
                 continue
             if resource.orchestrator.supports_bulk_create:
@@ -622,6 +660,69 @@ class InterfaceWorkflowExecutor:
                     f"resources[{resource.resource_index}] {resource.resource_type} create failed",
                 ):
                     return False
+        return True
+
+    @staticmethod
+    def _scheduled_key(
+        resource: InterfaceResourcePlan,
+        action: str,
+        model: NDBaseModel,
+    ) -> tuple[int, str, str, str]:
+        """Return the planner/executor key for one model mutation."""
+
+        switch_id = resource.orchestrator.fabric_context.get_switch_id(getattr(model, "switch_ip"))
+        return resource.resource_index, action, switch_id, getattr(model, "interface_name").casefold()
+
+    def _execute_scheduled_layers(self, plan: InterfaceWorkflowPlan) -> bool:
+        """Execute dependency layers, flushing deferred deletes between layers."""
+
+        for layer in plan.execution_layers:
+            if not layer:
+                continue
+            actions = {operation.action for operation in layer}
+            if len(actions) != 1:
+                self._errors.append("Interface execution schedule contains a mixed-action layer.")
+                return False
+            action = next(iter(actions))
+            if action == "delete":
+                if not self._queue_deletes(plan, layer):
+                    return False
+                if not self._flush_base_removes(plan):
+                    return False
+                if not self._flush_ethernet_removes(plan):
+                    return False
+                continue
+            if action == "transition":
+                if not self._execute_transitions(plan, layer):
+                    return False
+                continue
+            if action == "update":
+                refresh_operations = [operation for operation in layer if operation.refresh_before]
+                if refresh_operations:
+                    selected_by_resource: dict[int, list[NDBaseModel]] = defaultdict(list)
+                    for operation in refresh_operations:
+                        selected_by_resource[operation.resource_index].append(operation.model)
+                    for resource in plan.resources:
+                        models = selected_by_resource.get(resource.resource_index, [])
+                        if not models:
+                            continue
+                        if not isinstance(resource.orchestrator, EthernetBaseOrchestrator):
+                            self._errors.append(f"resources[{resource.resource_index}] scheduled a member refresh on an unsupported orchestrator.")
+                            return False
+                        try:
+                            resource.orchestrator.refresh_member_update_contexts(models)
+                        except Exception as exc:  # pylint: disable=broad-except
+                            self._errors.append(f"resources[{resource.resource_index}] member state refresh after parent mutation failed: {exc}")
+                            return False
+                if not self._execute_updates(plan, layer):
+                    return False
+                continue
+            if action == "create":
+                if not self._execute_creates(plan, layer):
+                    return False
+                continue
+            self._errors.append(f"Interface execution schedule contains unsupported action {action!r}.")
+            return False
         return True
 
     def _deploy_pending(
@@ -767,18 +868,21 @@ class InterfaceWorkflowExecutor:
         """Execute mutation and exact-target deployment phases, then reconcile intended state."""
         self._build_items(plan)
         phases_ok = self._enable_writes_and_preflight(plan)
-        if phases_ok:
+        execution_layers = getattr(plan, "execution_layers", ())
+        if phases_ok and execution_layers:
+            phases_ok = self._execute_scheduled_layers(plan)
+        elif phases_ok:
             phases_ok = self._queue_deletes(plan)
-        if phases_ok:
-            phases_ok = self._flush_base_removes(plan)
-        if phases_ok:
-            phases_ok = self._flush_ethernet_removes(plan)
-        if phases_ok:
-            phases_ok = self._execute_transitions(plan)
-        if phases_ok:
-            phases_ok = self._execute_updates(plan)
-        if phases_ok:
-            phases_ok = self._execute_creates(plan)
+            if phases_ok:
+                phases_ok = self._flush_base_removes(plan)
+            if phases_ok:
+                phases_ok = self._flush_ethernet_removes(plan)
+            if phases_ok:
+                phases_ok = self._execute_transitions(plan)
+            if phases_ok:
+                phases_ok = self._execute_updates(plan)
+            if phases_ok:
+                phases_ok = self._execute_creates(plan)
         if phases_ok:
             phases_ok = self._deploy_pending(plan, deployment_targets)
         elif self.deploy:

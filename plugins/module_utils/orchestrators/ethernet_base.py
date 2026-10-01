@@ -718,6 +718,78 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """Return the canonical key shared by member records, intents, and ownership."""
         return switch_id, interface_name.lower()
 
+    def member_update_intent(self, switch_id: str, interface_name: str) -> MemberUpdateIntent | None:
+        """Return validated member-limited intent for one interface, if present."""
+
+        return self._member_intents.get(self._member_key(switch_id, interface_name))
+
+    def prepare_member_update_intents(self, model_instances: Sequence[ModelType]) -> None:
+        """Capture explicit caller intent before aggregate planning models are merged."""
+
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            self._prepare_member_intent(model_instance, existing_data)
+
+    def refresh_member_update_contexts(self, model_instances: Sequence[ModelType]) -> None:
+        """Refresh and revalidate members after an owning parent mutation.
+
+        Parent writes can change controller-derived member fields.  Re-read each
+        affected switch (and a validated vPC peer when present), rebuild the
+        authoritative membership index, and retain the caller's original safe
+        intent while replacing every payload source with fresh controller data.
+        """
+
+        models = list(model_instances)
+        refresh_switch_ids: set[str] = set()
+        for model_instance in models:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            key = self._member_key(switch_id, model_instance.interface_name)
+            if key not in self._member_intents or key not in self._validated_member_ownership:
+                raise RuntimeError(f"Member-safe intent or ownership proof is missing for {model_instance.interface_name} on switch {switch_id}.")
+            ownership = self._validated_member_ownership[key]
+            refresh_switch_ids.add(switch_id)
+            if ownership.peer_owner is not None:
+                refresh_switch_ids.add(ownership.peer_owner.switch_id)
+
+        self.state_snapshot.refresh(sorted(refresh_switch_ids))
+        self._membership_index_cache = None
+        self._membership_index_inventory_switches = frozenset()
+        self._validated_member_ownership.clear()
+        for model_instance in models:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            if existing_data is None:
+                raise RuntimeError(f"Member {model_instance.interface_name} disappeared after its owning parent mutation.")
+            if not self._prepare_member_intent(model_instance, existing_data):
+                raise RuntimeError(f"Interface {model_instance.interface_name} is no longer an authentic supported member after its owning parent mutation.")
+
+    def member_update_projection(self, switch_id: str, interface_name: str) -> dict[str, Any] | None:
+        """Return the authentic member record after applying validated safe intent.
+
+        This is a reporting projection only. It uses the same PR #561 payload
+        builder and ownership proof as the real PUT, so aggregate check mode can
+        describe the effective member state without pretending the host-shaped
+        planning model replaces the member policy.
+        """
+
+        key = self._member_key(switch_id, interface_name)
+        intent = self._member_intents.get(key)
+        ownership = self._validated_member_ownership.get(key)
+        current = self._member_records.get(key)
+        if intent is None or ownership is None or current is None:
+            return None
+        payload = build_member_update_payload(
+            current,
+            intent.requested_values,
+            switch_id=switch_id,
+            pair_validated=bool(ownership.pair_validated),
+        )
+        projected = deepcopy(current)
+        projected["switchId"] = switch_id
+        projected["configData"] = deepcopy(payload["configData"])
+        return projected
+
     def _cache_member_peer_switch_id(
         self,
         switch_id: str,
@@ -800,7 +872,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         parent_name = policy.get("primaryInterface")
         if not isinstance(parent_name, str) or not parent_name:
             return None
-        parent_record = self._switch_interfaces_cache.get(switch_id, {}).get(parent_name.lower())
+        parent_inventory = self.state_snapshot.cached_switch(switch_id) or {}
+        parent_record = parent_inventory.get(parent_name.lower())
         if not isinstance(parent_record, dict):
             return None
         parent_policy = self._interface_policy(parent_record)
@@ -849,12 +922,12 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         for pair in sorted(tuple(sorted(pair)) for pair in pairs):
             for switch_id in pair:
-                if switch_id not in self._switch_interfaces_cache:
+                if not self.state_snapshot.has_switch(switch_id):
                     self._switch_interfaces(switch_id)
 
     def _membership_index(self) -> EthernetMembershipIndex:
         """Return the index built from cached inventories and vPC pair evidence."""
-        inventory_switches = frozenset(self._switch_interfaces_cache)
+        inventory_switches = self.state_snapshot.cached_switch_ids
         if self._membership_index_cache is not None and inventory_switches != self._membership_index_inventory_switches:
             # Direct orchestrator callers can load another switch after an earlier
             # safe PUT. The PUT itself does not invalidate ownership, but an index
@@ -863,10 +936,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if self._membership_index_cache is None:
             self._prefetch_named_member_peer_inventories()
             self._membership_index_cache = EthernetMembershipIndex(
-                self._switch_interfaces_cache,
+                self.state_snapshot.clean_interfaces_by_switch,
                 peer_switch_ids=self._member_peer_serial_cache,
             )
-            self._membership_index_inventory_switches = frozenset(self._switch_interfaces_cache)
+            self._membership_index_inventory_switches = self.state_snapshot.cached_switch_ids
         return self._membership_index_cache
 
     def _validate_member_ownership(self, switch_id: str, interface_name: str):
@@ -937,20 +1010,28 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"with state: merged; requested state: {state}."
             )
 
-        requested_fields, requested_values = self._requested_member_updates(model_instance)
-        non_safe = requested_fields - self.PORT_CHANNEL_MODIFIABLE_FIELDS
-        if non_safe:
-            raise RuntimeError(
-                f"Interface {model_instance.interface_name} is a port-channel member. "
-                f"The following explicitly requested fields cannot be modified: "
-                f"{sorted(non_safe)}. Only these fields can be modified: "
-                f"{sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
-            )
-        # Performs value normalization and rejects membership-changing extra_config.
-        requested_values = normalize_safe_member_updates(requested_values)
-
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
         key = self._member_key(switch_id, model_instance.interface_name)
+        retained_intent = self._member_intents.get(key)
+        if retained_intent is None:
+            requested_fields, requested_values = self._requested_member_updates(model_instance)
+            non_safe = requested_fields - self.PORT_CHANNEL_MODIFIABLE_FIELDS
+            if non_safe:
+                raise RuntimeError(
+                    f"Interface {model_instance.interface_name} is a port-channel member. "
+                    f"The following explicitly requested fields cannot be modified: "
+                    f"{sorted(non_safe)}. Only these fields can be modified: "
+                    f"{sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
+                )
+            # Performs value normalization and rejects membership-changing extra_config.
+            requested_values = normalize_safe_member_updates(requested_values)
+            retained_intent = MemberUpdateIntent(
+                requested_state=state,
+                effective_state="merged",
+                requested_fields=requested_fields,
+                requested_values=requested_values,
+            )
+
         # query_all() already records every named member for state-machine use.
         # Direct update() callers reach this method without that discovery pass;
         # register the authentic record now so peer prefetch precedes index build.
@@ -960,12 +1041,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             raise RuntimeError(f"Pair-aware ownership validation did not complete for vPC member " f"{model_instance.interface_name}.")
 
         self._validated_member_ownership[key] = ownership
-        self._member_intents[key] = MemberUpdateIntent(
-            requested_state=state,
-            effective_state="merged",
-            requested_fields=requested_fields,
-            requested_values=requested_values,
-        )
+        self._member_intents[key] = retained_intent
         return True
 
     def _host_policy_replay_is_noop(self, model_instance: ModelType, existing_data: dict | None) -> bool:
@@ -1281,8 +1357,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
-            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             self._check_xe_fabric_link(model_instance, existing_data)
 
     @staticmethod
@@ -1356,7 +1432,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # supplies it without a cache, classify only the supplied evidence rather
         # than issuing a surprising extra request.
         parent_claims = (
-            self._membership_index().claiming_parents(switch_id, model_instance.interface_name) if switch_id in self._switch_interfaces_cache else ()
+            self._membership_index().claiming_parents(switch_id, model_instance.interface_name) if self.state_snapshot.has_switch(switch_id) else ()
         )
         if parent_claims:
             parents = ", ".join(sorted(f"{claim.interface_name} ({claim.interface_type}, policy {claim.policy_type!r})" for claim in parent_claims))
@@ -1815,7 +1891,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         updated_record = deepcopy(existing_data)
         updated_record["switchId"] = switch_id
         updated_record["configData"] = deepcopy(payload["configData"])
-        self._switch_interfaces_cache[switch_id][model_instance.interface_name.lower()] = updated_record
+        if self.state_snapshot.has_switch(switch_id):
+            self.state_snapshot.apply_overlay(switch_id, upserts=[updated_record])
         self._member_records[key] = updated_record
         # The safe overlay cannot change member policy, primaryInterface, port-channel
         # identity, or parent membership lists. Retain the cached ownership index and
@@ -1893,8 +1970,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
-            self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
+            self._check_fabric_ownership(model_instance, existing_data)
             if self._model_is_ios_xe(model_instance):
                 self._check_xe_fabric_link(model_instance)
                 self._queue_xe_reset(model_instance.interface_name, switch_id)
@@ -2011,7 +2088,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 )
                 continue
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
-            self._check_fabric_ownership(model_instance, existing_data)
             restriction = self._port_channel_delete_restriction(
                 model_instance,
                 existing_data,
@@ -2027,6 +2103,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     )
                     continue
                 raise RuntimeError(restriction)
+            self._check_fabric_ownership(model_instance, existing_data)
             if self._model_is_ios_xe(model_instance):
                 self._check_xe_fabric_link(model_instance)
                 self._queue_xe_reset(model_instance.interface_name, switch_id)

@@ -14,7 +14,20 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_config
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    AccessPoHostPolicyTypeEnum,
+    LoopbackPolicyTypeEnum,
+    PortChannelRoutedPolicyTypeEnum,
+    SubinterfaceManagedPolicyTypeEnum,
+    SviPolicyTypeEnum,
+    TrunkPoHostPolicyTypeEnum,
+    XeAccessPoHostPolicyTypeEnum,
+    XeLoopbackPolicyTypeEnum,
+    XePortChannelRoutedPolicyTypeEnum,
+    XeSubinterfacePolicyTypeEnum,
+    XeSviPolicyTypeEnum,
+    XeTrunkPoHostPolicyTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan, NDStatePlanner, SUPPORTED_STATES
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
@@ -23,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_ro
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import PortChannelAccessInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_routed_interface import PortChannelRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_trunk_host_interface import (
     PortChannelTrunkHostInterfaceOrchestrator,
 )
@@ -43,6 +57,19 @@ IMPLICIT_TRANSITION_STATES = frozenset({"merged", "replaced"})
 LOOPBACK_POLICY_TYPES = frozenset(policy_type.value for policy_type in LoopbackPolicyTypeEnum) | frozenset(
     policy_type.value for policy_type in XeLoopbackPolicyTypeEnum
 )
+PORT_CHANNEL_ACCESS_POLICY_TYPES = frozenset(policy_type.value for policy_type in AccessPoHostPolicyTypeEnum) | frozenset(
+    policy_type.value for policy_type in XeAccessPoHostPolicyTypeEnum
+)
+PORT_CHANNEL_TRUNK_POLICY_TYPES = frozenset(policy_type.value for policy_type in TrunkPoHostPolicyTypeEnum) | frozenset(
+    policy_type.value for policy_type in XeTrunkPoHostPolicyTypeEnum
+)
+PORT_CHANNEL_ROUTED_POLICY_TYPES = frozenset(policy_type.value for policy_type in PortChannelRoutedPolicyTypeEnum) | frozenset(
+    policy_type.value for policy_type in XePortChannelRoutedPolicyTypeEnum
+)
+SUBINTERFACE_MANAGED_POLICY_TYPES = frozenset(policy_type.value for policy_type in SubinterfaceManagedPolicyTypeEnum) | frozenset(
+    policy_type.value for policy_type in XeSubinterfacePolicyTypeEnum
+)
+SVI_POLICY_TYPES = frozenset(policy_type.value for policy_type in SviPolicyTypeEnum) | frozenset(policy_type.value for policy_type in XeSviPolicyTypeEnum)
 
 
 class InterfaceWorkflowValidationError(ValueError):
@@ -190,7 +217,7 @@ _ADAPTER_DEFINITIONS = (
         "orchestrator_class": PortChannelAccessInterfaceOrchestrator,
         "ownership_domain": "port_channel",
         "interface_types": frozenset({"portChannel"}),
-        "policy_types": frozenset({"accessPoHost"}),
+        "policy_types": PORT_CHANNEL_ACCESS_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
         "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
     },
@@ -200,7 +227,17 @@ _ADAPTER_DEFINITIONS = (
         "orchestrator_class": PortChannelTrunkHostInterfaceOrchestrator,
         "ownership_domain": "port_channel",
         "interface_types": frozenset({"portChannel"}),
-        "policy_types": frozenset({"trunkPoHost"}),
+        "policy_types": PORT_CHANNEL_TRUNK_POLICY_TYPES,
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
+    },
+    {
+        "resource_type": "port_channel_routed",
+        "module_name": "cisco.nd.nd_interface_port_channel_routed",
+        "orchestrator_class": PortChannelRoutedInterfaceOrchestrator,
+        "ownership_domain": "port_channel",
+        "interface_types": frozenset({"portChannel"}),
+        "policy_types": PORT_CHANNEL_ROUTED_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
         "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
     },
@@ -210,8 +247,9 @@ _ADAPTER_DEFINITIONS = (
         "orchestrator_class": SubinterfaceManagedInterfaceOrchestrator,
         "ownership_domain": "subinterface",
         "interface_types": frozenset({"subInterface"}),
-        "policy_types": frozenset({"subinterface"}),
+        "policy_types": SUBINTERFACE_MANAGED_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "supports_intra_family_policy_transitions": True,
     },
     {
         "resource_type": "subinterface_unmanaged",
@@ -228,8 +266,9 @@ _ADAPTER_DEFINITIONS = (
         "orchestrator_class": SviInterfaceOrchestrator,
         "ownership_domain": "svi",
         "interface_types": frozenset({"svi"}),
-        "policy_types": frozenset({"svi"}),
+        "policy_types": SVI_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "supports_intra_family_policy_transitions": True,
     },
     {
         "resource_type": "vpc_access",

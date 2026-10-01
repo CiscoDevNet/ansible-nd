@@ -446,7 +446,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
         request_body = {"interfaces": [item.payload for item in items]}
         recorded = self.rest_send.response_count
-        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        cached_before = self.state_snapshot.cached_switch(group_key.switch_id)
         names_before = set(cached_before) if cached_before is not None else None
         try:
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)

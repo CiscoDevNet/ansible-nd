@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_execut
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfacePolicyTransition,
+    InterfaceWorkflowOperation,
     InterfaceWorkflowPlanner,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import DeferredDeleteRequestGroup
@@ -724,12 +725,26 @@ def policy_transition(name="Ethernet1/1"):
     )
 
 
-def plan(*resources, auxiliary_orchestrators=()):
+def plan(*resources, auxiliary_orchestrators=(), execution_layers=()):
     """Build one InterfaceWorkflowPlan-shaped value."""
     return SimpleNamespace(
         resources=tuple(resources),
         target_switch_ids=("SERIAL1", "SERIAL2"),
         auxiliary_orchestrators=tuple(auxiliary_orchestrators),
+        execution_layers=tuple(execution_layers),
+    )
+
+
+def scheduled_operation(resource_plan, action, model, *, refresh_before=False):
+    """Build one real planner operation for executor schedule tests."""
+    return InterfaceWorkflowOperation(
+        resource_index=resource_plan.resource_index,
+        resource_type=resource_plan.resource_type,
+        action=action,
+        switch_id=resource_plan.orchestrator.fabric_context.get_switch_id(model.switch_ip),
+        interface_name=model.interface_name,
+        model=model,
+        refresh_before=refresh_before,
     )
 
 
@@ -788,6 +803,102 @@ def test_executor_orders_phases_consolidates_remove_and_deploy_then_refreshes():
         "interface_inventory_refreshes": 2,
         "interface_inventory_dirty_refetches": 2,
     }
+
+
+def test_dependency_schedule_can_run_parent_create_before_member_update():
+    """An explicit parent/member edge overrides the legacy update-before-create preference."""
+    events = []
+    parent_orchestrator = FakeOrchestrator("parent", events)
+    member_orchestrator = FakeOrchestrator("member", events)
+    parent_model = FakeModel("port-channel10")
+    member_model = FakeModel("Ethernet1/1")
+    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_access")
+    member_resource = resource(1, member_orchestrator, updates=[member_model], resource_type="ethernet_access")
+    workflow_plan = plan(
+        parent_resource,
+        member_resource,
+        execution_layers=(
+            (scheduled_operation(parent_resource, "create", parent_model),),
+            (scheduled_operation(member_resource, "update", member_model),),
+        ),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    writes = [event for event in events if event[0] in {"create", "update"}]
+    assert result.failed is False
+    assert writes == [
+        ("create", "parent", ("port-channel10",)),
+        ("update", "member", "Ethernet1/1"),
+    ]
+
+
+class RefreshingMemberFakeOrchestrator(FakeOrchestrator):
+    """Record the mandatory post-parent member refresh hook."""
+
+    def refresh_member_update_contexts(self, models):
+        self.events.append(("member_refresh", self.name, tuple(model.interface_name for model in models)))
+
+
+def test_dependency_schedule_refreshes_member_state_after_parent_mutation(monkeypatch):
+    """A safe member PUT is rebuilt only after fresh post-parent controller state."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        RefreshingMemberFakeOrchestrator,
+    )
+    events = []
+    parent_orchestrator = FakeOrchestrator("parent", events)
+    member_orchestrator = RefreshingMemberFakeOrchestrator("member", events)
+    parent_model = FakeModel("port-channel10")
+    member_model = FakeModel("Ethernet1/1")
+    parent_resource = resource(0, parent_orchestrator, updates=[parent_model], resource_type="port_channel_access")
+    member_resource = resource(1, member_orchestrator, updates=[member_model], resource_type="ethernet_access")
+    workflow_plan = plan(
+        parent_resource,
+        member_resource,
+        execution_layers=(
+            (scheduled_operation(parent_resource, "update", parent_model),),
+            (scheduled_operation(member_resource, "update", member_model, refresh_before=True),),
+        ),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    relevant = [event for event in events if event[0] in {"update", "member_refresh"}]
+    assert relevant == [
+        ("update", "parent", "port-channel10"),
+        ("member_refresh", "member", ("Ethernet1/1",)),
+        ("update", "member", "Ethernet1/1"),
+    ]
+
+
+def test_dependency_schedule_flushes_child_delete_before_parent_delete():
+    """Dependent delete layers are sent separately so the child is gone first."""
+    events = []
+    parent_orchestrator = FakeOrchestrator("parent", events)
+    child_orchestrator = FakeOrchestrator("child", events)
+    parent_model = FakeModel("Ethernet1/1")
+    child_model = FakeModel("Ethernet1/1.10")
+    parent_resource = resource(0, parent_orchestrator, deletes=[parent_model], state="deleted", resource_type="ethernet_routed")
+    child_resource = resource(1, child_orchestrator, deletes=[child_model], state="deleted", resource_type="subinterface_managed")
+    workflow_plan = plan(
+        parent_resource,
+        child_resource,
+        execution_layers=(
+            (scheduled_operation(child_resource, "delete", child_model),),
+            (scheduled_operation(parent_resource, "delete", parent_model),),
+        ),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), verify=True).execute(workflow_plan)
+
+    removes = [event for event in events if event[0] == "remove"]
+    assert result.failed is False
+    assert [event[2] for event in removes] == [
+        (("Ethernet1/1.10", "SERIAL1"),),
+        (("Ethernet1/1", "SERIAL1"),),
+    ]
     assert set(result.actual_after_by_resource) == {0, 1}
     assert {item.status for item in result.items} == {"succeeded"}
 
@@ -1085,6 +1196,47 @@ def test_ios_xe_physical_delete_uses_selected_family_reset_and_one_consolidated_
     deploy_events = [event for event in events if event[0] == "deploy"]
     assert deploy_events == [("deploy", "access", (("GigabitEthernet3", "SERIAL1"),))]
     assert selected.pending_deploys == ()
+
+
+def test_scheduled_ios_xe_platform_deletes_are_filtered_to_each_dependency_layer(monkeypatch) -> None:
+    """Later IOS-XE resets are neither executed early nor replayed in a later layer."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
+        PlatformResetFakeOrchestrator,
+    )
+    events = []
+    orchestrator = PlatformResetFakeOrchestrator("access", events)
+    first = FakeModel("GigabitEthernet3")
+    second = FakeModel("GigabitEthernet4")
+    first_proxy = FakeModel("GigabitEthernet3")
+    second_proxy = FakeModel("GigabitEthernet4")
+    resource_plan = resource(
+        0,
+        orchestrator,
+        deletes=[first, second],
+        platform_deletes=[first_proxy, second_proxy],
+        state="deleted",
+        resource_type="ethernet_access",
+    )
+    workflow_plan = plan(
+        resource_plan,
+        execution_layers=(
+            (scheduled_operation(resource_plan, "delete", first),),
+            (scheduled_operation(resource_plan, "delete", second),),
+        ),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert [event for event in events if event[0] == "platform_delete_bulk"] == [
+        ("platform_delete_bulk", "access", ("GigabitEthernet3",)),
+        ("platform_delete_bulk", "access", ("GigabitEthernet4",)),
+    ]
+    assert [event for event in events if event[0] == "platform_reset"] == [
+        ("platform_reset", "access", ("GigabitEthernet3", "SERIAL1")),
+        ("platform_reset", "access", ("GigabitEthernet4", "SERIAL1")),
+    ]
 
 
 def test_ios_xe_explicit_delete_uses_its_family_after_routed_overridden(monkeypatch) -> None:

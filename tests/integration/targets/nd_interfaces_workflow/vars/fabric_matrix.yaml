@@ -26,6 +26,7 @@ nd_iw_fabric_matrix:
       - ethernet_trunk_host
       - loopback
       - port_channel_access
+      - port_channel_routed
       - port_channel_trunk_host
       - subinterface_managed
       - subinterface_unmanaged

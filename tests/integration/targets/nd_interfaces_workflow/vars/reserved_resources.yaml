@@ -43,6 +43,18 @@ nd_iw_reserved_resources:
         - "{{ nd_iw_port_channel_trunk_member1 | default('Ethernet1/49', true) }}"
       secondary_ports:
         - "{{ nd_iw_port_channel_trunk_member3 | default('Ethernet1/51', true) }}"
+    port_channel_routed:
+      primary_name: "port-channel{{ nd_iw_port_channel_routed_primary_id | default(921) }}"
+      secondary_name: "port-channel{{ nd_iw_port_channel_routed_secondary_id | default(922) }}"
+      primary_ports:
+        - "{{ nd_iw_port_channel_routed_member1 | default('Ethernet1/54', true) }}"
+      alternate_ports:
+        - "{{ nd_iw_port_channel_routed_member1 | default('Ethernet1/54', true) }}"
+      secondary_ports:
+        - "{{ nd_iw_port_channel_routed_member2 | default('Ethernet1/55', true) }}"
+      primary_ipv4: "{{ nd_iw_port_channel_routed_primary_ipv4 | default('198.18.94.1', true) }}"
+      alternate_ipv4: "{{ nd_iw_port_channel_routed_alternate_ipv4 | default('198.18.94.5', true) }}"
+      secondary_ipv4: "{{ nd_iw_port_channel_routed_secondary_ipv4 | default('198.18.94.9', true) }}"
     loopback:
       primary_name: "loopback{{ nd_iw_loopback_primary_id | default(901) }}"
       secondary_name: "loopback{{ nd_iw_loopback_secondary_id | default(902) }}"
@@ -181,6 +193,13 @@ nd_iw_cleanup_resources:
         interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.primary_name }}"
       - switch_ip: "{{ nd_iw_active_switches.primary }}"
         interface_name: "{{ nd_iw_active_resources.port_channel_trunk_host.secondary_name }}"
+  - type: port_channel_routed
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.secondary_name }}"
   - type: ethernet_access
     state: deleted
     config:

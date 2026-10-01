@@ -70,7 +70,14 @@ class NDStatePlanner:
                     existing_match = after.get(identifier)
                     if existing_match is not None and getattr(existing_match, "is_unsupported_policy", False):
                         raise ValueError(existing_match.describe_unsupported_policy() + "; this module cannot modify it.")
-                    diff_status = after.get_diff_config(proposed_item, exclude_unset=state == "merged")
+                    final_candidate = proposed_item
+                    if state != "merged" and existing_match is not None:
+                        # Full replacement retains only model-declared dynamic or
+                        # unsupported-but-writable controller values. The same
+                        # candidate must drive both the diff and the eventual PUT
+                        # so aggregate and standalone planning cannot diverge.
+                        final_candidate = proposed_item.prepare_for_replacement(existing_match)
+                    diff_status = after.get_diff_config(final_candidate, exclude_unset=state == "merged")
                     if diff_status == "no_diff":
                         continue
 
@@ -78,10 +85,10 @@ class NDStatePlanner:
                         final_item = after.merge(proposed_item)
                     else:
                         if diff_status == "changed":
-                            after.replace(proposed_item)
+                            after.replace(final_candidate)
                         else:
-                            after.add(proposed_item)
-                        final_item = proposed_item
+                            after.add(final_candidate)
+                        final_item = final_candidate
 
                     if diff_status == "changed":
                         updates.append(final_item)

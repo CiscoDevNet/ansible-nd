@@ -20,6 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesListGet,
     EpManageInterfacesSummaryGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import InterfaceOffsetPaginator
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 
 
@@ -45,19 +46,24 @@ class InterfaceStateSnapshot:
         fabric_name: str,
         fabric_context: FabricContext,
         request: Callable[..., Any],
-        page_size: int | None = 500,
+        page_size: int = InterfaceOffsetPaginator.DEFAULT_PAGE_SIZE,
+        max_pages: int = InterfaceOffsetPaginator.DEFAULT_MAX_PAGES,
     ) -> None:
         if not fabric_name:
             raise ValueError("InterfaceStateSnapshot requires a non-empty fabric_name.")
         if fabric_context.fabric_name != fabric_name:
             raise ValueError(f"InterfaceStateSnapshot fabric '{fabric_name}' does not match FabricContext fabric " f"'{fabric_context.fabric_name}'.")
-        if page_size is not None and page_size < 1:
-            raise ValueError("InterfaceStateSnapshot page_size must be at least 1 or None.")
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size < 1:
+            raise ValueError("InterfaceStateSnapshot page_size must be a positive integer.")
+        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1:
+            raise ValueError("InterfaceStateSnapshot max_pages must be a positive integer.")
 
         self.fabric_name = fabric_name
         self.fabric_context = fabric_context
         self._request = request
         self.page_size = page_size
+        self.max_pages = max_pages
+        self._paginator = InterfaceOffsetPaginator(page_size=page_size, max_pages=max_pages)
         self._interfaces_by_switch: dict[str, dict[str, dict]] = {}
         self._original_interfaces_by_switch: dict[str, dict[str, dict]] = {}
         self._interface_summaries_by_switch: dict[str, dict[str, dict]] = {}
@@ -97,57 +103,42 @@ class InterfaceStateSnapshot:
         return policy.get("policyType")
 
     def _fetch_switch(self, switch_id: str) -> dict[str, dict]:
-        """Fetch all pages for ``switch_id`` and key records by interface name."""
-        interfaces_by_name: dict[str, dict] = {}
-        offset = 0
-        seen_full_pages: set[tuple[str, ...]] = set()
+        """Fetch every page for ``switch_id`` and publish only a complete result."""
 
-        while True:
+        def fetch_page(offset: int, page_size: int) -> Any:
             endpoint = EpManageInterfacesListGet()
             endpoint.fabric_name = self.fabric_name
             endpoint.switch_sn = switch_id
             endpoint.endpoint_params.sort = "interfaceName:asc"
-            if self.page_size is not None:
-                endpoint.endpoint_params.max = self.page_size
-                endpoint.endpoint_params.offset = offset
+            endpoint.endpoint_params.max = page_size
+            endpoint.endpoint_params.offset = offset
 
             self._interface_inventory_gets += 1
             self._interface_inventory_pages += 1
-            result = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
-            page = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-            if not isinstance(page, list):
-                page = []
+            return self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
 
-            keyed_page: list[tuple[str, dict]] = []
-            for interface in page:
-                if not isinstance(interface, dict):
-                    continue
-                key = self._interface_key(interface)
-                if key is not None:
-                    keyed_page.append((key, interface))
+        def identity(interface: dict[str, Any]) -> tuple[str, str]:
+            interface_name = interface.get("interfaceName")
+            if not isinstance(interface_name, str) or not interface_name:
+                raise ValueError("interfaceName must be a non-empty string")
+            returned_switch_id = interface.get("switchId")
+            if returned_switch_id is not None and (not isinstance(returned_switch_id, str) or not returned_switch_id):
+                raise ValueError(f"switchId must be a non-empty string, received {returned_switch_id!r}")
+            if returned_switch_id is not None and returned_switch_id != switch_id:
+                raise ValueError(f"switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
+            return switch_id, interface_name.lower()
 
-            if self.page_size is not None and len(page) >= self.page_size:
-                signature = tuple(key for key, _interface in keyed_page)
-                if signature in seen_full_pages:
-                    raise RuntimeError(f"Interface inventory pagination repeated a full page for switch '{switch_id}' " f"at offset {offset}.")
-                seen_full_pages.add(signature)
-
-            for key, interface in keyed_page:
-                interfaces_by_name[key] = deepcopy(interface)
-
-            if self.page_size is None or len(page) < self.page_size:
-                break
-            offset += len(page)
-
-        return interfaces_by_name
+        interfaces = self._paginator.collect(
+            fetch_page=fetch_page,
+            identity=identity,
+            context=f"interface inventory for switch '{switch_id}'",
+        )
+        return {interface["interfaceName"].lower(): deepcopy(interface) for interface in interfaces}
 
     def _fetch_interface_summary_switch(self, switch_id: str) -> dict[str, dict]:
-        """Fetch all interface-summary pages for one switch and key them by name."""
-        summaries_by_name: dict[str, dict] = {}
-        offset = 0
-        seen_full_pages: set[tuple[tuple[str, str], ...]] = set()
+        """Fetch every summary page and select the requested switch afterwards."""
 
-        while True:
+        def fetch_page(offset: int, page_size: int) -> Any:
             endpoint = EpManageInterfacesSummaryGet()
             endpoint.fabric_name = self.fabric_name
             # Some ND releases treat switchId as advisory and return fabric-wide rows. The Lucene filter keeps those
@@ -155,53 +146,28 @@ class InterfaceStateSnapshot:
             endpoint.endpoint_params.switch_id = switch_id
             endpoint.endpoint_params.filter = f"switchId:{switch_id}"
             endpoint.endpoint_params.sort = "interfaceName:asc"
-            if self.page_size is not None:
-                endpoint.endpoint_params.max = self.page_size
-                endpoint.endpoint_params.offset = offset
+            endpoint.endpoint_params.max = page_size
+            endpoint.endpoint_params.offset = offset
 
             self._interface_summary_gets += 1
             self._interface_summary_pages += 1
-            result = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
-            page = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-            if not isinstance(page, list):
-                page = []
+            return self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
 
-            keyed_page: list[tuple[str, dict]] = []
-            page_identities: list[tuple[str, str]] = []
-            page_keys: set[str] = set()
-            for summary in page:
-                if not isinstance(summary, dict):
-                    continue
-                returned_switch_id = summary.get("switchId")
-                if not isinstance(returned_switch_id, str) or not returned_switch_id:
-                    raise RuntimeError(f"Interface summary row has invalid switchId {returned_switch_id!r} while fetching switch '{switch_id}'.")
-                key = self._interface_key(summary)
-                if key is None:
-                    continue
-                page_identities.append((returned_switch_id, key))
-                # Valid rows for another switch can appear even with both server-side selectors. Keep them in the raw
-                # pagination signature, but never cache them under the requested switch.
-                if returned_switch_id != switch_id:
-                    continue
-                if key in page_keys or key in summaries_by_name:
-                    raise RuntimeError(f"Interface summary contains duplicate case-insensitive interface identity '{key}' " f"for switch '{switch_id}'.")
-                page_keys.add(key)
-                keyed_page.append((key, summary))
+        def identity(summary: dict[str, Any]) -> tuple[str, str]:
+            returned_switch_id = summary.get("switchId")
+            if not isinstance(returned_switch_id, str) or not returned_switch_id:
+                raise ValueError(f"switchId must be a non-empty string, received {returned_switch_id!r}")
+            interface_name = summary.get("interfaceName")
+            if not isinstance(interface_name, str) or not interface_name:
+                raise ValueError("interfaceName must be a non-empty string")
+            return returned_switch_id, interface_name.lower()
 
-            if self.page_size is not None and len(page) >= self.page_size:
-                signature = tuple(page_identities)
-                if signature in seen_full_pages:
-                    raise RuntimeError(f"Interface summary pagination repeated a full page for switch '{switch_id}' at offset {offset}.")
-                seen_full_pages.add(signature)
-
-            for key, summary in keyed_page:
-                summaries_by_name[key] = deepcopy(summary)
-
-            if self.page_size is None or len(page) < self.page_size:
-                break
-            offset += len(page)
-
-        return summaries_by_name
+        summaries = self._paginator.collect(
+            fetch_page=fetch_page,
+            identity=identity,
+            context=f"interface summary for requested switch '{switch_id}'",
+        )
+        return {summary["interfaceName"].lower(): deepcopy(summary) for summary in summaries if summary["switchId"] == switch_id}
 
     def load_switch(self, switch_id: str) -> dict[str, dict]:
         """Return current state, automatically refetching a locally dirty switch.
@@ -245,6 +211,26 @@ class InterfaceStateSnapshot:
         inventory = self._original_interfaces_by_switch if original else self._interfaces_by_switch
         current = inventory.get(switch_id, {}).get(interface_name.lower())
         return deepcopy(current) if current is not None else None
+
+    def has_switch(self, switch_id: str) -> bool:
+        """Return whether a complete, clean current inventory is cached."""
+        return switch_id in self._interfaces_by_switch and switch_id not in self._dirty_switches
+
+    def cached_switch(self, switch_id: str) -> dict[str, dict] | None:
+        """Return a clean cached inventory without triggering an API request."""
+        if not self.has_switch(switch_id):
+            return None
+        return deepcopy(self._interfaces_by_switch[switch_id])
+
+    @property
+    def cached_switch_ids(self) -> frozenset[str]:
+        """Return switch IDs whose complete current inventories are safe to consume."""
+        return frozenset(switch_id for switch_id in self._interfaces_by_switch if switch_id not in self._dirty_switches)
+
+    @property
+    def clean_interfaces_by_switch(self) -> dict[str, dict[str, dict]]:
+        """Return isolated copies of all complete, non-dirty current inventories."""
+        return {switch_id: deepcopy(interfaces) for switch_id, interfaces in self._interfaces_by_switch.items() if switch_id not in self._dirty_switches}
 
     def load_interface_summaries(
         self,
@@ -373,6 +359,10 @@ class InterfaceStateSnapshot:
             candidate.pop(interface_name, None)
         candidate.update(prepared_upserts)
         self._interfaces_by_switch[switch_id] = candidate
+        # Summary rows describe the same controller intent through a different
+        # endpoint.  A raw-state overlay makes any previously cached summary for
+        # this switch stale even though the raw cache itself remains clean.
+        self._interface_summaries_by_switch.pop(switch_id, None)
         self._snapshot_overlays += 1
         return deepcopy(candidate)
 
@@ -383,7 +373,9 @@ class InterfaceStateSnapshot:
         cached controller intent unreliable. It does not inspect or change the
         controller configuration synchronization status.
         """
-        self._dirty_switches.update(self._normalise_switch_ids(switch_ids))
+        for switch_id in self._normalise_switch_ids(switch_ids):
+            self._interface_summaries_by_switch.pop(switch_id, None)
+            self._dirty_switches.add(switch_id)
 
     def invalidate(self, switch_ids: str | Iterable[str]) -> None:
         """Discard current switch caches, retain originals, and mark locally dirty."""

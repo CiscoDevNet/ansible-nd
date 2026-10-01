@@ -158,14 +158,22 @@ def _vpc(
     }
 
 
-def _wire_interface(name: str, interface_type: str, policy_type: str, **policy: Any) -> dict[str, Any]:
+def _wire_interface(
+    name: str,
+    interface_type: str,
+    policy_type: str,
+    *,
+    network_os_type: str = "nx-os",
+    mode: str = "access",
+    **policy: Any,
+) -> dict[str, Any]:
     return {
         "interfaceName": name,
         "interfaceType": interface_type,
         "configData": {
-            "mode": "access",
+            "mode": mode,
             "networkOS": {
-                "networkOSType": "nx-os",
+                "networkOSType": network_os_type,
                 "policy": {"policyType": policy_type, **policy},
             },
         },
@@ -195,7 +203,7 @@ def _summary_row(
     return row
 
 
-def test_registry_is_the_exact_eleven_family_scope_and_delegates_model_ownership() -> None:
+def test_registry_is_the_exact_twelve_family_scope_and_delegates_model_ownership() -> None:
     """The authoritative registry excludes flow-rules and derives every model from its orchestrator."""
     assert set(INTERFACE_FAMILY_ADAPTERS) == {
         "ethernet_access",
@@ -203,6 +211,7 @@ def test_registry_is_the_exact_eleven_family_scope_and_delegates_model_ownership
         "ethernet_trunk_host",
         "loopback",
         "port_channel_access",
+        "port_channel_routed",
         "port_channel_trunk_host",
         "subinterface_managed",
         "subinterface_unmanaged",
@@ -215,6 +224,35 @@ def test_registry_is_the_exact_eleven_family_scope_and_delegates_model_ownership
     assert all(adapter.supported_states == frozenset({"merged", "replaced", "overridden", "deleted"}) for adapter in INTERFACE_FAMILY_ADAPTERS.values())
     assert INTERFACE_FAMILY_ADAPTERS["ethernet_access"].policy_types == frozenset({"accessHost", "iosXeAccess"})
     assert INTERFACE_FAMILY_ADAPTERS["ethernet_trunk_host"].policy_types == frozenset({"trunkHost", "iosXeTrunkHost"})
+    assert INTERFACE_FAMILY_ADAPTERS["port_channel_access"].policy_types == frozenset({"accessPoHost", "iosXeAccessPoHost"})
+    assert INTERFACE_FAMILY_ADAPTERS["port_channel_trunk_host"].policy_types == frozenset({"trunkPoHost", "iosXeTrunkPoHost"})
+    assert INTERFACE_FAMILY_ADAPTERS["port_channel_routed"].policy_types == frozenset({"l3Po", "iosXeL3PortChannel"})
+    assert INTERFACE_FAMILY_ADAPTERS["subinterface_managed"].policy_types == frozenset({"subinterface", "iosXeSubinterface", "iosXeSubinterfaceShutNoshut"})
+    assert INTERFACE_FAMILY_ADAPTERS["svi"].policy_types == frozenset({"svi", "iosXeSvi", "iosXeSviShutNoShut"})
+
+
+def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
+    """Adapters with a managed-policy API cannot drift from their standalone orchestrator."""
+    checked = set()
+    for resource_type, adapter in INTERFACE_FAMILY_ADAPTERS.items():
+        if not hasattr(adapter.orchestrator_class, "_managed_policy_types"):
+            continue
+        orchestrator = adapter.orchestrator_class.__new__(adapter.orchestrator_class)
+        assert adapter.policy_types == frozenset(orchestrator._managed_policy_types())
+        checked.add(resource_type)
+
+    assert checked == {
+        "ethernet_access",
+        "ethernet_routed",
+        "ethernet_trunk_host",
+        "port_channel_access",
+        "port_channel_routed",
+        "port_channel_trunk_host",
+        "subinterface_managed",
+        "svi",
+        "vpc_access",
+        "vpc_trunk_host",
+    }
 
 
 @pytest.mark.parametrize(
@@ -234,7 +272,8 @@ def test_ethernet_adapters_retain_family_correct_ios_xe_reset_profiles(
     payload = INTERFACE_FAMILY_ADAPTERS[resource_type].orchestrator_class._xe_reset_payload("GigabitEthernet3", "SERIAL1")
 
     assert payload["configData"]["mode"] == expected_mode
-    assert payload["configData"]["networkOS"]["policy"] == {"policyType": expected_policy_type, "adminState": True}
+    assert payload["configData"]["networkOS"]["policy"]["policyType"] == expected_policy_type
+    assert payload["configData"]["networkOS"]["policy"]["adminState"] is True
 
 
 def test_registry_declares_generic_transition_delete_and_structural_safety_metadata() -> None:
@@ -245,6 +284,7 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
         "ethernet_trunk_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "loopback": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "port_channel_access": (InterfaceDeleteStrategy.REMOVE, False, True, True),
+        "port_channel_routed": (InterfaceDeleteStrategy.REMOVE, False, True, True),
         "port_channel_trunk_host": (InterfaceDeleteStrategy.REMOVE, False, True, True),
         "subinterface_managed": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "subinterface_unmanaged": (InterfaceDeleteStrategy.REMOVE, False, False, False),
@@ -261,7 +301,7 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
         assert adapter.safety.requires_pair_consistency is pair_consistency
         assert adapter.safety.owns_physical_members is owns_members
         assert adapter.safety.guards_child_subinterfaces is child_guard
-        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "loopback"})
+        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "loopback", "subinterface_managed", "svi"})
         assert not hasattr(adapter, "policy_transition_sources")
 
     assert IMPLICIT_TRANSITION_STATES == frozenset({"merged", "replaced"})
@@ -544,7 +584,7 @@ def test_implicit_transition_is_generic_across_non_vpc_adapters(
     inventory = [current]
     if resource_type.startswith("subinterface_"):
         parent_name = interface_name.rsplit(".", 1)[0]
-        inventory.append(_wire_interface(parent_name, "ethernet", "routedHost"))
+        inventory.append(_wire_interface(parent_name, "ethernet", "routedHost", mode="routed"))
     planner, _recorder = _planner(
         responses=[{"interfaces": inventory}],
         summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
@@ -575,6 +615,125 @@ def test_svi_transition_accepts_switch_virtual_interface_summary_alias() -> None
 
     assert len(plan.resources[0].transitions) == 1
     assert plan.request_stats["interface_summary_gets"] == 1
+
+
+@pytest.mark.parametrize(
+    ("current_policy_type", "current_policy", "desired_policy_type", "desired_policy"),
+    [
+        (
+            "iosXeSvi",
+            {"adminState": True, "ip": "198.51.100.1", "prefix": 24},
+            "iosXeSviShutNoShut",
+            {"admin_state": False},
+        ),
+        (
+            "iosXeSviShutNoShut",
+            {"adminState": False},
+            "iosXeSvi",
+            {"admin_state": True, "ip": "198.51.100.1", "prefix": 24},
+        ),
+    ],
+)
+def test_ios_xe_svi_full_and_admin_variants_transition_in_both_directions(
+    current_policy_type: str,
+    current_policy: dict[str, Any],
+    desired_policy_type: str,
+    desired_policy: dict[str, Any],
+) -> None:
+    """The final IOS-XE SVI union is executable, not merely listed in the registry."""
+    current = _wire_interface(
+        "vlan100",
+        "svi",
+        current_policy_type,
+        network_os_type="ios-xe",
+        mode="managed",
+        **current_policy,
+    )
+    planner, _recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
+    desired = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "vlan100",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {"policy_type": desired_policy_type, **desired_policy},
+            }
+        },
+    }
+
+    plan = planner.plan([{"type": "svi", "state": "merged", "config": [desired]}])
+
+    transition = plan.resources[0].transitions[0]
+    assert transition.from_policy_type == current_policy_type
+    assert transition.to_policy_type == desired_policy_type
+
+
+@pytest.mark.parametrize(
+    ("current_policy_type", "current_policy", "desired_policy_type", "desired_policy"),
+    [
+        (
+            "iosXeSubinterface",
+            {"adminState": True, "vlanId": 10, "ip": "198.51.100.5", "prefix": 30},
+            "iosXeSubinterfaceShutNoshut",
+            {"admin_state": False},
+        ),
+        (
+            "iosXeSubinterfaceShutNoshut",
+            {"adminState": False},
+            "iosXeSubinterface",
+            {"admin_state": True, "vlan_id": 10, "ip": "198.51.100.5", "prefix": 30},
+        ),
+    ],
+)
+def test_ios_xe_managed_subinterface_full_and_admin_variants_transition_in_both_directions(
+    current_policy_type: str,
+    current_policy: dict[str, Any],
+    desired_policy_type: str,
+    desired_policy: dict[str, Any],
+) -> None:
+    """Both final IOS-XE managed-subinterface policies honor the routed-parent contract."""
+    parent = _wire_interface(
+        "GigabitEthernet3",
+        "ethernet",
+        "iosXeRoutedHost",
+        network_os_type="ios-xe",
+        mode="routed",
+    )
+    current = _wire_interface(
+        "GigabitEthernet3.10",
+        "subInterface",
+        current_policy_type,
+        network_os_type="ios-xe",
+        mode="managed",
+        **current_policy,
+    )
+    planner, _recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [parent, current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
+    desired = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "GigabitEthernet3.10",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {"policy_type": desired_policy_type, **desired_policy},
+            }
+        },
+    }
+
+    plan = planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [desired]}])
+
+    transition = plan.resources[0].transitions[0]
+    assert transition.from_policy_type == current_policy_type
+    assert transition.to_policy_type == desired_policy_type
 
 
 @pytest.mark.parametrize(("resource_type", "trunk"), [("vpc_access", False), ("vpc_trunk_host", True)])
@@ -1195,7 +1354,7 @@ def test_same_family_ethernet_member_update_is_preflighted_before_execution() ->
     desired["config_data"]["network_os"]["policy"]["access_vlan"] = 20
     planner, recorder = _planner(responses=[{"interfaces": [current]}])
 
-    with pytest.raises(InterfaceWorkflowValidationError, match="cannot update.*member of port-channel 20"):
+    with pytest.raises(InterfaceWorkflowValidationError, match="operational port-channel membership 20.*configured policy.*accessHost"):
         planner.plan([{"type": "ethernet_access", "state": "merged", "config": [desired]}])
 
     assert len(recorder.calls) == 1
@@ -1203,11 +1362,21 @@ def test_same_family_ethernet_member_update_is_preflighted_before_execution() ->
 
 def test_same_family_ethernet_member_update_preserves_standalone_whitelist() -> None:
     """Description-only member changes remain allowed by the standalone whitelist."""
-    current = _wire_interface("Ethernet1/1", "ethernet", "accessHost", accessVlan=10, description="old")
+    parent = _wire_interface("port-channel20", "portChannel", "accessPoHost", ports=["Ethernet1/1"])
+    current = _wire_interface(
+        "Ethernet1/1",
+        "ethernet",
+        "accessPoMember",
+        portChannelId="port-channel20",
+        description="old",
+    )
     current["operData"] = {"portChannelId": 20}
-    desired = _ethernet("192.0.2.1")
-    desired["config_data"]["network_os"]["policy"]["description"] = "new"
-    planner, _recorder = _planner(responses=[{"interfaces": [current]}])
+    desired = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["Ethernet1/1"],
+        "config_data": {"network_os": {"policy": {"description": "new"}}},
+    }
+    planner, _recorder = _planner(responses=[{"interfaces": [parent, current]}])
 
     plan = planner.plan([{"type": "ethernet_access", "state": "merged", "config": [desired]}])
 
@@ -1283,7 +1452,7 @@ def test_parent_transition_conflicts_with_planned_child_create() -> None:
             ]
         )
 
-    assert "parent_subinterface_collision" in {conflict.code for conflict in exc_info.value.conflicts}
+    assert "subinterface_parent_prerequisite" in {conflict.code for conflict in exc_info.value.conflicts}
 
 
 @pytest.mark.parametrize(
@@ -1363,7 +1532,7 @@ def test_parent_create_conflicts_with_planned_child_create(
             ]
         )
 
-    assert "parent_subinterface_collision" in {conflict.code for conflict in exc_info.value.conflicts}
+    assert "subinterface_parent_prerequisite" in {conflict.code for conflict in exc_info.value.conflicts}
 
 
 @pytest.mark.parametrize(
@@ -1372,7 +1541,7 @@ def test_parent_create_conflicts_with_planned_child_create(
         (None, "does not exist"),
         (
             _wire_interface("Ethernet1/1", "ethernet", "accessHost", accessVlan=10),
-            "expected routed policy 'routedHost'",
+            "expected one of.*routedHost",
         ),
     ],
 )
@@ -1406,8 +1575,8 @@ def test_subinterface_write_accepts_existing_routed_port_channel_parent(
     resource_type: str,
     policy: dict[str, Any],
 ) -> None:
-    """Both subinterface families accept the documented l3PortChannel parent."""
-    parent = _wire_interface("port-channel10", "portChannel", "l3PortChannel")
+    """Both subinterface families accept the routed NX-OS port-channel parent."""
+    parent = _wire_interface("port-channel10", "portChannel", "l3Po", mode="routed")
     planner, _recorder = _planner(responses=[{"interfaces": [parent]}])
     child = {
         "switch_ip": "192.0.2.1",
@@ -1418,6 +1587,219 @@ def test_subinterface_write_accepts_existing_routed_port_channel_parent(
     plan = planner.plan([{"type": resource_type, "state": "merged", "config": [child]}])
 
     assert len(plan.resources[0].operations.creates) == 1
+
+
+@pytest.mark.parametrize(
+    ("parent_name", "interface_type", "policy_type"),
+    [
+        ("GigabitEthernet3", "ethernet", "iosXeRoutedHost"),
+        ("Port-channel120", "portChannel", "iosXeL3PortChannel"),
+    ],
+)
+def test_ios_xe_subinterface_write_accepts_matching_routed_parent_contract(
+    parent_name: str,
+    interface_type: str,
+    policy_type: str,
+) -> None:
+    """Final IOS-XE routed Ethernet and port-channel parent policies both satisfy the child contract."""
+    parent = _wire_interface(
+        parent_name,
+        interface_type,
+        policy_type,
+        network_os_type="ios-xe",
+        mode="routed",
+    )
+    planner, _recorder = _planner(responses=[{"interfaces": [parent]}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE, "192.0.2.2": PlatformType.IOS_XE}
+    child = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": f"{parent_name}.10",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {"vlan_id": 10, "ip": "198.51.100.5", "prefix": 30},
+            }
+        },
+    }
+
+    plan = planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [child]}])
+
+    assert len(plan.resources[0].operations.creates) == 1
+
+
+@pytest.mark.parametrize(
+    ("mode", "network_os_type", "expected_reason"),
+    [
+        ("access", "nx-os", "parent mode is 'access'.*expected 'routed'"),
+        ("routed", None, "requires networkOSType 'nx-os'.*reports None"),
+    ],
+)
+def test_subinterface_write_rejects_incomplete_routed_parent_envelope(
+    mode: str,
+    network_os_type: str | None,
+    expected_reason: str,
+) -> None:
+    """A routed policy name alone cannot authorize a structurally invalid parent."""
+    parent = _wire_interface("port-channel10", "portChannel", "l3Po", mode=mode)
+    if network_os_type is None:
+        parent["configData"]["networkOS"].pop("networkOSType")
+    else:
+        parent["configData"]["networkOS"]["networkOSType"] = network_os_type
+    planner, _recorder = _planner(responses=[{"interfaces": [parent]}])
+    child = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "port-channel10.10",
+        "config_data": {"network_os": {"policy": {"vlan_id": 10}}},
+    }
+
+    with pytest.raises(InterfaceWorkflowConflictError, match=expected_reason):
+        planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [child]}])
+
+
+@pytest.mark.parametrize(
+    ("parent_network_os", "child_network_os", "expected_reason"),
+    [
+        ("nx-os", "ios-xe", "requires networkOSType 'ios-xe'.*reports 'nx-os'"),
+        ("ios-xe", "nx-os", "child network_os_type is 'nx-os'.*requires 'ios-xe'"),
+    ],
+)
+def test_subinterface_write_rejects_ios_xe_parent_or_child_platform_mismatch(
+    parent_network_os: str,
+    child_network_os: str,
+    expected_reason: str,
+) -> None:
+    """Policy, parent network OS, and child network OS must describe one platform contract."""
+    parent = _wire_interface(
+        "GigabitEthernet3",
+        "ethernet",
+        "iosXeRoutedHost",
+        network_os_type=parent_network_os,
+        mode="routed",
+    )
+    planner, _recorder = _planner(responses=[{"interfaces": [parent]}])
+    child = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "GigabitEthernet3.10",
+        "config_data": {
+            "network_os": {
+                "network_os_type": child_network_os,
+                "policy": {"vlan_id": 10},
+            }
+        },
+    }
+
+    with pytest.raises(InterfaceWorkflowConflictError, match=expected_reason) as exc_info:
+        planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [child]}])
+
+    assert "subinterface_parent_prerequisite" in {conflict.code for conflict in exc_info.value.conflicts}
+
+
+def test_routed_parent_create_is_scheduled_before_subinterface_create() -> None:
+    """One workflow can create a routed parent and then its managed child."""
+    current_parent = _wire_interface("Ethernet1/1", "ethernet", "trunkHost")
+    planner, _recorder = _planner(responses=[{"interfaces": [current_parent]}])
+    parent = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "Ethernet1/1",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "nx-os",
+                "policy": {"ip": "198.51.100.1", "prefix": 30},
+            }
+        },
+    }
+    child = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "Ethernet1/1.10",
+        "config_data": {"network_os": {"policy": {"vlan_id": 10}}},
+    }
+
+    plan = planner.plan(
+        [
+            {"type": "subinterface_managed", "state": "merged", "config": [child]},
+            {"type": "ethernet_routed", "state": "merged", "config": [parent]},
+        ]
+    )
+
+    assert [[operation.interface_name for operation in layer] for layer in plan.execution_layers] == [
+        ["Ethernet1/1"],
+        ["Ethernet1/1.10"],
+    ]
+
+
+def test_subinterface_delete_is_scheduled_before_parent_policy_transition() -> None:
+    """Deleting the final child unlocks and precedes its parent's routed transition."""
+    current_parent = _wire_interface("Ethernet1/1", "ethernet", "accessHost", accessVlan=10)
+    current_child = _wire_interface("Ethernet1/1.10", "subInterface", "subinterface", vlanId=10)
+    current_child["configData"]["mode"] = "managed"
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [current_parent, current_child]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current_parent, "SERIAL1")]}},
+    )
+    parent = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "Ethernet1/1",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "nx-os",
+                "policy": {"ip": "198.51.100.1", "prefix": 30},
+            }
+        },
+    }
+    child = {"switch_ip": "192.0.2.1", "interface_name": "Ethernet1/1.10"}
+
+    plan = planner.plan(
+        [
+            {"type": "ethernet_routed", "state": "merged", "config": [parent]},
+            {"type": "subinterface_managed", "state": "deleted", "config": [child]},
+        ]
+    )
+
+    assert [(layer[0].action, layer[0].interface_name) for layer in plan.execution_layers] == [
+        ("delete", "Ethernet1/1.10"),
+        ("transition", "Ethernet1/1"),
+    ]
+
+
+def test_policy_independent_subinterface_delete_unblocks_parent_policy_transition() -> None:
+    """A foreign-family explicit child delete is classified before parent guards run."""
+    current_parent = _wire_interface("Ethernet1/1", "ethernet", "accessHost", accessVlan=10)
+    current_child = _wire_interface("Ethernet1/1.10", "subInterface", "subinterface", vlanId=10)
+    current_child["configData"]["mode"] = "managed"
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [current_parent, current_child]}],
+        summary_responses={
+            "SERIAL1": {
+                "interfaces": [
+                    _summary_row(current_parent, "SERIAL1"),
+                    _summary_row(current_child, "SERIAL1"),
+                ]
+            }
+        },
+    )
+    parent = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "Ethernet1/1",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "nx-os",
+                "policy": {"ip": "198.51.100.1", "prefix": 30},
+            }
+        },
+    }
+    child = {"switch_ip": "192.0.2.1", "interface_name": "Ethernet1/1.10"}
+
+    plan = planner.plan(
+        [
+            {"type": "ethernet_routed", "state": "merged", "config": [parent]},
+            {"type": "subinterface_unmanaged", "state": "deleted", "config": [child]},
+        ]
+    )
+
+    assert [(layer[0].action, layer[0].interface_name) for layer in plan.execution_layers] == [
+        ("delete", "Ethernet1/1.10"),
+        ("transition", "Ethernet1/1"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1703,8 +2085,13 @@ def test_configured_member_policy_is_a_fail_closed_backstop(state: str) -> None:
     ethernet["operData"] = {"portChannelId": -1}
     planner, recorder = _planner(responses=[{"interfaces": [ethernet]}])
 
-    with pytest.raises(InterfaceWorkflowValidationError, match="member of port-channel 901"):
-        planner.plan([{"type": "ethernet_access", "state": state, "config": [_ethernet("192.0.2.1")]}])
+    desired = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["Ethernet1/1"],
+        "config_data": {"network_os": {"policy": {"description": "new"}}},
+    }
+    with pytest.raises(InterfaceWorkflowValidationError, match="orphaned|member of port-channel 901"):
+        planner.plan([{"type": "ethernet_access", "state": state, "config": [desired]}])
 
     assert len(recorder.calls) == 1
 
@@ -1720,18 +2107,232 @@ def test_untouched_owner_preserves_whitelisted_ethernet_member_update() -> None:
     ethernet = _wire_interface(
         "Ethernet1/1",
         "ethernet",
-        "accessHost",
-        accessVlan=10,
+        "accessPoMember",
+        portChannelId="port-channel10",
         description="old",
     )
     ethernet["operData"] = {"portChannelId": -1}
-    desired = _ethernet("192.0.2.1")
-    desired["config_data"]["network_os"]["policy"]["description"] = "new"
+    desired = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["Ethernet1/1"],
+        "config_data": {"network_os": {"policy": {"description": "new"}}},
+    }
     planner, _recorder = _planner(responses=[{"interfaces": [parent, ethernet]}])
 
     plan = planner.plan([{"type": "ethernet_access", "state": "merged", "config": [desired]}])
 
     assert len(plan.resources[0].operations.updates) == 1
+
+
+def test_retained_parent_update_precedes_safe_member_update() -> None:
+    """A retained parent mutation is ordered before PR #561's safe member PUT."""
+    parent = _wire_interface(
+        "port-channel10",
+        "portChannel",
+        "accessPoHost",
+        ports=["Ethernet1/1"],
+        portChannelMode="active",
+        accessVlan=10,
+    )
+    member = _wire_interface(
+        "Ethernet1/1",
+        "ethernet",
+        "accessPoMember",
+        portChannelId="port-channel10",
+        description="old",
+    )
+    member["operData"] = {"portChannelId": -1}
+    desired_parent = _port_channel("192.0.2.1", "port-channel10", ["Ethernet1/1"])
+    desired_parent["config_data"]["network_os"]["policy"]["access_vlan"] = 20
+    desired_member = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["Ethernet1/1"],
+        "config_data": {"network_os": {"policy": {"description": "new"}}},
+    }
+    planner, _recorder = _planner(responses=[{"interfaces": [parent, member]}])
+
+    plan = planner.plan(
+        [
+            {"type": "ethernet_access", "state": "merged", "config": [desired_member]},
+            {"type": "port_channel_access", "state": "merged", "config": [desired_parent]},
+        ]
+    )
+
+    assert [(layer[0].resource_type, layer[0].interface_name) for layer in plan.execution_layers] == [
+        ("port_channel_access", "port-channel10"),
+        ("ethernet_access", "Ethernet1/1"),
+    ]
+    assert plan.execution_layers[1][0].refresh_before is True
+
+
+def test_parent_policy_transition_rejects_member_update_from_former_family() -> None:
+    """A member update cannot follow its owner into an incompatible final policy family."""
+    parent = _wire_interface(
+        "port-channel10",
+        "portChannel",
+        "accessPoHost",
+        ports=["Ethernet1/1"],
+        portChannelMode="active",
+        accessVlan=10,
+    )
+    member = _wire_interface(
+        "Ethernet1/1",
+        "ethernet",
+        "accessPoMember",
+        portChannelId="port-channel10",
+        description="old",
+    )
+    member["operData"] = {"portChannelId": -1}
+    desired_parent = _port_channel("192.0.2.1", "port-channel10", ["Ethernet1/1"])
+    desired_parent["config_data"]["network_os"]["policy"]["allowed_vlans"] = "10-20"
+    desired_member = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["Ethernet1/1"],
+        "config_data": {"network_os": {"policy": {"description": "new"}}},
+    }
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [parent, member]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(parent, "SERIAL1")]}},
+    )
+
+    with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
+        planner.plan(
+            [
+                {"type": "ethernet_access", "state": "merged", "config": [desired_member]},
+                {"type": "port_channel_trunk_host", "state": "merged", "config": [desired_parent]},
+            ]
+        )
+
+    assert "ethernet_member_collision" in {conflict.code for conflict in exc_info.value.conflicts}
+
+
+def test_aggregate_update_uses_authoritative_member_registry_for_configured_operational_mismatch() -> None:
+    """A matching operational owner cannot hide a contradictory configured member ID."""
+    parent = _wire_interface(
+        "port-channel10",
+        "portChannel",
+        "accessPoHost",
+        ports=["Ethernet1/1"],
+        portChannelMode="active",
+        accessVlan=10,
+    )
+    member = _wire_interface(
+        "Ethernet1/1",
+        "ethernet",
+        "accessPoMember",
+        portChannelId="port-channel20",
+        portChannelMode="active",
+    )
+    member["operData"] = {"portChannelId": 10}
+    desired = _port_channel("192.0.2.1", "port-channel10", ["Ethernet1/1"])
+    desired["config_data"]["network_os"]["policy"]["access_vlan"] = 20
+    planner, _recorder = _planner(responses=[{"interfaces": [parent, member]}])
+
+    with pytest.raises(InterfaceWorkflowConflictError, match="configured port-channel ID 20 but operational ID 10") as exc_info:
+        planner.plan([{"type": "port_channel_access", "state": "merged", "config": [desired]}])
+
+    assert "member_ownership_validation" in {conflict.code for conflict in exc_info.value.conflicts}
+
+
+def test_ios_xe_host_conversion_precedes_port_channel_attach(monkeypatch) -> None:
+    """The registry-required IOS-XE host policy transition runs before parent creation."""
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda self: {})
+    member = _wire_interface("GigabitEthernet1/0/2", "ethernet", "iosXeTrunkHost")
+    member["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    member["operData"] = {"portChannelId": -1}
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [member]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(member, "SERIAL1")]}},
+    )
+    desired_member = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["GigabitEthernet1/0/2"],
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {"access_vlan": 100},
+            }
+        },
+    }
+    desired_parent = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "port-channel101",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {"access_vlan": 100, "ports": ["GigabitEthernet1/0/2"]},
+            }
+        },
+    }
+
+    plan = planner.plan(
+        [
+            {"type": "port_channel_access", "state": "merged", "config": [desired_parent]},
+            {"type": "ethernet_access", "state": "merged", "config": [desired_member]},
+        ]
+    )
+
+    assert [(layer[0].action, layer[0].resource_type) for layer in plan.execution_layers] == [
+        ("create", "ethernet_access"),
+        ("create", "port_channel_access"),
+    ]
+
+
+def test_ios_xe_routed_host_conversion_precedes_routed_port_channel_attach(monkeypatch) -> None:
+    """The final routed registry row drives IOS-XE l3 port-channel dependency ordering."""
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda self: {})
+    member = _wire_interface(
+        "GigabitEthernet1/0/3",
+        "ethernet",
+        "iosXeTrunkHost",
+        network_os_type="ios-xe",
+        mode="trunk",
+    )
+    member["operData"] = {"portChannelId": -1}
+    planner, _recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [member]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(member, "SERIAL1")]}},
+    )
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
+    desired_member = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "GigabitEthernet1/0/3",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {},
+            }
+        },
+    }
+    desired_parent = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "port-channel103",
+        "config_data": {
+            "network_os": {
+                "network_os_type": "ios-xe",
+                "policy": {
+                    "ip": "198.51.100.1",
+                    "prefix": 30,
+                    "ports": ["GigabitEthernet1/0/3"],
+                },
+            }
+        },
+    }
+
+    plan = planner.plan(
+        [
+            {"type": "port_channel_routed", "state": "merged", "config": [desired_parent]},
+            {"type": "ethernet_routed", "state": "merged", "config": [desired_member]},
+        ]
+    )
+
+    assert [(layer[0].action, layer[0].resource_type) for layer in plan.execution_layers] == [
+        ("create", "ethernet_routed"),
+        ("create", "port_channel_routed"),
+    ]
+    parent_policy = plan.execution_layers[1][0].model.config_data.network_os.policy
+    assert parent_policy.policy_type == "iosXeL3PortChannel"
 
 
 def test_untouched_owner_rejects_non_whitelisted_ethernet_member_update() -> None:
@@ -1923,8 +2524,8 @@ def test_opposite_primaries_on_the_same_vpc_pair_share_one_identity() -> None:
     assert "duplicate_ownership" in {conflict.code for conflict in exc_info.value.conflicts}
 
 
-def test_eleven_family_plan_shares_one_inventory_fetch_per_switch() -> None:
-    """The actual workflow path reduces eleven family inventories over two switches to two GETs."""
+def test_twelve_family_plan_shares_one_inventory_fetch_per_switch() -> None:
+    """The actual workflow path reduces twelve family inventories over two switches to two GETs."""
 
     def config(switch_ip: str, interface_name: str, policy: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -1937,12 +2538,12 @@ def test_eleven_family_plan_shares_one_inventory_fetch_per_switch() -> None:
         responses=[
             {
                 "interfaces": [
-                    _wire_interface("Ethernet1/3", "ethernet", "routedHost"),
+                    _wire_interface("Ethernet1/3", "ethernet", "routedHost", mode="routed"),
                 ]
             },
             {
                 "interfaces": [
-                    _wire_interface("Ethernet1/4", "ethernet", "routedHost"),
+                    _wire_interface("Ethernet1/4", "ethernet", "routedHost", mode="routed"),
                 ]
             },
         ],
@@ -1991,6 +2592,22 @@ def test_eleven_family_plan_shares_one_inventory_fetch_per_switch() -> None:
             "config": [config("192.0.2.2", "port-channel11", {"port_channel_mode": "active"})],
         },
         {
+            "type": "port_channel_routed",
+            "state": "merged",
+            "config": [
+                {
+                    "switch_ip": "192.0.2.1",
+                    "interface_name": "port-channel12",
+                    "config_data": {
+                        "network_os": {
+                            "network_os_type": "nx-os",
+                            "policy": {"port_channel_mode": "active"},
+                        }
+                    },
+                }
+            ],
+        },
+        {
             "type": "subinterface_managed",
             "state": "merged",
             "config": [config("192.0.2.1", "Ethernet1/3.10", {"vlan_id": 10})],
@@ -2019,8 +2636,8 @@ def test_eleven_family_plan_shares_one_inventory_fetch_per_switch() -> None:
 
     plan = planner.plan(resources)
 
-    assert len(plan.resources) == 11
-    assert plan.mutation_count == 11
+    assert len(plan.resources) == 12
+    assert plan.mutation_count == 12
     assert plan.target_switch_ids == ("SERIAL1", "SERIAL2")
     assert plan.request_stats["interface_inventory_gets"] == 2
     assert len(recorder.calls) == 2

@@ -54,6 +54,7 @@ options:
         - Configured V(loopback) items require C(config_data.network_os.network_os_type) plus
           C(config_data.network_os.policy.policy_type). Identifier-only V(deleted) items may omit C(config_data).
         - V(port_channel_access) uses M(cisco.nd.nd_interface_port_channel_access).
+        - V(port_channel_routed) uses M(cisco.nd.nd_interface_port_channel_routed).
         - V(port_channel_trunk_host) uses M(cisco.nd.nd_interface_port_channel_trunk_host).
         - V(subinterface_managed) uses M(cisco.nd.nd_interface_subinterface_managed).
         - V(subinterface_unmanaged) uses M(cisco.nd.nd_interface_subinterface_unmanaged).
@@ -68,6 +69,7 @@ options:
         - ethernet_trunk_host
         - loopback
         - port_channel_access
+        - port_channel_routed
         - port_channel_trunk_host
         - subinterface_managed
         - subinterface_unmanaged
@@ -87,7 +89,7 @@ options:
         - V(deleted) acts on each explicitly listed identity regardless of its current policy family, provided the current interface is in
           the same structural domain and is safe to delete. Physical Ethernet interfaces are reset to the unconfigured fabric-default
           policy; deletable logical interfaces are removed.
-        - All eleven interface adapters support all four values.
+        - All twelve interface adapters support all four values.
         type: str
         choices: [ merged, replaced, overridden, deleted ]
         default: merged
@@ -162,11 +164,16 @@ notes:
   V(overridden) is authoritative across those nine policies but excludes C(userDefined) and system-owned NX-OS C(underlayLoopback).
 - A policy transition is rejected before writes when controller safety metadata, structural type, vPC peer consistency, port-channel or
   vPC membership, or parent-child interface dependencies make the change unsafe.
-- Current and final physical members of port-channel and vPC interfaces are protected from independent Ethernet resets, transitions,
-  creates, and non-whitelisted updates, including when operational membership data is stale.
-- Ethernet and port-channel parents cannot be mutated in the same workflow as a child-subinterface mutation and cannot be changed while
-  an existing child subinterface remains. Managed and unmanaged subinterface writes require an existing routed parent configured in a
-  prior workflow; V(routedHost) for Ethernet or V(l3PortChannel) for a port-channel.
+- Current and final physical members of port-channel and vPC interfaces are protected from Ethernet resets, detach/reparent requests,
+  ambiguous ownership, and non-whitelisted updates, including when operational membership data is stale. A supported existing member can
+  change only C(admin_state), C(description), and C(extra_config) through its matching Ethernet family with V(merged).
+- A retained aggregate-parent mutation is ordered before a safe update to one of its existing members. For a new IOS-XE port-channel,
+  the registry-required Ethernet host-policy conversion is ordered before the parent attaches that member. The member policy itself is
+  never synthesized by the workflow.
+- Managed and unmanaged subinterface writes require a routed parent. Accepted policies are V(routedHost) or V(iosXeRoutedHost) for Ethernet, and V(l3Po) or
+  V(iosXeL3PortChannel) for a port-channel, with matching network OS. A compatible routed parent may be created or transitioned in the
+  same workflow and is executed before the child. A planned child delete executes before its parent mutation; an unplanned existing
+  child continues to block that parent mutation.
 - For V(deleted), the selected type supplies the input and execution contract, but explicit identity lookup is policy-independent within
   that structural interface domain. A physical Ethernet delete resets the interface to the unconfigured default instead of removing the
   physical interface.
@@ -174,8 +181,10 @@ notes:
   port under V(iosXeRoutedHost) but clears its configurable policy fields to the IOS-XE template defaults.
 - An unconfigured default V(trunkHost) physical interface retains the ordinary bulk-create path and is never converted into a
   per-interface transition, preserving the workflow's scale advantage.
-- Interface inventories and transition/delete safety data are shared for the complete workflow. They are not fetched once per resource
-  group or once per interface; pagination may require more than one GET for a switch or fabric-level safety inventory.
+- Raw interface inventories and interface-summary safety rows use the same interface-scoped paginator. It advances by actual rows,
+  validates total/remaining/next-offset metadata, and rejects duplicates, repeats, contradictions, no progress, and page-limit
+  exhaustion. A cache is published only after the complete retrieval succeeds. Reads are shared for the complete workflow rather than
+  repeated per resource group or interface, although pagination can require multiple GETs for a switch.
 - O(verify.enabled) affects only the post-write refresh for a completely successful mutating workflow. Its default V(false) avoids those
   additional inventory GETs and reports projected state with C(resources[].after_verified=false). Initial discovery, validation, and
   safety reads are unchanged.
@@ -209,12 +218,16 @@ notes:
   default V(trunkHost) policy; a deleted IOS-XE routed interface remains present with a defaults-only V(iosXeRoutedHost) policy.
 - C(resources[].operations) is the single operation ledger. It combines create, update, transition, physical-reset, and logical-delete
   actions with their target identities and execution status; update-like actions can include leaf-level C(changes).
+- A member-limited update also reports C(requested_state), C(effective_state), C(member_limited=true), C(applied_fields), and
+  C(suppressed_fields). Its projected C(after) preserves the authentic member policy and ownership fields instead of presenting the
+  host-shaped model used internally for planning.
 - Successful output intentionally omits duplicate top-level snapshots and task-input echoes. C(request_stats) contains interface and
   fabric-link read, cache, refresh, overlay, and vPC metrics; C(execution) exclusively owns mutation and deployment write counters.
 - At O(output_level=debug), C(resources[].family_before) and C(resources[].family_after) expose the complete selected-family collections
   used for diagnostics. Result projection is in-memory and sends no additional controller GET requests.
-- Deletes and deferred normalize/reset operations run before transitions, updates, and creates. Deployments are consolidated across
-  compatible resource groups.
+- The dependency scheduler prefers deletes and deferred normalize/reset operations, then transitions, updates, and creates. Exact
+  parent/child and parent/member edges override that preference when safety requires the parent first or the child first. Deferred
+  deletes are flushed between dependency layers, and deployments are consolidated across compatible resource groups.
 - The Ethernet V(routedHost) to V(accessHost) and V(accessHost) to V(trunkHost) cross-policy PUTs have been live-qualified during this
   development effort. Destination orchestrators exist for port-channel, vPC, managed and unmanaged subinterface, SVI, loopback, and other
   Ethernet transitions, but those source/destination combinations must be live-qualified against the intended Nexus Dashboard release
@@ -288,6 +301,65 @@ EXAMPLES = r"""
     verify:
       enabled: true
   register: interface_result
+
+- name: Preview dependency ordering across NX-OS and IOS-XE routed resources
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: FABRIC1
+    resources:
+      # Resource order does not need to match execution order. The routed parent
+      # is created or transitioned before this child.
+      - type: subinterface_managed
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_name: Ethernet1/52.100
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  vlan_id: 100
+                  ip: 198.51.100.2
+                  prefix: 30
+      - type: ethernet_routed
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_name: Ethernet1/52
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  ip: 198.51.100.1
+                  prefix: 30
+      # The IOS-XE host conversion is executed before this routed
+      # port-channel attaches the physical member.
+      - type: port_channel_routed
+        state: merged
+        config:
+          - switch_ip: 192.168.1.21
+            interface_name: Port-channel120
+            config_data:
+              network_os:
+                network_os_type: ios-xe
+                policy:
+                  ip: 203.0.113.1
+                  prefix: 30
+                  ports:
+                    - GigabitEthernet1/0/2
+                  port_channel_mode: active
+      - type: ethernet_routed
+        state: merged
+        config:
+          - switch_ip: 192.168.1.21
+            interface_name: GigabitEthernet1/0/2
+            config_data:
+              network_os:
+                network_os_type: ios-xe
+                policy:
+                  description: Routed port-channel member
+    config_actions:
+      deploy: false
+  check_mode: true
 
 - name: Preview a fabric-wide authoritative SVI group
   cisco.nd.nd_interfaces_workflow:
@@ -441,6 +513,30 @@ resources:
           description: Destination controller policy discriminator for a transition.
           returned: for transition operations
           type: str
+        requested_state:
+          description: State requested for a member-limited Ethernet update.
+          returned: for a safe update to an existing aggregate member
+          type: str
+        effective_state:
+          description: Effective state applied by the member-safe path; currently V(merged).
+          returned: for a safe update to an existing aggregate member
+          type: str
+        member_limited:
+          description: Whether the operation is constrained by the authoritative aggregate-member contract.
+          returned: for a safe update to an existing aggregate member
+          type: bool
+        applied_fields:
+          description: Explicit safe policy fields applied to the authentic member policy.
+          returned: for a safe update to an existing aggregate member
+          type: list
+          elements: str
+        suppressed_fields:
+          description:
+          - Host-planning fields deliberately excluded from member intent and payload reconstruction.
+          - Controller-owned member identity and ownership fields remain preserved from the authentic current policy.
+          returned: for a safe update to an existing aggregate member
+          type: list
+          elements: str
         changes:
           description: Leaf-level differences for update, transition, or physical-reset operations whose reported values differ.
           returned: when an update-like operation has reported differences

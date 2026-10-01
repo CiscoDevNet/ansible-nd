@@ -37,6 +37,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planne
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
+    EthernetBaseOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
     ResponseHandler,
 )
@@ -362,6 +365,7 @@ class InterfaceWorkflowCoordinator:
         execution_items: Mapping[tuple[int, str, str, str], Mapping[str, Any]],
         from_policy_type: str | None = None,
         to_policy_type: str | None = None,
+        member_update: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Merge one planned action with its execution status and compact changed paths."""
         execution_key = (resource.resource_index, action, switch_ip.casefold(), interface_name.casefold())
@@ -382,6 +386,8 @@ class InterfaceWorkflowCoordinator:
             result["to_policy_type"] = to_policy_type
         if message := execution_item.get("message"):
             result["message"] = message
+        if member_update is not None:
+            result.update(member_update)
 
         if public_action in {"reset", "transition", "update"}:
             target_key = (switch_ip.casefold(), interface_name.casefold())
@@ -391,6 +397,29 @@ class InterfaceWorkflowCoordinator:
             if changes:
                 result["changes"] = changes
         return result
+
+    @staticmethod
+    def _member_update_details(resource, model) -> dict[str, Any] | None:
+        """Return truthful effective-state metadata for a PR #561 safe member update."""
+
+        orchestrator = resource.orchestrator
+        if not isinstance(orchestrator, EthernetBaseOrchestrator):
+            return None
+        switch_id = orchestrator.fabric_context.get_switch_id(getattr(model, "switch_ip"))
+        intent = orchestrator.member_update_intent(switch_id, getattr(model, "interface_name"))
+        if intent is None:
+            return None
+        config_data = getattr(model, "config_data", None)
+        network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+        policy = getattr(network_os, "policy", None) if network_os is not None else None
+        planned_fields = set(getattr(policy, "model_fields_set", ())) if policy is not None else set()
+        return {
+            "requested_state": intent.requested_state,
+            "effective_state": intent.effective_state,
+            "member_limited": True,
+            "applied_fields": sorted(intent.requested_fields),
+            "suppressed_fields": sorted(planned_fields - intent.requested_fields),
+        }
 
     def _resource_operations(
         self,
@@ -452,6 +481,7 @@ class InterfaceWorkflowCoordinator:
                         before_by_target=before_by_target,
                         after_by_target=after_by_target,
                         execution_items=execution_items,
+                        member_update=self._member_update_details(resource, model) if action == "update" else None,
                     )
                 )
         return operations
@@ -735,6 +765,15 @@ class InterfaceWorkflowCoordinator:
                     _switch_ip, current = self._raw_target(resource, desired, original=True)
                     projected.append(self._default_ethernet_target(desired, current))
                 continue
+            if isinstance(resource.orchestrator, EthernetBaseOrchestrator):
+                switch_id = resource.orchestrator.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
+                member_projection = resource.orchestrator.member_update_projection(
+                    switch_id,
+                    getattr(desired, "interface_name"),
+                )
+                if member_projection is not None:
+                    projected.append(self._serialize_raw_target(member_projection, getattr(desired, "switch_ip")))
+                    continue
             current = resource.operations.after.get(key)
             if current is not None:
                 projected.append(self._serialize_model_target(current))

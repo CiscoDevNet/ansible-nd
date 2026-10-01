@@ -17,6 +17,7 @@
       ethernet_trunk_host: trunkHost
       loopback: loopback
       port_channel_access: accessPoHost
+      port_channel_routed: l3Po
       port_channel_trunk_host: trunkPoHost
       subinterface_managed: subinterface
       subinterface_unmanaged: monitorSubinterface

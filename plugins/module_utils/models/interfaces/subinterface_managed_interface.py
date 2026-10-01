@@ -111,6 +111,7 @@ _CANONICAL_PARENT_PREFIXES = (
 
 _ADDRESS_PAIR_VALIDATION_SUSPENDED: ContextVar[bool] = ContextVar("subinterface_address_pair_validation_suspended", default=False)
 
+
 class SubinterfaceManagedPolicyModel(NetflowAtomicMergeMixin, InterfacePolicyStrictBase):
     """
     # Summary

@@ -53,7 +53,13 @@ class _RequestRecorder:
         return next(self._responses)
 
 
-def _snapshot(recorder: _RequestRecorder, *, fabric_name: str = "fabric_1", page_size: int | None = 500) -> InterfaceStateSnapshot:
+def _snapshot(
+    recorder: _RequestRecorder,
+    *,
+    fabric_name: str = "fabric_1",
+    page_size: int = 500,
+    max_pages: int = 1000,
+) -> InterfaceStateSnapshot:
     context = FabricContext(rest_send=RestSend({"fabric_name": fabric_name, "check_mode": False}), fabric_name=fabric_name)
     context._switch_map = {"192.0.2.1": "SERIAL1", "192.0.2.2": "SERIAL2"}
     context._switch_map_by_id = {"SERIAL1": "192.0.2.1", "SERIAL2": "192.0.2.2"}
@@ -62,6 +68,7 @@ def _snapshot(recorder: _RequestRecorder, *, fabric_name: str = "fabric_1", page
         fabric_context=context,
         request=recorder,
         page_size=page_size,
+        max_pages=max_pages,
     )
 
 
@@ -84,6 +91,16 @@ def _summary(name: str, switch_id: str, interface_type: str, policy_type: str) -
     }
 
 
+@pytest.mark.parametrize("max_pages", [0, -1, True, False, 1.5, "2", None])
+def test_constructor_rejects_invalid_max_pages(max_pages: Any) -> None:
+    recorder = _RequestRecorder([])
+
+    with pytest.raises(ValueError, match="max_pages must be a positive integer"):
+        _snapshot(recorder, max_pages=max_pages)
+
+    assert recorder.calls == []
+
+
 def test_load_switch_caches_indexes_and_isolates_callers() -> None:
     """A second family sees one cached GET and an unmodified shared record."""
     recorder = _RequestRecorder(
@@ -92,7 +109,6 @@ def test_load_switch_caches_indexes_and_isolates_callers() -> None:
                 "interfaces": [
                     _interface("Ethernet1/1", "ethernet", "accessHost"),
                     _interface("loopback10", "loopback", "loopback"),
-                    {"interfaceType": "ethernet"},
                 ]
             }
         ]
@@ -197,6 +213,42 @@ def test_interface_summaries_are_lazy_batched_cached_and_isolated() -> None:
     assert snapshot.request_stats["interface_summary_cache_hits"] == 1
 
 
+def test_mark_dirty_discards_summary_cache_and_forces_fresh_summary_read() -> None:
+    """A mutation marker cannot leave a stale summary row visible."""
+    old = _summary("Ethernet1/1", "SERIAL1", "ethernet", "accessHost")
+    new = _summary("Ethernet1/1", "SERIAL1", "ethernet", "trunkHost")
+    recorder = _RequestRecorder([{"interfaces": [old]}, {"interfaces": [new]}])
+    snapshot = _snapshot(recorder)
+
+    assert snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])[("SERIAL1", "ethernet1/1")]["policyType"] == "accessHost"
+    snapshot.mark_dirty("SERIAL1")
+    refreshed = snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
+
+    assert refreshed[("SERIAL1", "ethernet1/1")]["policyType"] == "trunkHost"
+    assert len(recorder.calls) == 2
+    assert snapshot.request_stats["interface_summary_gets"] == 2
+
+
+def test_raw_overlay_discards_summary_cache() -> None:
+    """A known raw overlay invalidates the parallel summary representation."""
+    recorder = _RequestRecorder(
+        [
+            {"interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost")]},
+            {"interfaces": [_summary("Ethernet1/1", "SERIAL1", "ethernet", "accessHost")]},
+            {"interfaces": [_summary("Ethernet1/1", "SERIAL1", "ethernet", "trunkHost")]},
+        ]
+    )
+    snapshot = _snapshot(recorder)
+    snapshot.load_switch("SERIAL1")
+    snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
+
+    snapshot.apply_overlay("SERIAL1", upserts=[_interface("Ethernet1/1", "ethernet", "trunkHost")])
+    refreshed = snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
+
+    assert refreshed[("SERIAL1", "ethernet1/1")]["policyType"] == "trunkHost"
+    assert len(recorder.calls) == 3
+
+
 def test_interface_summary_pagination_fetches_full_switch_then_exactly_filters() -> None:
     """Summary pagination caches the switch while returning only requested identities."""
     recorder = _RequestRecorder(
@@ -225,6 +277,52 @@ def test_interface_summary_pagination_fetches_full_switch_then_exactly_filters()
     assert snapshot.request_stats["interface_summary_pages"] == 2
 
 
+def test_interface_summary_metadata_continues_after_short_foreign_page_before_filtering() -> None:
+    """Pagination completes before rows for switches other than the requested one are discarded."""
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_summary("Ethernet1/1", "SERIAL2", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 2, "remaining": 1}},
+            },
+            {
+                "interfaces": [_summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")],
+                "meta": {"counts": {"total": 2, "remaining": 0}},
+            },
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=500)
+
+    result = snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
+
+    assert result == {("SERIAL1", "ethernet1/40"): _summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")}
+    assert snapshot.interface_summaries_by_identity == result
+    assert len(recorder.calls) == 2
+    assert "offset=0" in recorder.calls[0]["path"]
+    assert "offset=1" in recorder.calls[1]["path"]
+    assert snapshot.request_stats["interface_summary_pages"] == 2
+
+
+def test_interface_summary_page_two_failure_does_not_publish_partial_cache() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_summary("Ethernet1/1", "SERIAL2", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 2, "remaining": 1}},
+            },
+            {"unexpected": []},
+        ]
+    )
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError, match=r"summary.*SERIAL1.*lacks required 'interfaces' wrapper.*offset=1"):
+        snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
+
+    assert snapshot.interface_summaries_by_identity == {}
+    assert snapshot.request_stats["interface_summary_switches"] == 0
+    assert snapshot.request_stats["interface_summary_pages"] == 2
+
+
 def test_interface_summary_rejects_case_insensitive_duplicate_within_page() -> None:
     recorder = _RequestRecorder(
         [
@@ -238,8 +336,10 @@ def test_interface_summary_rejects_case_insensitive_duplicate_within_page() -> N
     )
     snapshot = _snapshot(recorder)
 
-    with pytest.raises(RuntimeError, match=r"duplicate.*case-insensitive.*ethernet1/1.*SERIAL1"):
+    with pytest.raises(RuntimeError, match=r"duplicate interface identity.*SERIAL1.*ethernet1/1"):
         snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
+
+    assert snapshot.interface_summaries_by_identity == {}
 
 
 def test_interface_summary_rejects_case_insensitive_duplicate_across_pages() -> None:
@@ -256,8 +356,10 @@ def test_interface_summary_rejects_case_insensitive_duplicate_across_pages() -> 
     )
     snapshot = _snapshot(recorder, page_size=2)
 
-    with pytest.raises(RuntimeError, match=r"duplicate.*case-insensitive.*ethernet1/1.*SERIAL1"):
+    with pytest.raises(RuntimeError, match=r"duplicate interface identity.*SERIAL1.*ethernet1/1"):
         snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
+
+    assert snapshot.interface_summaries_by_identity == {}
 
 
 @pytest.mark.parametrize("returned_switch_id", [None, "", 123])
@@ -270,7 +372,7 @@ def test_interface_summary_rejects_malformed_switch_id(returned_switch_id: Any) 
     recorder = _RequestRecorder([{"interfaces": [summary]}])
     snapshot = _snapshot(recorder)
 
-    with pytest.raises(RuntimeError, match=r"summary.*switchId.*SERIAL1"):
+    with pytest.raises(RuntimeError, match=r"summary.*SERIAL1.*switchId"):
         snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
 
 
@@ -347,8 +449,52 @@ def test_interface_summary_rejects_repeated_full_mixed_switch_page() -> None:
     recorder = _RequestRecorder([page, page])
     snapshot = _snapshot(recorder, page_size=2)
 
-    with pytest.raises(RuntimeError, match=r"summary pagination repeated a full page.*SERIAL1.*offset 2"):
+    with pytest.raises(RuntimeError, match=r"summary.*SERIAL1.*repeated page.*offset=2"):
         snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
+
+    assert snapshot.interface_summaries_by_identity == {}
+
+
+def test_interface_summary_rejects_empty_no_progress_page_without_publishing_cache() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_summary("Ethernet1/1", "SERIAL2", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 2, "remaining": 1}},
+            },
+            {"interfaces": [], "meta": {"counts": {"total": 2, "remaining": 1}}},
+        ]
+    )
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError, match=r"summary.*SERIAL1.*empty page.*reports more records.*offset=1"):
+        snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
+
+    assert snapshot.interface_summaries_by_identity == {}
+    assert snapshot.request_stats["interface_summary_switches"] == 0
+
+
+def test_interface_summary_max_page_exhaustion_does_not_publish_cache() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_summary("Ethernet1/1", "SERIAL2", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 3, "remaining": 2}},
+            },
+            {
+                "interfaces": [_summary("Ethernet1/40", "SERIAL1", "ethernet", "trunkHost")],
+                "meta": {"counts": {"total": 3, "remaining": 1}},
+            },
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=1, max_pages=2)
+
+    with pytest.raises(RuntimeError, match=r"summary.*SERIAL1.*maximum page limit 2 reached"):
+        snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/40")])
+
+    assert snapshot.interface_summaries_by_identity == {}
+    assert snapshot.request_stats["interface_summary_switches"] == 0
+    assert snapshot.request_stats["interface_summary_pages"] == 2
 
 
 @pytest.mark.parametrize(
@@ -404,6 +550,81 @@ def test_paginated_fetch_uses_offset_and_stops_on_short_page() -> None:
     assert snapshot.request_stats["interface_inventory_pages"] == 2
 
 
+def test_paginated_fetch_metadata_continues_after_short_page() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost")],
+                "metadata": {"counts": {"total": 2, "remaining": 1}},
+            },
+            {
+                "interfaces": [_interface("loopback10", "loopback", "loopback")],
+                "metadata": {"counts": {"total": 2, "remaining": 0}},
+            },
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=500)
+
+    result = snapshot.load_switch("SERIAL1")
+
+    assert set(result) == {"ethernet1/1", "loopback10"}
+    assert len(recorder.calls) == 2
+    assert "offset=0" in recorder.calls[0]["path"]
+    assert "offset=1" in recorder.calls[1]["path"]
+    assert snapshot.request_stats["interface_inventory_pages"] == 2
+
+
+def test_paginated_fetch_page_two_failure_does_not_publish_partial_cache() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 2, "remaining": 1}},
+            },
+            {"unexpected": []},
+        ]
+    )
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError, match=r"inventory.*SERIAL1.*lacks required 'interfaces' wrapper.*offset=1"):
+        snapshot.load_switch("SERIAL1")
+
+    assert snapshot.interfaces_by_switch == {}
+    assert snapshot.original_interfaces_by_switch == {}
+    assert snapshot.interfaces_by_identity == {}
+    assert snapshot.cached_switch_ids == frozenset()
+    assert snapshot.request_stats["switches"] == 0
+    assert snapshot.request_stats["interface_inventory_pages"] == 2
+
+
+def test_paginated_fetch_rejects_exact_duplicate_identity_across_pages() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [
+                    _interface("Ethernet1/1", "ethernet", "accessHost"),
+                    _interface("Ethernet1/2", "ethernet", "accessHost"),
+                ],
+                "meta": {"counts": {"total": 4, "remaining": 2}},
+            },
+            {
+                "interfaces": [
+                    _interface("Ethernet1/3", "ethernet", "accessHost"),
+                    _interface("Ethernet1/1", "ethernet", "accessHost"),
+                ],
+                "meta": {"counts": {"total": 4, "remaining": 0}},
+            },
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=2)
+
+    with pytest.raises(RuntimeError, match=r"inventory.*SERIAL1.*duplicate interface identity.*ethernet1/1"):
+        snapshot.load_switch("SERIAL1")
+
+    assert snapshot.interfaces_by_identity == {}
+    assert not snapshot.has_switch("SERIAL1")
+
+
 def test_paginated_fetch_stops_on_empty_page() -> None:
     """An exact-sized final data page is followed by one terminating empty page."""
     recorder = _RequestRecorder(
@@ -427,8 +648,73 @@ def test_paginated_fetch_rejects_a_repeated_full_page() -> None:
     recorder = _RequestRecorder([page, page])
     snapshot = _snapshot(recorder, page_size=1)
 
-    with pytest.raises(RuntimeError, match="repeated a full page"):
+    with pytest.raises(RuntimeError, match="repeated page"):
         snapshot.load_switch("SERIAL1")
+
+    assert snapshot.interfaces_by_identity == {}
+
+
+def test_paginated_fetch_rejects_empty_no_progress_page_without_publishing_cache() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 2, "remaining": 1}},
+            },
+            {"interfaces": [], "meta": {"counts": {"total": 2, "remaining": 1}}},
+        ]
+    )
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError, match=r"inventory.*SERIAL1.*empty page.*reports more records.*offset=1"):
+        snapshot.load_switch("SERIAL1")
+
+    assert snapshot.interfaces_by_identity == {}
+    assert snapshot.request_stats["switches"] == 0
+
+
+def test_paginated_fetch_max_page_exhaustion_does_not_publish_cache() -> None:
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 3, "remaining": 2}},
+            },
+            {
+                "interfaces": [_interface("Ethernet1/2", "ethernet", "accessHost")],
+                "meta": {"counts": {"total": 3, "remaining": 1}},
+            },
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=1, max_pages=2)
+
+    with pytest.raises(RuntimeError, match=r"inventory.*SERIAL1.*maximum page limit 2 reached"):
+        snapshot.load_switch("SERIAL1")
+
+    assert snapshot.interfaces_by_identity == {}
+    assert snapshot.request_stats["switches"] == 0
+    assert snapshot.request_stats["interface_inventory_pages"] == 2
+
+
+def test_paginated_fetch_rejects_malformed_identity_without_publishing_cache() -> None:
+    """A malformed row cannot leave a partial inventory available to safety checks."""
+    recorder = _RequestRecorder(
+        [
+            {
+                "interfaces": [
+                    _interface("Ethernet1/1", "ethernet", "accessHost"),
+                    {"interfaceType": "ethernet"},
+                ]
+            }
+        ]
+    )
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError, match=r"inventory.*invalid identity.*interfaceName"):
+        snapshot.load_switch("SERIAL1")
+
+    assert not snapshot.has_switch("SERIAL1")
+    assert snapshot.cached_switch("SERIAL1") is None
 
 
 def test_invalidate_refresh_and_original_snapshot_lifecycle() -> None:
@@ -563,3 +849,8 @@ def test_dirty_switch_is_refetched_automatically_on_next_read() -> None:
     snapshot.mark_dirty("SERIAL1")
 
     result = snapshot.load_switch("SERIAL1")
+
+    assert set(result) == {"loopback20"}
+    assert len(recorder.calls) == 2
+    assert snapshot.request_stats["interface_inventory_gets"] == 2
+    assert snapshot.request_stats["interface_inventory_dirty_refetches"] == 1
