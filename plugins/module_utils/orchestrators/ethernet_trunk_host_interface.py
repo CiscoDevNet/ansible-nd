@@ -169,9 +169,5 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         if not isinstance(result, list):
             return result
         named = self._named_interfaces() if self.rest_send.params.get("state") != "deleted" else set()
-        filtered = [
-            iface
-            for iface in result
-            if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)
-        ]
+        filtered = [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
         return self._append_named_member_projections(filtered)
