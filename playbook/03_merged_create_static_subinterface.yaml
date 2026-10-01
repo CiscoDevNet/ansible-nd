@@ -1,0 +1,59 @@
+---
+- name: "MERGED CREATE: Create static L3Out with subInterface links"
+  hosts: nd
+  gather_facts: false
+  connection: local
+  vars_files:
+    - "{{ playbook_dir }}/../tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+  vars:
+    nd_info:
+      output_level: '{{ api_key_output_level | default("debug") }}'
+    test_fabric_name: "jeet-fabric-ibgp"
+    test_fabric1_name: "jeet-fabric-ibgp"
+    test_fabric2_name: "jeet-fabric-ext"
+    test_vrf1_name: "vrf1"
+    test_vrf2_name: "vrf1"
+    test_tenant1_name: "{{ omit }}"
+    test_tenant2_name: "{{ omit }}"
+    test_switch1_id: "9LJHKH3VF1S"
+    test_switch2_id: "9W5HXHTY88P"
+    test_switch1_mgmt_ip: "192.168.10.122"
+    test_switch2_mgmt_ip: "192.168.10.124"
+    test_switch1_interface: "Ethernet1/1"
+    test_switch2_interface: "Ethernet1/2"
+    test_switch1_subif: "Ethernet1/1"
+    test_switch2_subif: "Ethernet1/2"
+    test_subinterface_vlan_id: 100
+    test_dci_link_ready: false
+
+  tasks:
+    - name: "SETUP: Remove test L3Outs before state tests"
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../tests/integration/targets/nd_manage_l3out/tasks/setup.yaml"
+
+    - name: "MERGED CREATE: Create subInterface + static L3Out (check mode)"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_static }}"
+        state: merged
+      check_mode: true
+      register: cm_merged_create_static_subif
+
+    - name: "MERGED CREATE: Create subInterface + static L3Out (normal mode)"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_static }}"
+        state: merged
+      register: nm_merged_create_static_subif
+
+    - name: "MERGED CREATE: Verify subInterface + static L3Out creation"
+      ansible.builtin.assert:
+        that:
+          - cm_merged_create_static_subif is changed
+          - nm_merged_create_static_subif is changed
+        fail_msg: "FAILED: subInterface + static L3Out was not created"
+        success_msg: "PASSED: subInterface + static L3Out created successfully"
