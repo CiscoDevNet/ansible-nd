@@ -264,7 +264,7 @@ def _member_record(
     # ND 4.2.1 injects this undeclared key on NX-OS member reads.  It is useful
     # evidence that response-only/unknown data is not blindly replayed.
     if case.network_os_type == "nx-os":
-        policy["ptp"] = False
+        policy.setdefault("ptp", False)
     return {
         "interfaceName": case.interface_name,
         "interfaceType": "ethernet",
@@ -462,6 +462,32 @@ def test_member_merge_is_planned_as_update_and_preserves_member_payload(
         if call["verb"] == HttpVerbEnum.GET.value and call["path"].split("?", 1)[0].endswith(f"/switches/{SWITCH_ID}/interfaces")
     ]
     assert len(inventory_gets) == 1
+
+
+@pytest.mark.parametrize("case", MEMBER_CASES[:3], ids=_case_id)
+@pytest.mark.parametrize("ptp", [True, False, "true", "false"])
+def test_nxos_member_update_accepts_qualified_ptp_echo_without_replaying_it(
+    case: _MemberCase,
+    ptp: object,
+) -> None:
+    """Observed 4.2.1 and 4.3.1 ``ptp`` echoes permit the same safe PUT."""
+
+    state_machine, controller = _state_machine(
+        case,
+        state="merged",
+        policy={"description": "updated with qualified ptp echo"},
+        member_policy_overrides={"ptp": ptp},
+    )
+
+    state_machine.manage_state()
+
+    writes = _write_calls(controller)
+    assert [call["verb"] for call in writes] == [HttpVerbEnum.PUT.value]
+    policy = writes[0]["data"]["configData"]["networkOS"]["policy"]
+    assert policy["policyType"] == case.member_policy_type
+    assert policy["description"] == "updated with qualified ptp echo"
+    assert "ptp" not in policy
+    assert not any(call["verb"] == HttpVerbEnum.POST.value for call in controller.calls)
 
 
 @pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)

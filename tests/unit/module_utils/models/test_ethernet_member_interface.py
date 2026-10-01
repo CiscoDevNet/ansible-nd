@@ -277,7 +277,7 @@ def test_parse_access_po_member_captured_nd_wire_shape():
                     "lacpPortPriority": 32768,
                     "lacpRate": "normal",
                     "portChannelMode": "active",
-                    "ptp": False,
+                    "ptp": "false",
                 },
             },
         },
@@ -311,7 +311,18 @@ def test_parse_rejects_unclassified_nested_configuration(path):
 
 @pytest.mark.parametrize(
     "field,value",
-    [("ptp", 1), ("portMode", False)],
+    [
+        ("ptp", 1),
+        ("ptp", 0),
+        ("ptp", None),
+        ("ptp", "TRUE"),
+        ("ptp", "FALSE"),
+        ("ptp", "yes"),
+        ("ptp", "0"),
+        ("ptp", {}),
+        ("ptp", []),
+        ("portMode", False),
+    ],
 )
 def test_parse_rejects_malformed_response_only_field(field, value):
     response = member_record(policy_type="accessPoMember", mode="access")
@@ -319,6 +330,36 @@ def test_parse_rejects_malformed_response_only_field(field, value):
 
     with pytest.raises(UnmodeledMemberConfigurationError, match=field):
         parse_member_interface_response(response)
+
+
+@pytest.mark.parametrize(
+    "policy_type,mode",
+    [
+        ("accessPoMember", "access"),
+        ("poMember", "trunk"),
+        ("accessVpcPoMember", "access"),
+        ("vpcMember", "trunk"),
+        ("l3PoMember", "routed"),
+    ],
+)
+@pytest.mark.parametrize("ptp", [True, False, "true", "false"])
+def test_qualified_ptp_echo_is_accepted_but_never_replayed(policy_type, mode, ptp):
+    """Known NX-OS member policies accept only observed Boolean echo encodings."""
+
+    response = member_record(policy_type=policy_type, mode=mode)
+    response["configData"]["networkOS"]["policy"]["ptp"] = ptp
+
+    payload = build_member_update_payload(
+        response,
+        {"description": "updated"},
+        pair_validated=policy_type in {"accessVpcPoMember", "vpcMember"},
+    )
+
+    policy = payload["configData"]["networkOS"]["policy"]
+    assert policy["policyType"] == policy_type
+    assert policy["portChannelId"] == "port-channel20"
+    assert policy["description"] == "updated"
+    assert "ptp" not in policy
 
 
 def test_safe_overlay_preserves_declared_fields_and_strips_response_only_data():

@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import ClassVar, Literal, Mapping, Union
+from typing import Callable, ClassVar, Literal, Mapping, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -487,12 +487,30 @@ PROTECTED_MEMBER_POLICY_TYPES = frozenset(
 )
 
 
-_RESPONSE_ONLY_POLICY_FIELDS: dict[str, Mapping[str, type[object]]] = {
-    "accessPoMember": {"ptp": bool, "portMode": str},
-    "poMember": {"ptp": bool},
-    "accessVpcPoMember": {"ptp": bool},
-    "vpcMember": {"ptp": bool},
-    "l3PoMember": {"ptp": bool},
+def _is_boolean_response_echo(value: object) -> bool:
+    """Return whether ND encoded a controller-owned Boolean echo safely.
+
+    ND 4.2.1 returns a JSON Boolean for ``ptp`` while ND 4.3.1 returns the
+    canonical lowercase strings ``"true"`` and ``"false"``.  Keep this
+    qualification deliberately narrower than ordinary Boolean coercion so a
+    new or malformed response shape still fails closed before a full PUT.
+    """
+
+    return type(value) is bool or (type(value) is str and value in {"true", "false"})
+
+
+def _is_string_response_echo(value: object) -> bool:
+    """Return whether ND encoded an ordinary response-only string."""
+
+    return type(value) is str
+
+
+_RESPONSE_ONLY_POLICY_FIELDS: dict[str, Mapping[str, Callable[[object], bool]]] = {
+    "accessPoMember": {"ptp": _is_boolean_response_echo, "portMode": _is_string_response_echo},
+    "poMember": {"ptp": _is_boolean_response_echo},
+    "accessVpcPoMember": {"ptp": _is_boolean_response_echo},
+    "vpcMember": {"ptp": _is_boolean_response_echo},
+    "l3PoMember": {"ptp": _is_boolean_response_echo},
 }
 """Qualified controller echoes that may be discarded before a member PUT."""
 
@@ -622,8 +640,8 @@ def _validate_nested_member_configuration(
     violations: list[str] = []
     for path, raw_mapping, nested_model, response_only in checks:
         for key in set(raw_mapping) - _declared_field_aliases(nested_model):
-            expected_type = response_only.get(key) if isinstance(key, str) else None
-            if expected_type is None or not isinstance(raw_mapping[key], expected_type):
+            validator = response_only.get(key) if isinstance(key, str) else None
+            if validator is None or not validator(raw_mapping[key]):
                 violations.append(f"{path}.{key!s}")
     if violations:
         raise UnmodeledMemberConfigurationError(
