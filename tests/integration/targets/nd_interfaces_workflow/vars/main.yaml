@@ -32,6 +32,7 @@ nd_iw_family_order:
   - vpc_access
   - vpc_trunk_host
   - port_channel_access
+  - port_channel_routed
   - port_channel_trunk_host
   - ethernet_access
   - ethernet_routed

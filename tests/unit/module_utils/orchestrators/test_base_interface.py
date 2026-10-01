@@ -210,7 +210,8 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
     inventory = instance._switch_interfaces("SERIAL1")
 
     assert list(inventory) == ["ethernet1/1", "ethernet1/2"]
-    assert instance._switch_interfaces("SERIAL1") is inventory
+    assert instance._switch_interfaces("SERIAL1") == inventory
+    assert instance._switch_interfaces("SERIAL1") is not inventory
     assert len(calls) == 2
     for expected_offset, path in enumerate(calls):
         assert "/switches/SERIAL1/interfaces?" in path
@@ -247,7 +248,7 @@ def test_switch_interfaces_never_publishes_an_invalid_second_page(second_page, m
     with pytest.raises(InterfacePaginationError, match=match):
         instance._switch_interfaces("SERIAL1")
 
-    assert "SERIAL1" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 def test_switch_interfaces_page_two_transport_failure_publishes_no_cache() -> None:
@@ -269,7 +270,7 @@ def test_switch_interfaces_page_two_transport_failure_publishes_no_cache() -> No
     with pytest.raises(RuntimeError, match="page two unavailable"):
         instance._switch_interfaces("SERIAL1")
 
-    assert "SERIAL1" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 # =============================================================================
@@ -1624,7 +1625,7 @@ def _bulk_orchestrator_with_inventory(gen_responses: ResponseGenerator, names: l
     """Return a bulk-create stub whose cached inventory for FDO12345ABC holds `names` (no cache entry at all when `None`)."""
     instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(gen_responses))
     if names is not None:
-        instance._switch_interfaces_cache["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
+        instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
     return instance
 
 
@@ -1768,7 +1769,7 @@ def test_base_interface_00799() -> None:
 
     assert "inventory unavailable" not in str(exc_info.value)
     assert instance._pending_deploys == []
-    assert "FDO12345ABC" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("FDO12345ABC")
 
 
 def test_base_interface_00795() -> None:
@@ -2599,7 +2600,7 @@ def _xe_record(name: str, status: str | None, network_os_type: str = "ios-xe") -
 def _seeded_orchestrator(gen_responses: ResponseGenerator, records: list[dict]) -> _StubInterfaceOrchestrator:
     """Return a stub orchestrator whose inventory cache for CAT9KV1701 already holds `records` (no interface-list GET needed)."""
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses))
-    instance._switch_interfaces_cache["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
+    instance.state_snapshot._interfaces_by_switch["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
     return instance
 
 

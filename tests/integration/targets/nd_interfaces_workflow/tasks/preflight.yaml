@@ -43,6 +43,17 @@
       Use the destructive profile, enable its normal safety gates, and select only ethernet_routed.
   when: nd_iw_enable_ethernet_routed_override | bool
 
+- name: Interface workflow preflight | Require exclusive scope for routed port-channel authoritative override
+  ansible.builtin.assert:
+    that:
+      - nd_iw_profile == 'destructive'
+      - nd_iw_enable_destructive | bool
+      - nd_iw_selected_families == ['port_channel_routed']
+    fail_msg: >-
+      Routed port-channel authoritative override can remove every managed NX-OS l3Po interface in the fabric.
+      Use the destructive profile, enable its normal safety gates, and select only port_channel_routed.
+  when: nd_iw_enable_port_channel_routed_override | bool
+
 - name: Interface workflow preflight | Derive immutable run flags
   ansible.builtin.set_fact:
     nd_iw_module_check_mode: "{{ nd_iw_execution_mode != 'live' }}"

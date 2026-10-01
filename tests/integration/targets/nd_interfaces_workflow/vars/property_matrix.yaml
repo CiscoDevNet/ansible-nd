@@ -1257,6 +1257,131 @@ nd_iw_property_matrix:
       - config_data.network_os.policy.vlan_mapping_entries[].dot1q_tunnel
       - config_data.network_os.policy.vlan_mapping_entries[].provider_vlan_id
 
+  port_channel_routed:
+    module: cisco.nd.nd_interface_port_channel_routed
+    ownership_domain: port_channel
+    identity_fields: [switch_ip, interface_name]
+    supported_states: [merged, replaced, overridden, deleted]
+    requires: [physical_member_interfaces]
+    unsupported_expected_error: {}
+    # Routed port-channel overridden state is fabric-wide for l3Po intent and
+    # therefore requires its dedicated exclusive-scope test gate.
+    generic_override_safe: false
+    minimal: &nd_iw_pcr_minimal
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ip: "{{ nd_iw_active_resources.port_channel_routed.primary_ipv4 }}"
+              prefix: 30
+              ports: "{{ nd_iw_active_resources.port_channel_routed.primary_ports }}"
+              port_channel_mode: active
+              description: IW routed port-channel minimal
+    maximal:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: true
+              copy_description: true
+              description: IW routed port-channel maximal
+              extra_config: no ip redirects
+              ip: "{{ nd_iw_active_resources.port_channel_routed.primary_ipv4 }}"
+              ip_redirects: false
+              mtu: 9216
+              port_channel_mode: active
+              ports: "{{ nd_iw_active_resources.port_channel_routed.primary_ports }}"
+              prefix: 30
+              routing_tag: "{{ nd_iw_active_resources.references.routing_tag }}"
+              speed: auto
+              vrf: "{{ nd_iw_active_resources.references.vrf }}"
+    alternate:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: false
+              description: IW routed port-channel alternate
+              ip: "{{ nd_iw_active_resources.port_channel_routed.alternate_ipv4 }}"
+              mtu: 1500
+              port_channel_mode: active
+              ports: "{{ nd_iw_active_resources.port_channel_routed.alternate_ports }}"
+              prefix: 30
+              routing_tag: "922"
+              vrf: "{{ nd_iw_active_resources.references.vrf }}"
+    replacement:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: true
+              description: IW routed port-channel replaced
+              ip: "{{ nd_iw_active_resources.port_channel_routed.alternate_ipv4 }}"
+              port_channel_mode: active
+              ports: "{{ nd_iw_active_resources.port_channel_routed.alternate_ports }}"
+              prefix: 30
+    secondary:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.secondary_name }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: true
+              description: IW routed port-channel override victim
+              ip: "{{ nd_iw_active_resources.port_channel_routed.secondary_ipv4 }}"
+              port_channel_mode: active
+              ports: "{{ nd_iw_active_resources.port_channel_routed.secondary_ports }}"
+              prefix: 30
+    override: *nd_iw_pcr_minimal
+    delete:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+    delete_all:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_routed.secondary_name }}"
+    mutex_variants: []
+    optional_packs: []
+    invalid:
+      - name: prefix_above_maximum
+        expected_error: less than or equal to 31
+        config:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_name: "{{ nd_iw_active_resources.port_channel_routed.primary_name }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  ip: "{{ nd_iw_active_resources.port_channel_routed.primary_ipv4 }}"
+                  prefix: 32
+    properties:
+      - switch_ip
+      - interface_name
+      - config_data.network_os.network_os_type
+      - config_data.network_os.policy.admin_state
+      - config_data.network_os.policy.copy_description
+      - config_data.network_os.policy.description
+      - config_data.network_os.policy.extra_config
+      - config_data.network_os.policy.ip
+      - config_data.network_os.policy.ip_redirects
+      - config_data.network_os.policy.mtu
+      - config_data.network_os.policy.port_channel_mode
+      - config_data.network_os.policy.ports
+      - config_data.network_os.policy.prefix
+      - config_data.network_os.policy.routing_tag
+      - config_data.network_os.policy.speed
+      - config_data.network_os.policy.vrf
+
   vpc_access:
     module: cisco.nd.nd_interface_vpc_access
     ownership_domain: vpc

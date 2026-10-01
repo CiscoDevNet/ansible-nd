@@ -22,6 +22,10 @@ nd_iw_enable_destructive: false
 # Enable only with nd_iw_selected_families: [ethernet_routed] after confirming
 # exclusive ownership of every managed routed interface in the selected fabric.
 nd_iw_enable_ethernet_routed_override: false
+# Routed port-channel overridden state is likewise fabric-wide for managed
+# NX-OS l3Po intent. Enable only with the routed port-channel family selected
+# exclusively after confirming ownership of every managed routed port-channel.
+nd_iw_enable_port_channel_routed_override: false
 nd_iw_enable_deploy: false
 
 nd_iw_output_level: normal

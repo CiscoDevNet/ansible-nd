@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import yaml
 from ansible_collections.cisco.nd.plugins.modules import nd_interfaces_workflow
 
 
@@ -16,13 +17,14 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
     resource_options = spec["resources"]["options"]
     choices = resource_options["type"]["choices"]
 
-    assert len(choices) == 11
+    assert len(choices) == 12
     assert set(choices) == {
         "ethernet_access",
         "ethernet_routed",
         "ethernet_trunk_host",
         "loopback",
         "port_channel_access",
+        "port_channel_routed",
         "port_channel_trunk_host",
         "subinterface_managed",
         "subinterface_unmanaged",
@@ -59,6 +61,7 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
         "nd_interface_ethernet_trunk_host",
         "nd_interface_loopback",
         "nd_interface_port_channel_access",
+        "nd_interface_port_channel_routed",
         "nd_interface_port_channel_trunk_host",
         "nd_interface_subinterface_managed",
         "nd_interface_subinterface_unmanaged",
@@ -80,6 +83,13 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     assert "\n  verify:" in nd_interfaces_workflow.DOCUMENTATION
     assert "after_verified" in nd_interfaces_workflow.DOCUMENTATION
     assert "from_policy_type" in nd_interfaces_workflow.RETURN
+
+
+def test_documentation_examples_and_return_are_valid_yaml():
+    """Ansible documentation fragments must remain parseable, not just contain expected text."""
+    assert yaml.safe_load(nd_interfaces_workflow.DOCUMENTATION)["module"] == "nd_interfaces_workflow"
+    assert isinstance(yaml.safe_load(nd_interfaces_workflow.EXAMPLES), list)
+    assert "resources" in yaml.safe_load(nd_interfaces_workflow.RETURN)
 
 
 def test_ethernet_routed_union_and_reset_contract_is_explicit_in_documentation():

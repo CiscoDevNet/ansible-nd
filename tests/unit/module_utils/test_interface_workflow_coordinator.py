@@ -923,6 +923,84 @@ def test_ios_xe_physical_delete_projects_defaults_only_routed_policy() -> None:
     assert {"path": "config_data.network_os.policy.prefix", "before": 30, "after": None} in changes
 
 
+def test_member_safe_update_reports_authentic_effective_state_and_limited_fields() -> None:
+    """Check-mode output must not portray a safe member PUT as a host-policy conversion."""
+    rest_send = RestSend({"fabric_name": "FABRIC1", "check_mode": True})
+    fabric_context = FabricContext(rest_send=rest_send, fabric_name="FABRIC1")
+    fabric_context._fabric_summary = {"local": True, "fabricStatus": "default"}
+    fabric_context._switch_map = {"192.0.2.1": "SERIAL1"}
+    fabric_context._switch_map_by_id = {"SERIAL1": "192.0.2.1"}
+    parent = {
+        "interfaceName": "port-channel10",
+        "interfaceType": "portChannel",
+        "configData": {
+            "mode": "access",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": "accessPoHost",
+                    "portChannelId": "port-channel10",
+                    "ports": ["Ethernet1/1"],
+                },
+            },
+        },
+    }
+    member = {
+        "interfaceName": "Ethernet1/1",
+        "interfaceType": "ethernet",
+        "configData": {
+            "mode": "access",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": "accessPoMember",
+                    "portChannelId": "port-channel10",
+                    "adminState": True,
+                    "description": "old",
+                },
+            },
+        },
+        "operData": {"portChannelId": -1},
+    }
+    snapshot = InterfaceStateSnapshot(
+        fabric_name="FABRIC1",
+        fabric_context=fabric_context,
+        request=lambda **_kwargs: {"interfaces": [parent, member]},
+    )
+    planner = InterfaceWorkflowPlanner(snapshot=snapshot)
+    workflow_plan = planner.plan(
+        [
+            {
+                "type": "ethernet_access",
+                "state": "merged",
+                "config": [
+                    {
+                        "switch_ip": "192.0.2.1",
+                        "interface_names": ["Ethernet1/1"],
+                        "config_data": {"network_os": {"policy": {"description": "new"}}},
+                    }
+                ],
+            }
+        ]
+    )
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    coordinator._snapshot = snapshot
+
+    projected = coordinator._format_result(workflow_plan)["resources"][0]
+
+    assert projected["before"][0]["policy_type"] == "accessPoMember"
+    assert projected["after"][0]["policy_type"] == "accessPoMember"
+    assert projected["after"][0]["config_data"]["network_os"]["policy"]["port_channel_id"] == "port-channel10"
+    assert projected["after"][0]["config_data"]["network_os"]["policy"]["description"] == "new"
+    operation = projected["operations"][0]
+    assert operation["requested_state"] == "merged"
+    assert operation["effective_state"] == "merged"
+    assert operation["member_limited"] is True
+    assert operation["applied_fields"] == ["description"]
+    assert "policy_type" in operation["suppressed_fields"]
+    assert not any(change["path"] == "policy_type" for change in operation["changes"])
+
+
 @pytest.mark.parametrize("present", [True, False])
 def test_logical_delete_reports_requested_resource_or_clean_absence(present):
     config = [{"switch_ip": "192.0.2.1", "interface_name": "loopback10"}]

@@ -360,7 +360,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
         request_body = {"interfaces": [item.payload for item in items]}
         recorded = self.rest_send.response_count
-        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        cached_before = self.state_snapshot.cached_switch(group_key.switch_id)
         names_before = set(cached_before) if cached_before is not None else None
         try:
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
@@ -405,7 +405,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         # this recovery the committed items stay staged and a retry reads them as unchanged (lab-verified 2026-09-21, 4.2.1.10).
         if names_before is None:
             return []
-        self._switch_interfaces_cache.pop(switch_id, None)
+        self.state_snapshot.invalidate(switch_id)
         try:
             names_now = self._switch_interfaces(switch_id)
         except Exception:  # pylint: disable=broad-exception-caught

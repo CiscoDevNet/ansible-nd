@@ -5,7 +5,7 @@ GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gp
 
 # `nd_interfaces_workflow` network integration target
 
-This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all eleven interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
+This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all twelve interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
 
 ## Run the target
 
@@ -32,7 +32,7 @@ Historical ten-family measurements on one fabric, before `ethernet_routed` joine
 - Smoke profile: **57.56 seconds**
 - Full check profile: **306.82 seconds** (about 5 minutes 7 seconds)
 
-These are reference measurements, not timeouts. An all-eleven run performs additional routed-interface planning and lifecycle requests,
+These are reference measurements, not timeouts. An all-twelve run performs additional routed-interface planning and lifecycle requests,
 so replace these figures after collecting a comparable run. Controller load, latency, and selected families can change runtime. The role
 is guarded with `run_once`, and selected fabrics run serially to protect the shared lab.
 ### Scale and request-count invariants
@@ -73,6 +73,9 @@ inputs or snapshots:
 - `resources[].operations` is the single action ledger. Each entry reports `action`, `switch_ip`, `switch_id`,
   `interface_name`, and `status`. Transitions also report `from_policy_type` and `to_policy_type`. Update, transition, and
   physical-reset entries can report `changes: [{path, before, after}]`; creates and logical deletes omit leaf deltas.
+- Safe updates to an existing port-channel or vPC member additionally report `requested_state`, `effective_state`,
+  `member_limited`, `applied_fields`, and `suppressed_fields`; the effective projection retains controller-owned member policy
+  and ownership fields while applying only the explicitly permitted member updates.
 - Physical Ethernet normalization is `action: reset`; logical removal is `action: delete`. Check mode reports `status: planned`.
   Normal mode carries the matching execution outcome into the same operation entry, so `execution.items` is not duplicated.
 - `output_level: info` adds `resources[].proposed`. `output_level: debug` adds `resources[].proposed`,
@@ -119,7 +122,7 @@ nd_iw_profile: destructive
 nd_iw_enable_destructive: true
 ```
 
-The generic all-family destructive run skips `ethernet_routed` override because NX-OS routed override resets every managed
+The generic all-family destructive run skips both routed override families. NX-OS Ethernet routed override resets every managed
 `routedHost` omitted from the task, including a separately prepared subinterface parent. To exercise that state, use an isolated
 resource-owner fabric containing no unrelated managed routed interfaces, select only `ethernet_routed`, satisfy the normal destructive
 fabric gates, and additionally set:
@@ -127,6 +130,14 @@ fabric gates, and additionally set:
 ```yaml
 nd_iw_selected_families: [ethernet_routed]
 nd_iw_enable_ethernet_routed_override: true
+```
+
+NX-OS routed port-channel override can remove every managed `l3Po` omitted from the task. Exercise it only on an isolated,
+exclusively owned routed port-channel scope with the corresponding dedicated gate:
+
+```yaml
+nd_iw_selected_families: [port_channel_routed]
+nd_iw_enable_port_channel_routed_override: true
 ```
 
 Physical deployment is independently gated by `nd_iw_enable_deploy: true`. Leave it false unless the reserved interfaces may safely be deployed. The target cleans only its reserved identities before and after live execution; `nd_iw_cleanup_strict` defaults to true so cleanup failures fail the run.
@@ -166,13 +177,14 @@ The preflight reads the mapped fabric and, when `nd_iw_verify_fabric_type` is tr
 
 ## Interface-family capabilities
 
-Each fabric currently lists the same eleven `candidate_families`:
+Each fabric currently lists the same twelve `candidate_families`:
 
 - `ethernet_access`
 - `ethernet_routed`
 - `ethernet_trunk_host`
 - `loopback`
 - `port_channel_access`
+- `port_channel_routed`
 - `port_channel_trunk_host`
 - `subinterface_managed`
 - `subinterface_unmanaged`
@@ -189,16 +201,18 @@ The checked-in mappings currently declare no unsupported families. Add an exclus
 Before selecting a family, reserve controller-visible resources that will not collide with other tests:
 
 - Physical interfaces for Ethernet cases and physical member interfaces for port channels. The checked-in NX-OS routed cases reserve
-  `Ethernet1/52` and `Ethernet1/53` by default; override both identities when those ports are not test-owned.
+  `Ethernet1/52` and `Ethernet1/53` for routed Ethernet plus `Ethernet1/54` and `Ethernet1/55` for routed port-channels by default;
+  override every identity that is not test-owned. Routed port-channel IDs default to 921 and 922.
 - A valid vPC pair and per-peer member interfaces for vPC cases.
 - Routed parent interfaces for managed and unmanaged subinterfaces.
 - Test-owned loopback, port-channel, subinterface, SVI, vPC, and VLAN identifiers matching the reserved-resource overrides.
 - Existing NetFlow monitors/samplers, QoS and queuing policies, and controller/switch support for PFC or VLAN mapping when those optional packs are exercised.
 
-Subinterface writes are intentionally fail-closed in the aggregator. Their Ethernet or port-channel parent must already exist in routed
-mode from a separately completed workflow: `routedHost` for Ethernet or `l3PortChannel` for a port-channel. The aggregator rejects a
-missing, structurally incompatible, access, or trunk parent before mutation. It also rejects any workflow that mutates a parent and its
-child together, and any parent mutation while existing child subinterfaces remain.
+Subinterface writes are intentionally fail-closed in the aggregator. Their Ethernet or port-channel parent must either already exist in
+routed mode or be supplied as a compatible parent resource in the same workflow. The accepted parent contracts are `routedHost` and
+`iosXeRoutedHost` for NX-OS and IOS-XE Ethernet, and `l3Po` and `iosXeL3PortChannel` for NX-OS and IOS-XE port-channels. The dependency
+scheduler orders parent creation or update before child work and child deletion before parent mutation or deletion. It rejects missing,
+structurally incompatible, access, or trunk parents and rejects a parent mutation while an undeleted child remains.
 
 Optional live packs are gated by `nd_iw_optional_prerequisites`, a mapping of prerequisite name to boolean. Set a prerequisite true only after verifying the referenced object or hardware capability in that fabric. Check-profile previews prove model normalization and zero-write planning, but they do not prove that a named NetFlow or QoS object exists. Object existence remains a live prerequisite.
 

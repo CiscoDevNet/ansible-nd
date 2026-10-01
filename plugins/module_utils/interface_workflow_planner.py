@@ -19,8 +19,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters
     InterfaceWorkflowValidationError,
     get_interface_family_adapter,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
+    EthernetMembershipIndex,
+    MembershipValidationError,
+    ParentMembershipClaim,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    get_member_policy_descriptor,
+    get_member_policy_descriptor_for_parent,
+    normalize_port_channel_id,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
@@ -122,6 +132,19 @@ class _PolicyRewriteCandidate:
 
 
 @dataclass(frozen=True)
+class _AggregateMemberClaim:
+    """Projected current/final ownership of one physical aggregate member."""
+
+    resource: InterfaceResourcePlan = field(repr=False, compare=False)
+    action: str
+    parent: NDBaseModel = field(repr=False, compare=False)
+    member_identity: InterfaceIdentity
+    owner_identity: InterfaceIdentity
+    current: bool
+    final: bool
+
+
+@dataclass(frozen=True)
 class InterfaceResourcePlan:
     """Validated current state and pure operation plan for one resource group."""
 
@@ -169,6 +192,25 @@ class InterfaceResourcePlan:
 
 
 @dataclass(frozen=True)
+class InterfaceWorkflowOperation:
+    """One mutation node in the dependency-aware workflow schedule."""
+
+    resource_index: int
+    resource_type: str
+    action: str
+    switch_id: str
+    interface_name: str
+    model: NDBaseModel = field(repr=False, compare=False)
+    refresh_before: bool = field(default=False, repr=False, compare=False)
+
+    @property
+    def key(self) -> tuple[int, str, str, str]:
+        """Return the stable graph and executor lookup key."""
+
+        return self.resource_index, self.action, self.switch_id, self.interface_name.casefold()
+
+
+@dataclass(frozen=True)
 class InterfaceWorkflowPlan:
     """Complete mutation-free plan across all requested interface families."""
 
@@ -177,6 +219,7 @@ class InterfaceWorkflowPlan:
     resources: tuple[InterfaceResourcePlan, ...]
     request_stats: dict[str, int]
     auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = field(default=(), repr=False, compare=False)
+    execution_layers: tuple[tuple[InterfaceWorkflowOperation, ...], ...] = field(default=(), repr=False, compare=False)
 
     @property
     def changed(self) -> bool:
@@ -221,6 +264,7 @@ class InterfaceWorkflowPlanner:
         self._vpc_pair_scope_cache: dict[str, tuple[str, ...]] = {}
         self._vpc_peer_serial_cache: dict[str, str] | None = None
         self._inventory_by_identity: dict[tuple[str, str], dict[str, Any]] | None = None
+        self._membership_index: EthernetMembershipIndex | None = None
         self._ethernet_link_cache_owner: EthernetBaseOrchestrator | None = None
 
     def plan(self, resources: list[dict[str, Any]]) -> InterfaceWorkflowPlan:
@@ -229,6 +273,7 @@ class InterfaceWorkflowPlanner:
         target_switch_ids = self._target_switch_ids(validated)
         self.snapshot.load_switches(target_switch_ids)
         self._inventory_by_identity = self.snapshot.interfaces_by_identity
+        self._membership_index = None
 
         resource_plans: list[InterfaceResourcePlan] = []
         for resource_index, adapter, state, proposed in validated:
@@ -274,6 +319,8 @@ class InterfaceWorkflowPlanner:
         if conflicts:
             raise InterfaceWorkflowConflictError(conflicts)
 
+        execution_layers = self._build_execution_layers(resource_plans)
+        self._apply_preflight_projections(resource_plans)
         self._run_preflights(resource_plans)
         auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = ()
         request_stats = dict(self.snapshot.request_stats)
@@ -284,6 +331,7 @@ class InterfaceWorkflowPlanner:
             resources=tuple(resource_plans),
             request_stats=request_stats,
             auxiliary_orchestrators=auxiliary_orchestrators,
+            execution_layers=execution_layers,
         )
 
     def _validate_resource_groups(self, resources: list[dict[str, Any]]) -> list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]:
@@ -372,6 +420,16 @@ class InterfaceWorkflowPlanner:
         if self._inventory_by_identity is None:
             self._inventory_by_identity = self.snapshot.interfaces_by_identity
         return self._inventory_by_identity
+
+    def _memberships(self) -> EthernetMembershipIndex:
+        """Return one ownership index built from the complete shared snapshot."""
+
+        if self._membership_index is None:
+            self._membership_index = EthernetMembershipIndex(
+                self.snapshot.clean_interfaces_by_switch,
+                peer_switch_ids=self._shared_vpc_peer_serial_cache(),
+            )
+        return self._membership_index
 
     def _shared_vpc_peer_serial_cache(self) -> dict[str, str]:
         """Return one authoritative peer cache shared by all workflow vPC orchestrators."""
@@ -515,6 +573,21 @@ class InterfaceWorkflowPlanner:
         return value if isinstance(value, str) and value else None
 
     @staticmethod
+    def _desired_mode(model: NDBaseModel) -> str | None:
+        """Return the destination model's structural mode discriminator."""
+        config_data = getattr(model, "config_data", None)
+        value = getattr(config_data, "mode", None) if config_data is not None else None
+        value = getattr(value, "value", value)
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _wire_mode(current: Mapping[str, Any]) -> str | None:
+        """Return one raw interface mode discriminator."""
+        config_data = current.get("configData") or {}
+        value = config_data.get("mode") if isinstance(config_data, Mapping) else None
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
     def _canonical_interface_type(value: Any) -> Any:
         """Normalize known raw/summary interface-type aliases."""
         return {"switchVirtualInterface": "svi"}.get(value, value)
@@ -604,6 +677,37 @@ class InterfaceWorkflowPlanner:
             parent_name = candidate_name.rsplit(".", 1)[0]
             collected[(switch_id, parent_name)].append(str(current.get("interfaceName") or candidate_name))
         return {identity: tuple(sorted(names, key=str.lower)) for identity, names in collected.items()}
+
+    def _children_after_planned_deletes(
+        self,
+        inventory: Mapping[tuple[str, str], dict[str, Any]],
+        resources: Iterable[InterfaceResourcePlan],
+    ) -> dict[tuple[str, str], tuple[str, ...]]:
+        """Return current child topology after applying explicit child deletes.
+
+        A ``deleted`` resource can target a structurally matching policy owned by
+        another subinterface family.  That policy-independent delete is rewritten
+        into ``operations.deletes`` later in this planning pass, so include the
+        explicit proposal here as well.  Any unsafe delete still fails its normal
+        structural and summary preflight before a plan can execute.
+        """
+
+        children = {identity: list(names) for identity, names in self._children_by_parent(inventory).items()}
+        for resource in resources:
+            if resource.adapter.ownership_domain != "subinterface":
+                continue
+            delete_models = list(resource.operations.deletes)
+            if resource.state == "deleted":
+                delete_models.extend(resource.proposed)
+            for model in delete_models:
+                child_name = getattr(model, "interface_name")
+                if "." not in child_name:
+                    continue
+                switch_id = self.fabric_context.get_switch_id(getattr(model, "switch_ip"))
+                parent_identity = switch_id, child_name.rsplit(".", 1)[0].casefold()
+                child_key = child_name.casefold()
+                children[parent_identity] = [name for name in children.get(parent_identity, []) if name.casefold() != child_key]
+        return {identity: tuple(names) for identity, names in children.items() if names}
 
     @staticmethod
     def _is_unconfigured_ethernet_default(
@@ -829,7 +933,7 @@ class InterfaceWorkflowPlanner:
     def _rewrite_policy_operations(self, resources: list[InterfaceResourcePlan]) -> list[InterfaceResourcePlan]:
         """Plan implicit transitions and explicit policy-independent deletes."""
         inventory = self._inventory()
-        children_by_parent = self._children_by_parent(inventory)
+        children_by_parent = self._children_after_planned_deletes(inventory, resources)
         resources_by_index = {resource.resource_index: resource for resource in resources}
         creates_by_index = {resource.resource_index: list(resource.operations.creates) for resource in resources}
         deletes_by_index = {resource.resource_index: list(resource.operations.deletes) for resource in resources}
@@ -843,20 +947,6 @@ class InterfaceWorkflowPlanner:
 
         for resource in resources:
             errors.extend(self._duplicate_member_errors(resource))
-            if isinstance(resource.orchestrator, EthernetBaseOrchestrator):
-                for desired in resource.operations.updates:
-                    switch_id = self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
-                    current = inventory.get((switch_id, getattr(desired, "interface_name").lower()))
-                    try:
-                        resource.orchestrator._check_port_channel_restrictions(
-                            desired,
-                            self._ethernet_membership_record(current),
-                        )
-                    except Exception as exc:
-                        errors.append(
-                            f"resources[{resource.resource_index}] cannot update "
-                            f"{getattr(desired, 'switch_ip')}/{getattr(desired, 'interface_name')}: {exc}"
-                        )
             if resource.adapter.safety.guards_child_subinterfaces:
                 parent_writes: list[tuple[str, NDBaseModel]] = [("update", desired) for desired in resource.operations.updates]
                 if resource.state not in resource.adapter.transition_states:
@@ -1052,6 +1142,198 @@ class InterfaceWorkflowPlanner:
         for item in resource.operations.deletes:
             yield "delete", item
 
+    def _operation_node(self, resource: InterfaceResourcePlan, action: str, model: NDBaseModel) -> InterfaceWorkflowOperation:
+        """Build one immutable execution-graph node from a planned mutation."""
+
+        return InterfaceWorkflowOperation(
+            resource_index=resource.resource_index,
+            resource_type=resource.resource_type,
+            action=action,
+            switch_id=self.fabric_context.get_switch_id(getattr(model, "switch_ip")),
+            interface_name=getattr(model, "interface_name"),
+            model=model,
+        )
+
+    @staticmethod
+    def _operation_priority(operation: InterfaceWorkflowOperation) -> tuple[int, int, str, str]:
+        """Prefer the legacy safe phase order when no dependency says otherwise."""
+
+        action_order = {"delete": 0, "transition": 1, "update": 2, "create": 3}
+        return (
+            action_order[operation.action],
+            operation.resource_index,
+            operation.switch_id,
+            operation.interface_name.casefold(),
+        )
+
+    def _build_execution_layers(
+        self,
+        resources: list[InterfaceResourcePlan],
+    ) -> tuple[tuple[InterfaceWorkflowOperation, ...], ...]:
+        """Topologically order mutations while retaining phase-sized batching.
+
+        Every emitted layer contains one action kind.  Among currently ready
+        operations, the scheduler prefers delete, transition, update, then
+        create, preserving the workflow's historical ordering unless an exact
+        parent/child or parent/member dependency requires an exception.
+        """
+
+        operations = [self._operation_node(resource, action, model) for resource in resources for action, model in self._iter_operations(resource)]
+        by_key = {operation.key: operation for operation in operations}
+        if len(by_key) != len(operations):
+            raise InterfaceWorkflowValidationError("Interface execution graph contains duplicate operation identities.")
+
+        edges, refresh_before = self._dependency_edges(resources, by_key)
+        for key in refresh_before:
+            by_key[key] = replace(by_key[key], refresh_before=True)
+        successors: dict[tuple[int, str, str, str], set[tuple[int, str, str, str]]] = {key: set() for key in by_key}
+        indegree = {key: 0 for key in by_key}
+        for predecessor, successor in edges:
+            if predecessor == successor or successor in successors[predecessor]:
+                continue
+            successors[predecessor].add(successor)
+            indegree[successor] += 1
+
+        layers: list[tuple[InterfaceWorkflowOperation, ...]] = []
+        remaining = set(by_key)
+        while remaining:
+            ready = [by_key[key] for key in remaining if indegree[key] == 0]
+            if not ready:
+                cycle = sorted(f"resources[{key[0]}] {key[1]} {key[2]}/{key[3]}" for key in remaining)
+                raise InterfaceWorkflowValidationError("Interface execution dependencies contain a cycle: " + ", ".join(cycle))
+            minimum_action = min(self._operation_priority(operation)[0] for operation in ready)
+            selected = tuple(
+                sorted(
+                    (operation for operation in ready if self._operation_priority(operation)[0] == minimum_action),
+                    key=self._operation_priority,
+                )
+            )
+            layers.append(selected)
+            for operation in selected:
+                remaining.remove(operation.key)
+                for successor in successors[operation.key]:
+                    indegree[successor] -= 1
+        return tuple(layers)
+
+    def _dependency_edges(
+        self,
+        resources: list[InterfaceResourcePlan],
+        operations: Mapping[tuple[int, str, str, str], InterfaceWorkflowOperation],
+    ) -> tuple[
+        set[tuple[tuple[int, str, str, str], tuple[int, str, str, str]]],
+        set[tuple[int, str, str, str]],
+    ]:
+        """Return mutation-order constraints and member updates needing fresh state."""
+
+        edges: set[tuple[tuple[int, str, str, str], tuple[int, str, str, str]]] = set()
+        refresh_before: set[tuple[int, str, str, str]] = set()
+        planned_parents = self._planned_parent_operations(resources)
+        for resource in resources:
+            if resource.adapter.ownership_domain != "subinterface":
+                continue
+            for child_action, child_model in self._iter_operations(resource):
+                child_name = getattr(child_model, "interface_name")
+                if "." not in child_name:
+                    continue
+                switch_id = self.fabric_context.get_switch_id(getattr(child_model, "switch_ip"))
+                child_key = resource.resource_index, child_action, switch_id, child_name.casefold()
+                if child_key not in operations:
+                    continue
+                parent_identity = InterfaceIdentity("switch", (switch_id,), child_name.rsplit(".", 1)[0].casefold())
+                for parent_resource, parent_action, parent_model in planned_parents.get(parent_identity, []):
+                    parent_key = (
+                        parent_resource.resource_index,
+                        parent_action,
+                        switch_id,
+                        getattr(parent_model, "interface_name").casefold(),
+                    )
+                    if parent_key not in operations:
+                        continue
+                    if child_action == "delete":
+                        edges.add((child_key, parent_key))
+                    else:
+                        edges.add((parent_key, child_key))
+
+        aggregate_claims: dict[InterfaceIdentity, list[_AggregateMemberClaim]] = defaultdict(list)
+        ethernet_operations: dict[InterfaceIdentity, list[tuple[InterfaceResourcePlan, str, NDBaseModel]]] = defaultdict(list)
+        for resource in resources:
+            if resource.adapter.ownership_domain == "ethernet":
+                for action, model in self._iter_operations(resource):
+                    ethernet_operations[self._identity(resource.adapter, model)].append((resource, action, model))
+            for claim in self._aggregate_member_claims(resource):
+                aggregate_claims[claim.member_identity].append(claim)
+
+        for member_identity, ethernet_entries in ethernet_operations.items():
+            member_claims = aggregate_claims.get(member_identity, [])
+            if not member_claims:
+                continue
+            for ethernet_entry in ethernet_entries:
+                interaction = self._ethernet_aggregate_interaction(
+                    member_identity=member_identity,
+                    ethernet_entry=ethernet_entry,
+                    aggregate_claims=member_claims,
+                )
+                if interaction is None:
+                    continue
+                ethernet_resource, ethernet_action, ethernet_model = ethernet_entry
+                ethernet_key = self._operation_node(ethernet_resource, ethernet_action, ethernet_model).key
+                for claim in member_claims:
+                    if not claim.final:
+                        continue
+                    parent_key = self._operation_node(claim.resource, claim.action, claim.parent).key
+                    if ethernet_key not in operations or parent_key not in operations:
+                        continue
+                    if interaction == "required_host_conversion":
+                        edges.add((ethernet_key, parent_key))
+                    else:
+                        edges.add((parent_key, ethernet_key))
+                        # Parent PUTs can update controller-derived member fields
+                        # such as portChannelMode/copyDescription.  The later
+                        # member-safe PUT must reconstruct from a post-parent row,
+                        # never from the planning snapshot.
+                        refresh_before.add(ethernet_key)
+        return edges, refresh_before
+
+    def _apply_preflight_projections(self, resources: list[InterfaceResourcePlan]) -> None:
+        """Project only registry-required host conversions into the shared safety view.
+
+        IOS-XE port-channel preflight validates the member's current host mode.
+        When this same workflow has already proven and scheduled that exact
+        conversion before the attach, its post-conversion payload is the safe
+        state against which the parent preflight must run. No member-policy
+        overlay is synthesized here.
+        """
+
+        aggregate_claims: dict[InterfaceIdentity, list[_AggregateMemberClaim]] = defaultdict(list)
+        ethernet_operations: dict[InterfaceIdentity, list[tuple[InterfaceResourcePlan, str, NDBaseModel]]] = defaultdict(list)
+        for resource in resources:
+            if resource.adapter.ownership_domain == "ethernet":
+                for action, model in self._iter_operations(resource):
+                    ethernet_operations[self._identity(resource.adapter, model)].append((resource, action, model))
+            for claim in self._aggregate_member_claims(resource):
+                aggregate_claims[claim.member_identity].append(claim)
+
+        overlays: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for member_identity, ethernet_entries in ethernet_operations.items():
+            claims = aggregate_claims.get(member_identity, [])
+            for ethernet_entry in ethernet_entries:
+                if (
+                    self._ethernet_aggregate_interaction(
+                        member_identity=member_identity,
+                        ethernet_entry=ethernet_entry,
+                        aggregate_claims=claims,
+                    )
+                    != "required_host_conversion"
+                ):
+                    continue
+                _resource, _action, model = ethernet_entry
+                payload = model.to_payload()
+                payload["switchId"] = member_identity.scope[0]
+                overlays[member_identity.scope[0]].append(payload)
+
+        for switch_id, upserts in overlays.items():
+            self.snapshot.apply_overlay(switch_id, upserts=upserts)
+
     def _find_conflicts(self, resources: list[InterfaceResourcePlan]) -> tuple[InterfaceWorkflowConflict, ...]:
         """Collect ownership, action, transition, and member dependency conflicts."""
         conflicts: list[InterfaceWorkflowConflict] = []
@@ -1137,54 +1419,66 @@ class InterfaceWorkflowPlanner:
                         f"resources[{resource.resource_index}] overridden deletion of {identity.label} conflicts with another desired group.",
                     )
 
-        self._find_parent_subinterface_conflicts(resources, add)
         self._find_subinterface_parent_prerequisite_conflicts(resources, add)
         self._find_existing_policy_conflicts(resources, add)
         self._find_member_conflicts(resources, add)
         return tuple(conflicts)
 
-    def _find_parent_subinterface_conflicts(self, resources: list[InterfaceResourcePlan], add: Callable[..., None]) -> None:
-        """Reject any parent mutation combined with a child mutation."""
-        parent_writes: dict[InterfaceIdentity, list[InterfaceResourcePlan]] = defaultdict(list)
+    def _planned_parent_operations(
+        self,
+        resources: Iterable[InterfaceResourcePlan],
+    ) -> dict[InterfaceIdentity, list[tuple[InterfaceResourcePlan, str, NDBaseModel]]]:
+        """Index mutations of physical and port-channel subinterface parents."""
+
+        parent_writes: dict[InterfaceIdentity, list[tuple[InterfaceResourcePlan, str, NDBaseModel]]] = defaultdict(list)
         for resource in resources:
             if not resource.adapter.safety.guards_child_subinterfaces:
                 continue
-            for _action, item in self._iter_operations(resource):
+            for action, item in self._iter_operations(resource):
                 switch_id = self.fabric_context.get_switch_id(getattr(item, "switch_ip"))
                 parent_identity = InterfaceIdentity("switch", (switch_id,), getattr(item, "interface_name").lower())
-                parent_writes[parent_identity].append(resource)
+                parent_writes[parent_identity].append((resource, action, item))
+        return parent_writes
 
-        for resource in resources:
-            if resource.adapter.ownership_domain != "subinterface":
-                continue
-            for action, item in self._iter_operations(resource):
-                child_name = getattr(item, "interface_name")
-                if "." not in child_name:
-                    continue
-                switch_id = self.fabric_context.get_switch_id(getattr(item, "switch_ip"))
-                parent_identity = InterfaceIdentity("switch", (switch_id,), child_name.rsplit(".", 1)[0].lower())
-                parent_resources = parent_writes.get(parent_identity, [])
-                if not parent_resources:
-                    continue
-                add(
-                    "parent_subinterface_collision",
-                    parent_identity,
-                    [*parent_resources, resource],
-                    f"{parent_identity.label} is mutated while child subinterface '{child_name}' has action '{action}'; "
-                    "split parent and child operations into separate workflows.",
-                )
+    @staticmethod
+    def _routed_parent_contract_error(
+        *,
+        interface_type: Any,
+        mode: Any,
+        policy_type: Any,
+        network_os_type: Any,
+        child_network_os_type: str | None,
+    ) -> str | None:
+        """Return why a parent cannot host the child, or ``None`` when compatible."""
+
+        contracts = {
+            ("ethernet", "routedHost"): "nx-os",
+            ("ethernet", "iosXeRoutedHost"): "ios-xe",
+            ("portChannel", "l3Po"): "nx-os",
+            ("portChannel", "iosXeL3PortChannel"): "ios-xe",
+        }
+        expected_network_os = contracts.get((interface_type, policy_type))
+        if expected_network_os is None:
+            expected_policies = sorted(policy for (candidate_type, policy), _network_os in contracts.items() if candidate_type == interface_type)
+            if not expected_policies:
+                return f"the parent has structural interfaceType {interface_type!r}, expected 'ethernet' or 'portChannel'"
+            return f"the parent policyType is {policy_type!r}, expected one of {expected_policies}"
+        if mode != "routed":
+            return f"the parent mode is {mode!r}, expected 'routed'"
+        if network_os_type != expected_network_os:
+            return f"the parent policyType {policy_type!r} requires networkOSType {expected_network_os!r}, " f"but the parent reports {network_os_type!r}"
+        if child_network_os_type is not None and child_network_os_type != expected_network_os:
+            return f"the child network_os_type is {child_network_os_type!r}, but parent policyType {policy_type!r} " f"requires {expected_network_os!r}"
+        return None
 
     def _find_subinterface_parent_prerequisite_conflicts(
         self,
         resources: list[InterfaceResourcePlan],
         add: Callable[..., None],
     ) -> None:
-        """Require every written subinterface to have an existing routed parent."""
+        """Require every written subinterface to have a compatible current or planned routed parent."""
         inventory = self._inventory()
-        routed_policy_by_type = {
-            "ethernet": "routedHost",
-            "portChannel": "l3PortChannel",
-        }
+        planned_parents = self._planned_parent_operations(resources)
         for resource in resources:
             if resource.adapter.ownership_domain != "subinterface":
                 continue
@@ -1195,25 +1489,45 @@ class InterfaceWorkflowPlanner:
                 child_name = getattr(item, "interface_name")
                 parent_name = child_name.rsplit(".", 1)[0].lower()
                 parent_identity = InterfaceIdentity("switch", (switch_id,), parent_name)
-                current = inventory.get((switch_id, parent_name))
-                if current is None:
-                    reason = "the parent does not exist in current controller inventory"
-                else:
-                    interface_type = self._canonical_interface_type(current.get("interfaceType"))
-                    required_policy = routed_policy_by_type.get(interface_type)
-                    if required_policy is None:
-                        reason = f"the parent has structural interfaceType {current.get('interfaceType')!r}, " "expected 'ethernet' or 'portChannel'"
+                child_network_os_type = self._desired_network_os_type(item)
+                parent_operations = planned_parents.get(parent_identity, [])
+                if parent_operations:
+                    parent_resource, parent_action, parent_model = parent_operations[0]
+                    if parent_action == "delete":
+                        reason = "the same workflow deletes the parent"
                     else:
-                        policy_type = InterfaceStateSnapshot.policy_type(current)
-                        if policy_type == required_policy:
-                            continue
-                        reason = f"the parent policyType is {policy_type!r}, " f"expected routed policy {required_policy!r}"
+                        parent_interface_type = next(iter(parent_resource.adapter.interface_types), None)
+                        reason = self._routed_parent_contract_error(
+                            interface_type=parent_interface_type,
+                            mode=self._desired_mode(parent_model),
+                            policy_type=self._desired_policy_type(parent_model),
+                            network_os_type=self._desired_network_os_type(parent_model),
+                            child_network_os_type=child_network_os_type,
+                        )
+                    if reason is None:
+                        continue
+                    participants = [parent_resource, resource]
+                else:
+                    participants = [resource]
+                    current = inventory.get((switch_id, parent_name))
+                    if current is None:
+                        reason = "the parent does not exist in current controller inventory"
+                    else:
+                        reason = self._routed_parent_contract_error(
+                            interface_type=self._canonical_interface_type(current.get("interfaceType")),
+                            mode=self._wire_mode(current),
+                            policy_type=InterfaceStateSnapshot.policy_type(current),
+                            network_os_type=self._wire_network_os_type(current),
+                            child_network_os_type=child_network_os_type,
+                        )
+                    if reason is None:
+                        continue
                 add(
                     "subinterface_parent_prerequisite",
                     parent_identity,
-                    [resource],
+                    participants,
                     f"Subinterface {switch_id}/{child_name} cannot perform action '{action}': {reason}. "
-                    "Configure the routed parent in a separate completed workflow first.",
+                    "Configure a compatible routed parent before the child operation.",
                 )
 
     def _find_existing_policy_conflicts(self, resources: list[InterfaceResourcePlan], add: Callable[..., None]) -> None:
@@ -1240,7 +1554,7 @@ class InterfaceWorkflowPlanner:
                         )
                         continue
                     policy_type = InterfaceStateSnapshot.policy_type(current)
-                    if policy_type == "trunkHost" and EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(current):
+                    if self._is_unconfigured_ethernet_default(resource.adapter, ((switch_id, current),)):
                         continue
                     if policy_type in resource.adapter.policy_types:
                         continue
@@ -1262,17 +1576,6 @@ class InterfaceWorkflowPlanner:
         network_os = getattr(config_data, "network_os", None) if config_data is not None else None
         return getattr(network_os, "policy", None) if network_os is not None else None
 
-    @staticmethod
-    def _positive_port_channel_id(value: Any) -> int | None:
-        """Return a positive numeric port-channel identifier."""
-        if isinstance(value, int) and value > 0:
-            return value
-        if isinstance(value, str):
-            candidate = value.lower().removeprefix("port-channel")
-            if candidate.isdigit() and int(candidate) > 0:
-                return int(candidate)
-        return None
-
     @classmethod
     def _configured_port_channel_id(cls, current: Mapping[str, Any] | None) -> int | None:
         """Return configured membership when ND operational data is stale."""
@@ -1285,95 +1588,57 @@ class InterfaceWorkflowPlanner:
         has_primary = isinstance(primary_interface, str) and bool(primary_interface.strip())
         if not has_member_policy and not has_primary:
             return None
-        return cls._positive_port_channel_id(policy.get("portChannelId"))
+        return normalize_port_channel_id(policy.get("portChannelId"))
 
     @classmethod
     def _effective_port_channel_id(cls, current: Mapping[str, Any] | None) -> int | None:
         """Prefer operational membership, then use the configured member-policy signal."""
-        operational_id = EthernetTrunkHostInterfaceOrchestrator._existing_port_channel_id(current)
+        oper_data = current.get("operData") if isinstance(current, Mapping) else None
+        operational_id = normalize_port_channel_id(oper_data.get("portChannelId")) if isinstance(oper_data, Mapping) else None
         return operational_id if operational_id is not None else cls._configured_port_channel_id(current)
 
-    @classmethod
-    def _ethernet_membership_record(cls, current: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Expose configured membership to the existing whitelist checker."""
-        if current is None or EthernetTrunkHostInterfaceOrchestrator._existing_port_channel_id(current) is not None:
-            return current
-        configured_id = cls._configured_port_channel_id(current)
-        if configured_id is None:
-            return current
-        effective = deepcopy(current)
-        effective["operData"] = {**(effective.get("operData") or {}), "portChannelId": configured_id}
-        return effective
+    def _claim_identity(self, claim: ParentMembershipClaim) -> InterfaceIdentity:
+        """Convert one authoritative membership-index claim to workflow identity."""
 
-    def _current_member_owners(
-        self,
-    ) -> tuple[
-        dict[InterfaceIdentity, set[InterfaceIdentity]],
-        dict[InterfaceIdentity, dict[InterfaceIdentity, set[int]]],
-    ]:
-        """Index aggregate owners and their expected operational port-channel IDs."""
-        owners: dict[InterfaceIdentity, set[InterfaceIdentity]] = defaultdict(set)
-        owner_ids: dict[InterfaceIdentity, dict[InterfaceIdentity, set[int]]] = defaultdict(lambda: defaultdict(set))
-        known_vpc_scope: dict[str, tuple[str, ...]] = {}
-        for switch_ip in self.vpc_pair_by_switch_ip:
-            scope = self._vpc_pair_scope(switch_ip)
-            if len(scope) == 2:
-                for switch_id in scope:
-                    known_vpc_scope[switch_id] = scope
-
-        def register(member: InterfaceIdentity, owner: InterfaceIdentity, port_channel_id: Any) -> None:
-            owners[member].add(owner)
-            if (normalized_id := self._positive_port_channel_id(port_channel_id)) is not None:
-                owner_ids[member][owner].add(normalized_id)
-
-        for (switch_id, interface_name), current in self._inventory().items():
-            interface_type = self._canonical_interface_type(current.get("interfaceType"))
-            policy = self._wire_policy(current)
-            if interface_type == "portChannel":
-                owner = InterfaceIdentity("switch", (switch_id,), interface_name)
-                port_channel_id = self._positive_port_channel_id(policy.get("portChannelId"))
-                if port_channel_id is None:
-                    port_channel_id = self._positive_port_channel_id(interface_name)
-                for member in self._member_names(policy.get("ports")):
-                    register(InterfaceIdentity("switch", (switch_id,), member), owner, port_channel_id)
-                continue
-            if interface_type != "vpc":
-                continue
-
+        if self._canonical_interface_type(claim.interface_type) != "vpc":
+            return InterfaceIdentity("switch", (claim.switch_id,), claim.interface_name.casefold())
+        policy = self._wire_policy(claim.record)
+        peer_id = self._shared_vpc_peer_serial_cache().get(claim.switch_id)
+        if peer_id is None:
             configured_peer_id = policy.get("peerSwitchId")
-            authoritative_scope = known_vpc_scope.get(switch_id)
-            if authoritative_scope is not None:
-                peer_id = next(candidate for candidate in authoritative_scope if candidate != switch_id)
-                if configured_peer_id is not None and configured_peer_id != peer_id:
-                    raise InterfaceWorkflowValidationError(
-                        f"Raw vPC owner {switch_id}/{interface_name} reports peerSwitchId {configured_peer_id!r}, "
-                        f"expected {peer_id!r} from authoritative pair inventory."
-                    )
-                scope = authoritative_scope
-            else:
+            if isinstance(configured_peer_id, str) and configured_peer_id and configured_peer_id != claim.switch_id:
                 peer_id = configured_peer_id
-                has_raw_peer = isinstance(peer_id, str) and bool(peer_id) and peer_id != switch_id
-                scope = tuple(sorted((switch_id, peer_id))) if has_raw_peer else (switch_id,)
+        scope = tuple(sorted((claim.switch_id, peer_id))) if peer_id is not None else (claim.switch_id,)
+        return InterfaceIdentity("vpc_pair", scope, claim.interface_name.casefold())
 
-            has_peer = isinstance(peer_id, str) and bool(peer_id) and peer_id != switch_id
-            owner = InterfaceIdentity("vpc_pair", scope, interface_name)
-            for member in self._member_names(policy.get("peer1MemberPorts")):
-                register(
-                    InterfaceIdentity("switch", (switch_id,), member),
-                    owner,
-                    policy.get("peer1PortChannelId"),
-                )
-            if has_peer:
-                for member in self._member_names(policy.get("peer2MemberPorts")):
-                    register(
-                        InterfaceIdentity("switch", (peer_id,), member),
-                        owner,
-                        policy.get("peer2PortChannelId"),
-                    )
-        return owners, owner_ids
+    def _claim_port_channel_ids(self, claim: ParentMembershipClaim) -> set[int]:
+        """Return parent IDs associated with the exact fields that claim a member."""
 
-    def _protected_member_claims(self, resource: InterfaceResourcePlan) -> Iterable[tuple[InterfaceIdentity, InterfaceIdentity]]:
-        """Yield current and final physical members protected by one aggregate action."""
+        policy = self._wire_policy(claim.record)
+        values: list[Any] = []
+        if self._canonical_interface_type(claim.interface_type) == "portChannel":
+            values.append(policy.get("portChannelId") or claim.interface_name)
+        else:
+            if "peer1MemberPorts" in claim.claim_fields:
+                values.append(policy.get("peer1PortChannelId"))
+            if "peer2MemberPorts" in claim.claim_fields:
+                values.append(policy.get("peer2PortChannelId"))
+        return {normalized for value in values if (normalized := normalize_port_channel_id(value)) is not None}
+
+    def _current_claims(
+        self,
+        member_identity: InterfaceIdentity,
+    ) -> tuple[tuple[ParentMembershipClaim, InterfaceIdentity, set[int]], ...]:
+        """Return indexed parent claims with workflow identities and expected IDs."""
+
+        switch_id = member_identity.scope[0]
+        return tuple(
+            (claim, self._claim_identity(claim), self._claim_port_channel_ids(claim))
+            for claim in self._memberships().claiming_parents(switch_id, member_identity.interface_name)
+        )
+
+    def _aggregate_member_claims(self, resource: InterfaceResourcePlan) -> Iterable[_AggregateMemberClaim]:
+        """Yield current and projected physical membership for aggregate mutations."""
         if not resource.adapter.safety.owns_physical_members:
             return
 
@@ -1391,7 +1656,15 @@ class InterfaceWorkflowPlanner:
                 current_members = set(self._member_names(current_policy.get("ports")))
                 final_members = set(self._member_names(getattr(final_policy, "ports", None))) if final_policy is not None else set()
                 for member in sorted(current_members | final_members, key=str.lower):
-                    yield InterfaceIdentity("switch", (primary_id,), member), logical_identity
+                    yield _AggregateMemberClaim(
+                        resource=resource,
+                        action=action,
+                        parent=item,
+                        member_identity=InterfaceIdentity("switch", (primary_id,), member),
+                        owner_identity=logical_identity,
+                        current=member in current_members,
+                        final=member in final_members,
+                    )
                 continue
 
             pair_scope = self._vpc_pair_scope(switch_ip)
@@ -1403,7 +1676,70 @@ class InterfaceWorkflowPlanner:
                 current_members = set(self._member_names(current_policy.get(wire_field)))
                 final_members = set(self._member_names(getattr(final_policy, model_field, None))) if final_policy is not None else set()
                 for member in sorted(current_members | final_members, key=str.lower):
-                    yield InterfaceIdentity("switch", (switch_id,), member), logical_identity
+                    yield _AggregateMemberClaim(
+                        resource=resource,
+                        action=action,
+                        parent=item,
+                        member_identity=InterfaceIdentity("switch", (switch_id,), member),
+                        owner_identity=logical_identity,
+                        current=member in current_members,
+                        final=member in final_members,
+                    )
+
+    def _validated_member_owner_identity(self, member_identity: InterfaceIdentity) -> InterfaceIdentity | None:
+        """Return the owner proven by PR #561's membership service, if valid."""
+
+        try:
+            ownership = self._memberships().validate(member_identity.scope[0], member_identity.interface_name)
+        except MembershipValidationError:
+            return None
+        owner_name = ownership.owner.interface_name.casefold()
+        owner_switch_id = ownership.owner.switch_id
+        for claim, owner_identity, _ids in self._current_claims(member_identity):
+            if claim.switch_id == owner_switch_id and claim.interface_name.casefold() == owner_name:
+                return owner_identity
+        return None
+
+    def _ethernet_aggregate_interaction(
+        self,
+        *,
+        member_identity: InterfaceIdentity,
+        ethernet_entry: tuple[InterfaceResourcePlan, str, NDBaseModel],
+        aggregate_claims: list[_AggregateMemberClaim],
+    ) -> str | None:
+        """Classify a safe same-workflow parent/member interaction."""
+
+        resource, action, model = ethernet_entry
+        if not isinstance(resource.orchestrator, EthernetBaseOrchestrator) or action == "delete":
+            return None
+        final_claims = [claim for claim in aggregate_claims if claim.final]
+        if len({claim.owner_identity for claim in final_claims}) != 1:
+            return None
+
+        current_member = self._memberships().get_member(member_identity.scope[0], member_identity.interface_name)
+        if action == "update" and current_member is not None and current_member.descriptor is not None:
+            validated_owner = self._validated_member_owner_identity(member_identity)
+            if validated_owner is None:
+                return None
+            matching = [claim for claim in final_claims if claim.owner_identity == validated_owner]
+            final_descriptors = {get_member_policy_descriptor_for_parent(self._desired_policy_type(claim.parent)) for claim in matching}
+            if matching and any(claim.current for claim in matching) and final_descriptors == {current_member.descriptor}:
+                return "safe_member_update"
+            return None
+
+        if current_member is not None or self._current_claims(member_identity):
+            return None
+        current = self._inventory().get((member_identity.scope[0], member_identity.interface_name))
+        if self._effective_port_channel_id(current) is not None:
+            return None
+        desired_policy_type = self._desired_policy_type(model)
+        for claim in final_claims:
+            if claim.current:
+                continue
+            descriptor = get_member_policy_descriptor_for_parent(self._desired_policy_type(claim.parent))
+            if descriptor is not None and descriptor.required_host_policy_type == desired_policy_type:
+                return "required_host_conversion"
+        return None
 
     def _find_member_conflicts(
         self,
@@ -1411,24 +1747,23 @@ class InterfaceWorkflowPlanner:
         add: Callable[..., None],
     ) -> None:
         """Reject duplicate member ownership and simultaneous Ethernet/member edits."""
-        claims: dict[InterfaceIdentity, list[tuple[InterfaceResourcePlan, InterfaceIdentity]]] = defaultdict(list)
+        claims: dict[InterfaceIdentity, list[_AggregateMemberClaim]] = defaultdict(list)
         ethernet_actions: dict[
             InterfaceIdentity,
             list[tuple[InterfaceResourcePlan, str, NDBaseModel]],
         ] = defaultdict(list)
-        current_owners, current_owner_ids = self._current_member_owners()
         inventory = self._inventory()
         for resource in resources:
             if resource.adapter.ownership_domain == "ethernet":
                 for action, item in self._iter_operations(resource):
                     ethernet_actions[self._identity(resource.adapter, item)].append((resource, action, item))
         for resource in resources:
-            for member_identity, logical_identity in self._protected_member_claims(resource):
-                claims[member_identity].append((resource, logical_identity))
+            for claim in self._aggregate_member_claims(resource):
+                claims[claim.member_identity].append(claim)
 
         for member_identity, entries in claims.items():
-            logical_identities = {logical_identity for _resource, logical_identity in entries}
-            participants = [resource for resource, _logical_identity in entries]
+            logical_identities = {claim.owner_identity for claim in entries}
+            participants = [claim.resource for claim in entries]
             if len(logical_identities) > 1:
                 add(
                     "duplicate_member_ownership",
@@ -1436,22 +1771,55 @@ class InterfaceWorkflowPlanner:
                     participants,
                     f"Physical member {member_identity.label} is a current or final member of multiple aggregate interfaces.",
                 )
-            existing_owners = current_owners.get(member_identity, set())
-            foreign_owners = existing_owners - logical_identities
-            if foreign_owners:
-                add(
-                    "existing_member_ownership",
-                    member_identity,
-                    participants,
-                    f"Physical member {member_identity.label} is already owned by aggregate interface(s) "
-                    f"{sorted(owner.label for owner in foreign_owners)}.",
-                )
+            indexed_claims = self._current_claims(member_identity)
+            existing_owners = {owner for _claim, owner, _ids in indexed_claims}
             ethernet = inventory.get((member_identity.scope[0], member_identity.interface_name))
-            port_channel_id = self._effective_port_channel_id(ethernet)
-            if port_channel_id is not None:
-                matching_owners = existing_owners.intersection(logical_identities)
-                expected_ids = {expected_id for owner in matching_owners for expected_id in current_owner_ids.get(member_identity, {}).get(owner, set())}
-                if not matching_owners or not expected_ids:
+            indexed_member = self._memberships().get_member(member_identity.scope[0], member_identity.interface_name)
+            if indexed_member is not None:
+                try:
+                    ownership = self._memberships().validate(member_identity.scope[0], member_identity.interface_name)
+                except MembershipValidationError as exc:
+                    add(
+                        "member_ownership_validation",
+                        member_identity,
+                        participants,
+                        f"Physical member {member_identity.label} failed authoritative membership validation: {exc}.",
+                    )
+                else:
+                    validated_owner = next(
+                        (
+                            owner
+                            for claim, owner, _ids in indexed_claims
+                            if claim.switch_id == ownership.owner.switch_id and claim.interface_name.casefold() == ownership.owner.interface_name.casefold()
+                        ),
+                        None,
+                    )
+                    if validated_owner not in logical_identities:
+                        add(
+                            "existing_member_ownership",
+                            member_identity,
+                            participants,
+                            f"Physical member {member_identity.label} is owned by aggregate interface "
+                            f"{ownership.owner.interface_name!r}, not by the requested aggregate.",
+                        )
+            else:
+                foreign_owners = existing_owners - logical_identities
+                if foreign_owners:
+                    add(
+                        "existing_member_ownership",
+                        member_identity,
+                        participants,
+                        f"Physical member {member_identity.label} is already owned by aggregate interface(s) "
+                        f"{sorted(owner.label for owner in foreign_owners)}.",
+                    )
+                port_channel_id = self._effective_port_channel_id(ethernet)
+                if port_channel_id is None:
+                    matching_owners = set()
+                    expected_ids = set()
+                else:
+                    matching_owners = existing_owners.intersection(logical_identities)
+                    expected_ids = {expected_id for _claim, owner, owner_ids in indexed_claims if owner in matching_owners for expected_id in owner_ids}
+                if port_channel_id is not None and (not matching_owners or not expected_ids):
                     add(
                         "operational_member_ownership",
                         member_identity,
@@ -1459,7 +1827,7 @@ class InterfaceWorkflowPlanner:
                         f"Physical member {member_identity.label} reports operational port-channel membership "
                         f"{port_channel_id}, but no matching aggregate owner and ID can be proven from raw inventory.",
                     )
-                elif port_channel_id not in expected_ids:
+                elif port_channel_id is not None and port_channel_id not in expected_ids:
                     add(
                         "operational_member_mismatch",
                         member_identity,
@@ -1469,20 +1837,33 @@ class InterfaceWorkflowPlanner:
                     )
             ethernet_entries = ethernet_actions.get(member_identity, [])
             if ethernet_entries:
-                add(
-                    "ethernet_member_collision",
-                    member_identity,
-                    [*participants, *(resource for resource, _action, _item in ethernet_entries)],
-                    f"Physical member {member_identity.label} is mutated as Ethernet while protected as a current or final aggregate member.",
-                )
+                unsafe_entries = [
+                    entry
+                    for entry in ethernet_entries
+                    if self._ethernet_aggregate_interaction(
+                        member_identity=member_identity,
+                        ethernet_entry=entry,
+                        aggregate_claims=entries,
+                    )
+                    is None
+                ]
+                if unsafe_entries:
+                    add(
+                        "ethernet_member_collision",
+                        member_identity,
+                        [*participants, *(resource for resource, _action, _item in unsafe_entries)],
+                        f"Physical member {member_identity.label} is mutated as Ethernet while protected as a current or final aggregate member.",
+                    )
 
         for member_identity, ethernet_entries in ethernet_actions.items():
             if member_identity in claims:
                 continue
-            existing_owners = current_owners.get(member_identity, set())
+            indexed_claims = self._current_claims(member_identity)
+            existing_owners = {owner for _claim, owner, _ids in indexed_claims}
             ethernet = inventory.get((member_identity.scope[0], member_identity.interface_name))
             configured_id = self._configured_port_channel_id(ethernet)
-            operational_id = EthernetTrunkHostInterfaceOrchestrator._existing_port_channel_id(ethernet)
+            oper_data = ethernet.get("operData") if isinstance(ethernet, Mapping) else None
+            operational_id = normalize_port_channel_id(oper_data.get("portChannelId")) if isinstance(oper_data, Mapping) else None
             if not existing_owners and configured_id is None and operational_id is None:
                 continue
 
@@ -1494,17 +1875,13 @@ class InterfaceWorkflowPlanner:
                 if not isinstance(resource.orchestrator, EthernetBaseOrchestrator):
                     protected.append(resource)
                     continue
-                membership_record = self._ethernet_membership_record(ethernet)
-                if membership_record is ethernet and operational_id is None:
-                    expected_ids = {expected_id for owner in existing_owners for expected_id in current_owner_ids.get(member_identity, {}).get(owner, set())}
-                    membership_record = deepcopy(ethernet) if ethernet is not None else {}
-                    membership_record["operData"] = {
-                        **(membership_record.get("operData") or {}),
-                        "portChannelId": min(expected_ids) if expected_ids else 1,
-                    }
-                try:
-                    resource.orchestrator._check_port_channel_restrictions(item, membership_record)
-                except Exception:
+                policy_type = InterfaceStateSnapshot.policy_type(ethernet or {})
+                # A same-family UPDATE is decided by PR #561's authoritative
+                # member service during preflight. Let it produce the precise
+                # inconsistent-operational, orphan, wrong-family, or safe-field
+                # result. A host-policy row that a cached parent still claims is
+                # not an authentic member and remains protected here.
+                if existing_owners and get_member_policy_descriptor(policy_type) is None:
                     protected.append(resource)
             if protected:
                 add(
@@ -1524,6 +1901,10 @@ class InterfaceWorkflowPlanner:
                     if resource.platform_deletes:
                         resource.orchestrator.preflight_delete(list(resource.platform_deletes))
                     continue
+                if isinstance(resource.orchestrator, EthernetBaseOrchestrator):
+                    update_identifiers = {model.get_identifier_value() for model in resource.operations.updates}
+                    explicit_updates = [model for model in resource.proposed if model.get_identifier_value() in update_identifiers]
+                    resource.orchestrator.prepare_member_update_intents(explicit_updates)
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
