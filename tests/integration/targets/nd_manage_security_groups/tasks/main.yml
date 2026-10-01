@@ -1,0 +1,346 @@
+---
+# Read/write and attach/detach qualification for nd_manage_security_groups.
+# Run only against an iBGP VXLAN fabric whose Group Based Policy feature is
+# enabled and ready.
+# Supply a run-unique name suffix and a free ID inside the fabric's configured
+# SGT range. The target refuses any pre-existing name or ID.
+
+- name: >-
+    Require mutation authorization, the expected controller, credentials, a
+    run-owned VRF, unique selector prefixes, a run ID, and a group ID
+  ansible.builtin.fail:
+    msg: >-
+      Set nd_test_security_mutation_authorized=true and
+      nd_test_security_run_owned_vrf_confirmed=true as booleans, set
+      nd_test_security_expected_controller_host to the exact ansible_host, and
+      define ansible_user, ansible_password, nd_test_security_fabric_name,
+      nd_test_security_vrf_name, nd_test_security_run_id,
+      nd_test_security_group_id, nd_test_security_selector_prefix, and
+      nd_test_security_selector_prefix_replaced. The names, ID, VRF, and two
+      distinct selector prefixes must be owned by this execution.
+  when: >-
+    ansible_host is not defined or
+    ansible_user is not defined or
+    ansible_password is not defined or
+    nd_test_security_expected_controller_host is not defined or
+    nd_test_security_expected_controller_host | string | trim | length == 0 or
+    (nd_test_security_expected_controller_host | string | trim | lower) !=
+    (ansible_host | string | trim | lower) or
+    (nd_test_security_mutation_authorized | default(false) | type_debug) !=
+    'bool' or
+    not (nd_test_security_mutation_authorized | default(false) | bool) or
+    (nd_test_security_run_owned_vrf_confirmed | default(false) | type_debug) !=
+    'bool' or
+    not (nd_test_security_run_owned_vrf_confirmed | default(false) | bool) or
+    nd_test_security_fabric_name is not defined or
+    nd_test_security_vrf_name is not defined or
+    nd_test_security_run_id is not defined or
+    nd_test_security_group_id is not defined or
+    nd_test_security_selector_prefix is not defined or
+    nd_test_security_selector_prefix | string | trim | length == 0 or
+    nd_test_security_selector_prefix_replaced is not defined or
+    nd_test_security_selector_prefix_replaced | string | trim | length == 0 or
+    (nd_test_security_selector_prefix | string | trim) ==
+    (nd_test_security_selector_prefix_replaced | string | trim) or
+    nd_test_security_run_id | string | length == 0 or
+    nd_test_security_run_id | string | length > 15 or
+    nd_test_security_run_id | string is not match('^[A-Za-z0-9_-]+$')
+
+- name: Exercise security group states and attachment actions
+  block:
+    - name: Gather groups before claiming the run-owned name and ID
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: group_preflight
+
+    - name: Find existing external subnet selector collisions in the test VRF
+      ansible.builtin.set_fact:
+        security_group_selector_collisions: >-
+          {%- set collisions = [] -%}
+          {%- set requested = [
+            nd_test_security_selector_prefix | string | trim,
+            nd_test_security_selector_prefix_replaced | string | trim
+          ] -%}
+          {%- for existing_group in group_preflight.gathered | default([]) -%}
+          {%- for selector in
+            existing_group.selectors | default([], true) -%}
+          {%- if selector.type | default('') == 'externalSubnet' and
+                selector.vrf_name | default('') ==
+                nd_test_security_vrf_name and
+                selector.ip | default('') | string | trim in requested -%}
+          {%- set _ = collisions.append({
+            'group': existing_group.name | default('unknown'),
+            'prefix': selector.ip | default('')
+          }) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- endfor -%}
+          {{ collisions }}
+
+    - name: Refuse to reuse an existing group name, ID, or selector prefix
+      ansible.builtin.assert:
+        that:
+          - >-
+            group_preflight.gathered |
+            selectattr('name', 'equalto', security_group.name) |
+            list | length == 0
+          - >-
+            group_preflight.gathered |
+            selectattr('id', 'defined') |
+            selectattr('id', 'equalto', security_group.id) |
+            list | length == 0
+          - security_group_selector_collisions | length == 0
+        fail_msg: >-
+          Refusing to reuse a pre-existing security group name, ID, or
+          externalSubnet selector in the requested VRF. Use a different run
+          ID, group ID, and run-owned selector prefixes. Selector collisions:
+          {{ security_group_selector_collisions }}
+
+    - name: Mark the collision-free group name and ID as owned by this run
+      ansible.builtin.set_fact:
+        security_group_run_owned: true
+
+    - name: Define the run-owned group deletion operation
+      cisco.nd.nd_manage_security_groups: &delete_group
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ security_group.name }}"
+        state: deleted
+      check_mode: true
+      changed_when: false
+
+    - name: Plan security group creation
+      cisco.nd.nd_manage_security_groups: &merge_group
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group }}"
+        state: merged
+      check_mode: true
+      register: group_create_check
+
+    - name: Create the security group
+      cisco.nd.nd_manage_security_groups: *merge_group
+      register: group_create
+
+    - name: Replay security group creation
+      cisco.nd.nd_manage_security_groups: *merge_group
+      register: group_replay
+
+    - name: Verify merged behavior and disabled action defaults
+      ansible.builtin.assert:
+        that:
+          - group_create_check is changed
+          - group_create is changed
+          - group_replay is not changed
+          - group_create.config_actions_result is not defined
+
+    - name: Attach the security group
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group | combine({'attach': true}) }}"
+        state: merged
+      register: group_attach
+
+    - name: Verify the group attach action ran
+      ansible.builtin.assert:
+        that:
+          - group_attach is changed
+          - group_attach.security_actions_result.attach is defined
+
+    - name: Replay the security group attach action
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group | combine({'attach': true}) }}"
+        state: merged
+      register: group_attach_replay
+
+    - name: Verify the group attach replay is idempotent
+      ansible.builtin.assert:
+        that:
+          - group_attach_replay is not changed
+          - group_attach_replay.security_actions_result is not defined
+
+    - name: Detach the security group
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group | combine({'attach': false}) }}"
+        state: merged
+      register: group_detach
+
+    - name: Verify the group detach action ran
+      ansible.builtin.assert:
+        that:
+          - group_detach is changed
+          - group_detach.security_actions_result.detach is defined
+
+    - name: Replay the security group detach action
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group | combine({'attach': false}) }}"
+        state: merged
+      register: group_detach_replay
+
+    - name: Verify the group detach replay is idempotent
+      ansible.builtin.assert:
+        that:
+          - group_detach_replay is not changed
+          - group_detach_replay.security_actions_result is not defined
+
+    - name: Gather security groups
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: groups_gathered
+
+    - name: Verify gathered is read-only and replayable
+      ansible.builtin.assert:
+        that:
+          - groups_gathered is not changed
+          - groups_gathered.before == []
+          - groups_gathered.after == []
+          - >-
+            groups_gathered.gathered |
+            selectattr('name', 'equalto', security_group.name) |
+            list | length == 1
+          - groups_gathered.config_actions_result is not defined
+          - groups_gathered.security_actions_result is not defined
+
+    - name: Plan an authoritative group override from exact gathered state
+      cisco.nd.nd_manage_security_groups: &override_group_inventory
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config: "{{ groups_gathered.gathered }}"
+        state: overridden
+      check_mode: true
+      register: group_override_check
+
+    - name: Replay the authoritative group override plan
+      cisco.nd.nd_manage_security_groups: *override_group_inventory
+      check_mode: true
+      register: group_override_replay
+
+    - name: Verify overridden exact-state planning is idempotent
+      ansible.builtin.assert:
+        that:
+          - group_override_check is not changed
+          - group_override_replay is not changed
+
+    - name: Replace the security group
+      cisco.nd.nd_manage_security_groups: &replace_group
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group_replaced }}"
+        state: replaced
+      register: group_replace
+
+    - name: Replay security group replacement
+      cisco.nd.nd_manage_security_groups: *replace_group
+      register: group_replace_replay
+
+    - name: Verify replaced behavior
+      ansible.builtin.assert:
+        that:
+          - group_replace is changed
+          - group_replace.security_actions_result.detach is defined
+          - group_replace_replay is not changed
+          - group_replace_replay.security_actions_result is not defined
+
+    - name: Delete the security group
+      cisco.nd.nd_manage_security_groups: *delete_group
+      register: group_delete
+
+    - name: Replay security group deletion
+      cisco.nd.nd_manage_security_groups: *delete_group
+      register: group_delete_replay
+
+    - name: Verify deleted behavior
+      ansible.builtin.assert:
+        that:
+          - group_delete is changed
+          - group_delete_replay is not changed
+  always:
+    - name: Gather the run-owned group before cleanup
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: group_cleanup_inventory
+      failed_when: false
+      changed_when: false
+      when: security_group_run_owned | default(false) | bool
+
+    - name: Detach the run-owned security group when it still exists
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_group | combine({'attach': false}) }}"
+        state: merged
+      ignore_errors: true
+      when:
+        - security_group_run_owned | default(false) | bool
+        - group_cleanup_inventory is defined
+        - not (group_cleanup_inventory.failed | default(true))
+        - >-
+          group_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', security_group.name) |
+          list | length == 1
+
+    - name: Remove the run-owned security group when it still exists
+      cisco.nd.nd_manage_security_groups: *delete_group
+      ignore_errors: true
+      check_mode: false
+      when:
+        - security_group_run_owned | default(false) | bool
+        - group_cleanup_inventory is defined
+        - not (group_cleanup_inventory.failed | default(true))
+        - >-
+          group_cleanup_inventory.gathered |
+          default([]) |
+            selectattr('name', 'equalto', security_group.name) |
+            list | length == 1
+
+    - name: Gather security groups after cleanup
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: group_cleanup_final
+      failed_when: false
+      changed_when: false
+      when: security_group_run_owned | default(false) | bool
+
+    - name: Verify the run-owned security group is absent after cleanup
+      ansible.builtin.assert:
+        that:
+          - not (group_cleanup_final.failed | default(false))
+          - group_cleanup_final.gathered is defined
+          - >-
+            group_cleanup_final.gathered |
+            default([]) |
+            selectattr('name', 'equalto', security_group.name) |
+            list | length == 0
+        fail_msg: >-
+          Cleanup did not prove that run-owned security group
+          {{ security_group.name }} is absent.
+      when: security_group_run_owned | default(false) | bool
+  module_defaults:
+    cisco.nd.nd_manage_security_groups:
+      config_actions:
+        save: false
+        deploy: false

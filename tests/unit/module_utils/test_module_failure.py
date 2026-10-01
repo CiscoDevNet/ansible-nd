@@ -26,6 +26,12 @@ from typing import Any
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
+    ConfigActionStepResult,
+    ConfigActions,
+    ConfigActionsExecutionError,
+    ConfigActionsResult,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDelete,
@@ -68,9 +74,10 @@ class _FakeAnsibleModule:
     None
     """
 
-    def __init__(self, *, output_level: str = "normal", check_mode: bool = False) -> None:
+    def __init__(self, *, output_level: str = "normal", check_mode: bool = False, verbosity: int = 0) -> None:
         self.params: dict[str, Any] = {"output_level": output_level}
         self.check_mode = check_mode
+        self._verbosity = verbosity
         self.fail_json_calls = 0
 
     def fail_json(self, **kwargs: Any) -> None:
@@ -373,3 +380,58 @@ def test_module_failure_00070() -> None:
     assert kwargs == {"msg": "Module failed: unexpected"}
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
+
+
+def test_module_failure_00080() -> None:
+    """Verify failure output uses the same verbosity-gated Results formatter as success output."""
+    calls = []
+    results = object()
+
+    def format_with_verbosity(verbosity, supplied_results):
+        calls.append((verbosity, supplied_results))
+        return {"changed": True, "api_paths": ["/api/v1/example"]}
+
+    state_machine = SimpleNamespace(
+        output=SimpleNamespace(format_with_verbosity=format_with_verbosity),
+        results=results,
+        model_orchestrator=None,
+    )
+    kwargs = _fail(
+        _FakeAnsibleModule(verbosity=2),
+        state_machine,
+        NDStateMachineError("later operation failed"),
+        logging.getLogger("nd.test"),
+    )
+
+    assert calls == [(2, results)]
+    assert kwargs == {
+        "msg": "Module execution failed: later operation failed",
+        "changed": True,
+        "api_paths": ["/api/v1/example"],
+    }
+
+
+def test_module_failure_00090() -> None:
+    """Verify a direct config-action failure retains its structured execution result."""
+    actions = ConfigActions(save=True, deploy=False, type="switch", provided=True)
+    result = ConfigActionsResult(
+        requested=actions,
+        effective=actions,
+        status="failed",
+        reason="action_failed",
+        targets={"fabrics": ("FAB1",)},
+        actions=(
+            ConfigActionStepResult(
+                action="save",
+                status="failed",
+                target="FAB1",
+                error="save failed",
+            ),
+        ),
+    )
+    error = ConfigActionsExecutionError("Config action 'save' failed for 'FAB1'", result)
+
+    kwargs = _fail(_FakeAnsibleModule(), _state_machine(), error, logging.getLogger("nd.test"))
+
+    assert kwargs["msg"] == "Module failed: Config action 'save' failed for 'FAB1'"
+    assert kwargs["config_actions_result"] == result.to_result()

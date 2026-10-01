@@ -1,0 +1,560 @@
+---
+# Full dependency-chain qualification for nd_manage_security_associations.
+# Setup order is protocol, groups/contract, then association.
+# Cleanup reverses that order.
+# Supply a unique run suffix and two free IDs inside the configured SGT range.
+# The target refuses any pre-existing dependency name or ID.
+
+- name: >-
+    Require mutation authorization, expected controller, run-owned VRF,
+    fabric inputs, a unique run ID, and two group IDs
+  ansible.builtin.fail:
+    msg: >-
+      Set nd_test_security_mutation_authorized=true and
+      nd_test_security_run_owned_vrf_confirmed=true as booleans, set
+      nd_test_security_expected_controller_host to the exact ansible_host, and
+      define ansible_user, ansible_password, nd_test_security_fabric_name,
+      nd_test_security_vrf_name, nd_test_security_run_id,
+      nd_test_security_source_group_id, and
+      nd_test_security_destination_group_id before running this target.
+  when: >-
+    ansible_host is not defined or
+    ansible_user is not defined or
+    ansible_password is not defined or
+    nd_test_security_expected_controller_host is not defined or
+    nd_test_security_expected_controller_host | string | trim | length == 0 or
+    (nd_test_security_expected_controller_host | string | trim | lower) !=
+    (ansible_host | string | trim | lower) or
+    (nd_test_security_mutation_authorized | default(false) | type_debug) !=
+    'bool' or
+    not (nd_test_security_mutation_authorized | default(false) | bool) or
+    (nd_test_security_run_owned_vrf_confirmed | default(false) | type_debug) !=
+    'bool' or
+    not (nd_test_security_run_owned_vrf_confirmed | default(false) | bool) or
+    nd_test_security_fabric_name is not defined or
+    nd_test_security_vrf_name is not defined or
+    nd_test_security_run_id is not defined or
+    nd_test_security_source_group_id is not defined or
+    nd_test_security_destination_group_id is not defined or
+    (nd_test_security_source_group_id | int) ==
+    (nd_test_security_destination_group_id | int) or
+    nd_test_security_run_id | string | length == 0 or
+    nd_test_security_run_id | string | length > 15 or
+    nd_test_security_run_id | string is not match('^[A-Za-z0-9_-]+$')
+
+- name: Exercise security association states and attachment actions
+  block:
+    - name: Gather protocol definitions before claiming the dependency name
+      cisco.nd.nd_manage_security_protocol_definitions:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_protocol_preflight
+
+    - name: Gather contracts before claiming the dependency name
+      cisco.nd.nd_manage_security_contracts:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_contract_preflight
+
+    - name: Gather groups before claiming dependency names and IDs
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_group_preflight
+
+    - name: Gather associations before claiming the run-owned name
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_preflight
+
+    - name: Refuse to reuse existing association test resources
+      ansible.builtin.assert:
+        that:
+          - >-
+            association_protocol_preflight.gathered |
+            map(attribute='name') | map('lower') |
+            select('equalto', association_protocol.name | lower) |
+            list | length == 0
+          - >-
+            association_contract_preflight.gathered |
+            map(attribute='name') | map('lower') |
+            select('equalto', association_contract.name | lower) |
+            list | length == 0
+          - >-
+            association_group_preflight.gathered |
+            selectattr('name', 'equalto', association_source_group.name) |
+            list | length == 0
+          - >-
+            association_group_preflight.gathered |
+            selectattr('name', 'equalto', association_destination_group.name) |
+            list | length == 0
+          - >-
+            association_group_preflight.gathered |
+            selectattr('id', 'defined') |
+            selectattr('id', 'equalto', association_source_group.id) |
+            list | length == 0
+          - >-
+            association_group_preflight.gathered |
+            selectattr('id', 'defined') |
+            selectattr('id', 'equalto', association_destination_group.id) |
+            list | length == 0
+          - >-
+            association_preflight.gathered |
+            selectattr('name', 'equalto', security_association.name) |
+            list | length == 0
+        fail_msg: >-
+          Refusing to mutate a pre-existing association test resource. Use a
+          different run ID and free security group IDs.
+
+    - name: Mark the collision-free association resources as owned by this run
+      ansible.builtin.set_fact:
+        security_association_run_owned: true
+
+    - name: Create the protocol dependency
+      cisco.nd.nd_manage_security_protocol_definitions: &merge_protocol
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ association_protocol }}"
+        state: merged
+
+    - name: Create the contract dependency
+      cisco.nd.nd_manage_security_contracts: &merge_contract
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ association_contract }}"
+        state: merged
+
+    - name: Create the source and destination group dependencies
+      cisco.nd.nd_manage_security_groups: &merge_groups
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ association_source_group }}"
+          - "{{ association_destination_group }}"
+        state: merged
+
+    - name: Define the run-owned association deletion operation
+      cisco.nd.nd_manage_security_associations: &delete_association
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ security_association.name }}"
+        state: deleted
+      check_mode: true
+      changed_when: false
+
+    - name: Plan security association creation
+      cisco.nd.nd_manage_security_associations: &merge_association
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association }}"
+        state: merged
+      check_mode: true
+      register: association_create_check
+
+    - name: Create the security association
+      cisco.nd.nd_manage_security_associations: *merge_association
+      register: association_create
+
+    - name: Replay security association creation
+      cisco.nd.nd_manage_security_associations: *merge_association
+      register: association_replay
+
+    - name: Verify merged behavior and disabled action defaults
+      ansible.builtin.assert:
+        that:
+          - association_create_check is changed
+          - association_create is changed
+          - association_replay is not changed
+          - association_create.config_actions_result is not defined
+
+    - name: Attach the security association
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association | combine({'attach': true}) }}"
+        state: merged
+      register: association_attach
+
+    - name: Verify the association attach action ran
+      ansible.builtin.assert:
+        that:
+          - association_attach is changed
+          - association_attach.security_actions_result.attach is defined
+
+    - name: Replay the security association attach action
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association | combine({'attach': true}) }}"
+        state: merged
+      register: association_attach_replay
+
+    - name: Verify the association attach replay is idempotent
+      ansible.builtin.assert:
+        that:
+          - association_attach_replay is not changed
+          - association_attach_replay.security_actions_result is not defined
+
+    - name: Detach the security association
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association | combine({'attach': false}) }}"
+        state: merged
+      register: association_detach
+
+    - name: Verify the association detach action ran
+      ansible.builtin.assert:
+        that:
+          - association_detach is changed
+          - association_detach.security_actions_result.detach is defined
+
+    - name: Replay the security association detach action
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association | combine({'attach': false}) }}"
+        state: merged
+      register: association_detach_replay
+
+    - name: Verify the association detach replay is idempotent
+      ansible.builtin.assert:
+        that:
+          - association_detach_replay is not changed
+          - association_detach_replay.security_actions_result is not defined
+
+    - name: Gather security associations
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: associations_gathered
+
+    - name: Verify gathered is read-only and replayable
+      ansible.builtin.assert:
+        that:
+          - associations_gathered is not changed
+          - associations_gathered.before == []
+          - associations_gathered.after == []
+          - >-
+            associations_gathered.gathered |
+            selectattr('name', 'equalto', security_association.name) |
+            list | length == 1
+          - associations_gathered.config_actions_result is not defined
+          - associations_gathered.security_actions_result is not defined
+
+    - name: Plan an authoritative association override from exact gathered state
+      cisco.nd.nd_manage_security_associations: &override_association_inventory
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config: "{{ associations_gathered.gathered }}"
+        state: overridden
+      check_mode: true
+      register: association_override_check
+
+    - name: Replay the authoritative association override plan
+      cisco.nd.nd_manage_security_associations: *override_association_inventory
+      check_mode: true
+      register: association_override_replay
+
+    - name: Verify overridden exact-state planning is idempotent
+      ansible.builtin.assert:
+        that:
+          - association_override_check is not changed
+          - association_override_replay is not changed
+
+    - name: Replace mutable association metadata
+      cisco.nd.nd_manage_security_associations: &replace_association
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association_replaced }}"
+        state: replaced
+      register: association_replace
+
+    - name: Replay security association replacement
+      cisco.nd.nd_manage_security_associations: *replace_association
+      register: association_replace_replay
+
+    - name: Verify replaced behavior
+      ansible.builtin.assert:
+        that:
+          - association_replace is changed
+          - association_replace.security_actions_result.detach is defined
+          - association_replace_replay is not changed
+          - association_replace_replay.security_actions_result is not defined
+
+    - name: Delete the security association
+      cisco.nd.nd_manage_security_associations: *delete_association
+      register: association_delete
+
+    - name: Replay security association deletion
+      cisco.nd.nd_manage_security_associations: *delete_association
+      register: association_delete_replay
+
+    - name: Verify deleted behavior
+      ansible.builtin.assert:
+        that:
+          - association_delete is changed
+          - association_delete_replay is not changed
+  always:
+    - name: Gather the run-owned association before cleanup
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_cleanup_inventory
+      failed_when: false
+      changed_when: false
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Detach the run-owned association when it still exists
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_association | combine({'attach': false}) }}"
+        state: merged
+      ignore_errors: true
+      when:
+        - security_association_run_owned | default(false) | bool
+        - association_cleanup_inventory is defined
+        - not (association_cleanup_inventory.failed | default(true))
+        - >-
+          association_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', security_association.name) |
+          list | length == 1
+
+    - name: Remove the run-owned association when it still exists
+      cisco.nd.nd_manage_security_associations: *delete_association
+      ignore_errors: true
+      check_mode: false
+      when:
+        - security_association_run_owned | default(false) | bool
+        - association_cleanup_inventory is defined
+        - not (association_cleanup_inventory.failed | default(true))
+        - >-
+          association_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', security_association.name) |
+          list | length == 1
+
+    - name: Gather run-owned group dependencies before cleanup
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_group_cleanup_inventory
+      failed_when: false
+      changed_when: false
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Detach the run-owned source group when it still exists
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ association_source_group | combine({'attach': false}) }}"
+        state: merged
+      ignore_errors: true
+      when:
+        - security_association_run_owned | default(false) | bool
+        - association_group_cleanup_inventory is defined
+        - not (association_group_cleanup_inventory.failed | default(true))
+        - >-
+          association_group_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', association_source_group.name) |
+          list | length == 1
+
+    - name: Detach the run-owned destination group when it still exists
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ association_destination_group | combine({'attach': false}) }}"
+        state: merged
+      ignore_errors: true
+      when:
+        - security_association_run_owned | default(false) | bool
+        - association_group_cleanup_inventory is defined
+        - not (association_group_cleanup_inventory.failed | default(true))
+        - >-
+          association_group_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', association_destination_group.name) |
+          list | length == 1
+
+    - name: Remove the run-owned source group when it still exists
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ association_source_group.name }}"
+        state: deleted
+      ignore_errors: true
+      when:
+        - security_association_run_owned | default(false) | bool
+        - association_group_cleanup_inventory is defined
+        - not (association_group_cleanup_inventory.failed | default(true))
+        - >-
+          association_group_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', association_source_group.name) |
+          list | length == 1
+
+    - name: Remove the run-owned destination group when it still exists
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ association_destination_group.name }}"
+        state: deleted
+      ignore_errors: true
+      when:
+        - security_association_run_owned | default(false) | bool
+        - association_group_cleanup_inventory is defined
+        - not (association_group_cleanup_inventory.failed | default(true))
+        - >-
+          association_group_cleanup_inventory.gathered |
+          default([]) |
+          selectattr('name', 'equalto', association_destination_group.name) |
+          list | length == 1
+
+    - name: Remove the contract after the associations
+      cisco.nd.nd_manage_security_contracts:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ association_contract.name }}"
+        state: deleted
+      ignore_errors: true
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Remove the protocol definition last
+      cisco.nd.nd_manage_security_protocol_definitions:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ association_protocol.name }}"
+        state: deleted
+      ignore_errors: true
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Gather associations after cleanup
+      cisco.nd.nd_manage_security_associations:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_cleanup_final
+      failed_when: false
+      changed_when: false
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Gather groups after association cleanup
+      cisco.nd.nd_manage_security_groups:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_group_cleanup_final
+      failed_when: false
+      changed_when: false
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Gather contracts after association cleanup
+      cisco.nd.nd_manage_security_contracts:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_contract_cleanup_final
+      failed_when: false
+      changed_when: false
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Gather protocol definitions after association cleanup
+      cisco.nd.nd_manage_security_protocol_definitions:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: association_protocol_cleanup_final
+      failed_when: false
+      changed_when: false
+      when: security_association_run_owned | default(false) | bool
+
+    - name: Verify all run-owned association resources are absent after cleanup
+      ansible.builtin.assert:
+        that:
+          - not (association_cleanup_final.failed | default(false))
+          - not (association_group_cleanup_final.failed | default(false))
+          - not (association_contract_cleanup_final.failed | default(false))
+          - not (association_protocol_cleanup_final.failed | default(false))
+          - association_cleanup_final.gathered is defined
+          - association_group_cleanup_final.gathered is defined
+          - association_contract_cleanup_final.gathered is defined
+          - association_protocol_cleanup_final.gathered is defined
+          - >-
+            association_cleanup_final.gathered |
+            default([]) |
+            selectattr('name', 'equalto', security_association.name) |
+            list | length == 0
+          - >-
+            association_group_cleanup_final.gathered |
+            default([]) |
+            selectattr('name', 'equalto', association_source_group.name) |
+            list | length == 0
+          - >-
+            association_group_cleanup_final.gathered |
+            default([]) |
+            selectattr(
+              'name',
+              'equalto',
+              association_destination_group.name
+            ) |
+            list | length == 0
+          - >-
+            association_contract_cleanup_final.gathered |
+            default([]) |
+            map(attribute='name') | map('lower') |
+            select('equalto', association_contract.name | lower) |
+            list | length == 0
+          - >-
+            association_protocol_cleanup_final.gathered |
+            default([]) |
+            map(attribute='name') | map('lower') |
+            select('equalto', association_protocol.name | lower) |
+            list | length == 0
+        fail_msg: >-
+          Cleanup did not prove that all run-owned association resources are
+          absent.
+      when: security_association_run_owned | default(false) | bool
+  module_defaults:
+    cisco.nd.nd_manage_security_protocol_definitions:
+      config_actions:
+        save: false
+        deploy: false
+    cisco.nd.nd_manage_security_contracts:
+      config_actions:
+        save: false
+        deploy: false
+    cisco.nd.nd_manage_security_groups:
+      config_actions:
+        save: false
+        deploy: false
+    cisco.nd.nd_manage_security_associations:
+      config_actions:
+        save: false
+        deploy: false

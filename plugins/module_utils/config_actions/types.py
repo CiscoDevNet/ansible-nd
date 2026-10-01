@@ -244,3 +244,17 @@ class ConfigActionsResult:
             "targets": {key: list(value) for key, value in self.targets.items()},
             "actions": [step.to_result() for step in self.actions],
         }
+
+
+class ConfigActionsExecutionError(Exception):
+    """Failure raised after config-action execution has produced a result.
+
+    The controller intentionally records every completed, skipped, and failed
+    step before the orchestrator fails the module.  Carrying that immutable
+    result on the exception lets shared failure handlers retain the structured
+    diagnostics instead of reducing them to the exception message.
+    """
+
+    def __init__(self, message: str, result: ConfigActionsResult) -> None:
+        super().__init__(message)
+        self.result = result

@@ -58,17 +58,40 @@ _MULTISTATUS_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 # Per-item status literal that marks a successful item in a Multi-Status body.
 _MULTISTATUS_SUCCESS_STATUSES = frozenset({"success"})
 
-# DATA envelope keys whose items carry a per-item `status`. Three known shapes:
+# DATA envelope keys whose items carry a per-item `status`:
 # - `results`   -> batch interface POST / breakout action
 # - `switchIds` -> switchActions/deploy (per-switch outcome)
 # - `links`     -> bulk link create (POST /links) and bulk link delete (POST /linkActions/remove),
 #                  items {linkId, message, status} with status success|failure. The GET /links list
 #                  body rides the same `links` envelope, but its link objects carry no top-level
 #                  `status` key, so the literal-gated scan cannot false-positive on queries.
-_MULTISTATUS_ITEM_KEYS = ("results", "switchIds", "links")
+# - Security and Segmentation bulk/action APIs -> the four resource envelopes below. Protocol-definition
+#   remove uses `protocols` in the schema, while ND 4.2 examples use `securityProtocolDefinitions`, so both
+#   are intentionally recognized.
+_MULTISTATUS_ITEM_KEYS = (
+    "results",
+    "switchIds",
+    "links",
+    "securityGroups",
+    "securityContracts",
+    "securityAssociations",
+    "securityProtocolDefinitions",
+    "protocols",
+)
 
 # Item keys, in priority order, used to label a failing item in an error message.
-_MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "linkId", "id")
+_MULTISTATUS_ITEM_LABEL_KEYS = (
+    "name",
+    "protocolDefinitionName",
+    "contractName",
+    "securityGroupName",
+    "securityAssociationName",
+    "resourceName",
+    "switchId",
+    "serialNumber",
+    "linkId",
+    "id",
+)
 
 # Item keys, in priority order, carrying the per-item failure detail. ND is not consistent
 # across endpoints: `message` (batch interface / switchActions/deploy) and `warningMessage`
@@ -149,7 +172,7 @@ def _multistatus_items_with_status(response: dict, statuses: frozenset[str]) -> 
 
     ## Description
 
-    Scans the known ND Multi-Status envelope arrays (`DATA.results[]`, `DATA.switchIds[]`, and `DATA.links[]`) and returns every item whose `status`
+    Scans the known ND Multi-Status envelope arrays and returns every item whose `status`
     matches one of `statuses` (case-insensitive, whitespace-tolerant). Returns an empty list when `DATA` is not a dict, none of the arrays is
     present, or no item matches.
 
@@ -211,8 +234,8 @@ def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
     Allowlist counterpart to `_failed_multistatus_items`, used for HTTP 207 responses only: on a 207 the per-item `status` vocabulary is unreliable —
     `failed`, `error`, `Failed`, softer literals like `warning`/`notexecuted`, or the key absent entirely (vault:
     `multi-status-207-status-field-inconsistent`; issue #397) — so only an exact `success` (case/whitespace-tolerant) may be trusted. A missing or
-    empty `status` counts as non-success. Scans the same envelope arrays as `_failed_multistatus_items` (`DATA.results[]`, `DATA.switchIds[]`,
-    `DATA.links[]`). NOT for plain-200 bodies: ND ships legitimately status-less item arrays on 200 (e.g. the GET /links list envelope), which the
+    empty `status` counts as non-success. Scans the same envelope arrays as `_failed_multistatus_items`. NOT for plain-200 bodies: ND ships
+    legitimately status-less item arrays on 200 (e.g. list envelopes), which the
     failure-literal denylist correctly ignores.
 
     ## Parameters

@@ -176,6 +176,19 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """
         return
 
+    def model_validation_context(self) -> dict[str, Any]:
+        """Return orchestrator-specific context for proposed-model validation.
+
+        The state machine always supplies the requested ``state``. Subclasses
+        can add controller capabilities that affect validation without making
+        every module perform the corresponding lookup.
+
+        ## Raises
+
+        None
+        """
+        return {}
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:

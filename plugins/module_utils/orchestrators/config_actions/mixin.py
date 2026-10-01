@@ -48,6 +48,7 @@ Then from the module, after parsing ``config_actions`` with the shared parser::
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection
 from typing import ClassVar
 
@@ -57,6 +58,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies i
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
     ConfigActions,
     ConfigActionsContext,
+    ConfigActionsExecutionError,
     ConfigActionsPolicy,
     ConfigActionsResult,
 )
@@ -94,6 +96,8 @@ class ConfigActionsMixin:
 
     config_actions_policy: ClassVar[ConfigActionsPolicy] = FABRIC_CONFIG_ACTIONS
     config_actions_backend_class: ClassVar[type[ConfigActionsBackend] | None] = FabricConfigActionsBackend
+    config_actions_switch_page_size: ClassVar[int] = 1000
+    config_actions_switch_max_pages: ClassVar[int] = 10000
 
     # ---------------------------------------------------------------- endpoints
 
@@ -234,7 +238,7 @@ class ConfigActionsMixin:
         result = controller.execute(actions, context)
         self._warn_skipped_config_actions(result)
         if result.status == "failed":
-            raise Exception(self._config_actions_failure_message(result))
+            raise ConfigActionsExecutionError(self._config_actions_failure_message(result), result)
         return result
 
     def _warn_skipped_config_actions(self, result: ConfigActionsResult) -> None:
@@ -328,20 +332,179 @@ class ConfigActionsMixin:
         return self._filter_switches_needing_deploy(self._get_fabric_switches(fabric_name))
 
     def _get_fabric_switches(self, fabric_name: str) -> list[dict]:
-        """Return the fabric's switches from the controller (empty list if none).
+        """Return every switch in the fabric (empty list if none).
 
         ND rejects configSave/deploy on a switchless fabric ("Fabric ... cannot be
         deployed without any switches"), so callers skip save/deploy when this is
-        empty.
+        empty. Both supported switch-list endpoints are paginated; follow their
+        offset/max contract so membership and post-save deploy resolution cannot
+        silently omit switches beyond the first page.
         """
-        ep = self.switches_endpoint(fabric_name)
-        result = self._request(
-            path=ep.path,
-            verb=ep.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
-        return result.get("switches", []) if result else []
+        switches: list[dict] = []
+        seen_pages: set[str] = set()
+        seen_switches: set[tuple[str, str]] = set()
+        offset = 0
+        known_remaining: int | None = None
+        known_total: int | None = None
+
+        for _page_number in range(1, self.config_actions_switch_max_pages + 1):
+            ep = self.switches_endpoint(fabric_name)
+            pagination_supported = self._set_switch_pagination(ep, offset)
+            result = self._request(
+                path=ep.path,
+                verb=ep.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+            if not result and self.rest_send.return_code == 404:
+                if switches:
+                    raise RuntimeError("Switch pagination returned 404 after earlier pages were collected.")
+                return []
+            if not isinstance(result, dict):
+                raise RuntimeError("Switch page must be an object.")
+            if "switches" not in result:
+                raise RuntimeError("Switch page is missing the 'switches' envelope.")
+            raw_page = result["switches"]
+            if not isinstance(raw_page, list):
+                raise RuntimeError("Switch page field 'switches' must be a list.")
+            page: list[dict] = []
+            for index, item in enumerate(raw_page):
+                if not isinstance(item, dict):
+                    raise RuntimeError(f"Switch page row 'switches[{index}]' must be an object.")
+                page.append(item)
+
+            remaining = self._switch_pagination_count(result, "remaining")
+            total = self._switch_pagination_count(result, "total")
+            next_link = self._switch_next_page_link(result)
+            raw_page_count = len(page)
+            if total is not None:
+                if known_total is not None and total != known_total:
+                    raise RuntimeError(f"Switch pagination total changed from {known_total} to {total}.")
+                known_total = total
+            if remaining is not None:
+                if known_remaining is not None and remaining > known_remaining:
+                    raise RuntimeError(f"Switch pagination remaining count increased from {known_remaining} to {remaining}.")
+                known_remaining = remaining
+            elif known_remaining is not None:
+                known_remaining = max(known_remaining - raw_page_count, 0)
+
+            if not page:
+                counts_report_more = (known_remaining is not None and known_remaining > 0) or (known_total is not None and len(seen_switches) < known_total)
+                if counts_report_more or (known_remaining is None and known_total is None and bool(next_link)):
+                    raise RuntimeError("Pagination metadata reports more switches, but the next page is empty.")
+                return switches
+
+            signature = json.dumps(page, sort_keys=True, default=str)
+            if signature in seen_pages:
+                raise RuntimeError("Switch pagination returned the same page twice.")
+            seen_pages.add(signature)
+
+            unique_page: list[dict] = []
+            for item in page:
+                identity = self._switch_pagination_identity(item)
+                if identity in seen_switches:
+                    continue
+                seen_switches.add(identity)
+                unique_page.append(item)
+            switches.extend(unique_page)
+            offset += raw_page_count
+
+            if known_remaining is not None and known_total is not None:
+                if known_remaining == 0 and len(seen_switches) < known_total:
+                    raise RuntimeError("Switch pagination counts are inconsistent: remaining is zero before total is collected.")
+                if known_remaining > 0 and len(seen_switches) >= known_total:
+                    raise RuntimeError("Switch pagination counts are inconsistent: remaining is positive after total is collected.")
+
+            if known_remaining is not None:
+                counts_report_more: bool | None = known_remaining > 0
+            elif known_total is not None:
+                counts_report_more = len(seen_switches) < known_total
+            else:
+                counts_report_more = None
+
+            has_more = counts_report_more if counts_report_more is not None else bool(next_link)
+            if not unique_page and has_more:
+                raise RuntimeError("Pagination metadata reports more switches, but the next page adds no new switch identities.")
+            if not pagination_supported:
+                if has_more:
+                    raise RuntimeError(f"{type(ep).__name__} reports more switches but does not expose pagination parameters.")
+                return switches
+            if has_more:
+                continue
+            if counts_report_more is not None or next_link is not None:
+                return switches
+            if raw_page_count < self.config_actions_switch_page_size:
+                return switches
+
+        raise RuntimeError(f"Switch pagination exceeded the maximum of {self.config_actions_switch_max_pages} pages.")
+
+    def _set_switch_pagination(self, endpoint: NDEndpointBaseModel, offset: int) -> bool:
+        """Set offset/max when supported and return whether the endpoint is paginated."""
+        for attribute in ("endpoint_params", "lucene_params"):
+            parameters = getattr(endpoint, attribute, None)
+            if parameters is None or not hasattr(parameters, "offset") or not hasattr(parameters, "max"):
+                continue
+            parameters.offset = offset
+            parameters.max = self.config_actions_switch_page_size
+            return True
+        return False
+
+    @staticmethod
+    def _switch_pagination_count(result: dict, key: str) -> int | None:
+        """Return a validated non-negative count from switch page metadata."""
+        if "meta" not in result:
+            return None
+        meta = result["meta"]
+        if not isinstance(meta, dict):
+            raise RuntimeError("Switch page field 'meta' must be an object.")
+        if "counts" not in meta:
+            return None
+        counts = meta["counts"]
+        if not isinstance(counts, dict):
+            raise RuntimeError("Switch page field 'meta.counts' must be an object.")
+        if key not in counts or counts[key] is None:
+            return None
+        value = counts[key]
+        if isinstance(value, bool):
+            raise RuntimeError(f"Switch page field 'meta.counts.{key}' must be a non-negative integer.")
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, str) and value.isdigit():
+            parsed = int(value)
+        else:
+            raise RuntimeError(f"Switch page field 'meta.counts.{key}' must be a non-negative integer.") from None
+        if parsed < 0:
+            raise RuntimeError(f"Switch page field 'meta.counts.{key}' must be a non-negative integer.")
+        return parsed
+
+    @staticmethod
+    def _switch_next_page_link(result: dict) -> str | None:
+        """Return the validated next-page link when supplied."""
+        if "meta" not in result:
+            return None
+        meta = result["meta"]
+        if not isinstance(meta, dict):
+            raise RuntimeError("Switch page field 'meta' must be an object.")
+        if "links" not in meta:
+            return None
+        links = meta["links"]
+        if not isinstance(links, dict):
+            raise RuntimeError("Switch page field 'meta.links' must be an object.")
+        next_link = links.get("next")
+        if next_link is not None and not isinstance(next_link, str):
+            raise RuntimeError("Switch page field 'meta.links.next' must be a string or null.")
+        return next_link
+
+    @classmethod
+    def _switch_pagination_identity(cls, switch: dict) -> tuple[str, str]:
+        """Return a stable identity used to detect overlapping switch pages."""
+        identifier = cls._switch_identifier(switch)
+        if identifier:
+            return ("switch", str(identifier))
+        management_ip = switch.get("fabricManagementIp")
+        if management_ip:
+            return ("management_ip", str(management_ip))
+        return ("row", json.dumps(switch, sort_keys=True, default=str))
 
     @staticmethod
     def _switch_identifier(switch: dict) -> str:

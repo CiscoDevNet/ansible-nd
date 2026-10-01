@@ -1,0 +1,10 @@
+---
+minor_changes:
+  - Add ``nd_manage_security_protocol_definitions``,
+    ``nd_manage_security_contracts``, ``nd_manage_security_groups``, and
+    ``nd_manage_security_associations`` for Group Based Policy resources on
+    Nexus Dashboard 4.2.1 and 4.3.1.
+  - Support ``merged``, ``replaced``, ``overridden``, ``deleted``, and
+    read-only ``gathered`` states, multi-cluster routing, security group and
+    association attach/detach actions, and optional fabric save and deploy
+    actions for the new security resource modules.

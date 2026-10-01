@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies i
     INTERFACE_CONFIG_ACTIONS,
     LEGACY_CONFIG_ACTIONS,
     RESOURCE_CONFIG_ACTIONS,
+    SECURITY_CONFIG_ACTIONS,
     SWITCH_CONFIG_ACTIONS,
     VPC_PAIR_CONFIG_ACTIONS,
 )
@@ -36,6 +37,13 @@ def test_config_actions_policies_00000() -> None:
     assert FABRIC_CONFIG_ACTIONS.defaults.save is False
     assert FABRIC_CONFIG_ACTIONS.defaults.deploy is False
     assert FABRIC_CONFIG_ACTIONS.allowed_types == frozenset({"switch", "global"})
+
+    assert SECURITY_CONFIG_ACTIONS.defaults.save is False
+    assert SECURITY_CONFIG_ACTIONS.defaults.deploy is False
+    assert SECURITY_CONFIG_ACTIONS.defaults.type == "switch"
+    assert SECURITY_CONFIG_ACTIONS.supported == frozenset({"save", "deploy", "type"})
+    assert SECURITY_CONFIG_ACTIONS.allowed_types == frozenset({"switch", "global"})
+    assert SECURITY_CONFIG_ACTIONS.deploy_requires_save is True
 
     assert SWITCH_CONFIG_ACTIONS.defaults.save is True
     assert SWITCH_CONFIG_ACTIONS.defaults.deploy is True

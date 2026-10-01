@@ -1,0 +1,54 @@
+---
+association_protocol:
+  name: "PASC_{{ nd_test_security_run_id }}"
+  match_type: any
+  match_items:
+    - match_name: HTTPS
+      type: IPv4
+      protocol_options: TCP
+      dst_port_range: "443"
+
+association_contract:
+  name: "CASC_{{ nd_test_security_run_id }}"
+  direction: custom
+  rules:
+    - rule_direction: bidirectional
+      action: permit
+      protocol_definition_name: >-
+        PASC_{{ nd_test_security_run_id }}
+
+association_source_group:
+  name: "GSRC_{{ nd_test_security_run_id }}"
+  id: "{{ nd_test_security_source_group_id | int }}"
+  vrf_names:
+    - "{{ nd_test_security_vrf_name }}"
+
+association_destination_group:
+  name: "GDST_{{ nd_test_security_run_id }}"
+  id: "{{ nd_test_security_destination_group_id | int }}"
+  vrf_names:
+    - "{{ nd_test_security_vrf_name }}"
+
+security_association:
+  name: "AWEB_{{ nd_test_security_run_id }}"
+  description: Ansible security association
+  attach: false
+  contract_name: "CASC_{{ nd_test_security_run_id }}"
+  src_security_group_name: >-
+    GSRC_{{ nd_test_security_run_id }}
+  src_vrf_name: "{{ nd_test_security_vrf_name }}"
+  dst_security_group_name: >-
+    GDST_{{ nd_test_security_run_id }}
+  dst_vrf_name: "{{ nd_test_security_vrf_name }}"
+
+security_association_replaced:
+  name: "AWEB_{{ nd_test_security_run_id }}"
+  description: Ansible security association updated
+  attach: false
+  contract_name: "CASC_{{ nd_test_security_run_id }}"
+  src_security_group_name: >-
+    GSRC_{{ nd_test_security_run_id }}
+  src_vrf_name: "{{ nd_test_security_vrf_name }}"
+  dst_security_group_name: >-
+    GDST_{{ nd_test_security_run_id }}
+  dst_vrf_name: "{{ nd_test_security_vrf_name }}"

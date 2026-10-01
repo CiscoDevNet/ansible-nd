@@ -17,6 +17,7 @@ import traceback
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsExecutionError
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import finalize_accepted_intent
 
 if TYPE_CHECKING:
@@ -62,10 +63,18 @@ def fail_from_exception(module: AnsibleModule, module_log: logging.Logger, nd_st
     output: dict[str, Any] = {}
     if nd_state_machine is not None:
         try:
-            output = nd_state_machine.output.format()
+            verbosity = getattr(module, "_verbosity", 0)
+            format_with_verbosity = getattr(nd_state_machine.output, "format_with_verbosity", None)
+            if callable(format_with_verbosity):
+                output = format_with_verbosity(verbosity, getattr(nd_state_machine, "results", None))
+            else:
+                output = nd_state_machine.output.format()
         except Exception:  # pylint: disable=broad-except
             module_log.exception(FORMAT_FAILURE_LOG)
             output = {}
+
+    if isinstance(error, ConfigActionsExecutionError):
+        output.setdefault("config_actions_result", error.result.to_result())
 
     error_msg = f"{prefix}: {str(error)}"
     error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)

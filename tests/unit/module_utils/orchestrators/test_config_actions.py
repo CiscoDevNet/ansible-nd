@@ -31,7 +31,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.backend import ConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionStepResult, ConfigActionsContext, ConfigActionsResult
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
+    ConfigActionStepResult,
+    ConfigActionsContext,
+    ConfigActionsExecutionError,
+    ConfigActionsResult,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -549,6 +554,48 @@ class TestBuildConfigActionsContext:
         warnings = rest_send.sender.ansible_module.warnings
         assert any("switchless-fabric" in w and "no switches" in w for w in warnings)
 
+    def test_collects_all_paginated_switch_membership_when_later_metadata_is_omitted(self, monkeypatch):
+        """Verify known counts continue switch collection across a metadata-free final page."""
+        pages = [
+            {
+                "switches": [{"switchId": "NODE-101"}],
+                "meta": {"counts": {"remaining": 1, "total": 2}},
+            },
+            {"switches": [{"switchId": "NODE-102"}]},
+        ]
+        rest_send = _make_rest_send([_success_response(data=page, method="GET") for page in pages])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+        monkeypatch.setattr(ConfigActionsOrchestrator, "config_actions_switch_page_size", 1)
+
+        context = orch.build_config_actions_context(["FAB1"], state="merged")
+
+        assert context.switch_ids_by_fabric == {"FAB1": ("NODE-101", "NODE-102")}
+        assert len(results._tasks) == 2
+        assert "max=1" in results._tasks[0].path
+        assert "offset=0" in results._tasks[0].path
+        assert "max=1" in results._tasks[1].path
+        assert "offset=1" in results._tasks[1].path
+
+    def test_terminal_switch_counts_override_a_nonempty_next_link(self, monkeypatch):
+        """Verify terminal counts stop pagination despite the templated next link in API examples."""
+        page = {
+            "switches": [{"switchId": "NODE-101"}],
+            "meta": {
+                "counts": {"remaining": 0, "total": 1},
+                "links": {"next": "/switches?offset=1&max=1"},
+            },
+        }
+        rest_send = _make_rest_send([_success_response(data=page, method="GET")])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+        monkeypatch.setattr(ConfigActionsOrchestrator, "config_actions_switch_page_size", 1)
+
+        context = orch.build_config_actions_context(["FAB1"], state="merged")
+
+        assert context.switch_ids_by_fabric == {"FAB1": ("NODE-101",)}
+        assert len(results._tasks) == 1
+
 
 # =============================================================================
 # Test: run_config_actions
@@ -890,8 +937,11 @@ class TestConfigActionsFailurePropagation:
             policy=FABRIC_CONFIG_ACTIONS,
         )
 
-        with pytest.raises(Exception, match=r"Config action 'save' failed for 'FAB1'"):
+        with pytest.raises(ConfigActionsExecutionError, match=r"Config action 'save' failed for 'FAB1'") as exc_info:
             orch.run_config_actions(actions=actions, fabric_names=["FAB1"], state="merged")
+
+        assert exc_info.value.result.status == "failed"
+        assert exc_info.value.result.actions[0].action == "save"
 
     def test_deploy_failure_raises(self):
         switches_response = {"switches": [{"serialNumber": "leaf1", "additionalData": {"configSyncStatus": "outOfSync"}}]}

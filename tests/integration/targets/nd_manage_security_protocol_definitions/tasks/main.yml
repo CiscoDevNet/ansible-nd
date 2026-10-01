@@ -1,0 +1,203 @@
+---
+# Read/write qualification for nd_manage_security_protocol_definitions.
+# Run only against an iBGP VXLAN fabric whose Group Based Policy feature is
+# enabled and ready.
+
+- name: >-
+    Require explicit mutation authorization, the expected controller, Nexus
+    Dashboard credentials, a security test fabric, and a unique run ID
+  ansible.builtin.fail:
+    msg: >-
+      Set nd_test_security_mutation_authorized=true as a boolean, set
+      nd_test_security_expected_controller_host to the exact ansible_host, and
+      define ansible_user, ansible_password, nd_test_security_fabric_name, and
+      nd_test_security_run_id before running this target. The run ID must be
+      unique for this execution.
+  when: >-
+    ansible_host is not defined or
+    ansible_user is not defined or
+    ansible_password is not defined or
+    nd_test_security_expected_controller_host is not defined or
+    nd_test_security_expected_controller_host | string | trim | length == 0 or
+    (nd_test_security_expected_controller_host | string | trim | lower) !=
+    (ansible_host | string | trim | lower) or
+    (nd_test_security_mutation_authorized | default(false) | type_debug) !=
+    'bool' or
+    not (nd_test_security_mutation_authorized | default(false) | bool) or
+    nd_test_security_fabric_name is not defined or
+    nd_test_security_run_id is not defined or
+    nd_test_security_run_id | string | length == 0 or
+    nd_test_security_run_id | string | length > 15 or
+    nd_test_security_run_id | string is not match('^[A-Za-z0-9_-]+$')
+
+- name: Exercise security protocol definition states
+  block:
+    - name: Gather protocol definitions before claiming the run-owned name
+      cisco.nd.nd_manage_security_protocol_definitions:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: protocol_preflight
+
+    - name: Refuse to reuse an existing protocol definition
+      ansible.builtin.assert:
+        that:
+          - >-
+            protocol_preflight.gathered |
+            map(attribute='name') | map('lower') |
+            select('equalto', security_protocol_definition.name | lower) |
+            list | length == 0
+        fail_msg: >-
+          Refusing to mutate pre-existing protocol definition
+          {{ security_protocol_definition.name }}. Use a different
+          nd_test_security_run_id.
+
+    - name: Mark the collision-free protocol name as owned by this run
+      ansible.builtin.set_fact:
+        security_protocol_definition_run_owned: true
+
+    - name: Define the run-owned protocol deletion operation
+      cisco.nd.nd_manage_security_protocol_definitions: &delete_protocol
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - name: "{{ security_protocol_definition.name }}"
+        state: deleted
+      check_mode: true
+      changed_when: false
+
+    - name: Plan protocol definition creation
+      cisco.nd.nd_manage_security_protocol_definitions: &merge_protocol
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_protocol_definition }}"
+        state: merged
+      check_mode: true
+      register: protocol_create_check
+
+    - name: Create the protocol definition
+      cisco.nd.nd_manage_security_protocol_definitions: *merge_protocol
+      register: protocol_create
+
+    - name: Replay protocol definition creation
+      cisco.nd.nd_manage_security_protocol_definitions: *merge_protocol
+      register: protocol_replay
+
+    - name: Verify merged behavior and disabled action defaults
+      ansible.builtin.assert:
+        that:
+          - protocol_create_check is changed
+          - protocol_create is changed
+          - protocol_replay is not changed
+          - protocol_create.config_actions_result is not defined
+
+    - name: Gather protocol definitions
+      cisco.nd.nd_manage_security_protocol_definitions:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: protocol_gathered
+
+    - name: Verify gathered is read-only and replayable
+      ansible.builtin.assert:
+        that:
+          - protocol_gathered is not changed
+          - protocol_gathered.before == []
+          - protocol_gathered.after == []
+          - >-
+            protocol_gathered.gathered |
+            selectattr('name', 'equalto', security_protocol_definition.name) |
+            list | length == 1
+          - protocol_gathered.config_actions_result is not defined
+          - protocol_gathered.security_actions_result is not defined
+
+    - name: Plan an authoritative protocol override from exact gathered state
+      cisco.nd.nd_manage_security_protocol_definitions: &override_protocol
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config: "{{ protocol_gathered.gathered }}"
+        state: overridden
+      check_mode: true
+      register: protocol_override_check
+
+    - name: Replay the authoritative protocol override plan
+      cisco.nd.nd_manage_security_protocol_definitions: *override_protocol
+      check_mode: true
+      register: protocol_override_replay
+
+    - name: Verify overridden exact-state planning is idempotent
+      ansible.builtin.assert:
+        that:
+          - protocol_override_check is not changed
+          - protocol_override_replay is not changed
+
+    - name: Replace the protocol definition
+      cisco.nd.nd_manage_security_protocol_definitions: &replace_protocol
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        config:
+          - "{{ security_protocol_definition_replaced }}"
+        state: replaced
+      register: protocol_replace
+
+    - name: Replay protocol definition replacement
+      cisco.nd.nd_manage_security_protocol_definitions: *replace_protocol
+      register: protocol_replace_replay
+
+    - name: Verify replaced behavior
+      ansible.builtin.assert:
+        that:
+          - protocol_replace is changed
+          - protocol_replace_replay is not changed
+
+    - name: Delete the protocol definition
+      cisco.nd.nd_manage_security_protocol_definitions: *delete_protocol
+      register: protocol_delete
+
+    - name: Replay protocol definition deletion
+      cisco.nd.nd_manage_security_protocol_definitions: *delete_protocol
+      register: protocol_delete_replay
+
+    - name: Verify deleted behavior
+      ansible.builtin.assert:
+        that:
+          - protocol_delete is changed
+          - protocol_delete_replay is not changed
+  always:
+    - name: Remove the protocol definition after the test
+      cisco.nd.nd_manage_security_protocol_definitions: *delete_protocol
+      ignore_errors: true
+      check_mode: false
+      when: security_protocol_definition_run_owned | default(false) | bool
+
+    - name: Gather protocol definitions after cleanup
+      cisco.nd.nd_manage_security_protocol_definitions:
+        fabric_name: "{{ nd_test_security_fabric_name }}"
+        cluster_name: "{{ nd_test_security_cluster_name | default(omit) }}"
+        state: gathered
+      register: protocol_cleanup_final
+      failed_when: false
+      changed_when: false
+      when: security_protocol_definition_run_owned | default(false) | bool
+
+    - name: Verify the run-owned protocol definition is absent after cleanup
+      ansible.builtin.assert:
+        that:
+          - not (protocol_cleanup_final.failed | default(false))
+          - protocol_cleanup_final.gathered is defined
+          - >-
+            protocol_cleanup_final.gathered |
+            default([]) |
+            map(attribute='name') | map('lower') |
+            select('equalto', security_protocol_definition.name | lower) |
+            list | length == 0
+        fail_msg: >-
+          Cleanup did not prove that run-owned protocol definition
+          {{ security_protocol_definition.name }} is absent.
+      when: security_protocol_definition_run_owned | default(false) | bool
+  module_defaults:
+    cisco.nd.nd_manage_security_protocol_definitions:
+      config_actions:
+        save: false
+        deploy: false
