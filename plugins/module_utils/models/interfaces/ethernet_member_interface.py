@@ -496,13 +496,13 @@ def _is_boolean_response_echo(value: object) -> bool:
     new or malformed response shape still fails closed before a full PUT.
     """
 
-    return type(value) is bool or (type(value) is str and value in {"true", "false"})
+    return isinstance(value, bool) or (isinstance(value, str) and value in {"true", "false"})
 
 
 def _is_string_response_echo(value: object) -> bool:
     """Return whether ND encoded an ordinary response-only string."""
 
-    return type(value) is str
+    return isinstance(value, str)
 
 
 _RESPONSE_ONLY_POLICY_FIELDS: dict[str, Mapping[str, Callable[[object], bool]]] = {
