@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -665,12 +666,12 @@ def test_sender_nd_00720():
     """
     # Summary
 
-    Verify commit() raises ValueError on connection failure.
+    Verify commit() raises a structured, backward-compatible transport error on connection failure.
 
     ## Test
 
     - When Connection.send_request raises AnsibleConnectionError,
-      commit() re-raises as ValueError
+      commit() raises NDTransportError, which remains a ValueError subclass
 
     ## Classes and Methods
 
@@ -693,8 +694,107 @@ def test_sender_nd_00720():
         return_value=mock_connection,
     ):
         match = r"Sender\.commit:.*ConnectionError occurred"
-        with pytest.raises(ValueError, match=match):
+        with pytest.raises(NDTransportError, match=match) as error:
             instance.commit()
+
+    assert isinstance(error.value, ValueError)
+    assert error.value.retryable is True
+    assert error.value.request_payload is None
+
+
+def test_sender_nd_00725_preserves_pre_request_property_error():
+    """Connection setup still exposes the legacy missing-module error unchanged."""
+    instance = Sender(verb=HttpVerbEnum.GET, path="/api/v1/test")
+
+    with pytest.raises(ValueError, match=r"Sender\.ansible_module:.*must be set before accessing") as error:
+        instance.commit()
+
+    assert "Unexpected error occurred" not in str(error.value)
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("constructor failed"), RuntimeError("set_params failed")])
+def test_sender_nd_00726_preserves_unexpected_connection_setup_errors(failure):
+    """Only AnsibleConnectionError is retyped during the legacy setup phase."""
+    mock_module = MagicMock()
+    mock_module._socket_path = "/tmp/test_socket"
+    mock_module.params = {"config": {}}
+    mock_connection = MagicMock()
+    if str(failure) == "set_params failed":
+        mock_connection.set_params.side_effect = failure
+        connection_patch = patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
+            return_value=mock_connection,
+        )
+    else:
+        connection_patch = patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
+            side_effect=failure,
+        )
+
+    instance = Sender(ansible_module=mock_module, verb=HttpVerbEnum.GET, path="/api/v1/test")
+    with connection_patch:
+        with pytest.raises(RuntimeError, match=str(failure)):
+            instance.commit()
+
+
+@pytest.mark.parametrize("setup_failure", ["constructor", "set_params"])
+def test_sender_nd_00727_types_connection_setup_transport_error(setup_failure):
+    """AnsibleConnectionError from setup is retryable transport failure metadata."""
+    mock_module = MagicMock()
+    mock_module._socket_path = "/tmp/test_socket"
+    mock_module.params = {"config": {}}
+    mock_connection = MagicMock()
+    instance = Sender(ansible_module=mock_module, verb=HttpVerbEnum.GET, path="/api/v1/test")
+
+    if setup_failure == "constructor":
+        connection_patch = patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
+            side_effect=AnsibleConnectionError("Connection refused"),
+        )
+    else:
+        mock_connection.set_params.side_effect = AnsibleConnectionError("Connection refused")
+        connection_patch = patch(
+            "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
+            return_value=mock_connection,
+        )
+
+    with connection_patch:
+        with pytest.raises(NDTransportError, match=r"Sender\.commit:.*ConnectionError occurred") as error:
+            instance.commit()
+
+    assert error.value.retryable is True
+
+
+def test_sender_nd_00728_rebuilds_connection_after_set_params_transport_error():
+    """A retry after failed setup must configure a fresh connection before sending."""
+    mock_module = MagicMock()
+    mock_module._socket_path = "/tmp/test_socket"
+    mock_module.params = {"config": {}}
+
+    failed_connection = MagicMock()
+    failed_connection.set_params.side_effect = AnsibleConnectionError("Connection refused")
+    working_connection = MagicMock()
+    working_connection.send_request.return_value = {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {},
+    }
+
+    instance = Sender(ansible_module=mock_module, verb=HttpVerbEnum.GET, path="/api/v1/test")
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
+        side_effect=[failed_connection, working_connection],
+    ) as connection_class:
+        with pytest.raises(NDTransportError, match=r"Sender\.commit:.*ConnectionError occurred"):
+            instance.commit()
+
+        instance.commit()
+
+    assert connection_class.call_count == 2
+    failed_connection.send_request.assert_not_called()
+    working_connection.set_params.assert_called_once_with(mock_module.params)
+    working_connection.send_request.assert_called_once_with("GET", "/api/v1/test")
+    assert instance.response["RETURN_CODE"] == 200
 
 
 def test_sender_nd_00730():

@@ -27,6 +27,7 @@ from typing import Any, Optional, Union
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -128,9 +129,19 @@ class Sender:
         method_name = "commit"
         caller = self._get_caller_name()
 
+        # Connection setup intentionally remains before construction of the
+        # request log message.  Apart from genuine Ansible connection errors,
+        # callers have historically received setup/property errors unchanged.
         if self._connection is None:
-            self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
-            self._connection.set_params(self.ansible_module.params)
+            try:
+                connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
+                connection.set_params(self.ansible_module.params)
+                self._connection = connection
+            except AnsibleConnectionError as error:
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"ConnectionError occurred: {error}"
+                self.log.error(msg)
+                raise NDTransportError(msg=msg, request_payload=self.payload, retryable=True) from error
 
         msg = f"{self.class_name}.{method_name}: "
         msg += f"caller: {caller}.  "
@@ -157,7 +168,7 @@ class Sender:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"ConnectionError occurred: {error}"
             self.log.error(msg)
-            raise ValueError(msg) from error
+            raise NDTransportError(msg=msg, request_payload=self.payload, retryable=True) from error
         except Exception as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"Unexpected error occurred: {error}"
