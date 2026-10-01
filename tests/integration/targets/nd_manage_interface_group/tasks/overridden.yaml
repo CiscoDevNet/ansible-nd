@@ -1,0 +1,73 @@
+---
+- name: Fetch fabric-wide Interface Group scope before override
+  cisco.nd.nd_rest:
+    method: GET
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/interfaceGroups?max=10000
+  register: interface_group_override_scope
+
+- name: Extract existing Interface Group names
+  ansible.builtin.set_fact:
+    interface_group_existing_names: >-
+      {{
+        interface_group_override_scope.current.interfaceGroupDetails
+        | default([])
+        | map(attribute='interfaceGroupName')
+        | list
+      }}
+
+- name: Reject overridden testing when unrelated groups exist
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_existing_names
+        | difference(interface_group_reserved_names)
+        | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Non-test Interface Groups exist in the fabric;
+      no override was applied.
+
+- name: Override fabric to one Interface Group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: overridden
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ interface_group_pc_one_member }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch complete Interface Group state after override
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_overridden
+
+- name: Validate overridden left exactly one Interface Group
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_overridden.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_one_member }}"
+    mode: exact
+    invariants:
+      total_count: 1
+      unique_group_names: true
+      unique_members: true
+  when: not ansible_check_mode

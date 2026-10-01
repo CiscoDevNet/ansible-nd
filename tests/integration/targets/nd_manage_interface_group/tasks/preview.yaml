@@ -1,0 +1,24 @@
+---
+- name: "{{ preview_name }} - Allow deployment preview to converge"
+  ansible.builtin.pause:
+    seconds: "{{ preview_convergence_delay | default(0) | int }}"
+  when:
+    - not ansible_check_mode
+    - (preview_convergence_delay | default(0) | int) > 0
+
+- name: "{{ preview_name }} - Query Interface configuration preview"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/interfaceActions/preview
+    method: post
+    content:
+      interfaces: "{{ preview_request_interfaces }}"
+  register: interface_group_interface_preview
+  when: not ansible_check_mode
+
+- name: "{{ preview_name }} - Validate Interface configuration preview"
+  cisco.nd.tests.integration.nd_interface_preview_validate:
+    nd_data: "{{ interface_group_interface_preview }}"
+    test_data: "{{ preview_test_data }}"
+  when: not ansible_check_mode
