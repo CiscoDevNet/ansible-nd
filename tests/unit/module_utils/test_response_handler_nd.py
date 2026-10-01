@@ -3187,3 +3187,225 @@ def test_response_handler_nd_01730():
     assert isinstance(NdV1Strategy(), TerminalClientErrorPolicy)
     assert isinstance(LegacyStrategy(), ResponseValidationStrategy)
     assert not isinstance(LegacyStrategy(), TerminalClientErrorPolicy)
+
+
+def test_response_handler_nd_01740():
+    """
+    # Summary
+
+    Verify the exact ``switchActions/deploy`` no-command outcome is accepted
+    as a successful HTTP 207 no-op.
+
+    ## Test
+
+    - The request path is a full URL with a trailing slash and query string
+    - ``DATA.switchIds[]`` contains normalized variants of ``notExecuted`` and
+      ``No Commands to execute``
+    - success is True and the historical changed fallback remains True
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "REQUEST_PATH": "https://nd.example/api/v1/manage/fabrics/fab1/switchActions/deploy/?clusterName=cluster1",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {
+                    "switchId": "SN1",
+                    "status": " notExecuted ",
+                    "message": "  No   Commands to execute  ",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result["success"] is True
+    assert instance.result["changed"] is True
+
+
+def test_response_handler_nd_01750():
+    """
+    # Summary
+
+    Verify the no-command item remains a failure outside
+    ``switchActions/deploy``.
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/policyActions/pushConfig",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {
+                    "switchId": "SN1",
+                    "status": "notExecuted",
+                    "message": "No Commands to execute",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result["success"] is False
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"switchId": "SN1", "status": "notExecuted", "message": "Switch is locked"},
+        {"switchId": "SN1", "status": "failed", "message": "No Commands to execute"},
+        {"switchId": "SN1", "status": "notExecuted", "message": ""},
+        {"status": "notExecuted", "message": "No Commands to execute"},
+    ],
+)
+def test_response_handler_nd_01760(item):
+    """
+    # Summary
+
+    Verify near matches remain failures on ``switchActions/deploy`` when the
+    status, message, or switch identity does not match the known no-op.
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {"switchIds": [item]},
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01770():
+    """
+    # Summary
+
+    Verify the no-command exception is limited to the ``switchIds`` envelope.
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "SN1",
+                    "status": "notExecuted",
+                    "message": "No Commands to execute",
+                }
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_01780():
+    """
+    # Summary
+
+    Verify a mixed switch deploy containing success and the exact benign no-op
+    is classified as successful.
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "SN1", "status": "success", "message": "Deployed Successfully"},
+                {
+                    "switchId": "SN2",
+                    "status": "notExecuted",
+                    "message": "No Commands to execute",
+                },
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result["success"] is True
+
+
+def test_response_handler_nd_01790():
+    """
+    # Summary
+
+    Verify a genuine failed switch remains fatal when another switch reports
+    the exact benign no-op.
+
+    ## Classes and Methods
+
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 207,
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {
+                    "switchId": "SN1",
+                    "status": "notExecuted",
+                    "message": "No Commands to execute",
+                },
+                {"switchId": "SN2", "status": "failed", "message": "deploy timeout"},
+            ]
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+
+    with does_not_raise():
+        instance.commit()
+
+    assert instance.result["success"] is False
+    assert instance.error_message == "ND Error: SN2: deploy timeout"
