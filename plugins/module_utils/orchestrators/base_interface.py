@@ -93,6 +93,27 @@ class BulkCreateItem:
     payload: dict
 
 
+@dataclass(frozen=True, slots=True)
+class BulkCreateOutcome:
+    """
+    # Summary
+
+    Result of one bulk-create POST sent by `_send_bulk_create_group`. `error` is `None` when the request succeeded, and `accepted` then
+    holds every submitted interface name in request order. When the request failed, `error` is the exception `_request` raised and
+    `accepted` holds the names the controller accepted (`verb == "accepted"`, read from an HTTP 207) or created anyway
+    (`verb == "created"`, recovered from the switch inventory).
+
+    ## Raises
+
+    None
+    """
+
+    result: ResponseType
+    error: Exception | None
+    accepted: list[str]
+    verb: str
+
+
 class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     """
     # Summary
@@ -372,25 +393,60 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             groups[group_key].append(BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
         return dict(groups)
 
-    def _post_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> ResponseType:
+    def _send_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> BulkCreateOutcome:
         """
         # Summary
 
-        Send one bulk-create POST for a `(switch_id, policy_type)` group and queue a deploy for every item the controller accepted.
-        On success that is the whole group, in request order.
+        Send one bulk-create POST for a `(switch_id, policy_type)` group and report what the controller did with it, without queueing any
+        deploy. A failed request does not raise: the exception is returned in the outcome so the caller decides what the accepted items
+        mean (`_post_bulk_create_group` queues their deploy; the loopback orchestrator's placeholder create removes them).
 
         The endpoint answers HTTP 207 with an independent `results[]` status per interface, so one create can be accepted while a
         sibling in the same request is rejected. On a failed request, the items the response reports as an exact `success`
-        (`_accepted_multistatus_names`, keyed by `name`) are queued before the error propagates, so the module's failure-path finalizer
-        (`deploy_accepted_mutations`) ships them rather than stranding them staged, where a retry would classify them as unchanged and
-        never deploy them. Names are matched case-insensitively and the queued pair keeps the module's identifier: ND echoes the
-        switch-canonical spelling for some interface families (`Port-channel101` for a submitted `port-channel101`). The response is
-        consulted only when the request recorded a new one: a sender exception leaves the previous response in place (issue #554), which
-        must not be mistaken for this request's result.
+        (`_accepted_multistatus_names`, keyed by `name`) are returned as accepted. Names are matched case-insensitively and the returned
+        name keeps the module's identifier: ND echoes the switch-canonical spelling for some interface families (`Port-channel101` for a
+        submitted `port-channel101`). The response is consulted only when the request recorded a new one: a sender exception leaves the
+        previous response in place (issue #554), which must not be mistaken for this request's result.
 
         A failure that is not a 207 can still have committed part of the group: ND 4.2.1 answers a flat HTTP 500 naming only the failing
         item and creates the valid ones ahead of it. For that shape the items are recovered from the switch inventory instead
         (`_created_despite_failure`): one GET, on the failure path only.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the orchestrator defines no `create_bulk_endpoint`.
+        """
+        endpoint_class = self.create_bulk_endpoint
+        if endpoint_class is None:
+            raise RuntimeError(f"'{self.__class__.__name__}' cannot bulk create: 'create_bulk_endpoint' is not defined.")
+        api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
+        request_body = {"interfaces": [item.payload for item in items]}
+        recorded = self.rest_send.response_count
+        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        names_before = set(cached_before) if cached_before is not None else None
+        try:
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted_names = self._accepted_multistatus_names()
+                accepted = [item.interface_name for item in items if item.interface_name.strip().lower() in accepted_names]
+                return BulkCreateOutcome(result=None, error=e, accepted=accepted, verb="accepted")
+            created = self._created_despite_failure(group_key.switch_id, items, names_before)
+            return BulkCreateOutcome(result=None, error=e, accepted=created, verb="created")
+        return BulkCreateOutcome(result=result, error=None, accepted=[item.interface_name for item in items], verb="accepted")
+
+    def _post_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> ResponseType:
+        """
+        # Summary
+
+        Send one bulk-create POST for a `(switch_id, policy_type)` group (`_send_bulk_create_group`) and queue a deploy for every item
+        the controller accepted. On success that is the whole group, in request order.
+
+        On a failed request, the items the controller accepted or created anyway are queued before the error propagates, so the module's
+        failure-path finalizer (`deploy_accepted_mutations`) ships them rather than stranding them staged, where a retry would classify
+        them as unchanged and never deploy them.
 
         ## Raises
 
@@ -404,33 +460,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - Propagated unchanged from `_request` for every other failure.
         """
-        endpoint_class = self.create_bulk_endpoint
-        if endpoint_class is None:
-            raise RuntimeError(f"'{self.__class__.__name__}' cannot bulk create: 'create_bulk_endpoint' is not defined.")
-        api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
-        request_body = {"interfaces": [item.payload for item in items]}
-        recorded = self.rest_send.response_count
-        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
-        names_before = set(cached_before) if cached_before is not None else None
-        try:
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-        except Exception as e:
-            accepted: list[str] = []
-            verb = "accepted"
-            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
-                accepted_names = self._accepted_multistatus_names()
-                accepted = [item.interface_name for item in items if item.interface_name.strip().lower() in accepted_names]
-            else:
-                accepted = self._created_despite_failure(group_key.switch_id, items, names_before)
-                verb = "created"
-            for interface_name in accepted:
-                self._queue_deploy(interface_name, group_key.switch_id)
-            if accepted:
-                raise RuntimeError(f"{e}. The controller {verb} {accepted} from the same request; their deploy stays queued.") from e
-            raise
-        for item in items:
-            self._queue_deploy(item.interface_name, group_key.switch_id)
-        return result
+        outcome = self._send_bulk_create_group(group_key, items)
+        for interface_name in outcome.accepted:
+            self._queue_deploy(interface_name, group_key.switch_id)
+        if outcome.error is None:
+            return outcome.result
+        if outcome.accepted:
+            raise RuntimeError(
+                f"{outcome.error}. The controller {outcome.verb} {outcome.accepted} from the same request; their deploy stays queued."
+            ) from outcome.error
+        raise outcome.error
 
     def _created_despite_failure(self, switch_id: str, items: list[BulkCreateItem], names_before: set[str] | None) -> list[str]:
         """
