@@ -798,3 +798,171 @@ def test_fabric_context_00330() -> None:
     match = r"Fabric 'fabric_1' is owned by a different controller"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_for_mutation()
+
+
+# =============================================================================
+# Test: fabric_details
+# =============================================================================
+
+
+def test_fabric_context_00400() -> None:
+    """
+    # Summary
+
+    Verify `fabric_details` fetches the full fabric body once and caches it.
+
+    ## Test
+
+    - GET to `/api/v1/manage/fabrics/fabric_1` returns 200 with a `management` object
+    - `fabric_details` returns the DATA dict
+    - A second access returns the same object without another request
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_details
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    with does_not_raise():
+        first = instance.fabric_details
+        second = instance.fabric_details
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1"
+    assert first == {"name": "fabric_1", "category": "fabric", "management": {"type": "vxlanIbgp", "mplsHandoff": False}}
+    assert second is first
+    assert rest_send.response_count == 1
+
+
+def test_fabric_context_00410() -> None:
+    """
+    # Summary
+
+    Verify `fabric_details` returns `None` for a fabric that does not exist and caches that answer.
+
+    ## Test
+
+    - GET returns 404
+    - `fabric_details` is `None` on both accesses, with one request sent
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_details
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+
+    with does_not_raise():
+        first = instance.fabric_details
+        second = instance.fabric_details
+
+    assert first is None
+    assert second is None
+    assert rest_send.response_count == 1
+
+
+def test_fabric_context_00420() -> None:
+    """
+    # Summary
+
+    Verify `invalidate` drops the cached fabric details so the next access re-fetches.
+
+    ## Test
+
+    - First access returns `mplsHandoff: false`
+    - `invalidate()` is called
+    - Second access sends a new GET and returns `mplsHandoff: true`
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_details
+    - FabricContext.invalidate()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    with does_not_raise():
+        before = instance.fabric_details
+        instance.invalidate()
+        after = instance.fabric_details
+
+    assert before is not None and before["management"]["mplsHandoff"] is False
+    assert after is not None and after["management"]["mplsHandoff"] is True
+    assert rest_send.response_count == 2
+
+
+def test_fabric_context_00430() -> None:
+    """
+    # Summary
+
+    Verify `fabric_details` fails closed on a 200 body that carries an embedded `code` error.
+
+    ## Test
+
+    - GET returns 200 with `{"code": 500, "message": "backend unavailable"}`
+    - `fabric_details` raises `RuntimeError` naming the embedded message
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_details
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    match = r"returned an embedded error instead of fabric details: backend unavailable"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.fabric_details  # pylint: disable=unused-variable
+
+
+def test_fabric_context_00440() -> None:
+    """
+    # Summary
+
+    Verify `fabric_details` raises when the fabric details request fails.
+
+    ## Test
+
+    - GET returns 500
+    - `fabric_details` raises `RuntimeError` naming the request path
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_details
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    match = r"GET /api/v1/manage/fabrics/fabric_1 failed"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.fabric_details  # pylint: disable=unused-variable
