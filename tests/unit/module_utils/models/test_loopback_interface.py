@@ -2116,6 +2116,58 @@ def test_mpls_loopback_accepts_omitted_and_named_dci_routing_tag():
     assert MplsLoopbackPolicyModel(policyType="mplsLoopback", dciRoutingTag="MPLS_UNDERLAY").dci_routing_tag == "MPLS_UNDERLAY"
 
 
+def _mpls_config(**policy) -> dict:
+    """Build a `from_config` item for an `mplsLoopback` with the given extra policy options."""
+    return {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "loopback30",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "mplsLoopback", "ip": "10.3.3.1", **policy}}},
+    }
+
+
+def test_mpls_loopback_payload_sends_default_dci_routing_tag():
+    """
+    # Summary
+
+    Verify the payload carries the `dciRoutingTag` default when the user omits it, and that the default is payload-only.
+
+    ## Test
+
+    - `from_config` with `policy_type: mplsLoopback` and `ip` only
+    - `to_payload()` carries `dciRoutingTag: MPLS_UNDERLAY`
+    - `to_config()` does not contain `dci_routing_tag`
+
+    ## Classes and Methods
+
+    - MplsLoopbackPolicyModel.payload_defaults
+    - LoopbackInterfaceModel.to_payload()
+    - LoopbackInterfaceModel.to_config()
+    """
+    instance = LoopbackInterfaceModel.from_config(_mpls_config())
+    assert instance.to_payload()["configData"]["networkOS"]["policy"]["dciRoutingTag"] == "MPLS_UNDERLAY"
+    assert "dci_routing_tag" not in instance.to_config()["config_data"]["network_os"]["policy"]
+
+
+def test_mpls_loopback_payload_keeps_user_dci_routing_tag():
+    """
+    # Summary
+
+    Verify a user-supplied `dci_routing_tag` is sent as given, not replaced by the default.
+
+    ## Test
+
+    - `from_config` with `dci_routing_tag: "200"`
+    - `to_payload()` carries `dciRoutingTag: "200"`
+
+    ## Classes and Methods
+
+    - MplsLoopbackPolicyModel.payload_defaults
+    - LoopbackInterfaceModel.to_payload()
+    """
+    instance = LoopbackInterfaceModel.from_config(_mpls_config(dci_routing_tag="200"))
+    assert instance.to_payload()["configData"]["networkOS"]["policy"]["dciRoutingTag"] == "200"
+
+
 # =============================================================================
 # Test: NexusLoopbackNetworkOSModel — policy discriminated union
 # =============================================================================

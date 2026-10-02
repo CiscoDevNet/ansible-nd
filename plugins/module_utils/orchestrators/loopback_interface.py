@@ -50,6 +50,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem, NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
+# VRF of the inert placeholder loopback created ahead of an `mplsLoopback` PUT; `_is_mpls_placeholder` recognizes it by this value.
+MPLS_PLACEHOLDER_VRF = "management"
+
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
     """
@@ -133,7 +136,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         every `mplsLoopback` already exists, and a task that names none, send nothing.
 
         Only an explicit `false` is refused. A fabric body with no `mplsHandoff` key gives no evidence either way, so the check is
-        skipped and ND answers the write. Switch role is not checked: ND does not enforce it.
+        skipped and ND answers the write. Switch role is not checked: ND does not enforce it. Under `state: merged` an existing interface
+        with another policy type is skipped, because the merge guard (`NDBaseModel.merge`) refuses that change and names `state: replaced`.
 
         ## Raises
 
@@ -148,6 +152,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         # pool" even when an explicit `ip` is supplied: HTTP 500 on the 4.2.1 create, HTTP 400 on the 4.3.1 PUT. Neither names the fix,
         # and without this check the failure arrives only after the placeholder POST was sent and rolled back.
         mpls_value = LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value
+        merged = self.rest_send.params.get("state") == "merged"
         becoming: list[str] = []
         for model_instance in model_instances:
             if model_instance.policy_type != mpls_value:
@@ -156,6 +161,10 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             existing = self._switch_interfaces(switch_id).get(model_instance.interface_name.lower()) or {}
             existing_policy = ((existing.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
             if existing_policy.get("policyType") == mpls_value:
+                continue
+            if merged and existing_policy.get("policyType"):
+                # `state: merged` never changes an existing interface's policy type (`NDBaseModel.merge` refuses it and names
+                # `state: replaced`), so the handoff setting is irrelevant for this item. Leave it to that guard.
                 continue
             becoming.append(f"{model_instance.interface_name} ({model_instance.switch_ip})")
         if not becoming:
@@ -186,6 +195,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If an `mplsLoopback` conversion fails (see `_create_mpls_loopbacks_on_switch`).
         """
         try:
+            # TODO(4.3.1) mpls-loopback-create-requires-mpls-handoff
+            # mplsLoopback cannot be created with the bulk POST on ND 4.3.1; see _create_mpls_loopbacks_on_switch.
             if model_instance.policy_type == LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value:
                 return self._create_mpls_loopbacks([model_instance])
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
@@ -260,6 +271,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If an `mplsLoopback` conversion fails (see `_create_mpls_loopbacks_on_switch`).
         """
         try:
+            # TODO(4.3.1) mpls-loopback-create-requires-mpls-handoff
+            # mplsLoopback cannot be created with the bulk POST on ND 4.3.1; see _create_mpls_loopbacks_on_switch.
             mpls_value = LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value
             direct = [model_instance for model_instance in model_instances if model_instance.policy_type != mpls_value]
             mpls = [model_instance for model_instance in model_instances if model_instance.policy_type == mpls_value]
@@ -292,13 +305,34 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             config_data=LoopbackConfigDataModel(
                 network_os=NexusLoopbackNetworkOSModel(
                     network_os_type="nx-os",
-                    policy=NexusLoopbackPolicyModel(policy_type=LoopbackPolicyTypeEnum.LOOPBACK.value, admin_state=False, vrf="management"),
+                    policy=NexusLoopbackPolicyModel(policy_type=LoopbackPolicyTypeEnum.LOOPBACK.value, admin_state=False, vrf=MPLS_PLACEHOLDER_VRF),
                 ),
             ),
         )
         payload = placeholder.to_payload()
         payload["switchId"] = switch_id
         return BulkCreateItem(interface_name=model_instance.interface_name, payload=payload)
+
+    @staticmethod
+    def _is_mpls_placeholder(record: dict) -> bool:
+        """
+        # Summary
+
+        Return True when an interface record read from the controller carries the placeholder signature `_mpls_placeholder_item` writes:
+        a plain `loopback` policy, `adminState` false, the placeholder VRF, and no address. Used to make sure the rollback only removes
+        interfaces this module created as placeholders, never an interface another actor created under the same name.
+
+        ## Raises
+
+        None
+        """
+        policy = ((record.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        return (
+            policy.get("policyType") == LoopbackPolicyTypeEnum.LOOPBACK.value
+            and policy.get("adminState") is False
+            and policy.get("vrfInterface") == MPLS_PLACEHOLDER_VRF
+            and not policy.get("ip")
+        )
 
     def _create_mpls_loopbacks(self, model_instances: list[LoopbackInterfaceModel]) -> list[Any]:
         """
@@ -331,7 +365,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         succeeds). A placeholder is never queued for deploy.
 
         If the placeholder POST fails or any PUT fails, every placeholder on this switch that exists and was not converted is removed
-        (`_roll_back_mpls_placeholders`) and the failure is raised. Interfaces already converted keep their queued deploy.
+        (`_roll_back_mpls_placeholders`) and the failure is raised. Interfaces already converted keep their queued deploy. After a non-207
+        POST failure, a name recovered from the inventory re-read is removed only if its record carries the placeholder signature
+        (`_is_mpls_placeholder`).
 
         ## Raises
 
@@ -348,7 +384,13 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type=LoopbackPolicyTypeEnum.LOOPBACK.value)
         outcome = self._send_bulk_create_group(group_key, items)
         if outcome.error is not None:
-            raise RuntimeError(self._roll_back_mpls_placeholders(outcome.error, switch_id, [], outcome.accepted)) from outcome.error
+            created = outcome.accepted
+            if created and outcome.verb == "created":
+                # These names come from the switch inventory re-read (`_created_despite_failure`), not from a per-item status. Keep only
+                # records that carry the placeholder signature, so an interface another actor created under the same name is never removed.
+                inventory = self._switch_interfaces(switch_id)
+                created = [name for name in created if self._is_mpls_placeholder(inventory.get(name.strip().lower()) or {})]
+            raise RuntimeError(self._roll_back_mpls_placeholders(outcome.error, switch_id, [], created)) from outcome.error
         results: list[Any] = [outcome.result]
         converted: list[str] = []
         for model_instance in model_instances:
@@ -364,7 +406,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         # Summary
 
-        Remove the named placeholder interfaces on `switch_id` with one `interfaceActions/remove` request, sent once and never retried.
+        Remove the named placeholder interfaces on `switch_id` with one `interfaceActions/remove` request. The helper
+        sends one request and does not loop on it; `RestSend`'s own retry of a non-terminal failure still applies.
         Returns the names that were NOT confirmed removed and the error that prevented it (`([], None)` when all were removed or `names`
         is empty, in which case no request is sent).
 
@@ -393,6 +436,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             if self.rest_send.response_count > recorded:
                 removed = self._accepted_multistatus_pairs()
             return [name for name in names if (name.strip().lower(), switch_id) not in removed], e
+        finally:
+            # Whatever the outcome, the cached inventory predates the remove; drop it so no later reader is served a pre-rollback list.
+            self._switch_interfaces_cache.pop(switch_id, None)
         return [], None
 
     def _roll_back_mpls_placeholders(self, error: Exception, switch_id: str, converted: list[str], unconverted: list[str]) -> str:
@@ -413,8 +459,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         if removed:
             msg += f" Removed the placeholder loopback(s) {removed} created for this request."
         if left_behind:
-            msg += f" Could not remove the placeholder loopback(s) {left_behind} ({rollback_error}); they remain staged as plain loopbacks."
-            msg += " Remove them with state: deleted."
+            msg += f" Could not remove the placeholder loopback(s) {left_behind} ({rollback_error}); they remain staged"
+            msg += " (as plain loopbacks, or as mplsLoopback where the failed PUT was applied). Remove them with state: deleted."
         if converted:
             msg += f" {converted} were created as mplsLoopback before the failure; their deploy stays queued."
         return msg

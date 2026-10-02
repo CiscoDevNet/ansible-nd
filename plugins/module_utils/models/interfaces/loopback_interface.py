@@ -238,6 +238,13 @@ class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
         "dciRoutingTag": "MPLS_UNDERLAY",
     }
 
+    # TODO(4.3.1) mpls-loopback-failed-write-not-rolled-back
+    # ND 4.3.1 does not apply the `dciRoutingTag` template default on a PUT: an omitted tag is treated as empty, the request fails with
+    # HTTP 500 in `isis_interface`, and the failed write is not rolled back. ND 4.2.1 applies `MPLS_UNDERLAY` either way, so sending the
+    # default explicitly changes nothing there (lab-verified 2026-10-02 on 4.2.1.10 and 4.3.1.175). Payload-only: see
+    # `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"dciRoutingTag": "MPLS_UNDERLAY"}
+
     policy_type: Literal["mplsLoopback"] = Field(alias="policyType", description="MPLS loopback policy template discriminator")
     dci_routing_protocol: Literal["ospf", "isis"] | None = Field(default=None, alias="dciRoutingProtocol", description="DCI link-state routing protocol")
     dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", description="DCI routing tag")
