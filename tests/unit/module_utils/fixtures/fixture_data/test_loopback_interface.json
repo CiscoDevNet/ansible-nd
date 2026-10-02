@@ -1758,5 +1758,405 @@
         "DATA": {
             "status": "ok"
         }
+    },
+    "test_loopback_interface_00900a": {
+        "TEST_NOTES": [
+            "handoff preflight, interface absent, handoff off: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00900b": {
+        "TEST_NOTES": [
+            "switch inventory without loopback30"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00900c": {
+        "TEST_NOTES": [
+            "fabric details: mplsHandoff false"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": false
+            }
+        }
+    },
+    "test_loopback_interface_00910a": {
+        "TEST_NOTES": [
+            "handoff preflight, handoff on: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00910b": {
+        "TEST_NOTES": [
+            "switch inventory without loopback30"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00910c": {
+        "TEST_NOTES": [
+            "fabric details: mplsHandoff true"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": true
+            }
+        }
+    },
+    "test_loopback_interface_00920a": {
+        "TEST_NOTES": [
+            "handoff preflight, setting absent: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00920b": {
+        "TEST_NOTES": [
+            "switch inventory without loopback30"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00920c": {
+        "TEST_NOTES": [
+            "fabric details: management has no mplsHandoff key"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanEbgp"
+            }
+        }
+    },
+    "test_loopback_interface_00930a": {
+        "TEST_NOTES": [
+            "handoff preflight, interface already mplsLoopback: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00930b": {
+        "TEST_NOTES": [
+            "switch inventory where loopback30 is already mplsLoopback; no fabric details GET may follow"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback30",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "mplsLoopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00940a": {
+        "TEST_NOTES": [
+            "handoff preflight, loopback to mplsLoopback transition: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00940b": {
+        "TEST_NOTES": [
+            "switch inventory where loopback30 is a plain loopback"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback30",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00940c": {
+        "TEST_NOTES": [
+            "fabric details: mplsHandoff false"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": false
+            }
+        }
+    },
+    "test_loopback_interface_00960a": {
+        "TEST_NOTES": [
+            "preflight wiring: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00960b": {
+        "TEST_NOTES": [
+            "preflight wiring: capableSwitches lists the switch"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00960c": {
+        "TEST_NOTES": [
+            "switch inventory without loopback30"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00960d": {
+        "TEST_NOTES": [
+            "fabric details: mplsHandoff false"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": false
+            }
+        }
+    },
+    "test_loopback_interface_00970a": {
+        "TEST_NOTES": [
+            "handoff preflight, fabric details GET fails: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00970b": {
+        "TEST_NOTES": [
+            "switch inventory without loopback30"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback10",
+                    "interfaceType": "loopback",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "loopback"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_loopback_interface_00970c": {
+        "TEST_NOTES": [
+            "fabric details GET returns 500"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "message": "boom"
+        }
     }
 }

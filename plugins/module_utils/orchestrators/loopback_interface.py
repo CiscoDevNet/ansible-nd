@@ -28,6 +28,7 @@ The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -79,6 +80,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
     - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
     - Via `create` / `create_bulk` if an `mplsLoopback` placeholder create or its conversion PUT fails; unconverted placeholders are removed first.
+    - Via `preflight` if an interface would become `mplsLoopback` while MPLS Handoff is disabled on the fabric.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
     - Via `deploy_pending` if the bulk deploy API request fails.
@@ -99,6 +101,73 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def preflight(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """
+        # Summary
+
+        Pre-mutation validation for the proposed loopbacks: the shared interface preflight (switch resolution, platform match,
+        capability, IOS-XE override removals), then the MPLS Handoff precondition for interfaces that would become `mplsLoopback`
+        (`_check_mpls_handoff`). Invoked by `NDStateMachine.manage_state` before any create or update, in check mode too.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `NDBaseInterfaceOrchestrator.preflight`.
+        - Propagated from `_check_mpls_handoff`.
+        """
+        super().preflight(model_instances)
+        self._check_mpls_handoff(model_instances)
+
+    def _check_mpls_handoff(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """
+        # Summary
+
+        Refuse an interface that would become `mplsLoopback` while the fabric's MPLS Handoff setting is disabled. "Would become" means
+        the interface is absent on the controller or present with a different policy type; it is read from the per-switch inventory
+        `query_all` already cached (`_switch_interfaces`), so the selection adds no request.
+
+        The setting is `management.mplsHandoff` in the full fabric body (`FabricContext.fabric_details`); the fabric summary does not
+        carry it. That body is fetched once per run, and only when at least one interface would become `mplsLoopback`: a re-run where
+        every `mplsLoopback` already exists, and a task that names none, send nothing.
+
+        Only an explicit `false` is refused. A fabric body with no `mplsHandoff` key gives no evidence either way, so the check is
+        skipped and ND answers the write. Switch role is not checked: ND does not enforce it.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more interfaces would become `mplsLoopback` and `management.mplsHandoff` is `false`.
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Via `FabricContext.fabric_details` if the fabric details request fails.
+        """
+        # TODO(4.2.1) mpls-loopback-create-requires-mpls-handoff
+        # With MPLS Handoff disabled, MPLS_LOOPBACK_IP_POOL is empty and ND fails the write with "[MPLS_LOOPBACK_IP_POOL] is an empty
+        # pool" even when an explicit `ip` is supplied: HTTP 500 on the 4.2.1 create, HTTP 400 on the 4.3.1 PUT. Neither names the fix,
+        # and without this check the failure arrives only after the placeholder POST was sent and rolled back.
+        mpls_value = LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value
+        becoming: list[str] = []
+        for model_instance in model_instances:
+            if model_instance.policy_type != mpls_value:
+                continue
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing = self._switch_interfaces(switch_id).get(model_instance.interface_name.lower()) or {}
+            existing_policy = ((existing.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+            if existing_policy.get("policyType") == mpls_value:
+                continue
+            becoming.append(f"{model_instance.interface_name} ({model_instance.switch_ip})")
+        if not becoming:
+            return
+        details = self.fabric_context.fabric_details
+        management = details.get("management") if isinstance(details, dict) else None
+        if not isinstance(management, dict) or management.get("mplsHandoff") is not False:
+            return
+        raise RuntimeError(
+            f"MPLS Handoff is disabled on fabric '{self.fabric_name}'; mplsLoopback requires it for {', '.join(becoming)}. "
+            "Enable mpls_handoff with the fabric's nd_manage_fabric_* module and retry. No changes were made."
+        )
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
