@@ -22,6 +22,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
     EpManageFabricsSwitchesDeploymentHistoryGet,
 )
@@ -31,8 +32,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+_UNSET_RESPONSE = object()
+
+
+@dataclass(frozen=True)
+class DeferredDeleteRequestGroup:
+    """One controller request boundary for queued interface delete/reset work."""
+
+    queue_name: str
+    targets: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +105,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     """
 
     deploy: bool = False
+    interface_state_snapshot: InterfaceStateSnapshot | None = Field(default=None, exclude=True, repr=False)
 
     # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets
     # `interface_type = "loopback"` and `interface_mode = "managed"`). Leaving `interface_type` as ""
@@ -104,6 +117,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     xe_removal_requires_discovery: ClassVar[bool] = False
     # Newest deployment-history records read per undiscovered IOS-XE removal candidate (see `_xe_interface_deployed`).
     XE_HISTORY_MAX: ClassVar[int] = 10
+    deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"remove"})
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -114,8 +128,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
         underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
-        deploy/remove queues, the `_deploy_attempted` stage flag read by `deploy_accepted_mutations`, and the per-switch interface
-        cache read by `_switch_interfaces`.
+        deploy/remove queues and the `_deploy_attempted` stage flag read by
+        `deploy_accepted_mutations`. Interface inventory is owned by the injected
+        or lazily-created `InterfaceStateSnapshot` provider.
 
         ## Raises
 
@@ -124,7 +139,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         self._pending_deploys: list[tuple[str, str]] = []
         self._pending_removes: list[tuple[str, str]] = []
         self._deploy_attempted: bool = False
-        self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
+        if self.interface_state_snapshot is not None and self.interface_state_snapshot.fabric_name != self.fabric_name:
+            raise ValueError(
+                f"Injected InterfaceStateSnapshot fabric {self.interface_state_snapshot.fabric_name} does not match "
+                f"orchestrator fabric {self.fabric_name}."
+            )
 
     def apply_config_actions(self, params: Mapping[str, Any]) -> bool:
         """
@@ -166,9 +185,22 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         None
         """
+        if self.interface_state_snapshot is not None:
+            return self.interface_state_snapshot.fabric_context
         if self._fabric_context is None:
             self._fabric_context = FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name)
         return self._fabric_context
+
+    @property
+    def state_snapshot(self) -> InterfaceStateSnapshot:
+        """Return the injected provider or lazily create a standalone provider."""
+        if self.interface_state_snapshot is None:
+            self.interface_state_snapshot = InterfaceStateSnapshot(
+                fabric_name=self.fabric_name,
+                fabric_context=self.fabric_context,
+                request=self._request,
+            )
+        return self.interface_state_snapshot
 
     def _resolve_switch_id(self, switch_ip: str) -> str:
         """
@@ -203,12 +235,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - Via `_request` if the interface-list API request fails with a non-404 status.
         """
-        if switch_id not in self._switch_interfaces_cache:
-            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
-        return self._switch_interfaces_cache[switch_id]
+        return self.state_snapshot.load_switch(switch_id)
 
     def _switches_to_query(self) -> dict[str, str]:
         """
@@ -333,7 +360,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
         request_body = {"interfaces": [item.payload for item in items]}
         recorded = self.rest_send.response_count
-        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        cached_before = self.state_snapshot.cached_switch(group_key.switch_id)
         names_before = set(cached_before) if cached_before is not None else None
         try:
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
@@ -378,7 +405,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         # this recovery the committed items stay staged and a retry reads them as unchanged (lab-verified 2026-09-21, 4.2.1.10).
         if names_before is None:
             return []
-        self._switch_interfaces_cache.pop(switch_id, None)
+        self.state_snapshot.invalidate(switch_id)
         try:
             names_now = self._switch_interfaces(switch_id)
         except Exception:  # pylint: disable=broad-exception-caught
@@ -410,6 +437,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             )
         return self._capability_preflight
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run local switch-resolution and platform safety checks without capability API calls.
+
+        Aggregate workflows use this in check mode for the exact planned mutation set. Keeping the capability query separate lets
+        them preserve their explicit capability-preflight option while still enforcing the platform contract for every proposed
+        write.
+        """
+        self._require_resolvable_switches(model_instances)
+        self._check_platform_match(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -437,8 +474,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Propagated from `validate_switches_capable` (see its docstring).
         - Propagated from `_check_overridden_removals_discovered` (an override would remove an undiscovered IOS-XE interface).
         """
-        self._require_resolvable_switches(model_instances)
-        self._check_platform_match(model_instances)
+        self.preflight_safety(model_instances)
         self.validate_switches_capable(model_instances)
         self._check_overridden_removals_discovered(model_instances)
 
@@ -784,6 +820,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if pair not in self._pending_deploys:
             self._pending_deploys.append(pair)
 
+    @property
+    def pending_deploys(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of interfaces queued for deployment."""
+        return tuple(self._pending_deploys)
+
+    def queue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved interface targets to the deployment queue."""
+        for interface_name, switch_id in targets:
+            self._queue_deploy(interface_name, switch_id)
+
     def _queue_remove(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
@@ -798,6 +844,67 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         pair = (interface_name, switch_id)
         if pair not in self._pending_removes:
             self._pending_removes.append(pair)
+
+    @property
+    def pending_removes(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of interfaces queued for removal."""
+        return tuple(self._pending_removes)
+
+    def queue_remove_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved interface targets to the removal queue."""
+        for interface_name, switch_id in targets:
+            self._queue_remove(interface_name, switch_id)
+
+    @property
+    def deferred_delete_queues(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Return immutable snapshots of every deferred delete/reset queue this orchestrator can flush."""
+        return {"remove": self.pending_removes}
+
+    @property
+    def pending_deferred_delete_targets(self) -> tuple[tuple[str, str], ...]:
+        """Return every queued delete/reset target once, preserving queue and insertion order."""
+        return tuple(dict.fromkeys(target for targets in self.deferred_delete_queues.values() for target in targets))
+
+    def queue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Import pre-resolved targets into one supported deferred delete/reset queue."""
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        self.queue_remove_targets(targets)
+
+    def dequeue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove transferred targets from one supported deferred queue without sending a request."""
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        removed = set(targets)
+        self._pending_removes = [target for target in self._pending_removes if target not in removed]
+
+    def deferred_delete_request_groups(self) -> tuple[DeferredDeleteRequestGroup, ...]:
+        """Describe the exact request groups and order used by `remove_pending`."""
+        if not self.pending_removes:
+            return ()
+        return (DeferredDeleteRequestGroup(queue_name="remove", targets=self.pending_removes),)
+
+    def dequeue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove exact targets from the pending deploy queue without sending a request."""
+        removed = set(targets)
+        self._pending_deploys = [target for target in self._pending_deploys if target not in removed]
+
+    def deploy_targets(self, targets: Sequence[tuple[str, str]]) -> ResponseType | None:
+        """
+        Deploy exactly the supplied targets in one request without consulting or replacing this orchestrator's pending queue.
+
+        The aggregate workflow uses this after consolidating queues from multiple families. It is safe on a partial-failure path
+        because callers can pass only targets backed by exact controller-success evidence.
+        """
+        if not self.deploy:
+            return None
+        requested = list(dict.fromkeys(targets))
+        if not requested:
+            return None
+        try:
+            return self._deploy_interfaces(requested)
+        except Exception as e:
+            raise RuntimeError(f"Bulk deploy failed for interfaces {requested}: {e}") from e
 
     def deploy_pending(self) -> ResponseType | None:
         """
@@ -820,12 +927,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not self.deploy or not self._pending_deploys:
             return None
         self._deploy_attempted = True
-        try:
-            result = self._deploy_interfaces(self._pending_deploys)
-            self._pending_deploys = []
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Bulk deploy failed for interfaces {self._pending_deploys}: {e}") from e
+        result = self.deploy_targets(self._pending_deploys)
+        self._pending_deploys = []
+        return result
 
     def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
         """
@@ -862,7 +966,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not accepted:
             return []
         try:
-            self._deploy_interfaces(accepted)
+            self.deploy_targets(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
         self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
@@ -883,24 +987,28 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         return set(self._pending_removes)
 
-    def _accepted_multistatus_names(self) -> set[str]:
+    def _accepted_multistatus_names(self, response: Mapping[str, Any] | None | object = _UNSET_RESPONSE) -> set[str]:
         """
         # Summary
 
-        Return the lower-cased `name` of every `DATA.results[]` item in the most recent response whose `status` is exactly
-        `success` (case/whitespace-tolerant). Used after a bulk POST that failed with HTTP 207 Multi-Status to recover the subset
-        the controller accepted, so that subset can still be queued for deploy (PR #550 review). On a 207 the per-item status
+        Return the lower-cased `name` of every `DATA.results[]` item in `response` whose `status` is exactly `success`
+        (case/whitespace-tolerant). Callers handling a request failure pass the response captured for that exact request; this
+        prevents an earlier HTTP 207 from being mistaken for a later request that failed before producing a response (issue #554).
+        When `response` is omitted, the current response is used for backward compatibility. On a 207 the per-item status
         vocabulary is unreliable (vault: `multi-status-207-status-field-inconsistent`; issue #397), so only an exact `success`
         is trusted — the same allowlist `NdV1Strategy.is_success` applies when classifying the response. Returns an empty set
-        when the last response was not a 207 or carries no `results[]` envelope.
+        when the supplied response was not a 207 or carries no `results[]` envelope.
 
         ## Raises
 
         None
         """
-        if self.rest_send.return_code != 207:
+        response = self.rest_send.response_current if response is _UNSET_RESPONSE else response
+        if not isinstance(response, Mapping):
             return set()
-        data = self.rest_send.response_current.get("DATA")
+        if response.get("RETURN_CODE") != 207:
+            return set()
+        data = response.get("DATA")
         results = data.get("results") if isinstance(data, dict) else None
         if not isinstance(results, list):
             return set()
@@ -1005,6 +1113,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             if accepted:
                 msg += f" The controller accepted the removal of {accepted} from the same request; their deploy stays queued."
             raise RuntimeError(msg) from e
+
+    def remove_pending_queue(self, queue_name: str) -> ResponseType | None:
+        """Flush one named deferred delete queue.
+
+        The base interface contract has only the ordinary ``remove`` queue. Ethernet subclasses extend this method so an aggregate
+        executor can preserve reset-family ordering and reconcile each queue from its exact pre/post contents.
+        """
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        return self.remove_pending()
 
     def _remove_interfaces(self) -> ResponseType:
         """

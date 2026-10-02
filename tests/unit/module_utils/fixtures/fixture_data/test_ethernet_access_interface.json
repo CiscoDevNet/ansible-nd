@@ -747,7 +747,7 @@
     },
     "test_delete_pc_member_blocked_00570b": {
         "TEST_NOTES": [
-            "00570: interfaceList -- Ethernet1/1 is a port-channel member; delete must refuse to normalize"
+            "00570: interfaceList -- accessHost intent has stale positive portChannelId and no parent claim; delete proceeds"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -793,7 +793,7 @@
     },
     "test_delete_bulk_pc_member_blocked_00580b": {
         "TEST_NOTES": [
-            "00580: interfaceList -- Ethernet1/1 is a port-channel member; delete_bulk must refuse"
+            "00580: interfaceList -- accessHost intent has stale positive portChannelId and no parent claim; bulk delete proceeds"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -890,7 +890,7 @@
     },
     "test_delete_bulk_overridden_skips_pc_00600b": {
         "TEST_NOTES": [
-            "00600: interfaceList for FDO11111AAA -- Ethernet1/1 IS a port-channel 10 member (must be skipped under state:overridden)"
+            "00600: interfaceList for FDO11111AAA -- Ethernet1/1 has accessHost intent and stale portChannelId 10 (must reset under state:overridden)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -966,7 +966,7 @@
     },
     "test_delete_bulk_deleted_raises_pc_00610b": {
         "TEST_NOTES": [
-            "00610: interfaceList -- Ethernet1/1 IS a PC 10 member (must raise under state:deleted because user named it explicitly)"
+            "00610: interfaceList -- Ethernet1/1 has accessHost intent and stale portChannelId 10 (explicit delete proceeds without a parent claim)"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",

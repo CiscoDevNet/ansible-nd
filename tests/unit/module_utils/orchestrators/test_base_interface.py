@@ -26,9 +26,11 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import inspect
 import logging
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import InterfacePaginationError
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -178,6 +180,97 @@ def test_base_interface_00020() -> None:
     instance = _StubInterfaceOrchestrator(rest_send=rest_send)
 
     assert instance.fabric_name == "my_fabric"
+
+
+def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
+    """A short first page with remaining rows is completed before the cache becomes visible."""
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    calls: list[str] = []
+    pages = {
+        0: {
+            "interfaces": [{"interfaceName": "Ethernet1/1"}],
+            "meta": {"counts": {"total": 2, "remaining": 1}},
+        },
+        1: {
+            "interfaces": [{"switchId": "SERIAL1", "interfaceName": "Ethernet1/2"}],
+            "meta": {"counts": {"total": 2, "remaining": 0}},
+        },
+    }
+
+    def request(*, path, verb, not_found_ok=False, **_kwargs):
+        assert verb == HttpVerbEnum.GET
+        assert not_found_ok is True
+        calls.append(path)
+        offset = int(parse_qs(urlsplit(path).query)["offset"][0])
+        return pages[offset]
+
+    object.__setattr__(instance, "_request", request)
+
+    inventory = instance._switch_interfaces("SERIAL1")
+
+    assert list(inventory) == ["ethernet1/1", "ethernet1/2"]
+    assert instance._switch_interfaces("SERIAL1") == inventory
+    assert instance._switch_interfaces("SERIAL1") is not inventory
+    assert len(calls) == 2
+    for expected_offset, path in enumerate(calls):
+        assert "/switches/SERIAL1/interfaces?" in path
+        query = parse_qs(urlsplit(path).query)
+        assert query["max"] == ["500"]
+        assert query["offset"] == [str(expected_offset)]
+        assert query["sort"] == ["interfaceName:asc"]
+
+
+@pytest.mark.parametrize(
+    "second_page,match",
+    [
+        ({"interfaces": [{"switchId": "OTHER", "interfaceName": "Ethernet1/2"}]}, "does not match requested switch"),
+        ({"interfaces": [{"switchId": "", "interfaceName": "Ethernet1/2"}]}, "switchId must be a non-empty string"),
+        ({"interfaces": [{"interfaceName": "ethernet1/1"}]}, "repeated page|duplicate interface identity"),
+        ({"interfaces": [], "meta": {"counts": {"total": 3, "remaining": 1}}}, "total changed|empty page"),
+    ],
+)
+def test_switch_interfaces_never_publishes_an_invalid_second_page(second_page, match: str) -> None:
+    """Identity and metadata failures leave no partially populated switch cache."""
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    first_page = {
+        "interfaces": [{"interfaceName": "Ethernet1/1"}],
+        "meta": {"counts": {"total": 2, "remaining": 1}},
+    }
+
+    def request(*, path, **_kwargs):
+        offset = int(parse_qs(urlsplit(path).query)["offset"][0])
+        return first_page if offset == 0 else second_page
+
+    object.__setattr__(instance, "_request", request)
+
+    with pytest.raises(InterfacePaginationError, match=match):
+        instance._switch_interfaces("SERIAL1")
+
+    assert not instance.state_snapshot.has_switch("SERIAL1")
+
+
+def test_switch_interfaces_page_two_transport_failure_publishes_no_cache() -> None:
+    """A request failure after page one cannot expose page-one-only inventory."""
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+
+    def request(*, path, **_kwargs):
+        offset = int(parse_qs(urlsplit(path).query)["offset"][0])
+        if offset:
+            raise RuntimeError("page two unavailable")
+        return {
+            "interfaces": [{"interfaceName": "Ethernet1/1"}],
+            "meta": {"counts": {"total": 2, "remaining": 1}},
+        }
+
+    object.__setattr__(instance, "_request", request)
+
+    with pytest.raises(RuntimeError, match="page two unavailable"):
+        instance._switch_interfaces("SERIAL1")
+
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 # =============================================================================
@@ -539,6 +632,22 @@ def test_base_interface_00530() -> None:
     instance._queue_remove("loopback10", "FDO12345ABC")
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00540() -> None:
+    """Verify public queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    targets = [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD")]
+
+    instance.queue_deploy_targets([*targets, targets[0]])
+    instance.queue_remove_targets([*targets, targets[0]])
+
+    assert instance.pending_deploys == tuple(targets)
+    assert instance.pending_removes == tuple(targets)
 
 
 # =============================================================================
@@ -1516,7 +1625,7 @@ def _bulk_orchestrator_with_inventory(gen_responses: ResponseGenerator, names: l
     """Return a bulk-create stub whose cached inventory for FDO12345ABC holds `names` (no cache entry at all when `None`)."""
     instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(gen_responses))
     if names is not None:
-        instance._switch_interfaces_cache["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
+        instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
     return instance
 
 
@@ -1660,7 +1769,7 @@ def test_base_interface_00799() -> None:
 
     assert "inventory unavailable" not in str(exc_info.value)
     assert instance._pending_deploys == []
-    assert "FDO12345ABC" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("FDO12345ABC")
 
 
 def test_base_interface_00795() -> None:
@@ -2491,7 +2600,7 @@ def _xe_record(name: str, status: str | None, network_os_type: str = "ios-xe") -
 def _seeded_orchestrator(gen_responses: ResponseGenerator, records: list[dict]) -> _StubInterfaceOrchestrator:
     """Return a stub orchestrator whose inventory cache for CAT9KV1701 already holds `records` (no interface-list GET needed)."""
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses))
-    instance._switch_interfaces_cache["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
+    instance.state_snapshot._interfaces_by_switch["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
     return instance
 
 

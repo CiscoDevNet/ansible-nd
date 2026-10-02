@@ -17,9 +17,10 @@ inherit from this base and provide their own `model_class` and `_managed_policy_
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch resolution) from
 `NDBaseInterfaceOrchestrator` and adds vPC-specific functionality:
 
-- Peer-serial auto-resolution: each create/update reads the per-switch `vpcPair` endpoint to obtain the peer
-  serial, then injects it as `peerSwitchId` in the payload. Results are cached per orchestrator instance so
-  bulk operations make at most one lookup per primary switch.
+- Peer-serial auto-resolution: create/update injects the peer serial as `peerSwitchId` in the payload. Standalone
+  orchestrators resolve a cache miss through the per-switch `vpcPair` endpoint. The aggregate interface workflow
+  shares a cache seeded from its authoritative fabric-wide `vpcPairs` read, so its mutations need no per-primary
+  pair lookups.
 - Standard remove-based deletion (vPC interfaces are virtual and deletable).
 - Fabric-wide `query_all()` filtered by `interfaceType: "vpc"` and per-type policy filtering.
 
@@ -62,8 +63,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     Provides shared logic for all vPC interface types. Subclasses must set `model_class` and implement
     `_managed_policy_types()` to define which policy types they manage.
 
-    Each create/update reads the `vpcPair` record for the primary switch to obtain the peer serial, which is
-    then injected as `peerSwitchId` in the payload. Lookups are cached per orchestrator instance.
+    Each create/update obtains the peer serial from the active cache and injects it as `peerSwitchId` in the
+    payload. Standalone instances populate cache misses from `vpcPair`; aggregate workflows can share a cache
+    pre-seeded from an authoritative `vpcPairs` inventory.
 
     Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` issues an immediate
     per-interface `DELETE /interfaces/{name}` (the bulk `interfaceActions/remove` endpoint rejects vPC interfaces;
@@ -114,6 +116,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         super().model_post_init(__context)
         self._peer_serial_cache: dict[str, str] = {}
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run local platform and duplicate-pair safety without capability API calls."""
+        super().preflight_safety(model_instances)
+        self._validate_unique_pair_names(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -132,7 +139,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If two (or more) proposed items share an `interface_name` and resolve to the same vPC pair.
         - Propagated from `super().preflight` / `_resolve_switch_id` / `_resolve_peer_switch_id` (unresolvable switch, missing pair).
         """
-        super().preflight(model_instances)
+        self.preflight_safety(model_instances)
+        self.validate_switches_capable(model_instances)
+
+    def _validate_unique_pair_names(self, model_instances: Sequence[ModelType]) -> None:
+        """Reject one vPC name listed under both peers of the same pair."""
         items_by_name: dict[str, list[ModelType]] = {}
         for model_instance in model_instances:
             items_by_name.setdefault(model_instance.interface_name, []).append(model_instance)
@@ -153,6 +164,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if offenders:
             raise RuntimeError(f"Invalid vPC config in fabric '{self.fabric_name}': " + "; ".join(sorted(offenders)))
 
+    def share_peer_serial_cache(self, cache: dict[str, str]) -> None:
+        """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
+        self._peer_serial_cache = cache
+
     def _managed_policy_types(self) -> set[str]:
         """
         # Summary
@@ -172,9 +187,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Resolve the peer switch's serial number for the vPC pair containing `primary_serial`. Reads the per-switch
-        `vpcPair` endpoint. Caches the result per orchestrator instance so bulk operations issue at most one lookup
-        per primary switch.
+        Resolve the peer switch's serial number for the vPC pair containing `primary_serial`. Return a cached value
+        when available; otherwise read the per-switch `vpcPair` endpoint and cache the result. The active cache may
+        be shared with other aggregate-workflow vPC orchestrators.
 
         ## Raises
 
@@ -451,20 +466,18 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Fetch one switch's interface list and return the vPC interfaces whose policy type this orchestrator manages,
-        each enriched with the `switchIp` of the switch it was read from. Tolerates a missing body (`not_found_ok`) and
-        a non-dict body (the `isinstance` guard) without raising.
+        Read one switch's complete shared interface inventory and return the vPC interfaces whose policy type this orchestrator manages,
+        each enriched with the `switchIp` of the switch it was read from. The shared reader paginates, validates identities, and publishes
+        its cache only after the full collection succeeds.
 
         ## Raises
 
         ### Exception
 
-        - If the interface-list request fails (propagated to `query_all`'s wrapper).
+        - If the paginated interface-list request or completeness validation fails (propagated to `query_all`'s wrapper).
         """
-        api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-        interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-        managed = [iface for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
+        interfaces = self._switch_interfaces(switch_id).values()
+        managed = [dict(iface) for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
         for iface in managed:
             iface["switchIp"] = switch_ip
         return managed

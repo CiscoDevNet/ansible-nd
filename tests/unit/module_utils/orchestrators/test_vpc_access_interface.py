@@ -590,7 +590,7 @@ def _assert_idempotent(state_machine: NDStateMachine, spy: _SpyAccessVpcHostInte
     `changed` False."""
     before = list(state_machine.before)
     assert [(item.switch_ip, item.interface_name) for item in before] == [(expected_switch_ip, "vpc100")]
-    assert state_machine.results.path == expected_paths
+    assert [path.split("?", 1)[0] for path in state_machine.results.path] == expected_paths
     state_machine.manage_state()
     assert spy._calls == []
     assert state_machine.output.format()["changed"] is False

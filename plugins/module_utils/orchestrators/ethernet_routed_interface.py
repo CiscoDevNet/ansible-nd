@@ -111,6 +111,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetRoutedInterfaceModel
+    MEMBER_FAMILY: ClassVar[str] = "routed"
 
     # TODO(4.2.1) capable-switches-empty-for-ethernet-on-vxlan
     # Deliberate opt-OUT of the capability preflight (both ClassVars ""): the unpublished capableSwitches
@@ -225,4 +226,5 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
                 return False
             return not (state == "deleted" and self._is_ios_xe(iface))
 
-        return [iface for iface in result if in_scope(iface)]
+        filtered = [iface for iface in result if in_scope(iface)]
+        return self._append_named_member_projections(filtered)

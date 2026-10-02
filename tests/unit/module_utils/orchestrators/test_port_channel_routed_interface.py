@@ -204,21 +204,21 @@ def test_port_channel_routed_orchestrator_00200(ports, match) -> None:
 
     ## Classes and Methods
 
-    - PortChannelBaseOrchestrator.XE_MEMBER_HOST_POLICY
+    - interface_membership.get_member_policy_descriptor_for_parent()
     - PortChannelBaseOrchestrator._validate_xe_member_modes()
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
-        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=rest_send)
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_model(ports=ports)])
-    assert len(rest_send.responses) == 3
+    assert len(rest_send.responses) == 2
 
 
 def test_port_channel_routed_orchestrator_00210() -> None:
@@ -241,8 +241,8 @@ def test_port_channel_routed_orchestrator_00210() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
-        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
 
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with does_not_raise():
@@ -268,8 +268,8 @@ def test_port_channel_routed_orchestrator_00220() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
-        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
 
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel121"):
@@ -391,7 +391,7 @@ def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
 
     - Two NX-OS and two IOS-XE routed port-channels on two capable switches
     - `preflight` does not raise
-    - The first two responses are the switches list and the `capableSwitches` GET; four in all
+    - The responses are the switches list, both member inventories, and the `capableSwitches` GET; four in all
 
     ## Classes and Methods
 
@@ -401,7 +401,7 @@ def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
     method_name = inspect.stack()[0][3]
 
     def responses():
-        for key in "abcd":
+        for key in "acdb":
             yield responses_pc_routed(f"{method_name}{key}")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
@@ -417,7 +417,12 @@ def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
         instance.preflight(models)
 
     paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
-    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed"]
+    assert paths == [
+        "/api/v1/manage/fabrics/fabric_1/switches",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed",
+    ]
     assert len(rest_send.responses) == 4
 
 
@@ -442,6 +447,7 @@ def test_port_channel_routed_orchestrator_00410() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_00400d")
         yield responses_pc_routed(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))

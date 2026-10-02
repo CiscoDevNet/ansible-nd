@@ -411,12 +411,12 @@ def _build_trunk_model(interface_name: str, ports: list[str], switch_ip: str = "
 
 
 def _preflight_orchestrator(method_name: str) -> PortChannelTrunkHostInterfaceOrchestrator:
-    """Build an orchestrator whose responses are the switches list (a) then the member-conflict inventory (b)."""
+    """Build an orchestrator with safety inventory before the capability response."""
 
     def responses():
         yield responses_pc_trunk_host(f"{method_name}a")
-        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_capable_switches_shared")
         yield responses_pc_trunk_host(f"{method_name}b")
+        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_capable_switches_shared")
 
     return _build_orchestrator(ResponseGenerator(responses()), state="merged")
 
@@ -661,14 +661,65 @@ def test_port_channel_trunk_host_orchestrator_01100() -> None:
 
     def responses():
         yield responses_pc_trunk_host(f"{method_name}a")
-        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_capable_switches_shared")
         yield responses_pc_trunk_host(f"{method_name}b")
+        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
     match = r"required=iosXeTrunkHost.*nd_interface_ethernet_trunk_host"
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3"])])
+
+
+def test_port_channel_trunk_host_orchestrator_01110() -> None:
+    """The shared registry accepts an IOS-XE trunk member already owned by the same parent."""
+
+    switch_id = "FDO11111AAA"
+    member_name = "GigabitEthernet1/0/4"
+    model = _build_xe_pc_model(interface_name="port-channel103", ports=[member_name])
+    parent = {
+        "interfaceName": "port-channel103",
+        "interfaceType": "portChannel",
+        "switchId": switch_id,
+        "configData": {
+            "mode": "trunk",
+            "networkOS": {
+                "networkOSType": "ios-xe",
+                "policy": {
+                    "policyType": "iosXeTrunkPoHost",
+                    "ports": [member_name],
+                },
+            },
+        },
+    }
+    member = {
+        "interfaceName": member_name,
+        "interfaceType": "ethernet",
+        "switchId": switch_id,
+        "configData": {
+            "mode": "trunk",
+            "networkOS": {
+                "networkOSType": "ios-xe",
+                "policy": {
+                    "adminState": True,
+                    "policyType": "iosXeTrunkPoMember",
+                    "portChannelId": "Port-channel103",
+                    "portChannelMode": "active",
+                },
+            },
+        },
+        "operData": {"portChannelId": -1},
+    }
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.state_snapshot._interfaces_by_switch[switch_id] = {
+        parent["interfaceName"].lower(): parent,
+        member["interfaceName"].lower(): member,
+    }
+    object.__setattr__(instance, "_resolve_switch_id", lambda _switch_ip: switch_id)
+
+    with does_not_raise():
+        instance._validate_members_available([model])
+        instance._validate_xe_member_modes([model])
 
 
 # =============================================================================
@@ -783,7 +834,7 @@ def test_port_channel_trunk_host_orchestrator_01400(check_mode: bool) -> None:
 
     - Two NX-OS port-channels on switch A and two IOS-XE port-channels on the Catalyst; both switches are capable
     - `preflight` does not raise
-    - One switches GET and one `capableSwitches` GET, then one interface-list GET per switch for the member checks: four responses
+    - One switches GET, one interface-list GET per switch for the member checks, then one `capableSwitches` GET: four responses
 
     ## Classes and Methods
 
@@ -794,9 +845,9 @@ def test_port_channel_trunk_host_orchestrator_01400(check_mode: bool) -> None:
 
     def responses():
         yield responses_pc_trunk_host(f"{method_name}a")
-        yield responses_pc_trunk_host(f"{method_name}b")
         yield responses_pc_trunk_host(f"{method_name}c")
         yield responses_pc_trunk_host(f"{method_name}d")
+        yield responses_pc_trunk_host(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
     instance = PortChannelTrunkHostInterfaceOrchestrator(rest_send=rest_send)
@@ -811,7 +862,12 @@ def test_port_channel_trunk_host_orchestrator_01400(check_mode: bool) -> None:
         instance.preflight(models)
 
     paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
-    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=trunk"]
+    assert paths == [
+        "/api/v1/manage/fabrics/fabric_1/switches",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=trunk",
+    ]
     assert len(rest_send.responses) == 4
 
 
@@ -836,6 +892,7 @@ def test_port_channel_trunk_host_orchestrator_01410() -> None:
 
     def responses():
         yield responses_pc_trunk_host(f"{method_name}a")
+        yield responses_pc_trunk_host("test_port_channel_trunk_host_orchestrator_01400d")
         yield responses_pc_trunk_host(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))

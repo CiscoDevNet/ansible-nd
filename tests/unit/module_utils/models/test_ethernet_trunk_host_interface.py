@@ -1745,6 +1745,47 @@ def test_ethernet_trunk_host_interface_01040():
     assert instance.config_data.network_os.policy.native_vlan == 10
 
 
+def test_ethernet_trunk_host_interface_01041_vlan_mapping_pair_merges_atomically():
+    """A valid VLAN-mapping pair must not fail on the intermediate flag-only state."""
+    existing = EthernetTrunkHostPolicyModel(vlan_mapping=False)
+    proposed = EthernetTrunkHostPolicyModel(
+        vlan_mapping=True,
+        vlan_mapping_entries=[
+            {
+                "customer_inner_vlan_id": 3121,
+                "customer_vlan_id": ["3122-3123"],
+                "dot1q_tunnel": True,
+                "provider_vlan_id": 3120,
+            }
+        ],
+    )
+
+    merged = existing.merge(proposed)
+
+    assert merged is existing
+    assert merged.vlan_mapping is True
+    assert len(merged.vlan_mapping_entries) == 1
+    assert merged.vlan_mapping_entries[0].customer_inner_vlan_id == 3121
+    assert merged.vlan_mapping_entries[0].customer_vlan_id == ["3122-3123"]
+    assert merged.vlan_mapping_entries[0].dot1q_tunnel is True
+    assert merged.vlan_mapping_entries[0].provider_vlan_id == 3120
+
+
+def test_ethernet_trunk_host_interface_01042_invalid_vlan_mapping_merge_is_atomic():
+    """An invalid final VLAN-mapping pair is rejected before existing state changes."""
+    existing = EthernetTrunkHostPolicyModel(
+        vlan_mapping=True,
+        vlan_mapping_entries=[{"customer_vlan_id": ["100"], "provider_vlan_id": 200}],
+    )
+    proposed = EthernetTrunkHostPolicyModel(vlan_mapping_entries=[])
+    original = existing.model_dump()
+
+    with pytest.raises(ValueError, match=r"vlan_mapping_entries must be provided"):
+        existing.merge(proposed)
+
+    assert existing.model_dump() == original
+
+
 def test_ethernet_trunk_host_interface_01050():
     """
     # Summary

@@ -701,6 +701,23 @@ class RestSend:  # pylint: disable=too-many-public-methods
         """
         return copy.deepcopy(self._result)
 
+    @property
+    def result_count(self) -> int:
+        """
+        # Summary
+
+        Return the number of accumulated result records without copying the result history.
+
+        Like `response_count`, this is a cheap freshness token. Callers can snapshot both counts before a request and read
+        `response_current` / `result_current` only when the corresponding count grew, avoiding both stale-current attribution and
+        repeated deep copies of an ever-growing history.
+
+        ## Raises
+
+        None
+        """
+        return len(self._result)
+
     def add_result(self, value: dict) -> None:
         """
         # Summary

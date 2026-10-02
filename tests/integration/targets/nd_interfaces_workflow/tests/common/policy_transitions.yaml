@@ -1,0 +1,404 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Select physical Ethernet cases for policy-transition coverage
+  ansible.builtin.set_fact:
+    nd_iw_transition_access_cases: >-
+      {{ nd_iw_active_cases | selectattr('family', 'equalto', 'ethernet_access') | list }}
+    nd_iw_transition_trunk_cases: >-
+      {{ nd_iw_active_cases | selectattr('family', 'equalto', 'ethernet_trunk_host') | list }}
+
+- name: Exercise implicit physical Ethernet policy transitions and policy-independent deletion
+  when:
+    - nd_iw_transition_access_cases | length > 0
+    - nd_iw_transition_trunk_cases | length > 0
+  block:
+    - name: Build deterministic policy-transition fixtures
+      ansible.builtin.set_fact:
+        nd_iw_transition_access_source:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names:
+              - "{{ nd_iw_active_resources.ethernet_trunk_host.primary | first }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: "{{ nd_iw_active_resources.vlans.access }}"
+                  description: IW transition source access
+        nd_iw_transition_trunk_source:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names:
+              - "{{ nd_iw_active_resources.ethernet_access.primary | first }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  allowed_vlans: "{{ nd_iw_active_resources.vlans.allowed }}"
+                  native_vlan: "{{ nd_iw_active_resources.vlans.native }}"
+                  description: IW transition source trunk
+        nd_iw_transition_to_access:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names:
+              - "{{ nd_iw_active_resources.ethernet_access.primary | first }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: "{{ nd_iw_active_resources.vlans.access_alternate }}"
+                  description: IW transition target access
+        nd_iw_transition_to_trunk:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names:
+              - "{{ nd_iw_active_resources.ethernet_trunk_host.primary | first }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  allowed_vlans: all
+                  native_vlan: "{{ nd_iw_active_resources.vlans.native_alternate }}"
+                  description: IW transition target trunk
+        nd_iw_transition_delete_access_via_trunk:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names:
+              - "{{ nd_iw_active_resources.ethernet_access.primary | first }}"
+        nd_iw_transition_delete_trunk_via_access:
+          - switch_ip: "{{ nd_iw_active_switches.primary }}"
+            interface_names:
+              - "{{ nd_iw_active_resources.ethernet_trunk_host.primary | first }}"
+
+    - name: Exercise live cross-policy replacement in both directions
+      when: not nd_iw_module_check_mode
+      block:
+        - name: Configure a trunkHost source on the access transition port
+          cisco.nd.nd_interface_ethernet_trunk_host:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            state: merged
+            config: "{{ nd_iw_transition_trunk_source }}"
+            config_actions:
+              deploy: false
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Configure an accessHost source on the trunk transition port
+          cisco.nd.nd_interface_ethernet_access:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            state: merged
+            config: "{{ nd_iw_transition_access_source }}"
+            config_actions:
+              deploy: false
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Preview implicit merged and replaced physical Ethernet policy transitions
+          cisco.nd.nd_interfaces_workflow:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            resources:
+              - type: ethernet_access
+                state: merged
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                state: replaced
+                config: "{{ nd_iw_transition_to_trunk }}"
+            config_actions:
+              deploy: true
+            output_level: info
+          check_mode: true
+          register: nd_iw_transition_preview
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Verify transition preview metadata and zero-write behavior
+          ansible.builtin.assert:
+            that:
+              - nd_iw_transition_preview is changed
+              - nd_iw_transition_preview.planned_changed
+              - nd_iw_transition_preview.mutation_count == 2
+              - nd_iw_transition_preview.execution.status == 'check_mode'
+              - nd_iw_transition_preview.execution.mutations_sent == 0
+              - nd_iw_transition_preview.execution.deployments_sent == 0
+              - nd_iw_transition_preview.resources | length == 2
+              - nd_iw_transition_preview.resources[0].state == 'merged'
+              - nd_iw_transition_preview.resources[1].state == 'replaced'
+              - nd_iw_transition_preview.resources[0].operations | selectattr('action', 'equalto', 'create') | list | length == 0
+              - nd_iw_transition_preview.resources[1].operations | selectattr('action', 'equalto', 'create') | list | length == 0
+              - nd_iw_transition_preview.resources[0].operations | selectattr('action', 'equalto', 'transition') | list | length == 1
+              - nd_iw_transition_preview.resources[1].operations | selectattr('action', 'equalto', 'transition') | list | length == 1
+              - >-
+                nd_iw_transition_preview.resources[0].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="from_policy_type")
+                | list == ["trunkHost"]
+              - >-
+                nd_iw_transition_preview.resources[0].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="to_policy_type")
+                | list == ["accessHost"]
+              - >-
+                nd_iw_transition_preview.resources[1].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="from_policy_type")
+                | list == ["accessHost"]
+              - >-
+                nd_iw_transition_preview.resources[1].operations
+                | selectattr("action", "equalto", "transition")
+                | map(attribute="to_policy_type")
+                | list == ["trunkHost"]
+
+        - name: Apply both implicit physical Ethernet policy transitions
+          cisco.nd.nd_interfaces_workflow:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            resources:
+              - type: ethernet_access
+                state: merged
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                state: replaced
+                config: "{{ nd_iw_transition_to_trunk }}"
+            config_actions:
+              deploy: false
+            verify:
+              enabled: true
+            output_level: info
+          register: nd_iw_transition_apply
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Verify each transition used one successful mutation and no deployment
+          ansible.builtin.assert:
+            that:
+              - nd_iw_transition_apply is changed
+              - nd_iw_transition_apply.planned_changed
+              - nd_iw_transition_apply.mutation_count == 2
+              - nd_iw_transition_apply.execution.status == 'staged'
+              - nd_iw_transition_apply.execution.mutations_sent == 2
+              - nd_iw_transition_apply.execution.deployments_sent == 0
+              - nd_iw_transition_apply.resources | selectattr('after_verified', 'equalto', true) | list | length == 2
+              - >-
+                nd_iw_transition_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | length == 2
+              - >-
+                nd_iw_transition_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | selectattr("action", "equalto", "transition")
+                | selectattr("status", "equalto", "succeeded")
+                | list
+                | length == 2
+
+        - name: Independently verify transitioned policy and description fingerprints
+          ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_verify_inventory.yaml"
+          vars:
+            nd_iw_raw_verify_mode: present
+            nd_iw_raw_workflow_result: "{{ nd_iw_transition_apply }}"
+            nd_iw_raw_identity_resources:
+              - type: ethernet_access
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                config: "{{ nd_iw_transition_to_trunk }}"
+            nd_iw_raw_fingerprint_resources:
+              - type: ethernet_access
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                config: "{{ nd_iw_transition_to_trunk }}"
+
+        - name: Reapply transitioned intent for idempotency
+          cisco.nd.nd_interfaces_workflow:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            resources:
+              - type: ethernet_access
+                state: merged
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                state: replaced
+                config: "{{ nd_iw_transition_to_trunk }}"
+            config_actions:
+              deploy: "{{ nd_iw_enable_deploy | bool }}"
+            output_level: normal
+          register: nd_iw_transition_idempotent
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Verify transitioned intent is idempotent without writes or deployment
+          ansible.builtin.assert:
+            that:
+              - nd_iw_transition_idempotent is not changed
+              - not nd_iw_transition_idempotent.planned_changed
+              - nd_iw_transition_idempotent.mutation_count == 0
+              - nd_iw_transition_idempotent.execution.status == 'no_change'
+              - nd_iw_transition_idempotent.execution.mutations_sent == 0
+              - nd_iw_transition_idempotent.execution.deployments_sent == 0
+              - nd_iw_transition_idempotent.resources[0].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
+              - nd_iw_transition_idempotent.resources[1].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
+
+        - name: Preview policy-independent deletion through the opposite Ethernet types
+          cisco.nd.nd_interfaces_workflow:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            resources:
+              - type: ethernet_trunk_host
+                state: deleted
+                config: "{{ nd_iw_transition_delete_access_via_trunk }}"
+              - type: ethernet_access
+                state: deleted
+                config: "{{ nd_iw_transition_delete_trunk_via_access }}"
+            config_actions:
+              deploy: true
+            output_level: info
+          check_mode: true
+          register: nd_iw_transition_delete_preview
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Verify policy-independent delete preview and zero-write behavior
+          ansible.builtin.assert:
+            that:
+              - nd_iw_transition_delete_preview is changed
+              - nd_iw_transition_delete_preview.planned_changed
+              - nd_iw_transition_delete_preview.mutation_count == 2
+              - nd_iw_transition_delete_preview.execution.status == 'check_mode'
+              - nd_iw_transition_delete_preview.execution.mutations_sent == 0
+              - nd_iw_transition_delete_preview.execution.deployments_sent == 0
+              - nd_iw_transition_delete_preview.resources | length == 2
+              - nd_iw_transition_delete_preview.resources[0].operations | selectattr('action', 'equalto', 'reset') | list | length == 1
+              - nd_iw_transition_delete_preview.resources[1].operations | selectattr('action', 'equalto', 'reset') | list | length == 1
+              - nd_iw_transition_delete_preview.resources[0].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
+              - nd_iw_transition_delete_preview.resources[1].operations | selectattr('action', 'equalto', 'transition') | list | length == 0
+
+        - name: Apply policy-independent deletion through the opposite Ethernet types
+          cisco.nd.nd_interfaces_workflow:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            resources:
+              - type: ethernet_trunk_host
+                state: deleted
+                config: "{{ nd_iw_transition_delete_access_via_trunk }}"
+              - type: ethernet_access
+                state: deleted
+                config: "{{ nd_iw_transition_delete_trunk_via_access }}"
+            config_actions:
+              deploy: false
+            output_level: info
+          register: nd_iw_transition_delete_apply
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Verify both physical deletes shared one normalize request
+          ansible.builtin.assert:
+            that:
+              - nd_iw_transition_delete_apply is changed
+              - nd_iw_transition_delete_apply.planned_changed
+              - nd_iw_transition_delete_apply.mutation_count == 2
+              - nd_iw_transition_delete_apply.execution.status == 'staged'
+              - nd_iw_transition_delete_apply.execution.mutations_sent == 1
+              - nd_iw_transition_delete_apply.execution.deployments_sent == 0
+              - >-
+                nd_iw_transition_delete_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | length == 2
+              - >-
+                nd_iw_transition_delete_apply.resources
+                | map(attribute="operations")
+                | flatten
+                | selectattr("action", "equalto", "reset")
+                | selectattr("status", "equalto", "succeeded")
+                | list
+                | length == 2
+
+        - name: Independently verify transitioned intent was reset
+          ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_verify_inventory.yaml"
+          vars:
+            nd_iw_raw_verify_mode: absent
+            nd_iw_raw_workflow_result: "{{ nd_iw_transition_delete_apply }}"
+            nd_iw_raw_identity_resources:
+              - type: ethernet_access
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                config: "{{ nd_iw_transition_to_trunk }}"
+            nd_iw_raw_fingerprint_resources:
+              - type: ethernet_access
+                config: "{{ nd_iw_transition_to_access }}"
+              - type: ethernet_trunk_host
+                config: "{{ nd_iw_transition_to_trunk }}"
+
+        - name: Verify both physical interfaces now use the default trunk policy
+          vars:
+            nd_iw_transition_default_policy_keys:
+              - >-
+                {{ nd_iw_raw_switch_id_by_ip[nd_iw_active_switches.primary]
+                   ~ '|' ~ (nd_iw_active_resources.ethernet_access.primary | first | lower)
+                   ~ '|trunkHost' }}
+              - >-
+                {{ nd_iw_raw_switch_id_by_ip[nd_iw_active_switches.primary]
+                   ~ '|' ~ (nd_iw_active_resources.ethernet_trunk_host.primary | first | lower)
+                   ~ '|trunkHost' }}
+          ansible.builtin.assert:
+            that:
+              - >-
+                nd_iw_transition_default_policy_keys
+                | difference(nd_iw_raw_observed_policy_keys)
+                | length == 0
+
+        - name: Reapply policy-independent deletion for idempotency
+          cisco.nd.nd_interfaces_workflow:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            resources:
+              - type: ethernet_trunk_host
+                state: deleted
+                config: "{{ nd_iw_transition_delete_access_via_trunk }}"
+              - type: ethernet_access
+                state: deleted
+                config: "{{ nd_iw_transition_delete_trunk_via_access }}"
+            config_actions:
+              deploy: "{{ nd_iw_enable_deploy | bool }}"
+            output_level: normal
+          register: nd_iw_transition_delete_idempotent
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+        - name: Verify policy-independent deletion is idempotent
+          ansible.builtin.assert:
+            that:
+              - nd_iw_transition_delete_idempotent is not changed
+              - not nd_iw_transition_delete_idempotent.planned_changed
+              - nd_iw_transition_delete_idempotent.mutation_count == 0
+              - nd_iw_transition_delete_idempotent.execution.status == 'no_change'
+              - nd_iw_transition_delete_idempotent.execution.mutations_sent == 0
+              - nd_iw_transition_delete_idempotent.execution.deployments_sent == 0
+
+
+      always:
+        - name: Remove accessHost intent from both transition ports
+          cisco.nd.nd_interface_ethernet_access:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            state: deleted
+            config:
+              - switch_ip: "{{ nd_iw_active_switches.primary }}"
+                interface_names:
+                  - "{{ nd_iw_active_resources.ethernet_access.primary | first }}"
+                  - "{{ nd_iw_active_resources.ethernet_trunk_host.primary | first }}"
+            config_actions:
+              deploy: false
+          register: nd_iw_transition_access_cleanup
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+          ignore_errors: true
+          when: not nd_iw_module_check_mode
+
+        - name: Remove trunkHost intent from both transition ports
+          cisco.nd.nd_interface_ethernet_trunk_host:
+            fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+            state: deleted
+            config:
+              - switch_ip: "{{ nd_iw_active_switches.primary }}"
+                interface_names:
+                  - "{{ nd_iw_active_resources.ethernet_access.primary | first }}"
+                  - "{{ nd_iw_active_resources.ethernet_trunk_host.primary | first }}"
+            config_actions:
+              deploy: false
+          register: nd_iw_transition_trunk_cleanup
+          delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+          ignore_errors: true
+          when: not nd_iw_module_check_mode
+
+        - name: Require successful cleanup of both transition source families
+          ansible.builtin.assert:
+            that:
+              - not (nd_iw_transition_access_cleanup.failed | default(false) | bool)
+              - not (nd_iw_transition_trunk_cleanup.failed | default(false) | bool)
+            fail_msg: >-
+              Policy-transition cleanup failed. access={{ nd_iw_transition_access_cleanup.msg | default('ok') }};
+              trunk={{ nd_iw_transition_trunk_cleanup.msg | default('ok') }}.
+          when: not nd_iw_module_check_mode
