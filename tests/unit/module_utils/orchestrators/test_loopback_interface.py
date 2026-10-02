@@ -1535,8 +1535,8 @@ def test_loopback_interface_01030() -> None:
     rest_send = _mpls_rest_send(method_name, "abcd")
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
 
-    match = r"Could not remove the placeholder loopback\(s\) \['loopback30'\] \(.*\); they remain staged as plain loopbacks\. "
-    match += r"Remove them with state: deleted\."
+    match = r"Could not remove the placeholder loopback\(s\) \['loopback30'\] \(.*\); they remain staged "
+    match += r"\(as plain loopbacks, or as mplsLoopback where the failed PUT was applied\)\. Remove them with state: deleted\."
     with pytest.raises(RuntimeError, match=match):
         instance.create_bulk([_build_mpls_loopback_model(interface_name="loopback30")])
 
@@ -1710,6 +1710,42 @@ def test_loopback_interface_01080() -> None:
         instance.create_bulk(models)
 
     assert rest_send.committed_payload == _remove_body(SWITCH_A, "loopback30")
+    assert instance._pending_deploys == []
+    assert SWITCH_A not in instance._switch_interfaces_cache
+
+
+def test_loopback_interface_01085() -> None:
+    """
+    # Summary
+
+    Verify the rollback only removes what carries the placeholder signature: after a flat 500, an interface the inventory re-read shows
+    under a submitted name but which another actor created (`adminState` true, has an `ip`) is never removed.
+
+    ## Test
+
+    - The switch inventory is cached first (loopback10 only)
+    - Two `mplsLoopback` models; placeholder POST returns a flat 500
+    - The inventory re-read shows loopback30 with `adminState: true` and an `ip`
+    - `RuntimeError` is raised without a `Removed the placeholder` sentence, and no remove request is sent
+    - Nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._create_mpls_loopbacks_on_switch()
+    - LoopbackInterfaceOrchestrator._is_mpls_placeholder()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcd")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._switch_interfaces(SWITCH_A)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.create_bulk(models)
+
+    assert "Removed the placeholder" not in str(exc_info.value)
+    assert "Could not remove" not in str(exc_info.value)
+    assert rest_send.response_count == 4
     assert instance._pending_deploys == []
 
 
@@ -1968,10 +2004,12 @@ def test_loopback_interface_00940() -> None:
     """
     # Summary
 
-    Verify the handoff preflight also covers a policy-type transition: an existing plain `loopback` proposed as `mplsLoopback`.
+    Verify the handoff preflight also covers a policy-type transition: an existing plain `loopback` proposed as `mplsLoopback`. The
+    request is built with `state: replaced`, the state under which the transition is possible.
 
     ## Test
 
+    - `state` is `replaced`
     - loopback30 (`mplsLoopback`) is proposed; the switch inventory shows it as a plain `loopback`
     - Fabric details report `management.mplsHandoff: false`
     - `RuntimeError` names the interface
@@ -1981,11 +2019,39 @@ def test_loopback_interface_00940() -> None:
     - LoopbackInterfaceOrchestrator._check_mpls_handoff()
     """
     method_name = inspect.stack()[0][3]
-    rest_send = _mpls_rest_send(method_name, "abc")
+    rest_send = _mpls_rest_send(method_name, "abc", state="replaced")
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
 
     with pytest.raises(RuntimeError, match=HANDOFF_OFF):
         instance._check_mpls_handoff([_build_mpls_loopback_model(interface_name="loopback30")])
+
+
+def test_loopback_interface_00945() -> None:
+    """
+    # Summary
+
+    Verify `state: merged` leaves a policy-type change to the merge guard: an existing plain `loopback` proposed as `mplsLoopback` does
+    not trip the handoff check, because `merged` never changes an existing interface's policy type.
+
+    ## Test
+
+    - `state` is `merged`
+    - loopback30 (`mplsLoopback`) is proposed; the switch inventory shows it as a plain `loopback`
+    - No exception
+    - Two requests were sent: switches list and switch inventory (no fabric details GET)
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_mpls_handoff()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "ab", state="merged")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_mpls_handoff([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.response_count == 2
 
 
 def test_loopback_interface_00950() -> None:
@@ -2069,3 +2135,112 @@ def test_loopback_interface_00970() -> None:
 
     with pytest.raises(RuntimeError, match=r"GET /api/v1/manage/fabrics/fabric_1 failed"):
         instance._check_mpls_handoff([_build_mpls_loopback_model(interface_name="loopback30")])
+
+
+def test_loopback_interface_00921() -> None:
+    """
+    # Summary
+
+    Verify the handoff preflight gives no verdict when the fabric details request returns 404, so `fabric_details` is `None`.
+
+    ## Test
+
+    - loopback30 (`mplsLoopback`) is proposed and absent from the switch inventory
+    - The fabric details GET returns 404
+    - No exception
+    - Three requests were sent: switches list, switch inventory, fabric details
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_mpls_handoff()
+    - FabricContext.fabric_details
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abc")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_mpls_handoff([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.response_count == 3
+
+
+def test_loopback_interface_00922() -> None:
+    """
+    # Summary
+
+    Verify the handoff preflight gives no verdict when the fabric body's `management` is not a dict.
+
+    ## Test
+
+    - loopback30 (`mplsLoopback`) is proposed and absent from the switch inventory
+    - Fabric details carry `"management": "unexpected"`
+    - No exception
+    - Three requests were sent: switches list, switch inventory, fabric details
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_mpls_handoff()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abc")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_mpls_handoff([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.response_count == 3
+
+
+def test_loopback_interface_01130(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the request bodies of the whole two-request create. The file-backed `Sender` ignores what is sent, so this records the
+    `_request` calls and checks the placeholder POST never carries the `mplsLoopback` policy while each PUT does.
+
+    ## Test
+
+    - Two `mplsLoopback` models on one switch; `_request` is wrapped at class level to record `(verb, path, data)`
+    - Write request 1 is one POST to the switch's interfaces path with two items, each carrying exactly the placeholder policy
+    - Write requests 2 and 3 are PUTs for loopback30 and loopback31 with `policyType: mplsLoopback`, the `dciRoutingTag` default, no
+      `vrfInterface`, and `switchId`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - LoopbackInterfaceOrchestrator._mpls_placeholder_item()
+    - MplsLoopbackPolicyModel.payload_defaults
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcd")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    recorded: list[tuple[str, str, dict | None]] = []
+    original_request = LoopbackInterfaceOrchestrator._request
+
+    def _recording_request(self, *args, **kwargs):
+        recorded.append((str(kwargs["verb"].value), kwargs["path"], kwargs.get("data")))
+        return original_request(self, *args, **kwargs)
+
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_request", _recording_request)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    with does_not_raise():
+        instance.create_bulk(models)
+
+    writes = [request for request in recorded if request[0] != "GET"]
+    assert len(writes) == 3
+    base = "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces"
+    verb, path, data = writes[0]
+    assert (verb, path) == ("POST", base)
+    assert len(data["interfaces"]) == 2
+    for item in data["interfaces"]:
+        assert item["configData"]["networkOS"]["policy"] == {"policyType": "loopback", "adminState": False, "vrfInterface": "management"}
+    for write, name in zip(writes[1:], ["loopback30", "loopback31"]):
+        verb, path, data = write
+        policy = data["configData"]["networkOS"]["policy"]
+        assert (verb, path) == ("PUT", f"{base}/{name}")
+        assert policy["policyType"] == "mplsLoopback"
+        assert policy["dciRoutingTag"] == "MPLS_UNDERLAY"
+        assert "vrfInterface" not in policy
+        assert data["switchId"] == SWITCH_A
