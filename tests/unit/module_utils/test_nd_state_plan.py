@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
@@ -15,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlanner
+from ansible_collections.cisco.nd.tests.unit.module_utils.state_reconciliation_helpers import PlanModel, collection
 
 
 def _loopback(name: str, *, ip: str | None = None, description: str | None = None) -> dict:
@@ -45,6 +48,83 @@ def test_merged_plan_preserves_unspecified_current_fields_without_mutating_befor
     assert policy["ip"] == "192.0.2.10"
     assert policy["description"] == "new"
     assert before.to_ansible_config() == original_before
+
+
+@pytest.mark.parametrize("state,creates,deletes", [("replaced", 1, 0), ("overridden", 1, 1), ("deleted", 0, 1), ("merged", 1, 0)])
+def test_synthetic_state_operations(state, creates, deletes):
+    before = collection(PlanModel(name="old"))
+    desired = collection(PlanModel(name="new")) if state != "deleted" else collection(PlanModel(name="old"))
+    plan = NDStatePlanner.plan(state=state, before=before, proposed=desired)
+    assert len(plan.creates) == creates
+    assert len(plan.deletes) == deletes
+    assert before.keys() == ["old"]
+    assert plan.changed
+
+
+def test_replacement_preserves_dynamic_values():
+    plan = NDStatePlanner.plan(
+        state="replaced", before=collection(PlanModel(name="a", value="old", dynamic="assigned")), proposed=collection(PlanModel(name="a", value="new"))
+    )
+    assert plan.updates[0].dynamic == "assigned"
+
+
+@pytest.mark.parametrize("state", ["replaced", "deleted"])
+def test_unsupported_explicit_target_rejected(state):
+    with pytest.raises(ValueError, match="Unsupported"):
+        NDStatePlanner.plan(state=state, before=collection(PlanModel(name="a", is_unsupported_policy=True)), proposed=collection(PlanModel(name="a")))
+
+
+def test_override_retains_unsupported_omitted_object():
+    plan = NDStatePlanner.plan(state="overridden", before=collection(PlanModel(name="a", is_unsupported_policy=True)), proposed=collection())
+    assert not plan.changed
+    assert plan.after.keys() == ["a"]
+
+
+def test_empty_deleted_and_identical_replacement_are_noops():
+    before = collection(PlanModel(name="a"))
+    assert not NDStatePlanner.plan(state="replaced", before=before, proposed=before).changed
+    assert not NDStatePlanner.plan(state="deleted", before=before, proposed=collection()).changed
+
+
+def test_public_dataclass_replacement_supports_before_and_operation_rewrites():
+    plan = NDStatePlanner.plan(state="overridden", before=collection(PlanModel(name="old")), proposed=collection(PlanModel(name="new")))
+    before = collection(PlanModel(name="inventory"))
+    rewritten = replace(plan, before=before, creates=(), deletes=plan.deletes + plan.creates)
+    assert rewritten.before is before
+    assert rewritten.creates == ()
+    assert [item.name for item in rewritten.deletes] == ["old", "new"]
+    assert rewritten.after is plan.after
+    assert [item.name for item in plan.creates] == ["new"]
+
+
+@pytest.mark.parametrize("size", [1000, 2000])
+def test_noop_planning_copies_inventory_once(monkeypatch, size):
+    before = collection(*(PlanModel(name=str(index)) for index in range(size)))
+    copied_sizes = []
+    original_copy = NDConfigCollection.copy
+
+    def counted_copy(items):
+        copied_sizes.append(len(items))
+        return original_copy(items)
+
+    monkeypatch.setattr(NDConfigCollection, "copy", counted_copy)
+    plan = NDStatePlanner.plan(state="replaced", before=before, proposed=before)
+    assert not plan.changed
+    assert copied_sizes == [size]
+
+
+def test_override_deletes_omitted_inventory_in_one_batch(monkeypatch):
+    deleted_batches = []
+    original_delete = NDConfigCollection.delete_many
+
+    def counted_delete(items, keys):
+        deleted_batches.append(set(keys))
+        return original_delete(items, keys)
+
+    monkeypatch.setattr(NDConfigCollection, "delete_many", counted_delete)
+    plan = NDStatePlanner.plan(state="overridden", before=collection(PlanModel(name="a"), PlanModel(name="b")), proposed=collection())
+    assert deleted_batches == [{"a", "b"}]
+    assert set(item.name for item in plan.deletes) == {"a", "b"}
 
 
 def test_overridden_plan_calculates_update_create_delete_and_after_state() -> None:
