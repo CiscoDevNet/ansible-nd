@@ -12,6 +12,7 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
+    NDStateMachineError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_campus_ibgp_vxlan import (
     ManageCampusIbgpVxlanFabricOrchestrator,
@@ -193,3 +194,28 @@ def test_nd_state_machine_campus_fabric_00050() -> None:
     assert len(instance.sent) == 0
     assert len(instance.removed) == 1
     assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_campus_fabric_00060() -> None:
+    """A partial merged update preserves the ASN already stored on the fabric."""
+    instance = _run(
+        "merged",
+        [{"fabric_name": "campus1", "management": {"performance_monitoring": True}}],
+        [_fabric_response()],
+    )
+
+    calls = instance.model_orchestrator._calls
+    assert [operation_name for operation_name, _model in calls] == ["update"]
+    updated = calls[0][1]
+    assert updated.management.bgp_asn == "65001"
+    assert updated.management.performance_monitoring is True
+
+
+def test_nd_state_machine_campus_fabric_00070() -> None:
+    """The same partial input fails locally when the named fabric does not exist."""
+    with pytest.raises(NDStateMachineError, match=r"management\.bgp_asn is required when creating.*campus1"):
+        _run(
+            "merged",
+            [{"fabric_name": "campus1", "management": {"performance_monitoring": True}}],
+            [],
+        )

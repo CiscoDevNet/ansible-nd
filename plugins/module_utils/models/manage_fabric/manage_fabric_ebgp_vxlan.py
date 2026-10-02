@@ -44,7 +44,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 
 # Re-use shared nested models from the common module
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    BGP_ASN_RE,
+    bgp_asn_to_site_id,
+    validate_bgp_asn_value,
+    validate_site_id_value,
     BootstrapSubnetModel,
     NetflowSettingsModel,
 )
@@ -154,8 +156,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
-    bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
-    site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
+    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].", default=None)
+    site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default=None)
     bgp_as_mode: BgpAsModeEnum = Field(
         alias="bgpAsMode",
         description=(
@@ -811,7 +813,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str) -> str:
+    def validate_bgp_asn(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -821,13 +823,11 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If value does not match the expected ASN format
         """
-        if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
-        return value
+        return validate_bgp_asn_value(value)
 
     @field_validator("site_id")
     @classmethod
-    def validate_site_id(cls, value: str) -> str:
+    def validate_site_id(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -837,14 +837,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If site ID is not numeric or outside valid range
         """
-        if value == "":
-            return value
-        if not value.isdigit():
-            raise ValueError(f"Site ID must be numeric, got: {value}")
-        site_id_int = int(value)
-        if not (1 <= site_id_int <= 281474976710655):
-            raise ValueError(f"Site ID must be between 1 and 281474976710655, got: {site_id_int}")
-        return value
+        return validate_site_id_value(value)
 
     @field_validator("anycast_gateway_mac")
     @classmethod
@@ -895,10 +888,5 @@ class FabricEbgpModel(FabricBaseModel):
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id == "":
-            bgp_asn = self.management.bgp_asn
-            if "." in bgp_asn:
-                high, low = bgp_asn.split(".")
-                self.management.site_id = str(int(high) * 65536 + int(low))
-            else:
-                self.management.site_id = bgp_asn
+        if self.management is not None and self.management.site_id in (None, "") and self.management.bgp_asn is not None:
+            self.management.site_id = bgp_asn_to_site_id(self.management.bgp_asn)

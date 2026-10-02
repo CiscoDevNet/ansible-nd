@@ -29,7 +29,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     VlanTrunkingProtocolModeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    BGP_ASN_RE,
+    bgp_asn_to_site_id,
+    validate_bgp_asn_value,
+    validate_site_id_value,
     BootstrapSubnetModel,
     NetflowSettingsModel,
 )
@@ -100,9 +102,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # Core Configuration (from vxlanProperties)
-    bgp_asn: str = Field(
+    bgp_asn: str | None = Field(
         alias="bgpAsn",
         description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]",
+        default=None,
     )
 
     # Internal wire field propagated from FabricCampusIbgpVxlanModel.fabric_name.
@@ -266,7 +269,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     site_id: str | None = Field(
         alias="siteId",
         description="EVPN Multi-Site Support. Defaults to Fabric ASN",
-        default="",
+        default=None,
     )
     fabric_mtu: int = Field(
         alias="fabricMtu",
@@ -676,7 +679,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str) -> str:
+    def validate_bgp_asn(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -686,26 +689,13 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
 
         - `ValueError` - If the value does not match the expected ASN format
         """
-        if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
-        return value
+        return validate_bgp_asn_value(value)
 
     @field_validator("site_id")
     @classmethod
     def validate_site_id(cls, value: str | None) -> str | None:
         """Validate the Campus site ID accepted by the 4.2.1/4.3.1 schemas."""
-        if value in (None, ""):
-            return value
-        if "." in value:
-            if not BGP_ASN_RE.match(value):
-                raise ValueError(f"Invalid dotted site ID: {value}")
-            return value
-        if not value.isdigit():
-            raise ValueError(f"Site ID must be numeric or dotted ASN notation, got: {value}")
-        site_id = int(value)
-        if not (1 <= site_id <= 281474976710655):
-            raise ValueError(f"Site ID must be between 1 and 281474976710655, got: {site_id}")
-        return value
+        return validate_site_id_value(value)
 
     @field_validator("anycast_gateway_mac")
     @classmethod
@@ -739,10 +729,5 @@ class FabricCampusIbgpVxlanModel(FabricBaseModel):
     def _post_validate_consistency(self) -> None:
         """Default the Campus site ID to the fabric BGP ASN."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id == "":
-            bgp_asn = self.management.bgp_asn
-            if "." in bgp_asn:
-                high, low = bgp_asn.split(".")
-                self.management.site_id = str(int(high) * 65536 + int(low))
-            else:
-                self.management.site_id = bgp_asn
+        if self.management is not None and self.management.site_id in (None, "") and self.management.bgp_asn is not None:
+            self.management.site_id = bgp_asn_to_site_id(self.management.bgp_asn)

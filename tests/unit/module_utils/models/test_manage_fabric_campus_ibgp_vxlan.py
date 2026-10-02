@@ -101,7 +101,7 @@ def test_manage_fabric_campus_ibgp_vxlan_00040(bgp_asn: str) -> None:
         )
 
 
-@pytest.mark.parametrize("site_id", ("0", "281474976710656", "65536.1", "1.65536", "1.2.3", "not-a-site"))
+@pytest.mark.parametrize("site_id", ("0", "01", "281474976710656", "65536.1", "1.65536", "1.2.3", "not-a-site"))
 def test_manage_fabric_campus_ibgp_vxlan_00050(site_id: str) -> None:
     """Site ID validation rejects malformed and out-of-range values."""
     with pytest.raises(ValidationError, match="site ID|Site ID"):
@@ -198,7 +198,7 @@ def test_manage_fabric_campus_ibgp_vxlan_00110() -> None:
     assert "category" not in config_options
     assert "type" not in management_options
     assert "name" not in management_options
-    assert management_options["bgp_asn"] == {"type": "str", "required": True}
+    assert management_options["bgp_asn"] == {"type": "str"}
     assert management_options["bgp_fast_convergence"] == {"type": "bool"}
     assert management_options["management_ipv4_prefix"] == {"type": "int"}
     assert management_options["vlan_trunking_protocol_mode"] == {

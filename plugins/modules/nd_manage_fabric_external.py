@@ -100,8 +100,9 @@ options:
           bgp_asn:
             description:
             - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
+            - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
+            - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-            required: true
           aaa:
             description:
             - Include AAA configs from Advanced tab during device bootup.
@@ -185,7 +186,6 @@ options:
             description:
             - DHCP Scope End Address For Switch POAP.
             type: str
-            default: ""
           dhcp_protocol_version:
             description:
             - IP protocol version for Local DHCP Server.
@@ -196,7 +196,6 @@ options:
             description:
             - DHCP Scope Start Address For Switch POAP.
             type: str
-            default: ""
           dns_collection:
             description:
             - List of IPv4 and IPv6 DNS addresses.
@@ -262,7 +261,6 @@ options:
             description:
             - Default Gateway For Management VRF On The Switch.
             type: str
-            default: ""
           management_ipv4_prefix:
             description:
             - Switch Mgmt IP Subnet Prefix if ipv4.
@@ -288,6 +286,7 @@ options:
             description:
             - Underlay MPLS Loopback Identifier.
             type: int
+            default: 101
           mpls_loopback_ip_range:
             description:
             - MPLS Loopback IP Address Range.
@@ -445,7 +444,6 @@ options:
             description:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
             type: str
-            default: ""
           snmp_trap:
             description:
             - Configure Nexus Dashboard as a receiver for SNMP traps.
@@ -749,6 +747,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool

@@ -101,8 +101,9 @@ options:
           bgp_asn:
             description:
             - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
+            - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
+            - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-            required: true
           target_subnet_mask:
             description:
             - Mask for underlay subnet IP range.
@@ -240,8 +241,10 @@ options:
             default: false
           site_id:
             description:
-            - EVPN Multi-Site Support. Defaults to Fabric ASN.
-            - Plain site ID values above C(4294967295) require Nexus Dashboard 4.3.1 or later.
+            - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
+            - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
+            - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
+            - Defaults to the value of O(config.management.bgp_asn) if not provided.
             type: str
           fabric_mtu:
             description:
@@ -991,6 +994,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool
