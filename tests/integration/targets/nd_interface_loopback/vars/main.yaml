@@ -128,6 +128,7 @@ loopback_207_mpls:
         dci_routing_protocol: isis
         dci_routing_tag: MPLS_UNDERLAY
 
+# Omits admin_state and the dci_* options on purpose: the create must apply the documented defaults.
 loopback_208_mpls:
   switch_ip: "{{ test_switch_ip }}"
   interface_name: loopback208
@@ -136,11 +137,8 @@ loopback_208_mpls:
       network_os_type: nx-os
       policy:
         policy_type: mplsLoopback
-        admin_state: true
         ip: "10.101.0.208"
         description: "Ansible integration test mpls loopback208"
-        dci_routing_protocol: isis
-        dci_routing_tag: MPLS_UNDERLAY
 
 loopback_207_mpls_replaced:
   switch_ip: "{{ test_switch_ip }}"
