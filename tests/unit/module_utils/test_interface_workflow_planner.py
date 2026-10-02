@@ -331,6 +331,53 @@ def test_ethernet_adapter_accepts_the_grouped_standalone_input_contract() -> Non
     assert proposed.keys() == [("192.0.2.1", "Ethernet1/1"), ("192.0.2.1", "Ethernet1/2")]
 
 
+def test_ethernet_trunk_vlan_mapping_plan_retains_entries() -> None:
+    """The aggregate path inherits the standalone atomic VLAN-mapping merge."""
+    current = _wire_interface(
+        "Ethernet1/44",
+        "ethernet",
+        "trunkHost",
+        mode="trunk",
+        vlanMapping=False,
+    )
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+    config = {
+        "switch_ip": "192.0.2.1",
+        "interface_names": ["Ethernet1/44"],
+        "config_data": {
+            "network_os": {
+                "policy": {
+                    "vlan_mapping": True,
+                    "vlan_mapping_entries": [
+                        {
+                            "customer_inner_vlan_id": 3121,
+                            "customer_vlan_id": ["3122-3123"],
+                            "dot1q_tunnel": True,
+                            "provider_vlan_id": 3120,
+                        }
+                    ],
+                }
+            }
+        },
+    }
+
+    plan = planner.plan([{"type": "ethernet_trunk_host", "state": "merged", "config": [config]}])
+
+    assert plan.changed is True
+    assert plan.mutation_count == 1
+    policy = plan.to_dict()["resources"][0]["after"][0]["config_data"]["network_os"]["policy"]
+    assert policy["vlan_mapping"] is True
+    assert policy["vlan_mapping_entries"] == [
+        {
+            "customer_inner_vlan_id": 3121,
+            "customer_vlan_id": ["3122-3123"],
+            "dot1q_tunnel": True,
+            "provider_vlan_id": 3120,
+        }
+    ]
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
 def test_check_mode_planning_rejects_platform_mismatch_before_any_write() -> None:
     """The read-only planner applies develop's platform guard to every planned aggregate write."""
     planner, recorder = _planner(responses=[{"interfaces": []}])
