@@ -217,13 +217,16 @@ class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
     """
     # Summary
 
-    Policy fields for the NX-OS `mplsLoopback` template. Maps to `configData.networkOS.policy` where
-    `policyType == "mplsLoopback"`. Note: `mplsLoopback` is lab-verified creatable but absent from the ND create-side
-    discriminator enum (spec drift); modelled per the template and wire.
+    Policy fields for the NX-OS `mplsLoopback` template. Maps to `configData.networkOS.policy` where `policyType == "mplsLoopback"`.
+    ND 4.3.1 rejects this policy type on the create `POST` (its create discriminator maps only `loopback`, `ipfmLoopback` and
+    `userDefined`), so `LoopbackInterfaceOrchestrator` creates it in two requests: a plain `loopback` `POST`, then a `PUT` to this policy.
+    ND 4.2.1 accepts both forms.
 
     ## Raises
 
-    None
+    ### ValueError
+
+    - Via `reject_empty_dci_routing_tag` if `dci_routing_tag` is empty or whitespace-only on user input.
     """
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
@@ -239,6 +242,31 @@ class MplsLoopbackPolicyModel(NexusLoopbackPolicyBase):
     dci_routing_protocol: Literal["ospf", "isis"] | None = Field(default=None, alias="dciRoutingProtocol", description="DCI link-state routing protocol")
     dci_routing_tag: str | None = Field(default=None, alias="dciRoutingTag", description="DCI routing tag")
     ospf_area_id: str | None = Field(default=None, alias="ospfAreaId", min_length=1, max_length=15, description="OSPF area identifier")
+
+    # TODO(4.2.1) mpls-loopback-failed-write-not-rolled-back
+    # A PUT carrying `dciRoutingTag: ""` returns HTTP 500 on ND 4.2.1 and 4.3.1, yet replaces the interface's child policies and takes an
+    # address from MPLS_LOOPBACK_IP_POOL while GET keeps echoing the old policy. The request gateway does not reject the empty value, so
+    # it is refused here before any request is sent.
+    @field_validator("dci_routing_tag", mode="after")
+    @classmethod
+    def reject_empty_dci_routing_tag(cls, value, info):
+        """
+        # Summary
+
+        Reject an empty or whitespace-only `dci_routing_tag` on user input. An omitted value (`None`) passes, and ND then applies its
+        default. Values read from the controller (validation context `mode == "response"`) are returned unchecked so reads stay tolerant.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `value` is an empty or whitespace-only string and the model is not being built from a controller response.
+        """
+        if value is None or (info.context and info.context.get("mode") == "response"):
+            return value
+        if not value.strip():
+            raise ValueError("dci_routing_tag must not be empty; omit it to use the ND default (MPLS_UNDERLAY)")
+        return value
 
 
 class XeLoopbackPolicyModel(LoopbackPolicyStrictBase):

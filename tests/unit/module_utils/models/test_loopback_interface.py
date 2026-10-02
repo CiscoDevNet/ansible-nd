@@ -2025,6 +2025,97 @@ def test_mpls_loopback_strict_rejects_foreign_field():
         MplsLoopbackPolicyModel(policyType="mplsLoopback", routingTag="777")
 
 
+@pytest.mark.parametrize("tag", ["", "   ", "\t"])
+def test_mpls_loopback_rejects_empty_dci_routing_tag(tag):
+    """
+    # Summary
+
+    Verify `MplsLoopbackPolicyModel` rejects an empty or whitespace-only `dci_routing_tag` on user input.
+
+    ## Test
+
+    - Construct with `dciRoutingTag` set to `""`, spaces, or a tab
+    - Raises `ValueError` telling the user to omit the option instead
+
+    ## Classes and Methods
+
+    - MplsLoopbackPolicyModel.reject_empty_dci_routing_tag()
+    """
+    match = r"dci_routing_tag must not be empty; omit it to use the ND default \(MPLS_UNDERLAY\)"
+    with pytest.raises(ValueError, match=match):
+        MplsLoopbackPolicyModel(policyType="mplsLoopback", dciRoutingTag=tag)
+
+
+def test_mpls_loopback_rejects_empty_dci_routing_tag_from_config():
+    """
+    # Summary
+
+    Verify the empty-tag guard fires on the playbook path (`from_config`), where the module builds its proposed config.
+
+    ## Test
+
+    - A config item with `policy_type: mplsLoopback` and `dci_routing_tag: ""`
+    - `LoopbackInterfaceModel.from_config` raises `ValueError`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.from_config()
+    - MplsLoopbackPolicyModel.reject_empty_dci_routing_tag()
+    """
+    config = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "loopback30",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "mplsLoopback", "ip": "10.3.3.1", "dci_routing_tag": ""}}},
+    }
+    with pytest.raises(ValueError, match=r"dci_routing_tag must not be empty"):
+        LoopbackInterfaceModel.from_config(config)
+
+
+def test_mpls_loopback_accepts_empty_dci_routing_tag_on_read():
+    """
+    # Summary
+
+    Verify the empty-tag guard is write-side only: a controller response carrying an empty `dciRoutingTag` still parses.
+
+    ## Test
+
+    - A response body with `policyType: mplsLoopback` and `dciRoutingTag: ""`
+    - `LoopbackInterfaceModel.from_response` returns a model whose `dci_routing_tag` is `""`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.from_response()
+    - MplsLoopbackPolicyModel.reject_empty_dci_routing_tag()
+    """
+    response = {
+        "switchIp": "192.168.1.1",
+        "interfaceName": "loopback30",
+        "interfaceType": "loopback",
+        "configData": {"mode": "managed", "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "mplsLoopback", "dciRoutingTag": ""}}},
+    }
+    model = LoopbackInterfaceModel.from_response(response)
+    assert model.config_data.network_os.policy.dci_routing_tag == ""
+
+
+def test_mpls_loopback_accepts_omitted_and_named_dci_routing_tag():
+    """
+    # Summary
+
+    Verify an omitted `dci_routing_tag` and a non-empty one both pass.
+
+    ## Test
+
+    - Construct without `dciRoutingTag`: the field is `None`
+    - Construct with `dciRoutingTag="MPLS_UNDERLAY"`: the value is kept unchanged
+
+    ## Classes and Methods
+
+    - MplsLoopbackPolicyModel.reject_empty_dci_routing_tag()
+    """
+    assert MplsLoopbackPolicyModel(policyType="mplsLoopback").dci_routing_tag is None
+    assert MplsLoopbackPolicyModel(policyType="mplsLoopback", dciRoutingTag="MPLS_UNDERLAY").dci_routing_tag == "MPLS_UNDERLAY"
+
+
 # =============================================================================
 # Test: NexusLoopbackNetworkOSModel — policy discriminated union
 # =============================================================================
