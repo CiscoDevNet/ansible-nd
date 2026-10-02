@@ -9,6 +9,9 @@
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+    EthernetTrunkHostInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlanner
@@ -103,3 +106,58 @@ def test_invalid_state_fails_without_changing_inputs() -> None:
 
     assert len(before) == 0
     assert len(proposed) == 0
+
+
+def test_merged_plan_applies_vlan_mapping_flag_and_entries_atomically() -> None:
+    """Merged planning retains a complete Ethernet trunk VLAN-mapping pair."""
+    identity = {"switch_ip": "192.0.2.1", "interface_name": "Ethernet1/44"}
+    before = NDConfigCollection.from_ansible_config(
+        data=[
+            {
+                **identity,
+                "config_data": {"network_os": {"policy": {"vlan_mapping": False}}},
+            }
+        ],
+        model_class=EthernetTrunkHostInterfaceModel,
+        context={"state": "merged"},
+    )
+    proposed = NDConfigCollection.from_ansible_config(
+        data=[
+            {
+                **identity,
+                "config_data": {
+                    "network_os": {
+                        "policy": {
+                            "vlan_mapping": True,
+                            "vlan_mapping_entries": [
+                                {
+                                    "customer_inner_vlan_id": 3121,
+                                    "customer_vlan_id": ["3122-3123"],
+                                    "dot1q_tunnel": True,
+                                    "provider_vlan_id": 3120,
+                                }
+                            ],
+                        }
+                    }
+                },
+            }
+        ],
+        model_class=EthernetTrunkHostInterfaceModel,
+        context={"state": "merged"},
+    )
+    original_before = before.to_ansible_config()
+
+    plan = NDStatePlanner.plan(state="merged", before=before, proposed=proposed)
+
+    assert len(plan.updates) == 1
+    policy = plan.after.to_ansible_config()[0]["config_data"]["network_os"]["policy"]
+    assert policy["vlan_mapping"] is True
+    assert policy["vlan_mapping_entries"] == [
+        {
+            "customer_inner_vlan_id": 3121,
+            "customer_vlan_id": ["3122-3123"],
+            "dot1q_tunnel": True,
+            "provider_vlan_id": 3120,
+        }
+    ]
+    assert before.to_ansible_config() == original_before
