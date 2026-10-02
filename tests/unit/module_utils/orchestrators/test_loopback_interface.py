@@ -98,7 +98,7 @@ def _build_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str
 
 
 def _build_mpls_loopback_model(switch_ip: str = "192.168.12.151", interface_name: str = "loopback30") -> LoopbackInterfaceModel:
-    """Build a minimal `LoopbackInterfaceModel` instance with an `mplsLoopback` policy, for policy-type-grouping tests."""
+    """Build a minimal `LoopbackInterfaceModel` instance with an `mplsLoopback` policy, for the two-request create and handoff preflight tests."""
     return LoopbackInterfaceModel(
         switch_ip=switch_ip,
         interface_name=interface_name,
@@ -651,7 +651,7 @@ def test_loopback_interface_00430() -> None:
     ## Test
 
     - Two interfaces on the SAME switch with DIFFERENT policy types: loopback10 (`policyType: loopback`) and
-      loopback30 (`policyType: mplsLoopback`)
+      loopback30 (`policyType: ipfmLoopback`)
     - TWO POSTs are issued (one per policy-type group), each with a single-item `interfaces` array - proven by
       `rest_send.responses` containing exactly 3 entries (switches-list + 2 POSTs; a combined single POST would
       leave one fixture unconsumed and `rest_send.responses` would have only 2 entries) and by the last committed
@@ -674,7 +674,7 @@ def test_loopback_interface_00430() -> None:
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     models = [
         _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
-        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+        _build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
     ]
 
     with does_not_raise():
@@ -746,7 +746,7 @@ def test_loopback_interface_00450() -> None:
 
     ## Test
 
-    - Run 1: loopback10 (`policyType: loopback`) POST succeeds, loopback30 (`policyType: mplsLoopback`) POST returns 500
+    - Run 1: loopback10 (`policyType: loopback`) POST succeeds, loopback30 (`policyType: ipfmLoopback`) POST returns 500
     - `create_bulk` raises `RuntimeError` matching `Bulk create failed`; `_pending_deploys` holds only loopback10
     - `deploy_accepted_mutations` POSTs `interfaceActions/deploy` with only loopback10 and clears it from the queue
     - Run 2 (fresh orchestrator, retry): `create_bulk` for loopback30 alone succeeds; `deploy_pending` deploys loopback30
@@ -770,7 +770,7 @@ def test_loopback_interface_00450() -> None:
     instance.deploy = True
     models = [
         _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
-        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+        _build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
     ]
 
     match = r"Bulk create failed"
@@ -797,7 +797,7 @@ def test_loopback_interface_00450() -> None:
     instance_retry.deploy = True
 
     with does_not_raise():
-        instance_retry.create_bulk([_build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30")])
+        instance_retry.create_bulk([_build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30")])
         instance_retry.deploy_pending()
 
     assert rest_send_retry.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
@@ -821,7 +821,7 @@ def test_loopback_interface_00460() -> None:
     ## Test
 
     - loopback10 (`policyType: loopback`) POST succeeds
-    - The mplsLoopback group (loopback30, loopback31) POST returns 207: loopback30 `success`, loopback31 failed
+    - The ipfmLoopback group (loopback30, loopback31) POST returns 207: loopback30 `success`, loopback31 failed
     - `create_bulk` raises `RuntimeError` matching `Bulk create failed` and names loopback30 as accepted
     - `_pending_deploys` holds loopback10 and loopback30; loopback31 is never queued
     - `deploy_accepted_mutations` deploys exactly those two
@@ -846,8 +846,8 @@ def test_loopback_interface_00460() -> None:
     instance.deploy = True
     models = [
         _build_loopback_model(switch_ip="192.168.12.151", interface_name="loopback10"),
-        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
-        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback31"),
+        _build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+        _build_ipfm_loopback_model(switch_ip="192.168.12.151", interface_name="loopback31"),
     ]
 
     match = r"Bulk create failed.*accepted \['loopback30'\] from the same request"
@@ -1371,3 +1371,473 @@ def test_loopback_interface_01500() -> None:
     assert [item.interface_name for item in groups[keys[0]]] == ["loopback200", "loopback202"]
     assert groups[keys[1]][0].payload["switchId"] == "FDO12345ABC"
     assert isinstance(groups[keys[1]][0], BulkCreateItem)
+
+
+# =============================================================================
+# Test: mplsLoopback two-request create (issue #595)
+# =============================================================================
+
+REMOVE_PATH = "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove"
+SWITCH_A = "FDO12345ABC"
+SWITCH_B = "FDO12345ABD"
+
+
+def _remove_body(switch_id: str, *names: str) -> dict:
+    """Build the `interfaceActions/remove` body the rollback sends for `names` on `switch_id`."""
+    return {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name in names]}
+
+
+def _mpls_rest_send(method_name: str, suffixes: str, **kwargs) -> RestSend:
+    """Build a `RestSend` that replays the fixtures `<method_name><suffix>` for each character of `suffixes`, in order."""
+
+    def responses():
+        for suffix in suffixes:
+            yield responses_loopback_interface(f"{method_name}{suffix}")
+
+    return _build_rest_send(ResponseGenerator(responses()), **kwargs)
+
+
+def test_loopback_interface_01000() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` creates `mplsLoopback` interfaces in two requests: one placeholder POST for the switch, then one PUT per
+    interface, queueing each deploy only after its PUT succeeds.
+
+    ## Test
+
+    - Two `mplsLoopback` models on one switch
+    - Requests: switches list, one POST (both placeholders), PUT loopback30, PUT loopback31
+    - The last request is the PUT for loopback31 and carries `policyType: mplsLoopback`
+    - Both deploys are queued in request order; no remove is queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - LoopbackInterfaceOrchestrator._create_mpls_loopbacks_on_switch()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcd")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    with does_not_raise():
+        instance.create_bulk(models)
+
+    assert rest_send.response_count == 4
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/loopback31"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    assert rest_send.committed_payload["configData"]["networkOS"]["policy"]["policyType"] == "mplsLoopback"
+    assert rest_send.committed_payload["switchId"] == SWITCH_A
+    assert instance._pending_deploys == [("loopback30", SWITCH_A), ("loopback31", SWITCH_A)]
+    assert instance._pending_removes == []
+
+
+def test_loopback_interface_01010() -> None:
+    """
+    # Summary
+
+    Verify the placeholder is inert: a plain `loopback` policy with `adminState: false` in the `management` VRF and nothing else, so a
+    placeholder that were ever deployed would carry no address and no routing configuration.
+
+    ## Test
+
+    - Build the placeholder for an `mplsLoopback` model that has an `ip`
+    - The payload holds only the identity, `policyType: loopback`, `adminState: false` and `vrfInterface: management`; the user's `ip` is
+      not copied
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._mpls_placeholder_item()
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    item = instance._mpls_placeholder_item(_build_mpls_loopback_model(interface_name="loopback30"), SWITCH_A)
+
+    assert item.interface_name == "loopback30"
+    assert item.payload == {
+        "interfaceName": "loopback30",
+        "interfaceType": "loopback",
+        "switchId": SWITCH_A,
+        "configData": {
+            "mode": "managed",
+            "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "loopback", "adminState": False, "vrfInterface": "management"}},
+        },
+    }
+    assert rest_send.response_count == 0
+
+
+def test_loopback_interface_01020() -> None:
+    """
+    # Summary
+
+    Verify a PUT failure part-way through: the interface already converted keeps its queued deploy, every unconverted placeholder is
+    removed in one request, and with `deploy` false the failure-path finalizer sends nothing.
+
+    ## Test
+
+    - Three `mplsLoopback` models; placeholder POST accepts all; PUT loopback30 succeeds; PUT loopback31 returns 500
+    - One `interfaceActions/remove` is sent for loopback31 and loopback32
+    - `RuntimeError` names the removed placeholders and the converted interface
+    - `_pending_deploys` holds only loopback30; `_pending_removes` is empty
+    - `deploy_accepted_mutations` returns `[]` and sends no request (`deploy` is false)
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - LoopbackInterfaceOrchestrator._roll_back_mpls_placeholders()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcde")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_mpls_loopback_model(interface_name=name) for name in ("loopback30", "loopback31", "loopback32")]
+
+    match = r"Bulk create failed: mplsLoopback create failed on switchId FDO12345ABC: .*"
+    match += r"Removed the placeholder loopback\(s\) \['loopback31', 'loopback32'\] created for this request\. "
+    match += r"\['loopback30'\] were created as mplsLoopback before the failure; their deploy stays queued\."
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert rest_send.path == REMOVE_PATH
+    assert rest_send.committed_payload == _remove_body(SWITCH_A, "loopback31", "loopback32")
+    assert instance._pending_deploys == [("loopback30", SWITCH_A)]
+    assert instance._pending_removes == []
+    assert rest_send.response_count == 5
+
+    assert instance.deploy_accepted_mutations() == []
+    assert rest_send.response_count == 5
+
+
+def test_loopback_interface_01030() -> None:
+    """
+    # Summary
+
+    Verify a failed rollback is reported, not hidden: the error names the placeholder left behind and tells the user how to remove it.
+
+    ## Test
+
+    - One `mplsLoopback` model; placeholder POST accepted; PUT returns 500; the remove returns 500
+    - `RuntimeError` says the placeholder could not be removed and remains staged
+    - Nothing is queued for deploy or remove
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._remove_placeholders()
+    - LoopbackInterfaceOrchestrator._roll_back_mpls_placeholders()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcd")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    match = r"Could not remove the placeholder loopback\(s\) \['loopback30'\] \(.*\); they remain staged as plain loopbacks\. "
+    match += r"Remove them with state: deleted\."
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.committed_payload == _remove_body(SWITCH_A, "loopback30")
+    assert instance._pending_deploys == []
+    assert instance._pending_removes == []
+
+
+def test_loopback_interface_01040() -> None:
+    """
+    # Summary
+
+    Verify a mixed 207 on the rollback is read per item: the error separates the placeholder the controller removed from the one it
+    did not.
+
+    ## Test
+
+    - Two `mplsLoopback` models; placeholder POST accepts both; PUT loopback30 returns 500
+    - The remove returns 207: loopback30 `success`, loopback31 `failed`
+    - `RuntimeError` reports loopback30 as removed and loopback31 as left behind
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._remove_placeholders()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_pairs()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcd")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    match = r"Removed the placeholder loopback\(s\) \['loopback30'\] created for this request\. "
+    match += r"Could not remove the placeholder loopback\(s\) \['loopback31'\]"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == []
+
+
+def test_loopback_interface_01050() -> None:
+    """
+    # Summary
+
+    Verify `_remove_placeholders` does not reconcile against a stale response: when the sender raises before any response is recorded,
+    `response_current` still holds the previous remove's all-success 207, and that must not be read as this request's result
+    (issue #554 freshness requirement).
+
+    ## Test
+
+    - First call removes loopback30; the remove returns an all-success 207; nothing is left behind
+    - The sender is set to raise `ValueError` from `commit`
+    - Second call for the same name reports loopback30 as left behind and returns the error; still exactly one response was recorded
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._remove_placeholders()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "a")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        left_behind, error = instance._remove_placeholders(SWITCH_A, ["loopback30"])
+    assert left_behind == []
+    assert error is None
+    assert rest_send.return_code == 207
+
+    rest_send.sender.raise_method = "commit"
+    rest_send.sender.raise_exception = ValueError("simulated transport failure")
+
+    left_behind, error = instance._remove_placeholders(SWITCH_A, ["loopback30"])
+
+    assert left_behind == ["loopback30"]
+    assert isinstance(error, Exception)
+    assert rest_send.response_count == 1
+
+
+def test_loopback_interface_01060() -> None:
+    """
+    # Summary
+
+    Verify a mixed 207 on the placeholder POST: no PUT is sent, the accepted placeholder is removed, and nothing is queued.
+
+    ## Test
+
+    - Two `mplsLoopback` models; placeholder POST returns 207: loopback30 `success`, loopback31 `failed`
+    - Requests: switches list, POST, remove (no PUT)
+    - The remove names only loopback30
+    - Nothing is queued for deploy
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._create_mpls_loopbacks_on_switch()
+    - NDBaseInterfaceOrchestrator._send_bulk_create_group()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abc")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    match = r"mplsLoopback create failed on switchId FDO12345ABC: .*Removed the placeholder loopback\(s\) \['loopback30'\]"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert rest_send.response_count == 3
+    assert rest_send.committed_payload == _remove_body(SWITCH_A, "loopback30")
+    assert instance._pending_deploys == []
+
+
+def test_loopback_interface_01070() -> None:
+    """
+    # Summary
+
+    Verify nothing is removed when the placeholder POST created nothing: the rollback may only remove interfaces this request created,
+    never an interface that already existed under the same name.
+
+    ## Test
+
+    - Two `mplsLoopback` models; placeholder POST returns 207 with both items `failed`
+    - Requests: switches list and the POST only; no remove is sent
+    - `RuntimeError` is raised and claims no removed placeholder
+    - Nothing is queued
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._create_mpls_loopbacks_on_switch()
+    - LoopbackInterfaceOrchestrator._remove_placeholders()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "ab")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    with pytest.raises(RuntimeError, match=r"mplsLoopback create failed on switchId FDO12345ABC") as exc_info:
+        instance.create_bulk(models)
+
+    assert "Removed the placeholder" not in str(exc_info.value)
+    assert "Could not remove" not in str(exc_info.value)
+    assert rest_send.response_count == 2
+    assert instance._pending_deploys == []
+    assert instance._pending_removes == []
+
+
+def test_loopback_interface_01080() -> None:
+    """
+    # Summary
+
+    Verify the flat-500 partial commit (ND 4.2.1) is rolled back too: a placeholder the failed POST still created is found by the
+    inventory re-read and removed.
+
+    ## Test
+
+    - The switch inventory is cached first (loopback10 only)
+    - Two `mplsLoopback` models; placeholder POST returns a flat 500
+    - The inventory re-read shows loopback30 now exists and loopback31 does not
+    - One remove is sent for loopback30 only
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._create_mpls_loopbacks_on_switch()
+    - NDBaseInterfaceOrchestrator._created_despite_failure()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcde")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance._switch_interfaces(SWITCH_A)
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    match = r"Removed the placeholder loopback\(s\) \['loopback30'\] created for this request\."
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(models)
+
+    assert rest_send.committed_payload == _remove_body(SWITCH_A, "loopback30")
+    assert instance._pending_deploys == []
+
+
+def test_loopback_interface_01090() -> None:
+    """
+    # Summary
+
+    Verify a task mixing plain `loopback` and `mplsLoopback` on one switch still sends one POST per group and handles the plain group
+    first.
+
+    ## Test
+
+    - Models in input order: loopback10 (plain), loopback30 (mpls), loopback11 (plain)
+    - Requests: switches list, plain POST (loopback10 and loopback11), placeholder POST (loopback30), PUT loopback30
+    - Deploy order is loopback10, loopback11, loopback30: the plain group was queued before the mpls conversion finished
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcd")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_loopback_model(interface_name="loopback10"),
+        _build_mpls_loopback_model(interface_name="loopback30"),
+        _build_loopback_model(interface_name="loopback11"),
+    ]
+
+    with does_not_raise():
+        instance.create_bulk(models)
+
+    assert rest_send.response_count == 4
+    assert instance._pending_deploys == [("loopback10", SWITCH_A), ("loopback11", SWITCH_A), ("loopback30", SWITCH_A)]
+
+
+def test_loopback_interface_01100() -> None:
+    """
+    # Summary
+
+    Verify the single-item `create` sends an `mplsLoopback` through the same two-request sequence.
+
+    ## Test
+
+    - `create` is called with one `mplsLoopback` model
+    - Requests: switches list, placeholder POST, PUT
+    - The deploy is queued once
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abc")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.create(_build_mpls_loopback_model(interface_name="loopback30"))
+
+    assert rest_send.response_count == 3
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    assert instance._pending_deploys == [("loopback30", SWITCH_A)]
+
+
+def test_loopback_interface_01110() -> None:
+    """
+    # Summary
+
+    Verify a failure on the second switch leaves the first switch alone: its converted interface keeps its queued deploy and the
+    rollback names only the second switch.
+
+    ## Test
+
+    - One `mplsLoopback` model per switch (A then B), both named loopback30
+    - Switch A: placeholder POST and PUT succeed
+    - Switch B: placeholder POST succeeds, PUT returns 500, the remove succeeds
+    - The remove body names loopback30 on switch B only
+    - `_pending_deploys` holds loopback30 on switch A only
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._create_mpls_loopbacks()
+    - LoopbackInterfaceOrchestrator._roll_back_mpls_placeholders()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcdef")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        _build_mpls_loopback_model(switch_ip="192.168.12.151", interface_name="loopback30"),
+        _build_mpls_loopback_model(switch_ip="192.168.12.152", interface_name="loopback30"),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"mplsLoopback create failed on switchId FDO12345ABD"):
+        instance.create_bulk(models)
+
+    assert rest_send.committed_payload == _remove_body(SWITCH_B, "loopback30")
+    assert instance._pending_deploys == [("loopback30", SWITCH_A)]
+
+
+def test_loopback_interface_01120() -> None:
+    """
+    # Summary
+
+    Verify the failure-path finalizer cannot ship a placeholder: after a failed conversion with `deploy` true it deploys only the
+    interface that was converted.
+
+    ## Test
+
+    - Two `mplsLoopback` models; PUT loopback30 succeeds; PUT loopback31 returns 500; loopback31 is removed
+    - `deploy_accepted_mutations` sends one `interfaceActions/deploy` naming loopback30 only
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abcdef")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    models = [_build_mpls_loopback_model(interface_name="loopback30"), _build_mpls_loopback_model(interface_name="loopback31")]
+
+    with pytest.raises(RuntimeError, match=r"Bulk create failed"):
+        instance.create_bulk(models)
+
+    with does_not_raise():
+        deployed = instance.deploy_accepted_mutations()
+
+    assert deployed == [("loopback30", SWITCH_A)]
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy"
+    assert rest_send.committed_payload == {"interfaces": [{"interfaceName": "loopback30", "switchId": SWITCH_A}]}
