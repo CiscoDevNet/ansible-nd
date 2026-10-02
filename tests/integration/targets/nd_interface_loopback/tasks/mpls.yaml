@@ -29,6 +29,7 @@
 
 - name: "MPLS SETUP: Record whether MPLS Handoff is enabled"
   ansible.builtin.set_fact:
+    mpls_handoff_known: "{{ mpls_fabric_details.jsondata.management.mplsHandoff is defined }}"
     mpls_handoff_enabled: "{{ mpls_fabric_details.jsondata.management.mplsHandoff | default(false) | bool }}"
 
 # --- EMPTY TAG (either handoff state) ---
@@ -52,7 +53,7 @@
 # --- MPLS HANDOFF DISABLED ---
 
 - name: "MPLS HANDOFF OFF: Run the refusal tests"
-  when: not mpls_handoff_enabled
+  when: mpls_handoff_known and not mpls_handoff_enabled
   block:
     - name: "MPLS HANDOFF OFF: Create mplsLoopbacks (check mode)"
       cisco.nd.nd_interface_loopback: &mpls_merge
@@ -128,11 +129,21 @@
       cisco.nd.nd_interface_loopback: *mpls_merge
       register: nm_mpls_idem
 
-    - name: "MPLS MERGED IDEMPOTENT: Verify no change on the second run"
+    - name: "MPLS MERGED IDEMPOTENT: Verify no change, and that the controller holds both as mplsLoopback with the defaults applied"
+      vars:
+        mpls_207: "{{ nm_mpls_idem.before | selectattr('interface_name', 'equalto', 'loopback207') | list }}"
+        mpls_208: "{{ nm_mpls_idem.before | selectattr('interface_name', 'equalto', 'loopback208') | list }}"
       ansible.builtin.assert:
         that:
           - cm_mpls_idem is not changed
           - nm_mpls_idem is not changed
+          - mpls_207 | length == 1
+          - mpls_208 | length == 1
+          - mpls_207[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+          - mpls_208[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+          - mpls_208[0].config_data.network_os.policy.admin_state == true
+          - mpls_208[0].config_data.network_os.policy.dci_routing_protocol == 'isis'
+          - mpls_208[0].config_data.network_os.policy.dci_routing_tag == 'MPLS_UNDERLAY'
 
     - name: "MPLS REPLACED: Change the loopback207 description"
       cisco.nd.nd_interface_loopback: &mpls_replace
@@ -149,7 +160,7 @@
 
     - name: "MPLS REPLACED: Verify the change and its idempotency"
       vars:
-        mpls_207: "{{ nm_mpls_replaced.after | selectattr('interface_name', 'equalto', 'loopback207') | list }}"
+        mpls_207: "{{ nm_mpls_replaced_idem.before | selectattr('interface_name', 'equalto', 'loopback207') | list }}"
       ansible.builtin.assert:
         that:
           - nm_mpls_replaced is changed
