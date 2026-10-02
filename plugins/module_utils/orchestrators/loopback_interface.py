@@ -28,7 +28,7 @@ The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -40,8 +40,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import LoopbackPolicyTypeEnum, XeLoopbackPolicyTypeEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackConfigDataModel,
+    LoopbackInterfaceModel,
+    NexusLoopbackNetworkOSModel,
+    NexusLoopbackPolicyModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem, NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
@@ -73,6 +78,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
     - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
+    - Via `create` / `create_bulk` if an `mplsLoopback` placeholder create or its conversion PUT fails; unconverted placeholders are removed first.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
     - Via `deploy_pending` if the bulk deploy API request fails.
@@ -99,7 +105,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         # Summary
 
         Create a loopback interface. Resolves `switch_ip` from the model instance, injects `switchId`, and wraps the payload
-        in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`.
+        in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`. An `mplsLoopback` is created in two
+        requests instead (`_create_mpls_loopbacks`).
 
         ## Raises
 
@@ -107,8 +114,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
         - If the create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
           (detected centrally by `NdV1Strategy.is_success`, which `_request` consults).
+        - If an `mplsLoopback` conversion fails (see `_create_mpls_loopbacks_on_switch`).
         """
         try:
+            if model_instance.policy_type == LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value:
+                return self._create_mpls_loopbacks([model_instance])
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
@@ -166,9 +176,10 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         # Summary
 
-        Create multiple loopback interfaces in bulk. Groups interfaces by `(switch_id, policy_type)` and sends one POST
-        per group with the group's interfaces in the `interfaces` array, reducing API calls from N to one-per-group.
-        Queues deploys for all successfully created interfaces for later bulk execution via `deploy_pending`.
+        Create multiple loopback interfaces in bulk. Interfaces other than `mplsLoopback` are grouped by `(switch_id, policy_type)` and
+        sent first, one POST per group with the group's interfaces in the `interfaces` array. `mplsLoopback` interfaces follow, created
+        in two requests each (`_create_mpls_loopbacks`). Queues deploys for all successfully created interfaces for later bulk execution
+        via `deploy_pending`.
 
         ## Raises
 
@@ -177,15 +188,167 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
           (detected centrally by `NdV1Strategy.is_success`, which `_request` consults). The items that response reports as accepted
           are still queued for deploy (`_post_bulk_create_group`); the rejected ones are not.
+        - If an `mplsLoopback` conversion fails (see `_create_mpls_loopbacks_on_switch`).
         """
         try:
-            groups = self.bulk_create_groups(model_instances)
-            results = []
-            for group_key, items in groups.items():
+            mpls_value = LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value
+            direct = [model_instance for model_instance in model_instances if model_instance.policy_type != mpls_value]
+            mpls = [model_instance for model_instance in model_instances if model_instance.policy_type == mpls_value]
+            results: list[Any] = []
+            for group_key, items in self.bulk_create_groups(direct).items():
                 results.append(self._post_bulk_create_group(group_key, items))
+            results.extend(self._create_mpls_loopbacks(mpls))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
+
+    def _mpls_placeholder_item(self, model_instance: LoopbackInterfaceModel, switch_id: str) -> BulkCreateItem:
+        """
+        # Summary
+
+        Build the placeholder create item for an `mplsLoopback` interface: a plain `loopback` policy with `adminState: false` in the
+        `management` VRF and no other field. It is deliberately inert. ND refuses an address-less loopback in the default VRF, and a
+        plain loopback that carries an address gets underlay routing configuration generated for it, so the placeholder sits in the
+        `management` VRF with no address and nothing from the requested `mplsLoopback` policy is copied. ND generates only
+        `vrf member management` and `shutdown` for it; the following PUT supplies the real policy and leaves neither line behind
+        (lab-verified 2026-10-02 on ND 4.2.1.10 and 4.3.1.175).
+
+        ## Raises
+
+        None
+        """
+        placeholder = LoopbackInterfaceModel(
+            switch_ip=model_instance.switch_ip,
+            interface_name=model_instance.interface_name,
+            config_data=LoopbackConfigDataModel(
+                network_os=NexusLoopbackNetworkOSModel(
+                    network_os_type="nx-os",
+                    policy=NexusLoopbackPolicyModel(policy_type=LoopbackPolicyTypeEnum.LOOPBACK.value, admin_state=False, vrf="management"),
+                ),
+            ),
+        )
+        payload = placeholder.to_payload()
+        payload["switchId"] = switch_id
+        return BulkCreateItem(interface_name=model_instance.interface_name, payload=payload)
+
+    def _create_mpls_loopbacks(self, model_instances: list[LoopbackInterfaceModel]) -> list[Any]:
+        """
+        # Summary
+
+        Create `mplsLoopback` interfaces switch by switch (`_create_mpls_loopbacks_on_switch`), in first-seen switch order. One switch
+        is finished before the next starts, so at any failure only the current switch holds unconverted placeholders.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Propagated from `_create_mpls_loopbacks_on_switch`.
+        """
+        by_switch: dict[str, list[LoopbackInterfaceModel]] = {}
+        for model_instance in model_instances:
+            by_switch.setdefault(self._resolve_switch_id(model_instance.switch_ip), []).append(model_instance)
+        results: list[Any] = []
+        for switch_id, switch_models in by_switch.items():
+            results.extend(self._create_mpls_loopbacks_on_switch(switch_id, switch_models))
+        return results
+
+    def _create_mpls_loopbacks_on_switch(self, switch_id: str, model_instances: list[LoopbackInterfaceModel]) -> list[Any]:
+        """
+        # Summary
+
+        Create the given `mplsLoopback` interfaces on one switch in two steps: one bulk POST of inert placeholders
+        (`_mpls_placeholder_item`), then one PUT per interface with the requested policy (`update`, which queues the deploy when it
+        succeeds). A placeholder is never queued for deploy.
+
+        If the placeholder POST fails or any PUT fails, every placeholder on this switch that exists and was not converted is removed
+        (`_roll_back_mpls_placeholders`) and the failure is raised. Interfaces already converted keep their queued deploy.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the placeholder POST fails. The message names any placeholder the controller created and what the rollback did with it.
+        - If a PUT fails. The message names the removed placeholders, any left behind, and the interfaces already converted.
+        """
+        # TODO(4.3.1) mpls-loopback-create-requires-mpls-handoff
+        # ND 4.3.1 rejects `policyType: mplsLoopback` on the create POST (HTTP 400: the create discriminator maps only `loopback`,
+        # `ipfmLoopback` and `userDefined`), while a PUT of an existing plain loopback to `mplsLoopback` is accepted on 4.2.1 and 4.3.1.
+        # Create an inert plain loopback, then PUT the requested policy onto it. One code path serves both releases.
+        items = [self._mpls_placeholder_item(model_instance, switch_id) for model_instance in model_instances]
+        group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type=LoopbackPolicyTypeEnum.LOOPBACK.value)
+        outcome = self._send_bulk_create_group(group_key, items)
+        if outcome.error is not None:
+            raise RuntimeError(self._roll_back_mpls_placeholders(outcome.error, switch_id, [], outcome.accepted)) from outcome.error
+        results: list[Any] = [outcome.result]
+        converted: list[str] = []
+        for model_instance in model_instances:
+            try:
+                results.append(self.update(model_instance))
+            except Exception as e:
+                unconverted = [item.interface_name for item in items if item.interface_name not in converted]
+                raise RuntimeError(self._roll_back_mpls_placeholders(e, switch_id, converted, unconverted)) from e
+            converted.append(model_instance.interface_name)
+        return results
+
+    def _remove_placeholders(self, switch_id: str, names: list[str]) -> tuple[list[str], Exception | None]:
+        """
+        # Summary
+
+        Remove the named placeholder interfaces on `switch_id` with one `interfaceActions/remove` request, sent once and never retried.
+        Returns the names that were NOT confirmed removed and the error that prevented it (`([], None)` when all were removed or `names`
+        is empty, in which case no request is sent).
+
+        The endpoint answers HTTP 207 with a status per interface, keyed by `interfaceName` + `switchId`. On a failed request only the
+        pairs the response reports as an exact `success` (`_accepted_multistatus_pairs`) count as removed. The response is consulted
+        only when the request recorded a new one: a sender exception leaves the previous response in place (issue #554), which must
+        not be mistaken for this request's result.
+
+        This request bypasses `_pending_removes` on purpose: a placeholder was never deployed and never queued, so there is no deploy
+        to pair it with and nothing for the failure-path finalizer to consider.
+
+        ## Raises
+
+        None
+        """
+        if not names:
+            return [], None
+        api_endpoint = EpManageInterfacesRemove()
+        api_endpoint.fabric_name = self.fabric_name
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name in names]}
+        recorded = self.rest_send.response_count
+        try:
+            self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            removed: set[tuple[str, str]] = set()
+            if self.rest_send.response_count > recorded:
+                removed = self._accepted_multistatus_pairs()
+            return [name for name in names if (name.strip().lower(), switch_id) not in removed], e
+        return [], None
+
+    def _roll_back_mpls_placeholders(self, error: Exception, switch_id: str, converted: list[str], unconverted: list[str]) -> str:
+        """
+        # Summary
+
+        Remove the unconverted placeholders after a failed `mplsLoopback` create on `switch_id` and return the failure message for the
+        caller to raise. The message names the original error, the placeholders removed, any that could not be removed (with the
+        rollback error and how to remove them), and the interfaces already converted, whose deploy stays queued.
+
+        ## Raises
+
+        None
+        """
+        left_behind, rollback_error = self._remove_placeholders(switch_id, unconverted)
+        removed = [name for name in unconverted if name not in left_behind]
+        msg = f"mplsLoopback create failed on switchId {switch_id}: {error}."
+        if removed:
+            msg += f" Removed the placeholder loopback(s) {removed} created for this request."
+        if left_behind:
+            msg += f" Could not remove the placeholder loopback(s) {left_behind} ({rollback_error}); they remain staged as plain loopbacks."
+            msg += " Remove them with state: deleted."
+        if converted:
+            msg += f" {converted} were created as mplsLoopback before the failure; their deploy stays queued."
+        return msg
 
     def delete_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> None:
         """
