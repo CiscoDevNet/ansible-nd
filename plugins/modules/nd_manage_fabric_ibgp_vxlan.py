@@ -4,9 +4,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -103,8 +101,9 @@ options:
             description:
             - The BGP Autonomous System Number for the fabric.
             - Accepts a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).
+            - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
+            - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-            required: true
           underlay_ipv6:
             description:
             - Enable IPv6 underlay.
@@ -431,7 +430,6 @@ options:
             description:
             - The BGP authentication key.
             type: str
-            default: ""
           bfd:
             description:
             - Enable BFD globally.
@@ -471,7 +469,6 @@ options:
             description:
             - The BFD authentication key.
             type: str
-            default: ""
           ospf_authentication:
             description:
             - Enable OSPF authentication.
@@ -486,7 +483,6 @@ options:
             description:
             - The OSPF authentication key.
             type: str
-            default: ""
           pim_hello_authentication:
             description:
             - Enable PIM hello authentication.
@@ -496,7 +492,6 @@ options:
             description:
             - The PIM hello authentication key.
             type: str
-            default: ""
           isis_level:
             description:
             - The IS-IS level.
@@ -522,7 +517,6 @@ options:
             description:
             - The IS-IS authentication keychain name.
             type: str
-            default: ""
           isis_authentication_keychain_key_id:
             description:
             - The IS-IS authentication keychain key ID.
@@ -532,7 +526,6 @@ options:
             description:
             - The IS-IS authentication key.
             type: str
-            default: ""
           isis_overload:
             description:
             - Enable IS-IS overload bit.
@@ -591,7 +584,6 @@ options:
             description:
             - The MACsec primary key string.
             type: str
-            default: ""
           macsec_algorithm:
             description:
             - The MACsec primary cryptographic algorithm.
@@ -602,7 +594,6 @@ options:
             description:
             - The MACsec fallback key string.
             type: str
-            default: ""
           macsec_fallback_algorithm:
             description:
             - The MACsec fallback cryptographic algorithm.
@@ -629,7 +620,6 @@ options:
             description:
             - The DCI MACsec primary key string (Cisco Type 7 Encrypted Octet String).
             type: str
-            default: ""
           vrf_lite_macsec_algorithm:
             description:
             - The DCI MACsec primary cryptographic algorithm.
@@ -641,7 +631,6 @@ options:
             - The DCI MACsec fallback key string (Cisco Type 7 Encrypted Octet String).
             - This parameter is used when DCI link has QKD disabled.
             type: str
-            default: ""
           vrf_lite_macsec_fallback_algorithm:
             description:
             - The DCI MACsec fallback cryptographic algorithm.
@@ -658,12 +647,10 @@ options:
             description:
             - The quantum key distribution profile name.
             type: str
-            default: ""
           key_management_entity_server_ip:
             description:
             - The key management entity server IP address.
             type: str
-            default: ""
           key_management_entity_server_port:
             description:
             - The key management entity server port.
@@ -673,7 +660,6 @@ options:
             description:
             - The trustpoint label for TLS authentication.
             type: str
-            default: ""
           skip_certificate_verification:
             description:
             - Skip verification of incoming certificate.
@@ -684,10 +670,11 @@ options:
           site_id:
             description:
             - The site identifier for the fabric (for EVPN Multi-Site support).
-            - Must be a numeric value between 1 and 281474976710655.
+            - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
+            - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
+            - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
             - Defaults to the value of O(config.management.bgp_asn) if not provided.
             type: str
-            default: ""
           overlay_mode:
             description:
             - The overlay configuration mode.
@@ -821,7 +808,6 @@ options:
             description:
             - DSCP for RDMA traffic. Numeric (0-63) with ranges/comma, or named values.
             type: str
-            default: "26"
           cnp:
             description:
             - DSCP value for Congestion Notification. Numeric (0-63) with ranges/comma, or named values.
@@ -1365,17 +1351,14 @@ options:
             description:
             - The DHCP start address for bootstrap.
             type: str
-            default: ""
           dhcp_end_address:
             description:
             - The DHCP end address for bootstrap.
             type: str
-            default: ""
           management_gateway:
             description:
             - The management gateway for bootstrap.
             type: str
-            default: ""
           management_ipv4_prefix:
             description:
             - The management IPv4 prefix length for bootstrap.
@@ -1447,27 +1430,26 @@ options:
             description:
             - Switch Loopback DHCP Scope Start Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
             type: str
-            default: ""
           unnumbered_dhcp_end_address:
             description:
             - Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
             type: str
-            default: ""
 
           # Configuration Backup
           real_time_backup:
             description:
             - Enable real-time backup.
             type: bool
+            default: false
           scheduled_backup:
             description:
             - Enable scheduled backup.
             type: bool
+            default: false
           scheduled_backup_time:
             description:
             - The scheduled backup time.
             type: str
-            default: ""
 
           # Flow Monitor
           netflow_settings:
@@ -1557,6 +1539,96 @@ options:
                     - Secondary exporter name.
                     type: str
                     default: ""
+      telemetry_settings:
+        description:
+        - Telemetry analysis, flow, microburst, NAS export, and energy settings.
+        type: dict
+        suboptions:
+          analysis_settings:
+            description:
+            - Telemetry analysis settings.
+            type: dict
+            suboptions:
+              is_enabled:
+                description:
+                - Enable telemetry analysis.
+                type: bool
+                default: false
+          energy_management:
+            description:
+            - Telemetry energy-management settings.
+            type: dict
+            suboptions:
+              cost:
+                description:
+                - Energy cost per unit owned by the module.
+                type: float
+                default: 1.2
+          flow_collection:
+            description:
+            - Telemetry flow-collection settings.
+            type: dict
+            suboptions:
+              operating_mode:
+                description:
+                - Telemetry flow operating mode.
+                type: str
+                default: flowTelemetry
+              traffic_analytics:
+                description:
+                - Traffic analytics state.
+                type: str
+                default: enabled
+              traffic_analytics_scope:
+                description:
+                - Traffic analytics scope.
+                type: str
+                default: intraFabric
+              udp_categorization:
+                description:
+                - UDP categorization state.
+                type: str
+                default: enabled
+          microburst:
+            description:
+            - Microburst-detection settings.
+            type: dict
+            suboptions:
+              microburst:
+                description:
+                - Enable microburst detection.
+                type: bool
+                default: false
+              sensitivity:
+                description:
+                - Microburst sensitivity level.
+                type: str
+                default: low
+          nas:
+            description:
+            - NAS telemetry settings.
+            type: dict
+            suboptions:
+              server:
+                description:
+                - NAS server address.
+                type: str
+                default: ""
+              export_settings:
+                description:
+                - NAS export settings.
+                type: dict
+                suboptions:
+                  export_format:
+                    description:
+                    - NAS export format.
+                    type: str
+                    default: json
+                  export_type:
+                    description:
+                    - NAS export type.
+                    type: str
+                    default: full
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
@@ -1865,6 +1937,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool

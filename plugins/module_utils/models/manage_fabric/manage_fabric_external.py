@@ -21,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     PowerRedundancyModeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    BGP_ASN_RE,
+    validate_bgp_asn_value,
     BootstrapSubnetModel,
     NetflowSettingsModel,
 )
@@ -102,7 +102,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 
     # Core Configuration
-    bgp_asn: str = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
+    bgp_asn: str | None = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]", default=None)
 
     # Name under management section is optional — propagated from FabricExternalConnectivityModel.fabric_name during validation
     name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
@@ -273,7 +273,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str) -> str:
+    def validate_bgp_asn(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -289,9 +289,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
         - `ValueError` - If the value does not match the expected ASN format
         """
-        if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
-        return value
+        return validate_bgp_asn_value(value)
 
 
 class FabricExternalConnectivityModel(FabricBaseModel):

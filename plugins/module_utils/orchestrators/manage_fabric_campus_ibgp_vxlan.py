@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -7,24 +5,25 @@
 from __future__ import annotations
 
 from typing import ClassVar
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_bgp_validation import ManageFabricBgpValidationMixin
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsDelete,
     EpManageFabricsGet,
     EpManageFabricsListGet,
     EpManageFabricsPost,
     EpManageFabricsPut,
-    EpManageFabricsDelete,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_bgp_validation import ManageFabricBgpValidationMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import ConfigActionsMixin
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
-class ManageAiIbgpVxlanFabricOrchestrator(ManageFabricBgpValidationMixin, ConfigActionsMixin, NDBaseOrchestrator):
-    model_class: ClassVar[type[NDBaseModel]] = FabricAiIbgpVxlanModel
+class ManageCampusIbgpVxlanFabricOrchestrator(ManageFabricBgpValidationMixin, ConfigActionsMixin, NDBaseOrchestrator):
+    model_class: ClassVar[type[NDBaseModel]] = FabricCampusIbgpVxlanModel
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut
@@ -35,12 +34,12 @@ class ManageAiIbgpVxlanFabricOrchestrator(ManageFabricBgpValidationMixin, Config
     def query_all(self) -> ResponseType:
         """
         Custom query_all action to extract 'fabrics' from response,
-        filtered to only aimlVxlanIbgp fabric types.
+        filtered to only vxlanCampus fabric types.
         """
         try:
             api_endpoint = self.query_all_endpoint()
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             fabrics = result.get("fabrics", []) or []
-            return [f for f in fabrics if f.get("management", {}).get("type") == "aimlVxlanIbgp"]
+            return [f for f in fabrics if f.get("management", {}).get("type") == "vxlanCampus"]
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

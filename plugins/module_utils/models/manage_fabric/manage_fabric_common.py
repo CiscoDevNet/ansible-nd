@@ -49,6 +49,42 @@ BGP_ASN_RE = re.compile(
     r"(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
 )
 
+SITE_ID_MAX_ND_4_2 = 4294967295
+SITE_ID_MAX_ND_4_3_1 = 281474976710655
+
+
+def validate_bgp_asn_value(value: str | None) -> str | None:
+    """Validate a BGP ASN when it is present in a partial fabric proposal."""
+    if value is None:
+        return value
+    if not BGP_ASN_RE.fullmatch(value):
+        raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer " "(1-4294967295) or dotted notation (1-65535.0-65535).")
+    return value
+
+
+def validate_site_id_value(value: str | None) -> str | None:
+    """Validate the site ID syntax and the largest value supported by ND."""
+    if value in (None, ""):
+        return value
+    if "." in value:
+        if not BGP_ASN_RE.fullmatch(value):
+            raise ValueError(f"Invalid dotted site ID: {value}")
+        return value
+    if not re.fullmatch(r"[1-9][0-9]*", value):
+        raise ValueError(f"Site ID must be a non-zero decimal without leading zeros or dotted ASN notation, got: {value}")
+    site_id = int(value)
+    if site_id > SITE_ID_MAX_ND_4_3_1:
+        raise ValueError(f"Site ID must be between 1 and {SITE_ID_MAX_ND_4_3_1}, got: {site_id}")
+    return value
+
+
+def bgp_asn_to_site_id(value: str) -> str:
+    """Return the asplain site ID corresponding to an ASN."""
+    if "." not in value:
+        return value
+    high, low = value.split(".")
+    return str(int(high) * 65536 + int(low))
+
 
 class BootstrapSubnetModel(NDNestedModel):
     """

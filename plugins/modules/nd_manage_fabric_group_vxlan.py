@@ -504,6 +504,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric group validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool

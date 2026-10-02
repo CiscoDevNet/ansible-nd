@@ -4,9 +4,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -108,8 +106,9 @@ options:
             description:
             - The BGP Autonomous System Number for the fabric.
             - Must be a numeric value between 1 and 4294967295, or dotted notation (1-65535.0-65535).
+            - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
+            - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-            required: true
           bgp_asn_auto_allocation:
             description:
             - Enable automatic BGP ASN allocation from the O(config.management.bgp_asn_range) pool.
@@ -161,11 +160,6 @@ options:
               used for BGP Router ID to the routing loopback interface.
             type: bool
             default: true
-          evpn:
-            description:
-            - Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric.
-            type: bool
-            default: true
           route_map_tag:
             description:
             - Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min 0, Max 4294967295).
@@ -194,9 +188,11 @@ options:
           site_id:
             description:
             - The site identifier for EVPN Multi-Site support.
+            - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
+            - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
+            - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
             - Defaults to the value of O(config.management.bgp_asn) if not provided.
             type: str
-            default: ""
           bgp_loopback_id:
             description:
             - The underlay routing loopback interface ID (0-1023).
@@ -607,7 +603,6 @@ options:
             description:
             - Encrypted BGP authentication key based on type.
             type: str
-            default: ""
           bfd:
             description:
             - Enable BFD. Valid for IPv4 underlay only.
@@ -632,7 +627,6 @@ options:
             description:
             - Encrypted SHA1 secret value.
             type: str
-            default: ""
           pim_hello_authentication:
             description:
             - Enable PIM hello authentication. Valid for IPv4 underlay only.
@@ -642,7 +636,6 @@ options:
             description:
             - PIM hello authentication key. 3DES encrypted.
             type: str
-            default: ""
           nxapi:
             description:
             - Enable NX-API over HTTPS.
@@ -715,17 +708,14 @@ options:
             description:
             - DHCP scope start address for switch POAP.
             type: str
-            default: ""
           dhcp_end_address:
             description:
             - DHCP scope end address for switch POAP.
             type: str
-            default: ""
           management_gateway:
             description:
             - Default gateway for management VRF on the switch.
             type: str
-            default: ""
           management_ipv4_prefix:
             description:
             - Switch management IP subnet prefix for IPv4.
@@ -837,7 +827,6 @@ options:
             description:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
             type: str
-            default: ""
           leaf_tor_id_range:
             description:
             - Use specific vPC/Port-channel ID range for leaf-tor pairings.
@@ -1072,7 +1061,6 @@ options:
               (af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43,
               cs1, cs2, cs3, cs4, cs5, cs6, cs7, default, ef).
             type: str
-            default: "26"
           cnp:
             description:
             - DSCP value for Congestion Notification. Numeric (0-63) with ranges/comma, or named values
@@ -1129,7 +1117,6 @@ options:
             - Flowlet aging timer in microseconds. Valid range depends on platform.
               Cloud Scale (CS) 1-2000000 (default 500), Silicon One (S1) 1-1024 (default 256).
             type: int
-            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values
@@ -1154,7 +1141,6 @@ options:
             - Acceptable values from 101 to 1000 (milliseconds).
               Leave blank for system default (100ms).
             type: int
-            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1196,7 +1182,6 @@ options:
             description:
             - MACsec primary key string. Cisco Type 7 encrypted octet string.
             type: str
-            default: ""
           macsec_algorithm:
             description:
             - MACsec primary cryptographic algorithm. AES_128_CMAC or AES_256_CMAC.
@@ -1207,7 +1192,6 @@ options:
             description:
             - MACsec fallback key string. Cisco Type 7 encrypted octet string.
             type: str
-            default: ""
           macsec_fallback_algorithm:
             description:
             - MACsec fallback cryptographic algorithm. AES_128_CMAC or AES_256_CMAC.
@@ -1661,6 +1645,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool

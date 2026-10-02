@@ -1,0 +1,572 @@
+---
+# Test code for the ND modules
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+- name: Query Nexus Dashboard version for Campus release-specific coverage
+  cisco.nd.nd_version:
+    state: query
+  register: campus_nd_version
+  tags: always
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabrics before starting tests
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+      - fabric_name: "{{ campus_test_fabric_deleted }}"
+      - fabric_name: "{{ campus_test_fabric_config_actions }}"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric using merged state
+#############################################################################
+- name: "TEST 1a: Create fabric using state merged (first run)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': campus_test_fabric_merged} | combine(fabric_config_campus) }}"
+  register: campus_merged_result_1
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1a: Verify fabric was created using merged state"
+  assert:
+    that:
+      - campus_merged_result_1 is changed
+      - campus_merged_result_1 is not failed
+    fail_msg: "Fabric creation with state merged failed"
+    success_msg: "Fabric successfully created with state merged"
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': campus_test_fabric_merged} | combine(fabric_config_campus) }}"
+  register: campus_merged_result_2
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - campus_merged_result_2 is not changed
+      - campus_merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1c: Update fabric using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          bgp_asn: "65002"  # Changed from 65001
+          link_state_routing_protocol: ospf
+          ospf_process_id: 2  # Changed from 1
+          ospf_area_id: "0.0.0.1"  # Changed from 0.0.0.0
+          system_mtu: 9198  # Changed from 1500
+          vlan_trunking_protocol_mode: transparent  # Changed from off
+          route_reflector_count: 4  # Changed from 2
+          bgp_ipv4_unicast_peering: true  # Changed from false
+          snmp_trap: false  # Changed from true
+          nxapi: true  # Changed from false
+          nxapi_http: true  # Changed from false
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: true  # Changed from false
+          real_time_interface_statistics_collection: true  # Changed from false
+          interface_statistics_load_interval: 30  # Changed from 10
+          sub_interface_dot1q_range: "2-511"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          management_ipv4_prefix: 24
+  register: campus_merged_result_3
+  tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Verify fabric was updated using merged state"
+  assert:
+    that:
+      - campus_merged_result_3 is changed
+      - campus_merged_result_3 is not failed
+    fail_msg: "Fabric update with state merged failed"
+    success_msg: "Fabric successfully updated with state merged"
+  tags: [test_merged, test_merged_update]
+
+#############################################################################
+# VALIDATION: Query campus_test_fabric_merged and validate expected changes
+#############################################################################
+- name: "VALIDATION 1: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Query campus_test_fabric_merged configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ campus_test_fabric_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: campus_merged_fabric_query
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Parse fabric configuration response"
+  set_fact:
+    campus_merged_fabric_config: "{{ campus_merged_fabric_query.json }}"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify BGP ASN was updated to 65002"
+  assert:
+    that:
+      - campus_merged_fabric_config.management.bgpAsn == "65002"
+    fail_msg: "BGP ASN validation failed. Expected: 65002, Actual: {{ campus_merged_fabric_config.management.bgpAsn }}"
+    success_msg: "BGP ASN correctly updated to 65002"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify OSPF Process ID was updated to 2"
+  assert:
+    that:
+      - campus_merged_fabric_config.management.ospfProcessId == 2
+    fail_msg: "OSPF Process ID validation failed. Expected: 2, Actual: {{ campus_merged_fabric_config.management.ospfProcessId }}"
+    success_msg: "OSPF Process ID correctly updated to 2"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify System MTU was updated to 9198"
+  assert:
+    that:
+      - campus_merged_fabric_config.management.systemMtu == 9198
+    fail_msg: "System MTU validation failed. Expected: 9198, Actual: {{ campus_merged_fabric_config.management.systemMtu }}"
+    success_msg: "System MTU correctly updated to 9198"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify Performance Monitoring was enabled"
+  assert:
+    that:
+      - campus_merged_fabric_config.management.performanceMonitoring == true
+    fail_msg: "Performance Monitoring validation failed. Expected: true, Actual: {{ campus_merged_fabric_config.management.performanceMonitoring }}"
+    success_msg: "Performance Monitoring correctly enabled"
+  tags: [test_merged, test_merged_validation]
+
+#############################################################################
+# VALIDATION: ND 4.3.1 Campus addition
+#
+# The 4.3.1 OpenAPI permits managementIpv4Prefix=31, but live ND
+# 4.3.1.175 Campus fabric validation rejects it and requires 24. Keep /31
+# contract coverage in the model tests and exercise the accepted release-only
+# field here.
+#############################################################################
+- name: "VALIDATION 1d: Configure the ND 4.3.1 Campus-only field"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+        management:
+          bgp_asn: "65002"
+          bgp_fast_convergence: true
+  register: campus_43_result_1
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '>=')
+  tags: [test_merged, test_43_fields]
+
+- name: "VALIDATION 1d: Reapply the ND 4.3.1 Campus-only field"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+        management:
+          bgp_asn: "65002"
+          bgp_fast_convergence: true
+  register: campus_43_result_2
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '>=')
+  tags: [test_merged, test_43_fields]
+
+- name: "VALIDATION 1d: Verify the ND 4.3.1 field is idempotent"
+  ansible.builtin.assert:
+    that:
+      - campus_43_result_1 is changed
+      - campus_43_result_1 is not failed
+      - campus_43_result_2 is not changed
+      - campus_43_result_2 is not failed
+    fail_msg: "ND 4.3.1 Campus field update was not idempotent"
+    success_msg: "ND 4.3.1 Campus field updated and remained idempotent"
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '>=')
+  tags: [test_merged, test_43_fields]
+
+- name: "VALIDATION 1d: Query the ND 4.3.1 Campus-only field"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ campus_test_fabric_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: campus_43_fabric_query
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '>=')
+  tags: [test_merged, test_43_fields]
+  delegate_to: localhost
+
+- name: "VALIDATION 1d: Verify ND stored the 4.3.1 Campus-only field"
+  ansible.builtin.assert:
+    that:
+      - campus_43_fabric_query.json.management.bgpFastConvergence == true
+    fail_msg: "ND did not retain the expected bgpFastConvergence value"
+    success_msg: "ND retained bgpFastConvergence"
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '>=')
+  tags: [test_merged, test_43_fields]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric using replaced state
+#############################################################################
+- name: "TEST 2a: Create fabric using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          bgp_asn: "65004"
+          replication_mode: multicast
+          link_state_routing_protocol: ospf
+          ospf_process_id: 3
+          ospf_area_id: "0.0.0.1"
+          system_mtu: 9198
+          vlan_trunking_protocol_mode: transparent
+          route_reflector_count: 4
+          bgp_ipv4_unicast_peering: true
+          snmp_trap: false
+          nxapi: true
+          nxapi_http: true
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: true
+          real_time_interface_statistics_collection: true
+          interface_statistics_load_interval: 30
+          sub_interface_dot1q_range: "2-511"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          management_ipv4_prefix: 24
+          management_ipv6_prefix: 64
+  register: campus_replaced_result_1
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2a: Verify fabric was created using replaced state"
+  assert:
+    that:
+      - campus_replaced_result_1 is changed
+      - campus_replaced_result_1 is not failed
+    fail_msg: "Fabric creation with state replaced failed"
+    success_msg: "Fabric successfully created with state replaced"
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          bgp_asn: "65004"
+          replication_mode: multicast
+          link_state_routing_protocol: ospf
+          ospf_process_id: 3
+          ospf_area_id: "0.0.0.1"
+          system_mtu: 9198
+          vlan_trunking_protocol_mode: transparent
+          route_reflector_count: 4
+          bgp_ipv4_unicast_peering: true
+          snmp_trap: false
+          nxapi: true
+          nxapi_http: true
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: true
+          real_time_interface_statistics_collection: true
+          interface_statistics_load_interval: 30
+          sub_interface_dot1q_range: "2-511"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          management_ipv4_prefix: 24
+          management_ipv6_prefix: 64
+  register: campus_replaced_result_2
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - campus_replaced_result_2 is not changed
+      - campus_replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2c: Replace fabric with only required fields (all optional settings revert to defaults)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+        management:
+          bgp_asn: "65004"
+  register: campus_replaced_result_3
+  tags: [test_replaced, test_replaced_defaults]
+
+- name: "TEST 2c: Verify fabric was replaced (optional settings reverted to defaults)"
+  assert:
+    that:
+      - campus_replaced_result_3 is changed
+      - campus_replaced_result_3 is not failed
+    fail_msg: "Fabric replace with defaults failed"
+    success_msg: "Fabric successfully replaced with defaults"
+  tags: [test_replaced, test_replaced_defaults]
+
+- name: "TEST 2d: Reapply the minimal replacement (idempotency test)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+        management:
+          bgp_asn: "65004"
+  register: campus_replaced_result_4
+  tags: [test_replaced, test_replaced_defaults]
+
+- name: "TEST 2d: Verify the minimal replacement is idempotent"
+  ansible.builtin.assert:
+    that:
+      - campus_replaced_result_4 is not changed
+      - campus_replaced_result_4 is not failed
+    fail_msg: "Minimal replaced state is not idempotent after defaults were restored"
+    success_msg: "Minimal replaced state remains idempotent after defaults were restored"
+  tags: [test_replaced, test_replaced_defaults]
+
+#############################################################################
+# TEST 3: STATE DELETED - Delete fabric using deleted state
+#############################################################################
+- name: "TEST 3 SETUP: Create a fabric to delete"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ campus_test_fabric_deleted }}"
+        management:
+          bgp_asn: "65010"
+  register: campus_delete_setup
+  tags: [test_deleted, test_deleted_setup]
+
+- name: "TEST 3 SETUP: Verify fabric was created for deletion test"
+  assert:
+    that:
+      - campus_delete_setup is changed
+      - campus_delete_setup is not failed
+    fail_msg: "Setup for delete test failed - fabric was not created"
+    success_msg: "Setup complete - fabric created for deletion test"
+  tags: [test_deleted, test_deleted_setup]
+
+- name: "TEST 3a: Delete fabric using state deleted (first run)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ campus_test_fabric_deleted }}"
+  register: campus_deleted_result_1
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 3a: Verify fabric was deleted"
+  assert:
+    that:
+      - campus_deleted_result_1 is changed
+      - campus_deleted_result_1 is not failed
+    fail_msg: "Fabric deletion failed"
+    success_msg: "Fabric successfully deleted"
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 3b: Delete fabric using state deleted (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ campus_test_fabric_deleted }}"
+  register: campus_deleted_result_2
+  tags: [test_deleted, test_deleted_idempotent]
+
+- name: "TEST 3b: Verify deleted state is idempotent"
+  assert:
+    that:
+      - campus_deleted_result_2 is not changed
+      - campus_deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when resource already absent"
+    success_msg: "Deleted state is idempotent - no changes on second run"
+  tags: [test_deleted, test_deleted_idempotent]
+
+#############################################################################
+# TEST 4: CONFIG ACTIONS VALIDATION - Invalid save/deploy combination
+#
+# Regression test for PR #256: config_actions validation must run BEFORE any
+# state mutation and must fail deterministically on every run, including
+# idempotent no-drift runs. deploy=true with save=false is invalid and must
+# fail before the fabric is modified.
+#############################################################################
+- name: "TEST 4 SETUP: Create baseline fabric with system_mtu 1500"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': campus_test_fabric_config_actions} | combine(fabric_config_campus) | combine({'management': (fabric_config_campus.management | default({})) | combine({'system_mtu': 1500})}) }}"
+  register: campus_config_actions_baseline
+  tags: [test_config_actions]
+
+- name: "TEST 4a: Invalid config_actions (save=false, deploy=true) - first run"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': campus_test_fabric_config_actions} | combine(fabric_config_campus) | combine({'management': (fabric_config_campus.management | default({})) | combine({'system_mtu': 9198})}) }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: campus_config_actions_first_run
+  ignore_errors: true
+  tags: [test_config_actions]
+
+- name: "TEST 4a: Verify first invalid run fails before any mutation"
+  assert:
+    that:
+      - campus_config_actions_first_run is failed
+      - campus_config_actions_first_run is not changed
+      - "'config_actions.deploy=true requires config_actions.save=true' in campus_config_actions_first_run.msg"
+    fail_msg: "Invalid config_actions did not fail before mutation on the first run"
+    success_msg: "Invalid config_actions failed before mutation without changing the fabric"
+  tags: [test_config_actions]
+
+- name: "TEST 4b: Invalid config_actions (save=false, deploy=true) - identical second run"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': campus_test_fabric_config_actions} | combine(fabric_config_campus) | combine({'management': (fabric_config_campus.management | default({})) | combine({'system_mtu': 9198})}) }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: campus_config_actions_second_run
+  ignore_errors: true
+  tags: [test_config_actions]
+
+- name: "TEST 4b: Verify identical second run also fails (no-drift path is not skipped)"
+  assert:
+    that:
+      - campus_config_actions_second_run is failed
+      - campus_config_actions_second_run is not changed
+      - "'config_actions.deploy=true requires config_actions.save=true' in campus_config_actions_second_run.msg"
+    fail_msg: "Invalid config_actions was skipped on the idempotent no-drift second run"
+    success_msg: "Invalid config_actions fails consistently regardless of drift"
+  tags: [test_config_actions]
+
+- name: "TEST 4c: Confirm system_mtu was never mutated (still 1500)"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': campus_test_fabric_config_actions} | combine(fabric_config_campus) | combine({'management': (fabric_config_campus.management | default({})) | combine({'system_mtu': 1500})}) }}"
+  register: campus_config_actions_verify_mtu
+  tags: [test_config_actions]
+
+- name: "TEST 4c: Verify system_mtu is unchanged at 1500"
+  assert:
+    that:
+      - campus_config_actions_verify_mtu is not changed
+    fail_msg: "system_mtu was mutated by an invalid config_actions run"
+    success_msg: "system_mtu remained 1500 - invalid config_actions never mutated ND"
+  tags: [test_config_actions]
+
+- name: "TEST 4 CLEANUP: Delete config_actions test fabric"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ campus_test_fabric_config_actions }}"
+  ignore_errors: true
+  tags: [test_config_actions, cleanup, always]
+
+#############################################################################
+# CLEANUP - Ensure clean state after tests
+#############################################################################
+- name: Clean up all test fabrics after tests
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+      - fabric_name: "{{ campus_test_fabric_deleted }}"
+      - fabric_name: "{{ campus_test_fabric_config_actions }}"
+  tags: always
