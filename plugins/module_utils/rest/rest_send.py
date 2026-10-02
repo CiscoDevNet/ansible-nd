@@ -130,6 +130,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._send_interval: int = 5
         self._sender: Optional[SenderProtocol] = None
         self._timeout: int = 300
+        self._max_attempts: int | None = None
         self._unit_test: bool = False
         self._verb: HttpVerbEnum = HttpVerbEnum.GET
 
@@ -340,6 +341,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.sender.verb = self.verb
         self.sender.payload = self.payload
         success = False
+        attempts = 0
         while timeout > 0 and success is False:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Calling sender.commit(): "
@@ -347,6 +349,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
             self.log.debug(msg)
 
             try:
+                attempts += 1
                 self.sender.commit()
             except ValueError as error:
                 raise ValueError(error) from error
@@ -378,6 +381,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
 
             success = self.result_current["success"]
             if success is False:
+                if self.max_attempts is not None and attempts >= self.max_attempts:
+                    break
                 if self.result_current.get("retryable", True) is False:
                     msg = f"{self.class_name}.{method_name}: "
                     msg += "Terminal failure (retryable=False). Not retrying. "
@@ -396,6 +401,17 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._result.append(self.result_current)
         self._committed_payload = copy.deepcopy(self._payload)
         self._payload = None
+
+    @property
+    def max_attempts(self) -> int | None:
+        """Limit request-loop sends without altering the default retry policy."""
+        return self._max_attempts
+
+    @max_attempts.setter
+    def max_attempts(self, value: int | None) -> None:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            raise ValueError("max_attempts must be a positive integer or None")
+        self._max_attempts = value
 
     @property
     def success(self) -> bool:

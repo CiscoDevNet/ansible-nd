@@ -15,6 +15,8 @@ class NDOutput:
         self._output_level: str = output_level
         self._state: str = state
         self._changed: bool = False
+        self._explicit_changed: bool | None = None
+        self._after_unknown: bool = False
         self._before: NDConfigCollection | list = []
         self._after: NDConfigCollection | list = []
         self._diff: NDConfigCollection | list = []
@@ -47,7 +49,9 @@ class NDOutput:
             gathered_output.update(**kwargs)
             return gathered_output
 
-        if isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
+        if self._explicit_changed is not None:
+            self._changed = self._explicit_changed
+        elif isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
             self._changed = True
 
         output = {
@@ -67,6 +71,10 @@ class NDOutput:
             output.update(self._extra)
 
         output.update(**kwargs)
+
+        if self._after_unknown:
+            output.pop("after", None)
+            output.pop("diff", None)
 
         return output
 
@@ -93,7 +101,7 @@ class NDOutput:
         final = results.final_result
 
         # Merge changed/failed from Results (API-level) with NDOutput (config-level).
-        if final.get("changed"):
+        if self._explicit_changed is None and final.get("changed"):
             output["changed"] = True
         if final.get("failed"):
             output["failed"] = True
@@ -123,7 +131,7 @@ class NDOutput:
         self,
         after: NDConfigCollection | None = None,
         before: NDConfigCollection | None = None,
-        diff: NDConfigCollection | None = None,
+        diff: NDConfigCollection | dict[str, Any] | list | None = None,
         proposed: NDConfigCollection | None = None,
         logs: list | None = None,
         gathered_spec: dict[str, Any] | None = None,
@@ -133,7 +141,7 @@ class NDOutput:
             self._after = after
         if isinstance(before, NDConfigCollection):
             self._before = before
-        if isinstance(diff, NDConfigCollection):
+        if isinstance(diff, (NDConfigCollection, dict, list)):
             self._diff = diff
         if isinstance(proposed, NDConfigCollection):
             self._proposed = proposed
@@ -142,3 +150,18 @@ class NDOutput:
         if isinstance(gathered_spec, dict):
             self._gathered_spec = gathered_spec
         self._extra.update(**kwargs)
+
+    def set_changed(self, changed: bool) -> None:
+        """Override prospective/API-level change with explicit mutation evidence."""
+        self._explicit_changed = bool(changed)
+        self._changed = bool(changed)
+
+    def set_after_state(self, after: NDConfigCollection, *, status: str = "confirmed") -> None:
+        """Publish a known snapshot, explicitly distinguishing check-mode plans."""
+        self._after_unknown = False
+        self.assign(after=after, after_status=status, diff_status=status)
+
+    def mark_after_unknown(self) -> None:
+        """Suppress complete final-state claims when any effect remains uncertain."""
+        self._after_unknown = True
+        self.assign(after_status="unknown", diff_status="unknown")

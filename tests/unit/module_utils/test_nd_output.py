@@ -22,6 +22,27 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
+
+@pytest.mark.parametrize("verbosity", [0, 2, 3])
+def test_explicit_unchanged_wins_over_http_acceptance(verbosity):
+    output = NDOutput("normal")
+    output.set_changed(False)
+    output.assign(failed=True)
+    result = output.format_with_verbosity(verbosity, _make_results_write_and_query())
+    assert result["changed"] is False
+    assert result["failed"] is True
+
+
+def test_unknown_snapshot_omitted_but_evidence_retained():
+    output = NDOutput("normal")
+    output.set_changed(True)
+    output.assign(diff={"before": [], "after": [{"name": "planned"}]}, action_results=[{"identifier": "confirmed"}])
+    output.mark_after_unknown()
+    result = output.format()
+    assert "after" not in result and "diff" not in result
+    assert result["changed"] and result["action_results"]
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
