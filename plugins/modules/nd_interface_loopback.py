@@ -79,7 +79,7 @@ options:
                       remaining C(policy) suboptions are applicable.
                     - Use V(loopback) for a standard NX-OS loopback interface.
                     - Use V(ipfmLoopback) for an IP Fabric for Media loopback interface.
-                    - Use V(mplsLoopback) for an MPLS loopback interface.
+                    - Use V(mplsLoopback) for an MPLS loopback interface. V(mplsLoopback) requires MPLS Handoff to be enabled on the fabric.
                     - Use V(iosXeLoopback) for a general-purpose IOS-XE loopback.
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
@@ -191,6 +191,7 @@ options:
                     description:
                     - The DCI (Data Center Interconnect) routing tag.
                     - The ND default is V(MPLS_UNDERLAY).
+                    - Must not be empty.
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                   ospf_area_id:
