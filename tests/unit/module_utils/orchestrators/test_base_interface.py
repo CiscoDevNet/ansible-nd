@@ -40,6 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import Fab
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
     BulkCreateGroupKey,
     BulkCreateItem,
+    BulkCreateOutcome,
     NDBaseInterfaceOrchestrator,
     finalize_accepted_intent,
 )
@@ -2706,3 +2707,82 @@ def test_base_interface_01140() -> None:
 
     assert "port-channel120" not in str(exc_info.value)
     assert len(instance.rest_send.responses) == 2
+
+
+# =============================================================================
+# Test: _send_bulk_create_group (send-and-recover step, issue #595)
+# =============================================================================
+
+
+def test_base_interface_01200() -> None:
+    """
+    # Summary
+
+    Verify `_send_bulk_create_group` returns a success outcome naming every submitted interface and queues no deploy.
+
+    ## Test
+
+    - One group of two items; POST returns an all-success 207
+    - The outcome has no error, lists both names in request order, and carries the response DATA
+    - `_pending_deploys` stays empty: queueing is the caller's decision
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._send_bulk_create_group()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with does_not_raise():
+        outcome = instance._send_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+
+    assert isinstance(outcome, BulkCreateOutcome)
+    assert outcome.error is None
+    assert outcome.accepted == ["loopback10", "loopback20"]
+    assert outcome.result == {"results": [{"name": "loopback10", "status": "success"}, {"name": "loopback20", "status": "success"}]}
+    assert instance._pending_deploys == []
+
+
+def test_base_interface_01210() -> None:
+    """
+    # Summary
+
+    Verify `_send_bulk_create_group` does not raise on a mixed 207: it returns the error and the names the controller accepted, and
+    queues nothing.
+
+    ## Test
+
+    - One group of two items; POST returns 207 with loopback10 `success` and loopback20 `failed`
+    - The outcome carries an exception, `accepted == ["loopback10"]`, `verb == "accepted"`
+    - `_pending_deploys` stays empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._send_bulk_create_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubBulkCreateOrchestrator(rest_send=rest_send)
+    group_key = BulkCreateGroupKey(switch_id="FDO12345ABC", policy_type="loopback")
+
+    with does_not_raise():
+        outcome = instance._send_bulk_create_group(group_key, _bulk_items("loopback10", "loopback20"))
+
+    assert isinstance(outcome.error, Exception)
+    assert outcome.result is None
+    assert outcome.accepted == ["loopback10"]
+    assert outcome.verb == "accepted"
+    assert instance._pending_deploys == []
