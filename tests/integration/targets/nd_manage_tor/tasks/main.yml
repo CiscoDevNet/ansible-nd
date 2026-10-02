@@ -56,6 +56,7 @@
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
+    # Gathered ignores config and always returns every fabric association.
     config:
       - aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: gathered
@@ -65,9 +66,9 @@
   ansible.builtin.assert:
     that:
       - gathered_tor_associations is not changed
-      - gathered_tor_associations.before is defined
-      - gathered_tor_associations.after is defined
-      - gathered_tor_associations.before == gathered_tor_associations.after
+      - gathered_tor_associations.gathered is defined
+      - gathered_tor_associations.before == []
+      - gathered_tor_associations.after == []
 
 # =============================================================================
 # MERGED STATE TESTS: CREATE
@@ -206,8 +207,6 @@
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_after_create
 
@@ -215,7 +214,20 @@
   ansible.builtin.assert:
     that:
       - gathered_after_create is not changed
-      - gathered_after_create.before | length >= 2
+      - gathered_after_create.gathered | length >= 2
+
+- name: Replay gathered ToR associations (merged state)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ gathered_after_create.gathered }}"
+    state: merged
+  register: replay_gathered
+
+- name: Asserts replaying gathered associations is idempotent
+  ansible.builtin.assert:
+    that:
+      - replay_gathered is not changed
 
 # =============================================================================
 # MERGED STATE TESTS: UPDATE
@@ -383,8 +395,6 @@
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - aggregation_or_leaf_switch: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_after_delete
 
@@ -392,6 +402,7 @@
   ansible.builtin.assert:
     that:
       - gathered_after_delete is not changed
+      - gathered_after_delete.gathered is defined
 
 # =============================================================================
 # FINAL CLEANUP
