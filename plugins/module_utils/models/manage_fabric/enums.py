@@ -427,6 +427,50 @@ class TelemetryStreamingProtocolEnum(str, Enum):
     IPV6 = "ipv6"
 
 
+class TelemetryTrafficAnalyticsEnum(str, Enum):
+    """Enumeration for telemetry traffic-analytics states."""
+
+    COMPATIBILITY = "compatibility"
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+
+class TelemetryTrafficAnalyticsScopeEnum(str, Enum):
+    """Enumeration for telemetry traffic-analytics scopes."""
+
+    INTER_FABRIC = "interFabric"
+    INTER_FABRIC_AND_EXTERNAL = "interFabricAndExternal"
+    INTRA_FABRIC = "intraFabric"
+
+
+class TelemetryUdpCategorizationEnum(str, Enum):
+    """Enumeration for telemetry UDP-categorization states."""
+
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+
+class TelemetryMicroburstSensitivityEnum(str, Enum):
+    """Enumeration for telemetry microburst sensitivity levels."""
+
+    HIGH = "high"
+    LOW = "low"
+    MEDIUM = "medium"
+
+
+class TelemetryNasExportTypeEnum(str, Enum):
+    """Enumeration for telemetry NAS export types."""
+
+    BASE = "base"
+    FULL = "full"
+
+
+class TelemetryNasExportFormatEnum(str, Enum):
+    """Enumeration for telemetry NAS export formats."""
+
+    JSON = "json"
+
+
 class VrfLiteAutoConfigEnum(str, Enum):
     """
     # Summary

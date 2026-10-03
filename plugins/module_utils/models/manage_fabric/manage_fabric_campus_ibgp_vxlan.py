@@ -29,11 +29,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     VlanTrunkingProtocolModeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
+    BootstrapSubnetModel,
+    FabricIPv4Address,
+    FabricIPv4CIDR,
+    FabricInterfaceName,
+    MulticastGroupSubnet,
+    NetflowSettingsModel,
+    ScheduledBackupTime,
     bgp_asn_to_site_id,
     validate_bgp_asn_value,
     validate_site_id_value,
-    BootstrapSubnetModel,
-    NetflowSettingsModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
 
@@ -138,7 +143,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Replication Mode for BUM Traffic",
         default=ReplicationModeEnum.MULTICAST,
     )
-    multicast_group_subnet: str = Field(
+    multicast_group_subnet: MulticastGroupSubnet = Field(
         alias="multicastGroupSubnet",
         description="Multicast pool prefix (8-30), CIDR v4 format",
         default="239.1.1.0/25",
@@ -398,7 +403,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="VRF Lite Inter-Fabric Connection Deployment Options",
         default=VrfLiteAutoConfigEnum.MANUAL,
     )
-    vrf_lite_subnet_range: str = Field(
+    vrf_lite_subnet_range: FabricIPv4CIDR = Field(
         alias="vrfLiteSubnetRange",
         description="P2P Interfabric Connection address range (CIDR v4)",
         default="10.33.0.0/16",
@@ -460,26 +465,26 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="IP protocol version for Local DHCP Server",
         default=DhcpProtocolVersionEnum.DHCPV4,
     )
-    dhcp_start_address: str | None = Field(
+    dhcp_start_address: FabricIPv4Address = Field(
         alias="dhcpStartAddress",
-        description="DHCP Scope Start Address",
+        description="IPv4 DHCP Scope Start Address",
         default=None,
     )
-    dhcp_end_address: str | None = Field(
+    dhcp_end_address: FabricIPv4Address = Field(
         alias="dhcpEndAddress",
-        description="DHCP Scope End Address",
+        description="IPv4 DHCP Scope End Address",
         default=None,
     )
-    management_gateway: str | None = Field(
+    management_gateway: FabricIPv4Address = Field(
         alias="managementGateway",
-        description="Default Gateway For Management VRF",
+        description="IPv4 Default Gateway For Management VRF",
         default=None,
     )
     management_ipv4_prefix: int = Field(
         alias="managementIpv4Prefix",
-        description="Switch Mgmt IP Subnet Prefix (IPv4)",
+        description="Switch Mgmt IP Subnet Prefix (IPv4, 8-30)",
         ge=8,
-        le=31,
+        le=30,
         default=24,
     )
     management_ipv6_prefix: int = Field(
@@ -506,7 +511,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Enable daily backup at scheduled time",
         default=None,
     )
-    scheduled_backup_time: str | None = Field(
+    scheduled_backup_time: ScheduledBackupTime = Field(
         alias="scheduledBackupTime",
         description="Backup time (UTC) in 24 hour format HH:MM",
         default=None,
@@ -549,9 +554,11 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         le=65535,
         default=1,
     )
-    ospf_area_id: str = Field(
+    ospf_area_id: FabricIPv4Address = Field(
         alias="ospfAreaId",
         description="OSPF Area Id in IP address format",
+        min_length=1,
+        max_length=15,
         default="0.0.0.0",
     )
 
@@ -641,7 +648,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Manage switches with only Inband connectivity",
         default=False,
     )
-    seed_switch_core_interfaces: list[str] = Field(
+    seed_switch_core_interfaces: list[FabricInterfaceName] = Field(
         alias="seedSwitchCoreInterfaces",
         description="Core-facing interface list on seed switch (N9K border gateway spine)",
         default_factory=list,

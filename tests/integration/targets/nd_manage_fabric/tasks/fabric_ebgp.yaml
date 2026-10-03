@@ -179,6 +179,7 @@
     status_code:
       - 200
   register: nd_auth_response
+  no_log: true
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
@@ -195,6 +196,7 @@
       - 200
       - 404
   register: ebgp_merged_fabric_query
+  no_log: true
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
@@ -511,6 +513,7 @@
     status_code:
       - 200
   register: nd_auth_response_2
+  no_log: true
   tags: [test_replaced, test_replaced_validation]
   delegate_to: localhost
 
@@ -527,6 +530,7 @@
       - 200
       - 404
   register: ebgp_replaced_fabric_query
+  no_log: true
   tags: [test_replaced, test_replaced_validation]
   delegate_to: localhost
 
@@ -991,7 +995,7 @@
     <<: *nd_info
     state: merged
     config:
-      - fabric_name: "multi_ebgp_fabric_1"
+      - fabric_name: "{{ ebgp_multi_fabric_1 }}"
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1068,7 +1072,7 @@
           dhcp_end_address: ""
           management_gateway: ""
           management_ipv4_prefix: 24
-      - fabric_name: "multi_ebgp_fabric_2"
+      - fabric_name: "{{ ebgp_multi_fabric_2 }}"
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -1259,8 +1263,8 @@
       - fabric_name: "{{ ebgp_test_fabric_merged }}"
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
-      - fabric_name: "multi_ebgp_fabric_1"
-      - fabric_name: "multi_ebgp_fabric_2"
+      - fabric_name: "{{ ebgp_multi_fabric_1 }}"
+      - fabric_name: "{{ ebgp_multi_fabric_2 }}"
   ignore_errors: true
   tags: [cleanup, always]
 

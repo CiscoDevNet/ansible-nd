@@ -58,10 +58,12 @@ FABRIC_FAMILIES = (
     (FabricCampusIbgpVxlanModel, ManageCampusIbgpVxlanFabricOrchestrator),
 )
 
+SITE_ID_FAMILIES = tuple(family for family in FABRIC_FAMILIES if family[0] is not FabricExternalConnectivityModel)
+
 
 def _orchestrator(orchestrator_class, state: str, version: str | None = None):
     rest_send = RestSend({"check_mode": False, "state": state})
-    rest_send._controller_version = version
+    rest_send.controller_version = version
     return orchestrator_class(rest_send=rest_send)
 
 
@@ -109,8 +111,9 @@ def test_parse_controller_version(value, expected) -> None:
     assert parse_controller_version(value) == expected
 
 
-def test_extended_site_id_is_release_aware() -> None:
-    model = FabricIbgpModel.from_config(
+@pytest.mark.parametrize(("model_class", "orchestrator_class"), SITE_ID_FAMILIES)
+def test_extended_site_id_is_release_aware(model_class, orchestrator_class) -> None:
+    model = model_class.from_config(
         {
             "fabric_name": "fabric1",
             "management": {"bgp_asn": "65001", "site_id": "4294967296"},
@@ -118,6 +121,26 @@ def test_extended_site_id_is_release_aware() -> None:
     )
 
     with pytest.raises(RuntimeError, match="require ND 4.3.1 or later"):
-        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.2.1.10").preflight([model])
+        _orchestrator(orchestrator_class, "merged", "4.2.1.10").preflight([model])
 
-    _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1.175").preflight([model])
+    with pytest.raises(RuntimeError, match="controller version is 'unknown'"):
+        _orchestrator(orchestrator_class, "merged", None).preflight([model])
+
+    _orchestrator(orchestrator_class, "merged", "4.3.1.175").preflight([model])
+
+
+@pytest.mark.parametrize("value", (True, False))
+@pytest.mark.parametrize("version", (None, "4.2.1.10"))
+def test_campus_bgp_fast_convergence_rejects_supplied_value_before_4_3_1(value: bool, version: str | None) -> None:
+    model = FabricCampusIbgpVxlanModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "bgp_fast_convergence": value}})
+
+    with pytest.raises(RuntimeError, match="bgp_fast_convergence requires ND 4.3.1 or later"):
+        _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", version).preflight([model])
+
+
+def test_campus_bgp_fast_convergence_is_allowed_when_omitted_or_supported() -> None:
+    omitted = FabricCampusIbgpVxlanModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}})
+    supplied = FabricCampusIbgpVxlanModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "bgp_fast_convergence": False}})
+
+    _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", "4.2.1.10").preflight([omitted])
+    _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", "4.3.1.175").preflight([supplied])

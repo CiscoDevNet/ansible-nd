@@ -55,9 +55,21 @@ def test_manage_fabric_campus_ibgp_vxlan_orchestrator_00020(monkeypatch) -> None
         captured["kwargs"] = kwargs
         return {
             "fabrics": [
-                {"name": "campus1", "management": {"type": "vxlanCampus"}},
-                {"name": "ibgp1", "management": {"type": "vxlanIbgp"}},
-                {"name": "external1", "management": {"type": "externalConnectivity"}},
+                {
+                    "name": "campus1",
+                    "category": "fabric",
+                    "management": {"type": "vxlanCampus"},
+                },
+                {
+                    "name": "ibgp1",
+                    "category": "fabric",
+                    "management": {"type": "vxlanIbgp"},
+                },
+                {
+                    "name": "external1",
+                    "category": "fabric",
+                    "management": {"type": "externalConnectivity"},
+                },
                 {"name": "missing-management"},
             ]
         }
@@ -67,13 +79,17 @@ def test_manage_fabric_campus_ibgp_vxlan_orchestrator_00020(monkeypatch) -> None
     result = instance.query_all()
 
     endpoint = EpManageFabricsListGet()
+    endpoint.endpoint_params.category = "fabric"
+    endpoint.endpoint_params.max = instance.fabric_inventory_page_size
+    endpoint.endpoint_params.offset = 0
+    endpoint.endpoint_params.sort = "name"
     assert captured["args"] == ()
     assert captured["kwargs"] == {
         "path": endpoint.path,
         "verb": endpoint.verb,
         "not_found_ok": True,
     }
-    assert result == [{"name": "campus1", "management": {"type": "vxlanCampus"}}]
+    assert result == [{"name": "campus1", "category": "fabric", "management": {"type": "vxlanCampus"}}]
 
 
 @pytest.mark.parametrize("response", ({}, {"fabrics": None}, {"fabrics": []}))

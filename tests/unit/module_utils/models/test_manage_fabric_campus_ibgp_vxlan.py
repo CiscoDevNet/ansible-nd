@@ -166,19 +166,22 @@ def test_manage_fabric_campus_ibgp_vxlan_00080() -> None:
 
 
 def test_manage_fabric_campus_ibgp_vxlan_00090() -> None:
-    """The ND 4.3 fields are optional, but explicit values are serialized."""
+    """The supported ND 4.3 field is optional and /31 remains live-rejected."""
     omitted = FabricCampusIbgpVxlanModel.from_config(_config()).to_payload()["management"]
     assert "bgpFastConvergence" not in omitted
 
-    enabled = FabricCampusIbgpVxlanModel.from_config(_config(bgp_fast_convergence=True, management_ipv4_prefix=31)).to_payload()["management"]
+    enabled = FabricCampusIbgpVxlanModel.from_config(_config(bgp_fast_convergence=True, management_ipv4_prefix=30)).to_payload()["management"]
     assert enabled["bgpFastConvergence"] is True
-    assert enabled["managementIpv4Prefix"] == 31
+    assert enabled["managementIpv4Prefix"] == 30
 
     disabled = FabricCampusIbgpVxlanModel.from_config(_config(bgp_fast_convergence=False)).to_payload()["management"]
     assert disabled["bgpFastConvergence"] is False
 
-    with pytest.raises(ValidationError):
-        FabricCampusIbgpVxlanModel.from_config(_config(management_ipv4_prefix=32))
+    # ND 4.3.1 OpenAPI declares /31, but live ND 4.3.1.175 rejects it and
+    # requires a shorter prefix. Keep the cross-release/live-supported bound.
+    for prefix in (7, 31, 32):
+        with pytest.raises(ValidationError):
+            FabricCampusIbgpVxlanModel.from_config(_config(management_ipv4_prefix=prefix))
 
 
 def test_manage_fabric_campus_ibgp_vxlan_00100() -> None:

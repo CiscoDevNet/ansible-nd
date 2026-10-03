@@ -331,6 +331,7 @@ options:
     - Controls save and deploy behavior after fabric group configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -364,6 +365,7 @@ notes:
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create a VXLAN fabric group (MSD) using state merged
   cisco.nd.nd_manage_fabric_group_vxlan:
     state: merged

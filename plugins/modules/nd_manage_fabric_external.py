@@ -126,6 +126,7 @@ options:
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
             - Under O(state=merged), entries in this list are not merged item-by-item.
@@ -152,7 +153,7 @@ options:
                 required: true
               subnet_prefix:
                 description:
-                - Subnet prefix length (8-30).
+                - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
           cdp:
@@ -185,6 +186,8 @@ options:
           dhcp_end_address:
             description:
             - DHCP Scope End Address For Switch POAP.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_protocol_version:
             description:
@@ -195,18 +198,22 @@ options:
           dhcp_start_address:
             description:
             - DHCP Scope Start Address For Switch POAP.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dns_collection:
             description:
             - List of IPv4 and IPv6 DNS addresses.
             type: list
             elements: str
+            default: []
           dns_vrf_collection:
             description:
             - DNS Server VRFs.
             - One VRF for all DNS servers or a list of VRFs, one per DNS server.
             type: list
             elements: str
+            default: []
           domain_name:
             description:
             - Domain name for DHCP server PnP block.
@@ -260,6 +267,8 @@ options:
           management_gateway:
             description:
             - Default Gateway For Management VRF On The Switch.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
             description:
@@ -442,7 +451,7 @@ options:
             type: bool
           scheduled_backup_time:
             description:
-            - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
+            - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
             type: str
           snmp_trap:
             description:
@@ -484,21 +493,27 @@ options:
                 description:
                 - Traffic analytics state.
                 type: str
+                choices:
+                - compatibility
+                - disabled
+                - enabled
                 default: enabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
                 type: str
+                choices:
+                - interFabric
+                - interFabricAndExternal
+                - intraFabric
                 default: intraFabric
-              operating_mode:
-                description:
-                - Operating mode.
-                type: str
-                default: flowTelemetry
               udp_categorization:
                 description:
                 - UDP categorization.
                 type: str
+                choices:
+                - disabled
+                - enabled
                 default: enabled
           microburst:
             description:
@@ -514,6 +529,10 @@ options:
                 description:
                 - Microburst sensitivity level.
                 type: str
+                choices:
+                - high
+                - low
+                - medium
                 default: low
           analysis_settings:
             description:
@@ -544,11 +563,16 @@ options:
                     description:
                     - Export type.
                     type: str
+                    choices:
+                    - base
+                    - full
                     default: full
                   export_format:
                     description:
                     - Export format.
                     type: str
+                    choices:
+                    - json
                     default: json
           energy_management:
             description:
@@ -570,11 +594,13 @@ options:
             - Email streaming configuration.
             type: list
             elements: dict
+            default: []
           message_bus:
             description:
             - Message bus configuration.
             type: list
             elements: dict
+            default: []
           syslog:
             description:
             - Syslog streaming configuration.
@@ -584,6 +610,7 @@ options:
             - Webhook configuration.
             type: list
             elements: dict
+            default: []
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
@@ -604,6 +631,7 @@ options:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -638,6 +666,7 @@ notes:
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create an External Connectivity fabric using state merged
   cisco.nd.nd_manage_fabric_external:
     state: merged
@@ -667,9 +696,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
   register: result
 
@@ -714,9 +740,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
           management_ipv6_prefix: 64
   register: result
@@ -728,6 +751,20 @@ EXAMPLES = r"""
       - fabric_name: my_ext_fabric
         management:
           bgp_asn: "65004"
+  register: result
+
+- name: Save and deploy External Connectivity fabric configuration after changes
+  cisco.nd.nd_manage_fabric_external:
+    state: merged
+    config:
+      - fabric_name: my_ext_fabric
+        management:
+          bgp_asn: "65004"
+          interface_statistics_load_interval: 30
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
 
 - name: Delete a specific fabric using state deleted

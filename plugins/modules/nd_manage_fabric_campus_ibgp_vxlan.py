@@ -128,7 +128,7 @@ options:
             choices: [ multicast, ingress ]
           multicast_group_subnet:
             description:
-            - Multicast pool prefix (8-30), CIDR v4 format.
+            - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
             type: str
             default: "239.1.1.0/25"
           auto_generate_multicast_group_address:
@@ -365,7 +365,7 @@ options:
             choices: [ manual, back2BackAndToExternal ]
           vrf_lite_subnet_range:
             description:
-            - P2P Interfabric Connection address range (CIDR v4).
+            - IPv4 address range in CIDR notation used to assign point-to-point inter-fabric connections.
             type: str
             default: "10.33.0.0/16"
           vrf_lite_subnet_target_mask:
@@ -422,19 +422,25 @@ options:
           dhcp_start_address:
             description:
             - DHCP Scope Start Address.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
             - DHCP Scope End Address.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - Default Gateway For Management VRF.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
             description:
-            - Switch management IP subnet prefix (IPv4, 8-31).
-            - The Nexus Dashboard 4.3.1 OpenAPI permits prefix length C(31); the live 4.3.1.175 Campus endpoint required C(24).
+            - Switch management IPv4 subnet prefix length from C(8) through C(30).
+            - Prefix length C(31) is intentionally unsupported because the live Nexus Dashboard 4.3.1 Campus endpoint rejects it.
             type: int
             default: 24
           management_ipv6_prefix:
@@ -445,6 +451,7 @@ options:
           bootstrap_subnet_collection:
             description:
             - List of IPv4/IPv6 subnets for bootstrap.
+            - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
             - Under O(state=merged), entries in this list are not merged item-by-item.
@@ -471,7 +478,7 @@ options:
                 required: true
               subnet_prefix:
                 description:
-                - Subnet prefix length (8-30).
+                - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
           real_time_backup:
@@ -484,7 +491,7 @@ options:
             type: bool
           scheduled_backup_time:
             description:
-            - Backup time (UTC) in 24 hour format HH:MM (00:00 to 23:59).
+            - Backup time (UTC) in 24-hour C(HH:MM) format (C(00:00) to C(23:59)).
             type: str
           link_state_routing_protocol:
             description:
@@ -519,7 +526,7 @@ options:
             default: 1
           ospf_area_id:
             description:
-            - OSPF Area Id in IP address format.
+            - OSPF area ID as a valid IPv4 address.
             type: str
             default: "0.0.0.0"
           system_mtu:
@@ -600,8 +607,11 @@ options:
           seed_switch_core_interfaces:
             description:
             - Core-facing interface list on seed switch (N9K border gateway spine).
+            - Each entry must be an Ethernet or port-channel interface name, optionally with a numeric range suffix
+              (for example C(Ethernet1/1), C(Eth1/1-4), C(Port-Channel10), or C(Po10-12)).
             type: list
             elements: str
+            default: []
           extra_config_xe_bootstrap:
             description:
             - Additional CLIs during device bootup/login (IOS-XE, e.g. AAA/Radius).
@@ -723,21 +733,27 @@ options:
                 description:
                 - Traffic analytics state.
                 type: str
+                choices:
+                - compatibility
+                - disabled
+                - enabled
                 default: enabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
                 type: str
+                choices:
+                - interFabric
+                - interFabricAndExternal
+                - intraFabric
                 default: intraFabric
-              operating_mode:
-                description:
-                - Operating mode.
-                type: str
-                default: flowTelemetry
               udp_categorization:
                 description:
                 - UDP categorization.
                 type: str
+                choices:
+                - disabled
+                - enabled
                 default: enabled
           microburst:
             description:
@@ -753,6 +769,10 @@ options:
                 description:
                 - Microburst sensitivity level.
                 type: str
+                choices:
+                - high
+                - low
+                - medium
                 default: low
           analysis_settings:
             description:
@@ -783,11 +803,16 @@ options:
                     description:
                     - Export type.
                     type: str
+                    choices:
+                    - base
+                    - full
                     default: full
                   export_format:
                     description:
                     - Export format.
                     type: str
+                    choices:
+                    - json
                     default: json
           energy_management:
             description:
@@ -809,11 +834,13 @@ options:
             - Email streaming configuration.
             type: list
             elements: dict
+            default: []
           message_bus:
             description:
             - Message bus configuration.
             type: list
             elements: dict
+            default: []
           syslog:
             description:
             - Syslog streaming configuration.
@@ -823,6 +850,7 @@ options:
             - Webhook configuration.
             type: list
             elements: dict
+            default: []
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
@@ -843,6 +871,7 @@ options:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -878,6 +907,7 @@ notes:
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create a VXLAN Campus fabric using state merged
   cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: merged
@@ -975,6 +1005,20 @@ EXAMPLES = r"""
       - fabric_name: my_campus_fabric
         management:
           bgp_asn: "65004"
+  register: result
+
+- name: Save and deploy Campus iBGP VXLAN fabric configuration after changes
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    state: merged
+    config:
+      - fabric_name: my_campus_fabric
+        management:
+          bgp_asn: "65004"
+          system_mtu: 9198
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
 
 - name: Delete a specific fabric using state deleted

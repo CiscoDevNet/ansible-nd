@@ -139,6 +139,7 @@
     status_code:
       - 200
   register: nd_auth_response
+  no_log: true
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
@@ -155,6 +156,7 @@
       - 200
       - 404
   register: campus_merged_fabric_query
+  no_log: true
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
@@ -196,11 +198,39 @@
   tags: [test_merged, test_merged_validation]
 
 #############################################################################
+# VALIDATION: ND 4.2 rejects explicit use of the 4.3.1-only Campus field
+#############################################################################
+- name: "VALIDATION 1d: Reject the Campus-only field on ND before 4.3.1"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+        management:
+          bgp_asn: "65002"
+          bgp_fast_convergence: false
+  register: campus_pre43_fast_convergence
+  ignore_errors: true
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '<')
+  tags: [test_merged, test_43_fields]
+
+- name: "VALIDATION 1d: Verify explicit false is locally rejected before ND 4.3.1"
+  ansible.builtin.assert:
+    that:
+      - campus_pre43_fast_convergence is failed
+      - campus_pre43_fast_convergence is not changed
+      - "'requires ND 4.3.1 or later' in (campus_pre43_fast_convergence.msg | default(''))"
+    fail_msg: "The ND 4.3.1-only Campus field was not rejected locally without mutation"
+    success_msg: "The ND 4.3.1-only Campus field was rejected locally without mutation"
+  when: campus_nd_version.current.platformVersion is version('4.3.1', '<')
+  tags: [test_merged, test_43_fields]
+
+#############################################################################
 # VALIDATION: ND 4.3.1 Campus addition
 #
 # The 4.3.1 OpenAPI permits managementIpv4Prefix=31, but live ND
 # 4.3.1.175 Campus fabric validation rejects it and requires 24. Keep /31
-# contract coverage in the model tests and exercise the accepted release-only
+# rejection coverage in the model tests and exercise the accepted release-only
 # field here.
 #############################################################################
 - name: "VALIDATION 1d: Configure the ND 4.3.1 Campus-only field"
@@ -253,6 +283,7 @@
     status_code:
       - 200
   register: campus_43_fabric_query
+  no_log: true
   when: campus_nd_version.current.platformVersion is version('4.3.1', '>=')
   tags: [test_merged, test_43_fields]
   delegate_to: localhost

@@ -1,18 +1,178 @@
 ---
+- name: Generate a collision-resistant fabric integration run identifier
+  ansible.builtin.set_fact:
+    nd_fabric_test_run_id: "{{ lookup('ansible.builtin.password', '/dev/null', length=10, chars=['ascii_lowercase', 'digits']) }}"
+  when: nd_fabric_test_run_id is not defined
+
+- name: Define the disposable Campus failure-cleanup probe
+  ansible.builtin.set_fact:
+    campus_cleanup_failure_probe: "ndit_{{ nd_fabric_test_run_id }}_campus_cleanup"
+    campus_cleanup_controlled_failure_observed: false
+
 - name: Run nd_manage_fabric iBGP tests
-  ansible.builtin.include_tasks: fabric_ibgp.yaml
+  block:
+    - name: Include iBGP test scenarios
+      ansible.builtin.include_tasks: fabric_ibgp.yaml
+  always:
+    - name: Always remove disposable iBGP test fabrics
+      cisco.nd.nd_manage_fabric_ibgp_vxlan:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ test_fabric_merged }}"
+          - fabric_name: "{{ test_fabric_replaced }}"
+          - fabric_name: "{{ test_fabric_deleted }}"
+          - fabric_name: "{{ test_fabric_config_actions }}"
+          - fabric_name: "{{ ibgp_multi_fabric_1 }}"
+          - fabric_name: "{{ ibgp_multi_fabric_2 }}"
+      ignore_errors: true
+      tags: [cleanup, always]
 
 - name: Run nd_manage_fabric Campus iBGP VXLAN tests
-  ansible.builtin.include_tasks: fabric_campus.yaml
+  block:
+    - name: Prove Campus cleanup executes after a controlled failure
+      block:
+        - name: Create the disposable Campus failure-cleanup probe
+          cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+            output_level: '{{ api_key_output_level | default("debug") }}'
+            state: merged
+            config:
+              - fabric_name: "{{ campus_cleanup_failure_probe }}"
+                management:
+                  bgp_asn: "65099"
+          register: campus_cleanup_failure_create
+
+        - name: Verify the Campus failure-cleanup probe was created
+          ansible.builtin.assert:
+            that:
+              - campus_cleanup_failure_create is changed
+              - campus_cleanup_failure_create is not failed
+
+        - name: Trigger the expected Campus cleanup failure path
+          ansible.builtin.fail:
+            msg: "Expected controlled failure for Campus cleanup verification"
+
+      rescue:
+        - name: Verify and record the expected controlled failure
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg == "Expected controlled failure for Campus cleanup verification"
+
+        - name: Record that the controlled Campus failure was observed
+          ansible.builtin.set_fact:
+            campus_cleanup_controlled_failure_observed: true
+
+      always:
+        - name: Remove the Campus failure-cleanup probe after the controlled failure
+          cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+            output_level: '{{ api_key_output_level | default("debug") }}'
+            state: deleted
+            config:
+              - fabric_name: "{{ campus_cleanup_failure_probe }}"
+
+    - name: Verify the controlled Campus failure was rescued
+      ansible.builtin.assert:
+        that:
+          - campus_cleanup_controlled_failure_observed | default(false) | bool
+
+    - name: Delete the Campus failure-cleanup probe a second time
+      cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ campus_cleanup_failure_probe }}"
+      register: campus_cleanup_failure_second_delete
+
+    - name: Verify the controlled-failure teardown already removed the probe
+      ansible.builtin.assert:
+        that:
+          - campus_cleanup_failure_second_delete is not changed
+          - campus_cleanup_failure_second_delete is not failed
+
+    - name: Include Campus iBGP VXLAN test scenarios
+      ansible.builtin.include_tasks: fabric_campus.yaml
+  always:
+    - name: Always remove disposable Campus iBGP VXLAN test fabrics
+      cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ campus_test_fabric_merged }}"
+          - fabric_name: "{{ campus_test_fabric_replaced }}"
+          - fabric_name: "{{ campus_test_fabric_deleted }}"
+          - fabric_name: "{{ campus_test_fabric_config_actions }}"
+          - fabric_name: "{{ campus_cleanup_failure_probe }}"
+      ignore_errors: true
+      tags: [cleanup, always]
 
 - name: Run nd_manage_fabric eBGP tests
-  ansible.builtin.include_tasks: fabric_ebgp.yaml
+  block:
+    - name: Include eBGP test scenarios
+      ansible.builtin.include_tasks: fabric_ebgp.yaml
+  always:
+    - name: Always remove disposable eBGP test fabrics
+      cisco.nd.nd_manage_fabric_ebgp_vxlan:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ ebgp_test_fabric_merged }}"
+          - fabric_name: "{{ ebgp_test_fabric_replaced }}"
+          - fabric_name: "{{ ebgp_test_fabric_deleted }}"
+          - fabric_name: "{{ ebgp_test_fabric_config_actions }}"
+          - fabric_name: "{{ ebgp_multi_fabric_1 }}"
+          - fabric_name: "{{ ebgp_multi_fabric_2 }}"
+      ignore_errors: true
+      tags: [cleanup, always]
 
 - name: Run nd_manage_fabric External Connectivity tests
-  ansible.builtin.include_tasks: fabric_external.yaml
+  block:
+    - name: Include External Connectivity test scenarios
+      ansible.builtin.include_tasks: fabric_external.yaml
+  always:
+    - name: Always remove disposable External Connectivity test fabrics
+      cisco.nd.nd_manage_fabric_external:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ ext_test_fabric_merged }}"
+          - fabric_name: "{{ ext_test_fabric_replaced }}"
+          - fabric_name: "{{ ext_test_fabric_deleted }}"
+          - fabric_name: "{{ ext_test_fabric_config_actions }}"
+          - fabric_name: "{{ ext_multi_fabric_1 }}"
+          - fabric_name: "{{ ext_multi_fabric_2 }}"
+      ignore_errors: true
+      tags: [cleanup, always]
 
 - name: Run nd_manage_fabric AI iBGP VXLAN tests
-  ansible.builtin.include_tasks: fabric_ai_ibgp.yaml
+  block:
+    - name: Include AI iBGP VXLAN test scenarios
+      ansible.builtin.include_tasks: fabric_ai_ibgp.yaml
+  always:
+    - name: Always remove disposable AI iBGP VXLAN test fabrics
+      cisco.nd.nd_manage_fabric_ai_ibgp_vxlan:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ ai_ibgp_test_fabric_merged }}"
+          - fabric_name: "{{ ai_ibgp_test_fabric_replaced }}"
+          - fabric_name: "{{ ai_ibgp_test_fabric_deleted }}"
+          - fabric_name: "{{ ai_ibgp_test_fabric_config_actions }}"
+      ignore_errors: true
+      tags: [cleanup, always]
 
 - name: Run nd_manage_fabric AI eBGP VXLAN tests
-  ansible.builtin.include_tasks: fabric_ai_ebgp.yaml
+  block:
+    - name: Include AI eBGP VXLAN test scenarios
+      ansible.builtin.include_tasks: fabric_ai_ebgp.yaml
+  always:
+    - name: Always remove disposable AI eBGP VXLAN test fabrics
+      cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+        output_level: '{{ api_key_output_level | default("debug") }}'
+        state: deleted
+        config:
+          - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+          - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+          - fabric_name: "{{ ai_ebgp_test_fabric_deleted }}"
+          - fabric_name: "{{ ai_ebgp_test_fabric_config_actions }}"
+      ignore_errors: true
+      tags: [cleanup, always]

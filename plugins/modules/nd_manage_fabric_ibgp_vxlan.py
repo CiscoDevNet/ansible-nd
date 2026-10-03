@@ -70,11 +70,13 @@ options:
         - The telemetry collection type.
         type: str
         default: inBand
+        choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
         - The telemetry streaming protocol.
         type: str
         default: ipv4
+        choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
         - The telemetry source interface.
@@ -162,7 +164,7 @@ options:
             choices: [ multicast, ingress ]
           multicast_group_subnet:
             description:
-            - The multicast group subnet.
+            - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
             type: str
             default: "239.1.1.0/25"
           ipv6_multicast_group_subnet:
@@ -377,7 +379,7 @@ options:
           # Protocols
           ospf_area_id:
             description:
-            - The OSPF area ID.
+            - The OSPF area ID as a valid IPv4 address.
             type: str
             default: "0.0.0.0"
           bgp_loopback_id:
@@ -563,12 +565,6 @@ options:
             - Enable SGT pre-provisioning.
             type: bool
             default: false
-          security_group_status:
-            description:
-            - The security group status.
-            type: str
-            default: disabled
-            choices: [ enabled, enabledStrict, enabledLoose, enablePending, enablePendingStrict, enablePendingLoose, disablePending, disabled ]
           macsec:
             description:
             - Enable MACsec on intra-fabric links.
@@ -1140,7 +1136,7 @@ options:
             choices: [ manual, back2BackAndToExternal ]
           vrf_lite_subnet_range:
             description:
-            - The VRF lite subnet IP address pool.
+            - The VRF Lite IPv4 address pool in CIDR notation.
             type: str
             default: "10.33.0.0/16"
           vrf_lite_subnet_target_mask:
@@ -1271,36 +1267,43 @@ options:
             - The list of NTP server IP addresses.
             type: list
             elements: str
+            default: []
           ntp_server_vrf_collection:
             description:
             - The list of VRFs for NTP servers.
             type: list
             elements: str
+            default: []
           dns_collection:
             description:
             - The list of DNS server IP addresses.
             type: list
             elements: str
+            default: []
           dns_vrf_collection:
             description:
             - The list of VRFs for DNS servers.
             type: list
             elements: str
+            default: []
           syslog_server_collection:
             description:
             - The list of syslog server IP addresses.
             type: list
             elements: str
+            default: []
           syslog_server_vrf_collection:
             description:
             - The list of VRFs for syslog servers.
             type: list
             elements: str
+            default: []
           syslog_severity_collection:
             description:
             - The list of syslog severity levels (0-7).
             type: list
             elements: int
+            default: []
 
           # Hypershield
           allow_smart_switch_onboarding:
@@ -1350,14 +1353,20 @@ options:
           dhcp_start_address:
             description:
             - The DHCP start address for bootstrap.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
             - The DHCP end address for bootstrap.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - The management gateway for bootstrap.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
             description:
@@ -1372,6 +1381,7 @@ options:
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
             - Under O(state=merged), entries in this list are not merged item-by-item.
@@ -1398,24 +1408,31 @@ options:
                 required: true
               subnet_prefix:
                 description:
-                - Subnet prefix length (8-30).
+                - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
           seed_switch_core_interfaces:
             description:
             - Seed switch fabric interfaces. Core-facing interface list on seed switch.
+            - Each entry must be an Ethernet or port-channel interface name, optionally with a numeric range suffix
+              (for example C(Ethernet1/1), C(Eth1/1-4), C(Port-Channel10), or C(Po10-12)).
             type: list
             elements: str
+            default: []
           spine_switch_core_interfaces:
             description:
             - Spine switch fabric interfaces. Core-facing interface list on all spines.
+            - Each entry must be an Ethernet or port-channel interface name, optionally with a numeric range suffix
+              (for example C(Ethernet1/1), C(Eth1/1-4), C(Port-Channel10), or C(Po10-12)).
             type: list
             elements: str
+            default: []
           inband_dhcp_servers:
             description:
-            - List of external DHCP server IP addresses (Max 3).
+            - List of external DHCP server IPv4 addresses (maximum 3).
             type: list
             elements: str
+            default: []
           extra_config_nxos_bootstrap:
             description:
             - Additional CLIs required during device bootup/login (e.g. AAA/Radius).
@@ -1429,10 +1446,12 @@ options:
           unnumbered_dhcp_start_address:
             description:
             - Switch Loopback DHCP Scope Start Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
+            - Must be a valid IPv4 address without a prefix length.
             type: str
           unnumbered_dhcp_end_address:
             description:
             - Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
+            - Must be a valid IPv4 address without a prefix length.
             type: str
 
           # Configuration Backup
@@ -1448,7 +1467,7 @@ options:
             default: false
           scheduled_backup_time:
             description:
-            - The scheduled backup time.
+            - Scheduled backup time in 24-hour C(HH:MM) format (C(00:00) to C(23:59)).
             type: str
 
           # Flow Monitor
@@ -1569,25 +1588,31 @@ options:
             - Telemetry flow-collection settings.
             type: dict
             suboptions:
-              operating_mode:
-                description:
-                - Telemetry flow operating mode.
-                type: str
-                default: flowTelemetry
               traffic_analytics:
                 description:
                 - Traffic analytics state.
                 type: str
+                choices:
+                - compatibility
+                - disabled
+                - enabled
                 default: enabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
                 type: str
+                choices:
+                - interFabric
+                - interFabricAndExternal
+                - intraFabric
                 default: intraFabric
               udp_categorization:
                 description:
                 - UDP categorization state.
                 type: str
+                choices:
+                - disabled
+                - enabled
                 default: enabled
           microburst:
             description:
@@ -1603,6 +1628,10 @@ options:
                 description:
                 - Microburst sensitivity level.
                 type: str
+                choices:
+                - high
+                - low
+                - medium
                 default: low
           nas:
             description:
@@ -1623,12 +1652,44 @@ options:
                     description:
                     - NAS export format.
                     type: str
+                    choices:
+                    - json
                     default: json
                   export_type:
                     description:
                     - NAS export type.
                     type: str
+                    choices:
+                    - base
+                    - full
                     default: full
+      external_streaming_settings:
+        description:
+        - External streaming settings for the fabric.
+        type: dict
+        suboptions:
+          email:
+            description:
+            - Email streaming configuration.
+            type: list
+            elements: dict
+            default: []
+          message_bus:
+            description:
+            - Message bus configuration.
+            type: list
+            elements: dict
+            default: []
+          syslog:
+            description:
+            - Syslog streaming configuration.
+            type: dict
+          webhooks:
+            description:
+            - Webhook configuration.
+            type: list
+            elements: dict
+            default: []
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
@@ -1649,6 +1710,7 @@ options:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -1684,6 +1746,7 @@ notes:
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create an iBGP VXLAN fabric using state merged
   cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: merged
@@ -1756,9 +1819,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
   register: result
 
@@ -1849,9 +1909,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
           management_ipv6_prefix: 64
   register: result
@@ -1917,6 +1974,20 @@ EXAMPLES = r"""
           l3_vni_range: "50000-59000"
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
+  register: result
+
+- name: Save and deploy iBGP VXLAN fabric configuration after changes
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
+    state: merged
+    config:
+      - fabric_name: my_fabric
+        management:
+          bgp_asn: "65001"
+          fabric_mtu: 9216
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
 
 - name: Delete a specific fabric using state deleted

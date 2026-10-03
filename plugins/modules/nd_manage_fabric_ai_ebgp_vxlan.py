@@ -277,8 +277,8 @@ options:
             choices: [ multicast, ingress ]
           multicast_group_subnet:
             description:
-            - Multicast pool prefix between 8 to 30. A multicast group IPv4 from this pool
-              is used for BUM traffic for each overlay network.
+            - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
+            - A multicast group IPv4 address from this pool is used for BUM traffic for each overlay network.
             type: str
             default: "239.1.1.0/25"
           auto_generate_multicast_group_address:
@@ -434,7 +434,7 @@ options:
             choices: [ manual, back2BackAndToExternal ]
           vrf_lite_subnet_range:
             description:
-            - Address range to assign P2P interfabric connections.
+            - IPv4 address range in CIDR notation used to assign point-to-point inter-fabric connections.
             type: str
             default: "10.33.0.0/16"
           vrf_lite_subnet_target_mask:
@@ -664,6 +664,7 @@ options:
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
             - Under O(state=merged), entries in this list are not merged item-by-item.
@@ -690,7 +691,7 @@ options:
                 required: true
               subnet_prefix:
                 description:
-                - Subnet prefix length (8-30).
+                - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
           local_dhcp_server:
@@ -707,14 +708,20 @@ options:
           dhcp_start_address:
             description:
             - DHCP scope start address for switch POAP.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
             - DHCP scope end address for switch POAP.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - Default gateway for management VRF on the switch.
+            - Must be a valid IPv4 address without a prefix length.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
             description:
@@ -825,7 +832,7 @@ options:
             default: false
           scheduled_backup_time:
             description:
-            - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
+            - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
             type: str
           leaf_tor_id_range:
             description:
@@ -849,36 +856,43 @@ options:
             - List of NTP server IPv4/IPv6 addresses and/or hostnames.
             type: list
             elements: str
+            default: []
           ntp_server_vrf_collection:
             description:
             - NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server.
             type: list
             elements: str
+            default: []
           dns_collection:
             description:
             - List of IPv4 and IPv6 DNS addresses.
             type: list
             elements: str
+            default: []
           dns_vrf_collection:
             description:
             - DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server.
             type: list
             elements: str
+            default: []
           syslog_server_collection:
             description:
             - List of syslog server IPv4/IPv6 addresses and/or hostnames.
             type: list
             elements: str
+            default: []
           syslog_server_vrf_collection:
             description:
             - Syslog Server VRFs. One VRF for all syslog servers or a list of VRFs, one per syslog server.
             type: list
             elements: str
+            default: []
           syslog_severity_collection:
             description:
             - List of syslog severity values, one per syslog server.
             type: list
             elements: int
+            default: []
           banner:
             description:
             - Message of the Day (motd) banner. Delimiter char (very first char is delimiter char)
@@ -1238,21 +1252,27 @@ options:
                 description:
                 - Traffic analytics state.
                 type: str
+                choices:
+                - compatibility
+                - disabled
+                - enabled
                 default: enabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
                 type: str
+                choices:
+                - interFabric
+                - interFabricAndExternal
+                - intraFabric
                 default: intraFabric
-              operating_mode:
-                description:
-                - Operating mode.
-                type: str
-                default: flowTelemetry
               udp_categorization:
                 description:
                 - UDP categorization.
                 type: str
+                choices:
+                - disabled
+                - enabled
                 default: enabled
           microburst:
             description:
@@ -1268,6 +1288,10 @@ options:
                 description:
                 - Microburst sensitivity level.
                 type: str
+                choices:
+                - high
+                - low
+                - medium
                 default: low
           analysis_settings:
             description:
@@ -1298,11 +1322,16 @@ options:
                     description:
                     - Export type.
                     type: str
+                    choices:
+                    - base
+                    - full
                     default: full
                   export_format:
                     description:
                     - Export format.
                     type: str
+                    choices:
+                    - json
                     default: json
           energy_management:
             description:
@@ -1324,11 +1353,13 @@ options:
             - Email streaming configuration.
             type: list
             elements: dict
+            default: []
           message_bus:
             description:
             - Message bus configuration.
             type: list
             elements: dict
+            default: []
           syslog:
             description:
             - Syslog streaming configuration.
@@ -1338,6 +1369,7 @@ options:
             - Webhook configuration.
             type: list
             elements: dict
+            default: []
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
@@ -1359,6 +1391,7 @@ options:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -1394,6 +1427,7 @@ notes:
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create an AI/ML eBGP VXLAN fabric using state merged (with auto ASN allocation)
   cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: merged
@@ -1407,6 +1441,7 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
+          bgp_asn: "65001"
           bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65535"
           bgp_as_mode: multiAS
@@ -1467,9 +1502,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
   register: result
 
@@ -1625,6 +1657,20 @@ EXAMPLES = r"""
           l3_vni_range: "50000-59000"
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
+  register: result
+
+- name: Save and deploy AI/ML eBGP VXLAN fabric configuration after changes
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    state: merged
+    config:
+      - fabric_name: my_ai_ebgp_fabric
+        management:
+          bgp_asn: "65001"
+          fabric_mtu: 9216
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
 
 - name: Delete a specific AI/ML eBGP fabric using state deleted

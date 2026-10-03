@@ -103,11 +103,11 @@ class NDBaseModel(BaseModel, ABC):
     # constrained fields with HTTP 400 (see the validator docstring).
     empty_string_means_unset: ClassVar[bool] = False
 
-    # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
-    # ND echoes the schema-declared template default for every field the user never set, so an existing-side
-    # value equal to its declared default is normalized to absent during removal detection -- omitting it from
-    # proposed config is not a pending reset. Source the values from the ND OpenAPI template schema for the
-    # model's policyType (see the `nd-openapi` MCP); a wrong value here breaks replaced/overridden idempotency.
+    # Evidence-backed controller defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS
+    # (wire key). OpenAPI defaults are contract candidates, not proof of live controller behavior: add a value
+    # only after omit/read-back and explicit-value probes establish a deterministic value for every supported
+    # release/fabric in scope. Dynamic, conditional, release-divergent, or otherwise unresolved values must be
+    # preserved or omitted instead. A wrong value here breaks replaced/overridden idempotency.
     # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
     # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
     # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
