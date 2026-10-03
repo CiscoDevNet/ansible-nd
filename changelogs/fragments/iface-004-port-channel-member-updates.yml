@@ -18,3 +18,12 @@ bugfixes:
     port-channel preflight and ethernet-member updates. Unrecognized nested
     member configuration fails closed instead of being silently omitted from the full PUT
     (https://github.com/CiscoDevNet/ansible-nd/issues/533#iface-004).
+  - >-
+    nd_interface_port_channel_access, nd_interface_port_channel_trunk_host,
+    nd_interface_port_channel_routed, nd_interface_vpc_access, and
+    nd_interface_vpc_trunk_host - normalize omitted or null controller member
+    lists to empty lists so explicit ports=[], peer1_member_ports=[], and
+    peer2_member_ports=[] requests are idempotent after all members have been
+    removed. Merged configuration still preserves a membership list when that
+    field is omitted, while replaced and overridden configuration reset omitted
+    membership lists to empty lists.
