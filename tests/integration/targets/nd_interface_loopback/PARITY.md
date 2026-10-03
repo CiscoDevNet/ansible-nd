@@ -5,7 +5,7 @@ This document maps the non-XE scenarios in the original
 The optional `xe.yaml` suite is explicitly excluded from this review.
 
 The current branch HEAD is
-`ce28cabc14bd6b2ebce8c996c5e8ed0a857da34e`; the harness and this document also
+`ce611f538ca3c1ef15634d2e65dac07c15a7703f`; the harness and this document also
 contain uncommitted changes. Historical `Live run passed` entries are retained
 as evidence of prior executions and do not by themselves prove the current
 working tree has passed a full same-environment run.
@@ -85,16 +85,17 @@ task files, so there is no non-XE OSPF parity case to map.
 Harness scenarios retain the `never` tag while parity validation is in
 progress. A normal target run continues to execute only the original suite.
 The aggregate `nd4x_demo` tag selects both preflight and harness scenarios. A
-state-specific tag such as `nd4x_demo_merged` must also select
-`nd4x_demo_preflight`; otherwise the version fact can remain unset and the
-state include can be skipped.
+state-specific tag such as `nd4x_demo_merged` selects the preflight
+automatically. Contributors do not need to add `nd4x_demo_preflight`
+separately; the preflight include carries each state tag used by this target,
+so the version fact is set before the selected state include runs.
 
 The safe replacement run excludes `overridden`:
 
 ```bash
 ansible-test network-integration nd_interface_loopback \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo,nd4x_demo_preflight \
+  --tags never,nd4x_demo \
   --skip-tags nd4x_demo_overridden \
   -vv
 ```
@@ -111,7 +112,7 @@ Run it with:
 ```bash
 ansible-test network-integration nd_interface_loopback \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo_overridden,nd4x_demo_preflight \
+  --tags never,nd4x_demo_overridden \
   --allow-destructive \
   -vv
 ```
@@ -119,7 +120,7 @@ ansible-test network-integration nd_interface_loopback \
 ## Deployment scope
 
 Live switch/controller integration is **IN SCOPE**. The recorded harness runs
-performed real controller/switch configuration and cleanup on `Astha_Fabric`.
+performed real controller/switch configuration and cleanup on `<fabric-name>`.
 The legacy run was started against the same inventory but was interrupted in
 the legacy no-deploy task after it stopped producing output; it is not claimed
 as passed. XE is excluded from this review as stated above.
@@ -154,7 +155,7 @@ around predictive check mode.
 | Evidence | Result |
 |---|---|
 | Nexus Dashboard version | ND 4.x preflight passed; exact `platformVersion` was not retained in the run record |
-| Fabric and switch management IP | `Astha_Fabric`; `10.122.84.71` |
+| Fabric and switch management IP | `<fabric-name>`; `192.0.2.x` |
 | Original suite command and date | Untagged `nd_interface_loopback` target run; 2026-08-05 |
 | Original suite recap (`failed=0`) | Passed |
 | Safe replacement command and date | `nd4x_demo` aggregate excluding `nd4x_demo_overridden`; 2026-08-05 |
@@ -167,13 +168,13 @@ around predictive check mode.
 | Current harness destructive run | 2026-09-06; `ok=67 changed=20 failed=0 skipped=3` |
 | Manual no-deploy device observation | Reported 2026-09-29 after `MERGED NO-DEPLOY`: ND displayed loopback103 while the switch running configuration still showed only loopback0 and loopback1; manual observation, not an automated harness assertion |
 | Current legacy run | Incomplete/interrupted in legacy no-deploy; not a pass |
-| Current testbed | ND `4.2.1`; `Astha_Fabric`; selected switch `10.122.84.71` |
-| Current branch HEAD at review | `ce28cabc14bd6b2ebce8c996c5e8ed0a857da34e` plus uncommitted changes |
+| Current testbed | ND `4.2.1`; `<fabric-name>`; selected switch `192.0.2.x` |
+| Current branch HEAD at review | `ce611f538ca3c1ef15634d2e65dac07c15a7703f` plus uncommitted changes |
 | Current local develop reference at review | `084631c34dd22e1fe13137660fdf82358e246023` |
 | Historical harness CIDR rerun after alignment | 2026-09-07; preflight, setup, create/update/idempotency, and nested no-deploy workflow passed; controller call stalled at `loopback204` CIDR creation; reserved state was subsequently cleaned and API absence validation passed |
 | Latest existing loopback JUnit artifact | 2026-09-27; `tests/output/junit/nd_interface_loopback-qwwlydxh-1790525237.758909.xml`; 32 tests, 0 failures, 0 errors, 2 skipped; covers preflight and merged harness tasks, including loopback204 CIDR normalization/idempotency and controller cleanup, but not replaced/overridden/deleted |
 | Latest CIDR artifact environment | Testbed identity and exact same-testbed parity with the legacy run were not retained in the JUnit artifact |
-| Static gaps requiring follow-up | No-deploy switch-state assertion is manual only; harness remains opt-in rather than the untagged target path; state-specific tags require preflight |
+| Static gaps requiring follow-up | No-deploy switch-state assertion is manual only; harness remains opt-in rather than the untagged target path; state-specific tags select preflight automatically |
 
 ## Retirement decision
 
