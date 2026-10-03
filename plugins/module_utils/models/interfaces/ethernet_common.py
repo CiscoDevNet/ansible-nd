@@ -66,12 +66,15 @@ def normalize_member_interface_names(value):
     # Summary
 
     Normalize every member interface name in a port-channel `ports` list through `normalize_ethernet_interface_name` (see it for the
-    expansion rules). A non-list value is returned unchanged so the field's own type validation reports it.
+    expansion rules). Normalize `None` to `[]` because ND can omit an empty member list or return it as null; both wire shapes mean
+    that the port-channel has no members. Any other non-list value is returned unchanged so the field's own type validation reports it.
 
     ## Raises
 
     None
     """
+    if value is None:
+        return []
     if not isinstance(value, list):
         return value
     return [normalize_ethernet_interface_name(name) for name in value]

@@ -29,6 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import InterfaceOffsetPaginator
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
@@ -204,10 +205,33 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Via `_request` if the interface-list API request fails with a non-404 status.
         """
         if switch_id not in self._switch_interfaces_cache:
-            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
+            paginator = InterfaceOffsetPaginator()
+
+            def fetch_page(offset: int, page_size: int):
+                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+                api_endpoint.endpoint_params.max = page_size
+                api_endpoint.endpoint_params.offset = offset
+                api_endpoint.endpoint_params.sort = "interfaceName:asc"
+                return self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+
+            def identity(interface: Mapping[str, Any]) -> tuple[str, str]:
+                interface_name = interface.get("interfaceName")
+                if not isinstance(interface_name, str) or not interface_name:
+                    raise ValueError("interfaceName must be a non-empty string")
+                returned_switch_id = interface.get("switchId")
+                if returned_switch_id is not None:
+                    if not isinstance(returned_switch_id, str) or not returned_switch_id:
+                        raise ValueError("row switchId must be a non-empty string when supplied")
+                    if returned_switch_id != switch_id:
+                        raise ValueError(f"row switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
+                return switch_id, interface_name.lower()
+
+            interfaces = paginator.collect(
+                fetch_page=fetch_page,
+                identity=identity,
+                context=f"interface inventory for switch {switch_id!r}",
+            )
+            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces}
         return self._switch_interfaces_cache[switch_id]
 
     def _switches_to_query(self) -> dict[str, str]:

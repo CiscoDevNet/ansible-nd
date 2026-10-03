@@ -451,20 +451,18 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Fetch one switch's interface list and return the vPC interfaces whose policy type this orchestrator manages,
-        each enriched with the `switchIp` of the switch it was read from. Tolerates a missing body (`not_found_ok`) and
-        a non-dict body (the `isinstance` guard) without raising.
+        Read one switch's complete shared interface inventory and return the vPC interfaces whose policy type this orchestrator manages,
+        each enriched with the `switchIp` of the switch it was read from. The shared reader paginates, validates identities, and publishes
+        its cache only after the full collection succeeds.
 
         ## Raises
 
         ### Exception
 
-        - If the interface-list request fails (propagated to `query_all`'s wrapper).
+        - If the paginated interface-list request or completeness validation fails (propagated to `query_all`'s wrapper).
         """
-        api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-        interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-        managed = [iface for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
+        interfaces = self._switch_interfaces(switch_id).values()
+        managed = [dict(iface) for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
         for iface in managed:
             iface["switchIp"] = switch_ip
         return managed

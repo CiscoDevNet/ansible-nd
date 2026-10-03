@@ -204,7 +204,7 @@ def test_port_channel_routed_orchestrator_00200(ports, match) -> None:
 
     ## Classes and Methods
 
-    - PortChannelBaseOrchestrator.XE_MEMBER_HOST_POLICY
+    - interface_membership.get_member_policy_descriptor_for_parent()
     - PortChannelBaseOrchestrator._validate_xe_member_modes()
     """
     method_name = inspect.stack()[0][3]

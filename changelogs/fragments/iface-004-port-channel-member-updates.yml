@@ -1,0 +1,29 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+bugfixes:
+  - >-
+    nd_interface_ethernet_access, nd_interface_ethernet_trunk_host, and
+    nd_interface_ethernet_routed - recognize authentic accessPoMember,
+    iosXeAccessPoMember, accessVpcPoMember, poMember, iosXeTrunkPoMember,
+    vpcMember, l3PoMember, and iosXeL3PoMember
+    controller policies and safely update admin_state, description, and
+    extra_config with state=merged while preserving port-channel or vPC
+    membership. Member validation rejects abbreviated membership or
+    interface-context commands and requires a compatible parent policy, mode,
+    and network OS. vPC validation compares the literal shared peer
+    configuration returned in both parent echoes, validates both switches from
+    complete paginated inventories, and uses one reusable pair proof without a
+    GET per member. One immutable member-to-parent policy registry is shared by
+    port-channel preflight and ethernet-member updates. Unrecognized nested
+    member configuration fails closed instead of being silently omitted from the full PUT
+    (https://github.com/CiscoDevNet/ansible-nd/issues/533#iface-004).
+  - >-
+    nd_interface_port_channel_access, nd_interface_port_channel_trunk_host,
+    nd_interface_port_channel_routed, nd_interface_vpc_access, and
+    nd_interface_vpc_trunk_host - normalize omitted or null controller member
+    lists to empty lists so explicit ports=[], peer1_member_ports=[], and
+    peer2_member_ports=[] requests are idempotent after all members have been
+    removed. Merged configuration still preserves a membership list when that
+    field is omitted, while replaced and overridden configuration reset omitted
+    membership lists to empty lists.

@@ -4,7 +4,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -15,9 +19,10 @@ description:
 - Manage ethernet trunk-mode host interfaces on Cisco Nexus Dashboard, on NX-OS (C(trunkHost)) and IOS-XE (C(iosXeTrunkHost)) switches.
 - It supports creating, updating, and deleting trunk host interface configurations on switches within a fabric.
 - Multiple interfaces can share the same configuration via the O(config[].interface_names) list.
-- Interfaces that are port-channel members have restricted mutability; only O(config[].config_data.network_os.policy.description),
-  O(config[].config_data.network_os.policy.admin_state), and O(config[].config_data.network_os.policy.extra_config)
-  can be modified on port-channel member interfaces.
+- An ethernet interface carrying the C(poMember), C(iosXeTrunkPoMember), or C(vpcMember) policy can be updated with O(state=merged)
+  without changing its port-channel or vPC membership. Only O(config[].config_data.network_os.policy.admin_state),
+  O(config[].config_data.network_os.policy.description), and O(config[].config_data.network_os.policy.extra_config)
+  may be supplied for such a member.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -162,6 +167,10 @@ options:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
                     - Applies to all policy_type values.
+                    - For a C(poMember) or C(vpcMember) interface, membership-changing and interface-context
+                      commands are rejected. This includes C(channel-group), C(no channel-group),
+                      C(default interface), C(default-interface), C(interface), C(exit), C(end), and
+                      C(configure terminal), including their ordinary CLI abbreviations.
                     type: str
                   fec:
                     description:
@@ -387,17 +396,23 @@ options:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new resources and update existing ones as defined in your configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-    - Use O(state=replaced) to replace the resources specified in the configuration.
+      For C(poMember), C(iosXeTrunkPoMember), and C(vpcMember), this is the only supported state and only the three documented member-safe
+      fields may be supplied; all other modeled configurable member-policy fields and membership values are preserved.
+    - Use O(state=replaced) to replace the resources specified in the configuration. An explicitly named
+      C(poMember), C(iosXeTrunkPoMember), or C(vpcMember) is rejected; use O(state=merged) for its member-safe fields.
     - Use O(state=overridden) to enforce the configuration as the single source of truth. Named interfaces are
       modified to exactly match the configuration. For NX-OS, every C(trunkHost) interface in the fabric that is not
       present in the configuration is reset to its fabric default (fabric-wide remove-omitted semantics); use with
-      extra caution. Specifying an empty O(config) list resets every NX-OS trunkHost interface in the fabric, not only the
-      interfaces named in prior tasks. IOS-XE interfaces are merge-only under this state, so named C(iosXeTrunkHost)
-      interfaces converge but omitted IOS-XE interfaces are left untouched and must be reset explicitly with O(state=deleted).
+      extra caution. Specifying an empty O(config) list resets every NX-OS trunkHost interface in the fabric, not only
+      the interfaces named in prior tasks. IOS-XE interfaces are merge-only under this state, so named
+      C(iosXeTrunkHost) interfaces converge but omitted IOS-XE interfaces are left untouched and must be reset
+      explicitly with O(state=deleted). Omitted member interfaces remain outside the managed C(trunkHost) scope,
+      while an explicitly named C(poMember), C(iosXeTrunkPoMember), or C(vpcMember) is rejected.
     - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration. Physical
       ethernet interfaces cannot be truly deleted from a switch. NX-OS interfaces reset via the
       C(interfaceActions/normalize) API, the equivalent of the NX-OS C(default interface) CLI command; IOS-XE
-      interfaces reset to a default trunk configuration with all policy fields cleared.
+      interfaces reset to a default trunk configuration with all policy fields cleared. An explicitly named
+      C(poMember), C(iosXeTrunkPoMember), or C(vpcMember) is rejected because resetting it would change its membership.
     type: str
     default: merged
     choices: [ merged, replaced, overridden, deleted ]
@@ -410,7 +425,31 @@ notes:
   selected via O(config[].config_data.network_os.network_os_type).
 - This module manages the C(trunkHost) (NX-OS) and C(iosXeTrunkHost) (IOS-XE) policy templates. Interfaces carrying any other
   policy type are never read or modified by this module.
-- Interfaces that are port-channel members have restricted mutability.
+- Explicitly named C(poMember), C(iosXeTrunkPoMember), and C(vpcMember) interfaces are also supported under O(state=merged), but only for
+  C(admin_state), C(description), and C(extra_config). The update retains the authentic member policy, owning
+  identifier and mode, and every other modeled configurable member-policy field. Qualified controller response-only
+  echoes are not replayed; any unrecognized nested configuration field fails closed before mutation so a full PUT
+  cannot silently discard future intent.
+- Manage a C(poMember) or C(iosXeTrunkPoMember) parent and its C(ports) membership with
+  M(cisco.nd.nd_interface_port_channel_trunk_host). Manage a C(vpcMember) parent and peer membership with
+  M(cisco.nd.nd_interface_vpc_trunk_host). This module never attaches, detaches, or reparents an ethernet member.
+- Before updating C(poMember) or C(iosXeTrunkPoMember), the module requires exactly one compatible trunk port-channel parent on the same
+  switch. The parent must list the member, the member's configured port-channel identifier must match that parent,
+  the parent's configured policy, mode, and network OS must be compatible, and any present positive operational
+  identifier must also agree. Orphaned, multiply claimed, incompatible, or conflicting evidence fails closed before
+  mutation.
+- ND returns literal identical C(peer1*) and C(peer2*) configured values in both vPC parent echoes; only the
+  C(switchId) and C(peerSwitchId) orientation swaps. Before updating C(vpcMember), the module compares that shared
+  configured state and validates the parent policy, mode, network OS, member policies, member lists, port-channel
+  identifiers, C(primaryInterface), peer identities, and unambiguous ownership on both switches using cached
+  inventories. Missing or inconsistent evidence fails closed before any interface mutation.
+- Pair-aware validation creates one cached pair proof shared by all requested members of the same vPC. Resolving
+  that proof can add one C(/vpcPair) GET when peer identity is not already known and one cached interface-inventory
+  GET when the peer inventory has not already been read. It never adds a GET per member.
+- Peer-link members, uplink members, internal routed members, and other fabric-owned or system member policies remain
+  protected and are rejected before mutation.
+- With O(config_actions.deploy=false), a successful member update remains staged on the controller. With
+  O(config_actions.deploy=true), the changed member is included in the module's final interface deployment call.
 - O(state=overridden) operates fabric-wide for NX-OS interfaces. An empty O(config) list resets every NX-OS trunkHost
   interface in the fabric to its fabric default configuration.
 - IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
@@ -588,6 +627,42 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Update safe properties on an existing trunk port-channel member
+  # The trunk port-channel and its Ethernet1/24 membership already exist.
+  # Membership-changing commands are not permitted in extra_config.
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/24
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: Trunk port-channel member managed by Ansible
+              extra_config: "logging event link-status"
+    config_actions:
+      deploy: false
+    state: merged
+
+- name: Update one member of an existing trunk vPC after reciprocal peer validation
+  # The vPC parent and both peer memberships already exist. The peer inventory is
+  # validated, but only the explicitly named Ethernet1/24 interface is updated.
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/24
+        config_data:
+          network_os:
+            policy:
+              description: Trunk vPC member managed by Ansible
+    config_actions:
+      deploy: false
+    state: merged
 """
 
 RETURN = r"""
@@ -603,15 +678,21 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
-  - An empty list when no matching interface configuration existed.
+  - The existing managed trunk interface configurations before the module ran, normalized to one item per interface
+    with singular C(interface_name), rather than grouped by O(config[].interface_names).
+  - For O(state=merged), O(state=replaced), and O(state=deleted), it includes all managed trunk interfaces on every
+    switch named in O(config), not only the explicitly named interfaces. For O(state=overridden), it is fabric-wide.
+  - An empty list when no matching trunk interface configuration existed in that query scope.
+  - For a supported C(poMember), C(iosXeTrunkPoMember), or C(vpcMember) update, the entry is a host-shaped
+    planning/reporting projection containing the member identity and safe fields. It uses C(trunkHost) for NX-OS or
+    C(iosXeTrunkHost) for IOS-XE as the reporting policy and omits the authentic member discriminator, owning identifier,
+    and membership metadata. It does not represent a policy conversion.
   returned: always
   type: list
   elements: dict
   sample:
   - switch_ip: 192.168.1.1
-    interface_names:
-    - Ethernet1/1
+    interface_name: Ethernet1/1
     config_data:
       network_os:
         policy:
@@ -619,33 +700,32 @@ before:
           allowed_vlans: "100-200"
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - The resulting managed trunk interface configurations in the same per-interface query scope and singular
+    C(interface_name) format as C(before).
   - In check mode, the configuration that would result had the module run outside of check mode.
+  - An interface reset to its fabric default by O(state=deleted) or O(state=overridden) leaves the managed trunk
+    scope and is absent from this list.
+  - For a supported member update, the entry is the resulting host-shaped safe-field projection. The authentic member
+    policy and parent membership remain unchanged on the controller but are not included in this output projection.
   returned: always
   type: list
   elements: dict
   sample:
   - switch_ip: 192.168.1.1
-    interface_names:
-    - Ethernet1/1
+    interface_name: Ethernet1/1
     config_data:
       network_os:
         policy:
           admin_state: true
           allowed_vlans: "100-300"
 diff:
-  description: The per-interface difference between C(before) and C(after).
+  description:
+  - Reserved for the per-interface difference between C(before) and C(after).
+  - Currently always an empty list for this module family; compare C(before) and C(after) directly.
   returned: always
   type: list
   elements: dict
-  sample:
-  - switch_ip: 192.168.1.1
-    interface_names:
-    - Ethernet1/1
-    config_data:
-      network_os:
-        policy:
-          allowed_vlans: "100-300"
+  sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
   returned: when O(output_level) is V(info) or V(debug)
@@ -653,21 +733,25 @@ proposed:
   elements: dict
   sample:
   - switch_ip: 192.168.1.1
-    interface_names:
-    - Ethernet1/1
+    interface_name: Ethernet1/1
     config_data:
       network_os:
         policy:
           allowed_vlans: "100-300"
 logs:
-  description: Internal diagnostic log messages collected during the run.
+  description:
+  - Reserved for internal diagnostic log messages collected during the run.
+  - Currently always an empty list for this module family; use the C(ND_LOGGING_CONFIG) file-based logging
+    described in the collection docs instead.
   returned: when O(output_level) is V(debug)
   type: list
   elements: str
-  sample:
-  - "Querying existing trunkHost interface configuration"
+  sample: []
 msg:
-  description: A human-readable error message, present only when the module fails.
+  description:
+  - A human-readable error message, present only when the module fails.
+  - When O(config_actions.deploy=true) and the controller accepted some changes before the failure, the message
+    names the interfaces whose accepted changes were deployed, or reports that deploying them also failed.
   returned: on failure
   type: str
   sample: "Configuration error: ..."
