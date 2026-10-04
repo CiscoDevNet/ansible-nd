@@ -195,7 +195,9 @@ options:
           dhcp_end_address:
             description:
             - DHCP Scope End Address For Switch POAP.
-            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true), and
+              O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
@@ -209,7 +211,9 @@ options:
           dhcp_start_address:
             description:
             - DHCP Scope Start Address For Switch POAP.
-            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true), and
+              O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str

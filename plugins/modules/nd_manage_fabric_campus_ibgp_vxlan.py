@@ -374,7 +374,8 @@ options:
           vrf_lite_auto_config:
             description:
             - VRF Lite Inter-Fabric Connection Deployment Options.
-            - C(back2BackAndToExternal) uses O(config.management.vrf_lite_subnet_range) and O(config.management.vrf_lite_subnet_target_mask) for automatically created links.
+            - C(back2BackAndToExternal) uses O(config.management.vrf_lite_subnet_range)
+              and O(config.management.vrf_lite_subnet_target_mask) for automatically created links.
             type: str
             default: manual
             choices: [ manual, back2BackAndToExternal ]
@@ -447,14 +448,18 @@ options:
           dhcp_start_address:
             description:
             - DHCP Scope Start Address.
-            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true), and
+              O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
             - DHCP Scope End Address.
-            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true), and
+              O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
