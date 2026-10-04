@@ -1,0 +1,1006 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_port_channel_routed_interface.py (issue #549)",
+        "Each key matches a test function + suffix (a/b/c/...) per the unit-test conventions.",
+        "Interface shapes are the echoes read from the lab on 2026-09-18 (S1_TOR1 port-channel10 l3Po, C1_LE1 Port-channel120 iosXeL3PortChannel).",
+        "Switch: fabricManagementIp=192.168.1.1, switchId=FDO11111AAA.",
+        "Shared behaviour of PortChannelBaseOrchestrator is covered by test_port_channel_{access,trunk_host}_interface.py; only what the routed subclass adds is tested here."
+    ],
+    "test_port_channel_routed_orchestrator_00100a": {
+        "TEST_NOTES": [
+            "query_all: fabric summary (validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_routed_orchestrator_00100b": {
+        "TEST_NOTES": [
+            "query_all: switches list (1 switch)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00100c": {
+        "TEST_NOTES": [
+            "query_all: l3Po (managed), l3PoInternal / mplsUplinkPo / userDefined (system or unmanaged routed types), accessPoHost (another module's), iosXeL3PortChannel (managed), and an l3PoMember ethernet"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel20",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "copyDescription": false,
+                                "description": "l3 uplink",
+                                "ip": "10.1.1.1",
+                                "ipRedirects": false,
+                                "mtu": 9216,
+                                "netflow": false,
+                                "pfc": false,
+                                "pimDrPriority": 1,
+                                "pimSparse": false,
+                                "policyType": "l3Po",
+                                "portChannelId": "Port-channel20",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "Ethernet1/10"
+                                ],
+                                "prefix": 30,
+                                "qos": false,
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel21",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "l3PoInternal",
+                                "portChannelId": "Port-channel21",
+                                "ports": [
+                                    "Ethernet1/11"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel22",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "mplsUplinkPo",
+                                "portChannelId": "Port-channel22",
+                                "ports": [
+                                    "Ethernet1/12"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel23",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "userDefined"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel501",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "accessVlan": 100,
+                                "adminState": true,
+                                "policyType": "accessPoHost",
+                                "ports": [
+                                    "Ethernet1/13"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel120",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "ip": "10.49.0.1",
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/4"
+                                ],
+                                "prefix": 30
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "fec": "auto",
+                                "policyType": "l3PoMember",
+                                "portChannelId": "Port-channel20",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00200a": {
+        "TEST_NOTES": [
+            "preflight refusal: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00200b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight inventory for FDO11111AAA (shapes read from C1_LE1 on ND 4.2.1.10, 2026-09-18): GigabitEthernet1/0/2 (iosXeTrunkHost, the fabric default), GigabitEthernet1/0/3 (free iosXeRoutedHost), GigabitEthernet1/0/4 (iosXeL3PoMember of Port-channel120), GigabitEthernet1/0/5 (iosXeL3PoMember of Port-channel121), plus an unrelated NX-OS Ethernet1/10 trunkHost. GigabitEthernet1/0/9 is absent."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "policyType": "iosXeTrunkHost",
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "mtu": 1500,
+                                "policyType": "iosXeRoutedHost",
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/4",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PoMember",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/5",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PoMember",
+                                "portChannelId": "Port-channel121",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel120",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/4"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel121",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel121",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/5"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00210a": {
+        "TEST_NOTES": [
+            "preflight acceptance: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00210b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight inventory for FDO11111AAA (shapes read from C1_LE1 on ND 4.2.1.10, 2026-09-18): GigabitEthernet1/0/2 (iosXeTrunkHost, the fabric default), GigabitEthernet1/0/3 (free iosXeRoutedHost), GigabitEthernet1/0/4 (iosXeL3PoMember of Port-channel120), GigabitEthernet1/0/5 (iosXeL3PoMember of Port-channel121), plus an unrelated NX-OS Ethernet1/10 trunkHost. GigabitEthernet1/0/9 is absent."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "policyType": "iosXeTrunkHost",
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "mtu": 1500,
+                                "policyType": "iosXeRoutedHost",
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/4",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PoMember",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/5",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PoMember",
+                                "portChannelId": "Port-channel121",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel120",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/4"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel121",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel121",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/5"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00220a": {
+        "TEST_NOTES": [
+            "preflight foreign owner: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00220b": {
+        "TEST_NOTES": [
+            "IOS-XE member-mode preflight inventory for FDO11111AAA (shapes read from C1_LE1 on ND 4.2.1.10, 2026-09-18): GigabitEthernet1/0/2 (iosXeTrunkHost, the fabric default), GigabitEthernet1/0/3 (free iosXeRoutedHost), GigabitEthernet1/0/4 (iosXeL3PoMember of Port-channel120), GigabitEthernet1/0/5 (iosXeL3PoMember of Port-channel121), plus an unrelated NX-OS Ethernet1/10 trunkHost. GigabitEthernet1/0/9 is absent."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "allowedVlans": "none",
+                                "bpduGuard": "default",
+                                "mtu": 1500,
+                                "policyType": "iosXeTrunkHost",
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "mtu": 1500,
+                                "policyType": "iosXeRoutedHost",
+                                "speed": "auto"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/4",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PoMember",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/5",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PoMember",
+                                "portChannelId": "Port-channel121",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel120",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel120",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/4"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "port-channel121",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelId": "Port-channel121",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/5"
+                                ]
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "trunkHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00300a": {
+        "TEST_NOTES": [
+            "create_bulk: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00300b": {
+        "TEST_NOTES": [
+            "create_bulk: POST create, NX-OS l3Po group accepted"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "port-channel20",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00300c": {
+        "TEST_NOTES": [
+            "create_bulk: POST create, IOS-XE iosXeL3PortChannel group accepted (ND names the item with the canonical spelling it was sent; verbatim from C1_LE1 2026-09-18)"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "message": "Interface added successfully",
+                    "name": "Port-channel120",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00310a": {
+        "TEST_NOTES": [
+            "delete_bulk: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_capable_switches_shared": {
+        "TEST_NOTES": [
+            "SHARED fixture (PR #577 review): capableSwitches?interfaceType=portChannel&mode=routed listing the switch every preflight test targets.",
+            "Shared because the orchestrator now opts in to the capability preflight, which inserts one capableSwitches GET between the switches list and the interface list in every preflight test; the answer is the same for all of them."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "SW-A"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00400a": {
+        "TEST_NOTES": [
+            "capability preflight (PR #577 review): switches list, two switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00400b": {
+        "TEST_NOTES": [
+            "capableSwitches for portChannel/routed: both switches"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "SW-A"
+                },
+                {
+                    "switchId": "CAT9KV1701",
+                    "switchName": "C1_LE1"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00400c": {
+        "TEST_NOTES": [
+            "capability preflight scale test: interface list for FDO11111AAA (members free)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/11",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00400d": {
+        "TEST_NOTES": [
+            "capability preflight scale test: interface list for CAT9KV1701 (members are iosXeRoutedHost)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/4",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00410a": {
+        "TEST_NOTES": [
+            "capability preflight: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00410b": {
+        "TEST_NOTES": [
+            "capableSwitches for portChannel/routed: switch A only"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "switchName": "SW-A"
+                }
+            ]
+        }
+    }
+}

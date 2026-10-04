@@ -1,0 +1,51 @@
+---
+# Replaced state tests for nd_interface_port_channel_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Entry state (from merged.yaml): port-channel520 carries ip 10.49.20.5, mtu 1500, a description and one member;
+# port-channel521 and port-channel522 exist. Replacing port-channel520 with a config that omits description, mtu and
+# port_channel_mode must clear them back to the ND defaults and restore both members.
+
+- name: "REPLACED: Replace port-channel520 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &replace_pc520
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520_replaced }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced
+
+- name: "REPLACED: Replace port-channel520 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *replace_pc520
+  register: nm_replaced
+
+- name: "REPLACED: Verify omitted fields were cleared and other port-channels untouched"
+  vars:
+    pc520: "{{ nm_replaced.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced is changed
+      - nm_replaced is changed
+      - pc520.config_data.network_os.policy.ip == "10.49.20.9"
+      - pc520.config_data.network_os.policy.description is not defined
+      - pc520.config_data.network_os.policy.ports | length == 2
+      - nm_replaced.after | selectattr('interface_name', 'equalto', 'port-channel521') | list | length == 1
+      - nm_replaced.after | selectattr('interface_name', 'equalto', 'port-channel522') | list | length == 1
+
+- name: "REPLACED IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: *replace_pc520
+  check_mode: true
+  register: cm_replaced_idem
+
+- name: "REPLACED IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *replace_pc520
+  register: nm_replaced_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_idem is not changed
+      - nm_replaced_idem is not changed

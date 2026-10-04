@@ -82,6 +82,31 @@ class XeTrunkPoHostPolicyTypeEnum(str, Enum):
     IOS_XE_TRUNK_PO_HOST = "iosXeTrunkPoHost"
 
 
+class PortChannelRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    NX-OS policy type managed by `nd_interface_port_channel_routed` (issue #549): `l3Po` (`int_l3_port_channel` template). The
+    template's other discriminator values are not managed: `l3PoInternal` and `mplsUplinkPo` are system-provisioned, `l3PoMember` is
+    the member type ND provisions on the port-channel's ethernet members, and `freeform` / `userDefined` are intentionally excluded so
+    `overridden` can never touch fabric underlay intent.
+    """
+
+    L3_PO = "l3Po"
+
+
+class XePortChannelRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_routed` (issue #549): `iosXeL3PortChannel`
+    (`ios_xe_int_l3_port_channel` template). `iosXeL3PoMember` is the member type ND provisions on the port-channel's ethernet members
+    and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_L3_PORT_CHANNEL = "iosXeL3PortChannel"
+
+
 class AccessVpcHostPolicyTypeEnum(str, Enum):
     """
     # Summary
@@ -275,20 +300,50 @@ class SviPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for SVI (switched virtual interface) interfaces.
+    NX-OS policy type managed by `nd_interface_svi`: the `svi` member of the ND create-side `createInterfaceSviManagedNexus` mapping
+    (`int_vlan` template). `vpcBackupSvi` / `underlaySvi` are fabric-provisioned and `userDefined` is intentionally excluded.
     """
 
     SVI = "svi"
+
+
+class XeSviPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_svi` (issue #540): the `iosXeSvi` (`ios_xe_int_vlan` template) and `iosXeSviShutNoShut`
+    (`ios_xe_int_vlan_admin_state` template, admin state only) members of the ND create-side `createInterfaceSviManagedXe` mapping.
+    `userDefined` is intentionally excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SVI = "iosXeSvi"
+    IOS_XE_SVI_SHUT_NO_SHUT = "iosXeSviShutNoShut"
 
 
 class SubinterfaceManagedPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for managed L3 subinterfaces.
+    NX-OS policy type managed by `nd_interface_subinterface_managed`: the `subinterface` member of the ND create-side
+    `createInterfaceSubInterfaceManagedNexusType` mapping (`int_subif` template). `ipfmSubinterface` (IPFM fabrics) and `userDefined` are
+    intentionally excluded.
     """
 
     SUBINTERFACE = "subinterface"
+
+
+class XeSubinterfacePolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_subinterface_managed` (issue #541): the `iosXeSubinterface` (`ios_xe_int_subintf` template)
+    and `iosXeSubinterfaceShutNoshut` (`ios_xe_int_subif_admin_state` template, admin state only) members of the ND create-side
+    `createInterfaceSubInterfaceManagedXeType` mapping. The ND-internal `iosXeInternalSubinterface` and `userDefined` are intentionally
+    excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SUBINTERFACE = "iosXeSubinterface"
+    IOS_XE_SUBINTERFACE_SHUT_NOSHUT = "iosXeSubinterfaceShutNoshut"
 
 
 class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):

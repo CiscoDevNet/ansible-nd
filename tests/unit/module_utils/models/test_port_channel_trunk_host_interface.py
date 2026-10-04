@@ -1770,7 +1770,7 @@ def test_port_channel_trunk_host_interface_01020():
 
 
 def test_port_channel_trunk_host_interface_01025():
-    """Treat an omitted staged empty member list as equivalent to ``ports=[]`` only when opted in."""
+    """Treat an omitted response-side member list as equivalent to ``ports=[]``."""
     existing_response = copy.deepcopy(SAMPLE_API_RESPONSE)
     existing_response["configData"]["networkOS"]["policy"].pop("ports")
 
@@ -1779,11 +1779,9 @@ def test_port_channel_trunk_host_interface_01025():
 
     existing = PortChannelTrunkHostInterfaceModel.from_response(existing_response)
     proposed = PortChannelTrunkHostInterfaceModel.from_config(proposed_config)
-    empty_ports_path = {("configData", "networkOS", "policy", "ports")}
 
-    # Without the explicit, path-scoped normalization this remains a real diff.
-    assert existing.get_diff(proposed, exclude_unset=True) is False
-    assert existing.get_diff(proposed, exclude_unset=True, empty_list_equivalents=empty_ports_path) is True
+    assert existing.config_data.network_os.policy.ports == []
+    assert existing.get_diff(proposed, exclude_unset=True) is True
 
 
 @pytest.mark.parametrize(
@@ -1808,14 +1806,7 @@ def test_port_channel_trunk_host_interface_01026(existing_ports, proposed_ports)
     existing = PortChannelTrunkHostInterfaceModel.from_response(existing_response)
     proposed = PortChannelTrunkHostInterfaceModel.from_config(proposed_config)
 
-    assert (
-        existing.get_diff(
-            proposed,
-            exclude_unset=True,
-            empty_list_equivalents={("configData", "networkOS", "policy", "ports")},
-        )
-        is False
-    )
+    assert existing.get_diff(proposed, exclude_unset=True) is False
 
 
 def test_port_channel_trunk_host_interface_01030():

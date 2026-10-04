@@ -1,0 +1,332 @@
+---
+# IOS-XE tests for nd_interface_svi (issue #540)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Requires nd_test_xe_switch_ip; gated in tasks/main.yaml. Exercises the iosXeSvi template (L3 addressing, VLAN name, the DHCP relay
+# list) and the admin-state-only iosXeSviShutNoShut template through every state, plus the cross-platform rejection. Lab-verified on
+# CAMPUS1 Catalyst 9000v leaves against ND 4.2.1.10 and 4.3.1.175 (see the PR body).
+
+# --- XE SETUP ---
+
+- name: "XE SETUP: Remove any leftover XE test SVIs"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config: "{{ xe_cleanup_config }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: xe_setup_cleanup
+
+- name: "DEBUG: Show XE cleanup result"
+  ansible.builtin.debug:
+    var: xe_setup_cleanup
+
+- name: "XE SETUP: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: xe_switches
+
+- name: "XE SETUP: Resolve the Catalyst switch id from its management IP"
+  vars:
+    matches: "{{ xe_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip) | map(attribute='switchId') | list }}"
+  ansible.builtin.set_fact:
+    xe_switch_id: "{{ (matches + ['']) | first }}"
+
+- name: "XE SETUP: Verify the Catalyst switch is in the fabric"
+  ansible.builtin.assert:
+    that:
+      - xe_switch_id | length > 0
+    fail_msg: "No switch with fabricManagementIp {{ test_xe_switch_ip }} in fabric {{ test_xe_fabric_name }}"
+
+# --- XE NEGATIVE: NX-OS-only field on the IOS-XE branch ---
+
+- name: "XE NEGATIVE: HSRP on an IOS-XE SVI is refused before any controller call (check mode)"
+  cisco.nd.nd_interface_svi: &xe_bad_hsrp
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_svi_bad_hsrp }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_bad_hsrp
+  ignore_errors: true
+
+- name: "XE NEGATIVE: HSRP on an IOS-XE SVI is refused before any controller call (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_bad_hsrp
+  register: nm_xe_bad_hsrp
+  ignore_errors: true
+
+- name: "XE NEGATIVE: Verify the refusal names the offending field"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_bad_hsrp is failed
+      - nm_xe_bad_hsrp is failed
+      - "'hsrp' in nm_xe_bad_hsrp.msg"
+
+# --- XE MERGED CREATE: both IOS-XE policy types in one task (one POST per policy type) ---
+
+- name: "XE MERGED CREATE: Create vlan980 (iosXeSvi) and vlan981 (iosXeSviShutNoShut) in one task (check mode)"
+  cisco.nd.nd_interface_svi: &xe_merge
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_svi_980 }}"
+      - "{{ xe_svi_981_shut }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_xe_merged
+
+- name: "XE MERGED CREATE: Create vlan980 (iosXeSvi) and vlan981 (iosXeSviShutNoShut) in one task (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_merge
+  register: nm_xe_merged
+
+- name: "DEBUG: Show XE merged create result"
+  ansible.builtin.debug:
+    var: nm_xe_merged
+
+- name: "XE MERGED CREATE: Verify both SVIs and the echoed discriminators"
+  vars:
+    svi980: "{{ nm_xe_merged.after | selectattr('interface_name', 'equalto', 'vlan980') | first }}"
+    svi981: "{{ nm_xe_merged.after | selectattr('interface_name', 'equalto', 'vlan981') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged is changed
+      - nm_xe_merged is changed
+      - svi980.config_data.network_os.network_os_type == "ios-xe"
+      - svi980.config_data.network_os.policy.policy_type == "iosXeSvi"
+      - svi980.config_data.network_os.policy.ip == "10.99.80.1"
+      - svi980.config_data.network_os.policy.prefixv6 == 64
+      - svi980.config_data.network_os.policy.vlan_name == "ansible-980"
+      - svi980.config_data.network_os.policy.dhcp_servers | length == 1
+      - svi980.config_data.network_os.policy.dhcp_servers[0].server_ip_address == "10.10.10.10"
+      - svi980.config_data.network_os.policy.dhcp_servers[0].server_vrf == "default"
+      - svi981.config_data.network_os.policy.policy_type == "iosXeSviShutNoShut"
+      - svi981.config_data.network_os.policy.admin_state == false
+
+- name: "XE MERGED IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_svi: *xe_merge
+  check_mode: true
+  register: cm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_merge
+  register: nm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_idem is not changed
+      - nm_xe_merged_idem is not changed
+
+# --- XE MERGED UPDATE ---
+
+- name: "XE MERGED UPDATE: Change description, ip_redirects and the DHCP relay list on vlan980 (check mode)"
+  cisco.nd.nd_interface_svi: &xe_merge_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_svi_980_updated }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_xe_update
+
+- name: "XE MERGED UPDATE: Change description, ip_redirects and the DHCP relay list on vlan980 (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_merge_updated
+  register: nm_xe_update
+
+- name: "XE MERGED UPDATE: Verify"
+  vars:
+    svi980: "{{ nm_xe_update.after | selectattr('interface_name', 'equalto', 'vlan980') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_update is changed
+      - nm_xe_update is changed
+      - svi980.config_data.network_os.policy.description == "Updated XE vlan980"
+      - svi980.config_data.network_os.policy.ip_redirects == false
+      - svi980.config_data.network_os.policy.dhcp_servers | map(attribute='server_ip_address') | list == ["10.10.10.10", "10.10.10.11"]
+
+- name: "XE MERGED UPDATE IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_svi: *xe_merge_updated
+  register: nm_xe_update_idem
+
+- name: "XE MERGED UPDATE IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_update_idem is not changed
+
+# --- XE REPLACED ---
+
+- name: "XE REPLACED: Replace vlan980 back to the base config (check mode)"
+  cisco.nd.nd_interface_svi: &xe_replace
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_svi_980 }}"
+    config_actions:
+      deploy: true
+    state: replaced
+  check_mode: true
+  register: cm_xe_replaced
+
+- name: "XE REPLACED: Replace vlan980 back to the base config (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_replace
+  register: nm_xe_replaced
+
+- name: "XE REPLACED: Verify the base config is restored (one relay server, ip_redirects back to default)"
+  vars:
+    svi980: "{{ nm_xe_replaced.after | selectattr('interface_name', 'equalto', 'vlan980') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_replaced is changed
+      - nm_xe_replaced is changed
+      - svi980.config_data.network_os.policy.description == "Ansible integration test XE vlan980"
+      - svi980.config_data.network_os.policy.dhcp_servers | length == 1
+      - svi980.config_data.network_os.policy.ip_redirects is not defined or svi980.config_data.network_os.policy.ip_redirects == true
+
+- name: "XE REPLACED IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_svi: *xe_replace
+  register: nm_xe_replaced_idem
+
+- name: "XE REPLACED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_replaced_idem is not changed
+
+# --- XE MERGED: policy-type change on an existing SVI (iosXeSvi -> iosXeSviShutNoShut is a replace, not a merge) ---
+
+- name: "XE MERGED CREATE: Create vlan982 (explicit policy_type iosXeSvi)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_svi_982 }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_xe_merged_982
+
+- name: "XE MERGED CREATE: Verify vlan982"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_merged_982 is changed
+      - nm_xe_merged_982.after | selectattr('interface_name', 'equalto', 'vlan982') | list | length == 1
+
+# --- XE DISCOVERY WAIT (before overridden) ---
+# TODO(4.3.1) xe-interface-removal-requires-discovery
+# ND generates the switch-side removal of an IOS-XE interface only once it has discovered the deployed interface, and the module refuses
+# a removal before that. Discovery usually takes 10-30 s but is variable: the last SVI created took over three minutes on an otherwise
+# idle 4.2.1.10 and on 4.3.1.175 (2026-09-21). Real playbooks delete long after creating; this scenario does both in one run, so wait
+# here, for up to ten minutes so a slow discovery cannot fail the run.
+
+- name: "XE DISCOVERY WAIT: Wait until ND has discovered vlan980, vlan981 and vlan982 on the Catalyst"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_discovery
+  until: >-
+    xe_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', ['vlan980', 'vlan981', 'vlan982'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 3
+  retries: 60
+  delay: 10
+
+# --- XE OVERRIDDEN ---
+
+- name: "XE OVERRIDDEN: Keep only vlan980 and vlan981 (check mode)"
+  cisco.nd.nd_interface_svi: &xe_override
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_svi_980 }}"
+      - "{{ xe_svi_981_shut }}"
+    config_actions:
+      deploy: true
+    state: overridden
+  check_mode: true
+  register: cm_xe_overridden
+
+- name: "XE OVERRIDDEN: Keep only vlan980 and vlan981 (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_override
+  register: nm_xe_overridden
+
+- name: "XE OVERRIDDEN: Verify vlan982 was removed and the others kept"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_overridden is changed
+      - nm_xe_overridden is changed
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', 'vlan982') | list | length == 0
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', 'vlan980') | list | length == 1
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', 'vlan981') | list | length == 1
+
+- name: "XE OVERRIDDEN IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_svi: *xe_override
+  register: nm_xe_overridden_idem
+
+- name: "XE OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_overridden_idem is not changed
+
+# --- XE DELETED ---
+
+- name: "XE DELETED: Delete vlan980 and vlan981 (check mode)"
+  cisco.nd.nd_interface_svi: &xe_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: vlan980
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: vlan981
+    config_actions:
+      deploy: true
+    state: deleted
+  check_mode: true
+  register: cm_xe_deleted
+
+- name: "XE DELETED: Delete vlan980 and vlan981 (normal mode)"
+  cisco.nd.nd_interface_svi: *xe_delete
+  register: nm_xe_deleted
+
+- name: "XE DELETED: Verify"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_deleted is changed
+      - nm_xe_deleted is changed
+      - nm_xe_deleted.after | selectattr('interface_name', 'in', ['vlan980', 'vlan981']) | list | length == 0
+
+- name: "XE DELETED IDEMPOTENT: Re-delete"
+  cisco.nd.nd_interface_svi: *xe_delete
+  register: nm_xe_deleted_idem
+
+- name: "XE DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_deleted_idem is not changed
+
+# --- XE VERIFY: nothing left on the Catalyst ---
+
+- name: "XE VERIFY: Read the Catalyst running config through the switch diff"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/diff"
+    method: get
+  register: xe_diff
+
+- name: "XE VERIFY: No test SVI remains in the running config"
+  vars:
+    running: "{{ xe_diff.jsondata.diffConfigs | default([]) | map(attribute='runningConfig') | select('defined') | join('\n') }}"
+  ansible.builtin.assert:
+    that:
+      - "'interface Vlan980' not in running"
+      - "'interface Vlan981' not in running"
+      - "'interface Vlan982' not in running"

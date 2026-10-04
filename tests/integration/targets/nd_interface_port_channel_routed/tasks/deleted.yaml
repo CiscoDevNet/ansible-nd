@@ -1,0 +1,48 @@
+---
+# Deleted state tests for nd_interface_port_channel_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Entry state (from overridden.yaml): port-channel520 exists; port-channel521 and port-channel522 do not.
+
+- name: "DELETED: Delete port-channel520 and the already-absent port-channel521 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &delete_pc520
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel521
+    config_actions:
+      deploy: true
+    state: deleted
+  check_mode: true
+  register: cm_deleted
+
+- name: "DELETED: Delete port-channel520 and the already-absent port-channel521 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *delete_pc520
+  register: nm_deleted
+
+- name: "DELETED: Verify"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted is changed
+      - nm_deleted is changed
+      - nm_deleted.after | selectattr('interface_name', 'equalto', 'port-channel520') | list | length == 0
+
+- name: "DELETED IDEMPOTENT: Re-delete (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: *delete_pc520
+  check_mode: true
+  register: cm_deleted_idem
+
+- name: "DELETED IDEMPOTENT: Re-delete (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *delete_pc520
+  register: nm_deleted_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_idem is not changed
+      - nm_deleted_idem is not changed

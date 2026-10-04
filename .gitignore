@@ -402,8 +402,12 @@ playbooks/
 # Local documentation and OpenAPI specs
 docs/
 
-# Local AI agent configuration
-.agents/
+# Local AI agent configuration. Keep the release-audit skill as the one
+# version-controlled canonical skill; all other local agent state stays ignored.
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/nd-fabric-release-audit/
 .codex/
 .github/agents/
 .github/copilot-instructions.md
