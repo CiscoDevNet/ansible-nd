@@ -71,6 +71,14 @@
             - never
             - nd4x_demo
             - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_merged_split
+            - nd4x_demo_merged_fanout
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_negative
+            - nd4x_demo_overridden
+            - nd4x_demo_destructive
             - nd4x_demo_multi_switch
             - nd4x_demo_replaced_multi_switch
             - nd4x_demo_deleted_multi_switch
@@ -79,6 +87,14 @@
         - never
         - nd4x_demo
         - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_merged_split
+        - nd4x_demo_merged_fanout
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_negative
+        - nd4x_demo_overridden
+        - nd4x_demo_destructive
         - nd4x_demo_multi_switch
         - nd4x_demo_replaced_multi_switch
         - nd4x_demo_deleted_multi_switch

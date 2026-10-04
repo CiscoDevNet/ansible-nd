@@ -5,17 +5,15 @@ This document maps every scenario in the original
 replacement.
 
 All original scenarios have implemented replacements. The 2026-08-31 full
-safe and destructive runs were against `VXLAN_Fabric`; the 2026-09-06
-follow-up harness and legacy runs were against `Astha_Fabric`. The subsequently
-added multi-switch scenarios were run on 2026-09-29 against `VXLAN_Fabric`; the
+safe and destructive runs were against `<fabric-name>`; the 2026-09-06
+follow-up harness and legacy runs were against `<fabric-name>`. The subsequently
+added multi-switch scenarios were run on 2026-09-29 against `<fabric-name>`; the
 scenario-specific results are recorded separately.
 
 ## Status definitions
 
 - **Live run passed**: the replacement exists and a successful controller run
   has been recorded.
-- **Implemented; run pending**: the replacement exists, but current live-run
-  evidence has not yet been recorded.
 
 ## Scenario mapping
 
@@ -95,7 +93,7 @@ that idempotency and REST phases did not execute.
 
 The multi-switch scenarios configure, replace, and delete Ethernet1/41 on both
 test switches in one module call. The 2026-09-29 live runs used
-`VXLAN_Fabric`, with test switches `10.122.84.71` and `10.122.84.63`.
+`<fabric-name>`, with test switches `192.0.2.x` and `192.0.2.y`.
 Preflight resolves both switch IDs from ND,
 checks that the second switch ID matches the inventory value, and confirms the
 test port exists and is not a port-channel member on both switches. Each
@@ -185,14 +183,28 @@ Multi-switch merged, replaced, and deleted cases run with
 switch IP and ID. The port-channel guard has its own tag and requires the
 confirmed fixture variables above.
 
+Each state-specific harness tag selects the shared ND4X preflight
+automatically. This includes the merged, split, fan-out, replaced, deleted,
+negative, overridden, destructive, and multi-switch tags listed in
+`tasks/main.yaml`; contributors do not need to add `nd4x_demo_preflight`
+separately. The `nd4x_demo_port_channel_guard` scenario is intentionally
+separate because its task file contains its own dedicated preflight.
+
 Run the complete safe replacement suite with:
 
 ```bash
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ANSIBLE_FORKS=1 \
 ansible-test network-integration nd_interface_ethernet_access \
-  --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo,nd4x_demo_preflight \
+  --no-temp-workdir \
+  --python-interpreter /absolute/path/to/python3.11 \
+  --inventory /absolute/path/to/inventory.LOCAL.networking \
+  --tags nd4x_demo \
   -vv
 ```
+
+Use Python 3.10 or newer. If `ansible-test` is not on `PATH`, use its
+absolute path. The direct inventory form keeps the local inventory selected
+during delegated runs instead of using the placeholder `inventory.networking`.
 
 The destructive replacement requires both:
 
@@ -204,9 +216,12 @@ nd_ethernet_destructive_tests_enabled=true
 Run it separately on a dedicated fabric:
 
 ```bash
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ANSIBLE_FORKS=1 \
 ansible-test network-integration nd_interface_ethernet_access \
-  --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo_overridden,nd4x_demo_preflight \
+  --no-temp-workdir \
+  --python-interpreter /absolute/path/to/python3.11 \
+  --inventory /absolute/path/to/inventory.LOCAL.networking \
+  --tags nd4x_demo_overridden \
   --allow-destructive \
   -vv
 ```
@@ -214,8 +229,11 @@ ansible-test network-integration nd_interface_ethernet_access \
 Run the multi-switch `overridden` scenario by itself with:
 
 ```bash
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ANSIBLE_FORKS=1 \
 ansible-test network-integration nd_interface_ethernet_access \
-  --inventory /absolute/path/to/inventory.networking \
+  --no-temp-workdir \
+  --python-interpreter /absolute/path/to/python3.11 \
+  --inventory /absolute/path/to/inventory.LOCAL.networking \
   --tags nd4x_demo_overridden_multi_switch \
   --allow-destructive \
   -vv
@@ -228,7 +246,7 @@ as alternatives, so selecting `never` activates other opt-in scenarios too.
 
 Live switch/controller integration is **IN SCOPE**. Current safe and
 destructive harness runs performed real configuration and cleanup on
-`Astha_Fabric`. The legacy suite remains enabled and also completed on the
+`<fabric-name>`. The legacy suite remains enabled and also completed on the
 same testbed.
 
 ## Same-environment execution record
@@ -241,22 +259,20 @@ ND 4.2.1 environment on 2026-08-31 using collection commit
 |---|---|
 | Collection commit | `a682edd30efde3484d29e579535ad0b4366621ab` |
 | Nexus Dashboard version | `platformVersion: 4.2.1` |
-| Fabric | `VXLAN_Fabric` |
-| Test switch | Management IP `10.122.84.71`; discovered switch ID `9WME34GIAPX` |
+| Fabric | `<fabric-name>` |
+| Test switch | Management IP `192.0.2.x`; discovered switch ID `<switch-id>` |
 | Complete safe replacement run | Passed on 2026-08-31; 83 tests, 0 failures, 0 errors, 2 skipped |
 | Complete destructive replacement run | Passed on 2026-08-31; 51 tests, 0 failures, 0 errors, 3 skipped |
 | Safe-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-ikvaey6o-1788157802.610605.xml` |
 | Destructive-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-b9j5k705-1788159564.175429.xml` |
 | Original suite run at this commit/environment | Passed on 2026-08-31; 95 tests, 0 failures, 0 errors, 1 skipped; `ok=89 changed=30 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
 | Original-run JUnit artifact | `tests/output/junit/nd_interface_ethernet_access-23wmhdy4-1788161053.3463218.xml` |
-| Earlier harness safe run | 2026-09-06 on `Astha_Fabric`; `ok=74 changed=21 failed=0 skipped=2` |
-| Earlier harness destructive/overridden run | 2026-09-06 on `Astha_Fabric`; `ok=47 changed=9 failed=0 skipped=2` |
-| Multi-switch merged/replaced/deleted run | 2026-09-29 on `VXLAN_Fabric`; `ok=42 changed=7 failed=0 skipped=2` |
-| Multi-switch overridden run | 2026-09-29 on `VXLAN_Fabric`; `ok=45 changed=3 failed=0 skipped=3` |
+| Earlier harness safe run | 2026-09-06 on `<fabric-name>`; `ok=74 changed=21 failed=0 skipped=2` |
+| Earlier harness destructive/overridden run | 2026-09-06 on `<fabric-name>`; `ok=47 changed=9 failed=0 skipped=2` |
+| Multi-switch merged/replaced/deleted run | 2026-09-29 on `<fabric-name>`; `ok=42 changed=7 failed=0 skipped=2` |
+| Multi-switch overridden run | 2026-09-29 on `<fabric-name>`; `ok=45 changed=3 failed=0 skipped=3` |
 | Current legacy run | Passed; `ok=89 changed=30 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
-| Earlier testbed | ND `4.2.1`; `Astha_Fabric`; selected switch `10.122.84.71` |
-| Current PR base HEAD | `f19ece994ca7e3b9e1502c7d6a02c19a4998fc81` plus uncommitted changes |
-| Current local develop reference | `576a681dd9c52b56640d7d27c8c5b6924735ed4a` |
+| Earlier testbed | ND `4.2.1`; `<fabric-name>`; selected switch `192.0.2.x` |
 | Static scenario mapping | Complete for the current Ethernet access scenario set |
 
 The safe replacement run used the `nd4x_demo` tag. The destructive replacement

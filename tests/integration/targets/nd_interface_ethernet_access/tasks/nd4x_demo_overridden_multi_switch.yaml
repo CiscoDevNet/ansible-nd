@@ -103,8 +103,8 @@
     that:
       - matching_interface | length == 1
       - >-
+        matching_interface | length != 1 or
         matching_interface[0].interfaceType | default('') == 'ethernet'
-        if matching_interface | length == 1 else false
       - member_port_channel_id | int < 1
     fail_msg: >-
       {{ item }} on second switch {{ test_switch_b_ip }} must exist exactly
@@ -123,11 +123,11 @@
     that:
       - matching_sentinel | length == 1
       - >-
+        matching_sentinel | length != 1 or
         matching_sentinel[0].interfaceType | default('') == 'ethernet'
-        if matching_sentinel | length == 1 else false
       - >-
+        matching_sentinel | length != 1 or
         matching_sentinel[0].get('operData', {}).get('portChannelId', -1) | int < 1
-        if matching_sentinel | length == 1 else false
     fail_msg: >-
       Ethernet1/48 must exist as a non-port-channel Ethernet interface on
       second switch {{ test_switch_b_ip }} for the non-accessHost sentinel.
