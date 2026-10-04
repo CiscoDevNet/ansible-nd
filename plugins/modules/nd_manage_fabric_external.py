@@ -68,23 +68,27 @@ options:
       telemetry_collection_type:
         description:
         - Telemetry collection method.
+        - Applies when O(config.telemetry_collection=true).
         type: str
         default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
         - Telemetry Streaming Protocol.
+        - Applies when O(config.telemetry_collection=true).
         type: str
         default: ipv4
         choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
         - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
+        - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
         - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
+        - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         type: str
         default: default
       security_domain:
@@ -121,11 +125,13 @@ options:
           allow_smart_switch_onboarding:
             description:
             - Enable onboarding of smart switches to Hypershield for firewall service.
+            - The Hypershield connectivity options below apply to onboarded smart switches.
             type: bool
             default: false
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - Used for switch bootstrap when O(config.management.day0_bootstrap=true).
             - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
@@ -171,33 +177,39 @@ options:
           create_bgp_config:
             description:
             - Generate BGP configuration for core and edge routers.
+            - Uses O(config.management.bgp_asn) when enabled.
             type: bool
             default: true
           day0_bootstrap:
             description:
             - Support day 0 touchless switch bringup.
+            - Enables the POAP context for O(config.management.local_dhcp_server) and O(config.management.bootstrap_subnet_collection).
             type: bool
             default: false
           day0_plug_and_play:
             description:
             - Enable Plug n Play for Catalyst 9000 switches.
+            - Applies to the day 0 bootstrap workflow controlled by O(config.management.day0_bootstrap).
             type: bool
             default: false
           dhcp_end_address:
             description:
             - DHCP Scope End Address For Switch POAP.
+            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_protocol_version:
             description:
             - IP protocol version for Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true) and O(config.management.local_dhcp_server=true).
             type: str
             default: dhcpv4
             choices: [ dhcpv4, dhcpv6 ]
           dhcp_start_address:
             description:
             - DHCP Scope Start Address For Switch POAP.
+            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
@@ -211,17 +223,20 @@ options:
             description:
             - DNS Server VRFs.
             - One VRF for all DNS servers or a list of VRFs, one per DNS server.
+            - Entries correspond to the addresses in O(config.management.dns_collection).
             type: list
             elements: str
             default: []
           domain_name:
             description:
             - Domain name for DHCP server PnP block.
+            - Applies to the day 0 Plug and Play DHCP block when O(config.management.day0_plug_and_play=true).
             type: str
             default: ""
           enable_dpu_pinning:
             description:
             - Enable pinning of VRFs and networks to specific DPUs on smart switches.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: bool
             default: false
           extra_config_aaa:
@@ -247,6 +262,7 @@ options:
           inband_day0_bootstrap:
             description:
             - Support day 0 touchless switch bringup via inband management.
+            - Applies to O(config.management.day0_bootstrap=true) using O(config.management.inband_management=true).
             type: bool
             default: false
           inband_management:
@@ -257,16 +273,19 @@ options:
           interface_statistics_load_interval:
             description:
             - Interface Statistics Load Interval Time in seconds.
+            - Applies when O(config.management.real_time_interface_statistics_collection=true).
             type: int
             default: 10
           local_dhcp_server:
             description:
             - Automatic IP Assignment For POAP from Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true); O(config.management.dhcp_protocol_version) selects the address family.
             type: bool
             default: false
           management_gateway:
             description:
             - Default Gateway For Management VRF On The Switch.
+            - Applies to IPv4 management addressing when O(config.management.day0_bootstrap=true).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
@@ -294,11 +313,13 @@ options:
           mpls_loopback_identifier:
             description:
             - Underlay MPLS Loopback Identifier.
+            - Applies when O(config.management.mpls_handoff=true).
             type: int
             default: 101
           mpls_loopback_ip_range:
             description:
             - MPLS Loopback IP Address Range.
+            - Applies when O(config.management.mpls_handoff=true).
             type: str
             default: "10.102.0.0/25"
           netflow_settings:
@@ -309,11 +330,13 @@ options:
               netflow:
                 description:
                 - Enable netflow collection.
+                - Enables use of the exporter, record, and monitor collections in O(config.management.netflow_settings).
                 type: bool
                 default: false
               netflow_exporter_collection:
                 description:
                 - List of netflow exporters.
+                - Used when O(config.management.netflow_settings.netflow=true); monitors reference exporters by name.
                 type: list
                 elements: dict
                 suboptions:
@@ -344,6 +367,7 @@ options:
               netflow_record_collection:
                 description:
                 - List of netflow records.
+                - Used when O(config.management.netflow_settings.netflow=true); monitors reference records by name.
                 type: list
                 elements: dict
                 suboptions:
@@ -360,11 +384,13 @@ options:
                   layer2_record:
                     description:
                     - Enable layer 2 record fields.
+                    - Applies when O(config.management.netflow_settings.netflow_record_collection.record_template=netflowLayer2Record).
                     type: bool
                     default: false
               netflow_monitor_collection:
                 description:
                 - List of netflow monitors.
+                - Used when O(config.management.netflow_settings.netflow=true); each monitor names a record and at least one exporter.
                 type: list
                 elements: dict
                 suboptions:
@@ -376,16 +402,19 @@ options:
                   record_name:
                     description:
                     - Associated record name.
+                    - Matches an entry in O(config.management.netflow_settings.netflow_record_collection).
                     type: str
                     required: true
                   exporter1_name:
                     description:
                     - Primary exporter name.
+                    - Matches an entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     required: true
                   exporter2_name:
                     description:
                     - Secondary exporter name.
+                    - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
           nxapi:
@@ -401,11 +430,13 @@ options:
           nxapi_http_port:
             description:
             - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http=true).
             type: int
             default: 80
           nxapi_https_port:
             description:
             - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi=true).
             type: int
             default: 443
           performance_monitoring:
@@ -428,11 +459,13 @@ options:
           ptp_domain_id:
             description:
             - Multiple Independent PTP Clocking Subdomains on a Single Network.
+            - Applies when O(config.management.ptp=true).
             type: int
             default: 0
           ptp_loopback_id:
             description:
             - Precision Time Protocol Source Loopback Id.
+            - Applies when O(config.management.ptp=true).
             type: int
             default: 0
           real_time_backup:
@@ -452,6 +485,7 @@ options:
           scheduled_backup_time:
             description:
             - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
+            - Applies when O(config.management.scheduled_backup=true).
             type: str
           snmp_trap:
             description:
@@ -466,18 +500,22 @@ options:
           connectivity_domain_name:
             description:
             - Domain name to connect to Hypershield.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
           hypershield_connectivity_proxy_server:
             description:
             - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
           hypershield_connectivity_proxy_server_port:
             description:
             - Proxy port number for communication with Hypershield.
+            - Applies when O(config.management.hypershield_connectivity_proxy_server) is set.
             type: int
           hypershield_connectivity_source_intf:
             description:
             - Loopback interface on smart switch for communication with Hypershield.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
       telemetry_settings:
         description:
@@ -501,6 +539,7 @@ options:
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
+                - Applies when O(config.telemetry_settings.flow_collection.traffic_analytics) is C(enabled) or C(compatibility).
                 type: str
                 choices:
                 - interFabric
@@ -510,6 +549,7 @@ options:
               udp_categorization:
                 description:
                 - UDP categorization.
+                - Applies when O(config.telemetry_settings.flow_collection.traffic_analytics) is C(enabled) or C(compatibility).
                 type: str
                 choices:
                 - disabled
@@ -528,6 +568,7 @@ options:
               sensitivity:
                 description:
                 - Microburst sensitivity level.
+                - Applies when O(config.telemetry_settings.microburst.microburst=true).
                 type: str
                 choices:
                 - high
@@ -557,11 +598,13 @@ options:
               export_settings:
                 description:
                 - NAS export settings.
+                - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                 type: dict
                 suboptions:
                   export_type:
                     description:
                     - Export type.
+                    - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                     type: str
                     choices:
                     - base
@@ -570,6 +613,7 @@ options:
                   export_format:
                     description:
                     - Export format.
+                    - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                     type: str
                     choices:
                     - json
@@ -651,6 +695,7 @@ options:
         - Scope of the deploy operation.
         - C(switch) deploys only to affected switches.
         - C(global) deploys to all switches in the fabric.
+        - Applies when O(config_actions.deploy=true).
         type: str
         default: switch
         choices: [ switch, global ]

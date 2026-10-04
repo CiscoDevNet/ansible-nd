@@ -86,6 +86,7 @@ options:
         - Scope of the deploy operation.
         - C(switch) deploys only to switches that are out of sync.
         - C(global) deploys to all switches in the fabric group.
+        - Used when O(config_actions.deploy=true).
         type: str
         default: switch
         choices: [ switch, global ]

@@ -36,16 +36,19 @@ options:
       location:
         description:
         - The geographic location of the fabric.
+        - Supply both O(config.location.latitude) and O(config.location.longitude) when setting a location.
         type: dict
         suboptions:
           latitude:
             description:
             - Latitude coordinate of the fabric location (-90 to 90).
+            - Requires O(config.location.longitude) in the same location object.
             type: float
             required: true
           longitude:
             description:
             - Longitude coordinate of the fabric location (-180 to 180).
+            - Requires O(config.location.latitude) in the same location object.
             type: float
             required: true
       license_tier:
@@ -63,28 +66,34 @@ options:
       telemetry_collection:
         description:
         - Enable telemetry collection for the fabric.
+        - O(config.telemetry_collection_type), O(config.telemetry_streaming_protocol), and telemetry source settings
+          control collection when this option is enabled.
         type: bool
         default: false
       telemetry_collection_type:
         description:
         - The telemetry collection type.
+        - Applies when O(config.telemetry_collection) is enabled; in-band collection uses the telemetry source settings.
         type: str
         default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
         - The telemetry streaming protocol.
+        - Applies when O(config.telemetry_collection) is enabled.
         type: str
         default: ipv4
         choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
         - The telemetry source interface.
+        - Applies only when O(config.telemetry_collection) is enabled and O(config.telemetry_collection_type=inBand).
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
         - The telemetry source VRF.
+        - Applies only when O(config.telemetry_collection) is enabled and O(config.telemetry_collection_type=inBand).
         type: str
         default: default
       security_domain:
@@ -107,12 +116,15 @@ options:
           bgp_asn_auto_allocation:
             description:
             - Enable automatic BGP ASN allocation from the O(config.management.bgp_asn_range) pool.
+            - Applies to O(config.management.bgp_as_mode=multiAS).
             type: bool
             default: true
           bgp_asn_range:
             description:
             - The BGP ASN range to use for automatic ASN allocation (e.g. C(65000-65535)).
-            - Required when O(config.management.bgp_asn_auto_allocation) is C(true).
+            - Used when O(config.management.bgp_asn_auto_allocation) is C(true). Omit to let Nexus Dashboard
+              allocate a range dynamically, or supply a range to choose the pool.
+            - The allocation feature applies to O(config.management.bgp_as_mode=multiAS).
             - When O(state=replaced) or O(state=overridden) targets an existing fabric, omitting this option preserves
               the range allocated by Nexus Dashboard.
             type: str
@@ -121,12 +133,15 @@ options:
             - The BGP AS mode for the fabric.
             - C(multiAS) assigns a unique AS number per leaf/border/border gateway (borders and border gateways may share ASN).
             - C(sameTierAS) assigns the same AS number within a tier (leafs share one ASN, borders/border gateways share one ASN).
+            - O(config.management.bgp_asn_auto_allocation) and O(config.management.allow_leaf_same_as) apply to C(multiAS).
             type: str
             default: multiAS
             choices: [ multiAS, sameTierAS ]
           bgp_allow_as_in_num:
             description:
             - The number of occurrences of the local AS number allowed in the BGP AS-path.
+            - On ND 4.3.1, applies when the controller-side BGP allow-as-in setting is enabled; that toggle is not
+              exposed by this module.
             type: int
             default: 1
           bgp_max_path:
@@ -147,38 +162,46 @@ options:
           allow_leaf_same_as:
             description:
             - Allow leaf switches to have the same BGP ASN even when AS mode is Multi-AS.
+            - Applies to O(config.management.bgp_as_mode=multiAS).
             type: bool
             default: false
           assign_ipv4_to_loopback0:
             description:
             - In an IPv6 routed fabric or VXLAN EVPN fabric with IPv6 underlay, assign IPv4 address
               used for BGP Router ID to the routing loopback interface.
+            - Relevant when O(config.management.underlay_ipv6) is enabled.
             type: bool
             default: true
           route_map_tag:
             description:
             - Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min 0, Max 4294967295).
+            - Used when O(config.management.disable_route_map_tag) is C(false).
             type: int
             default: 12345
           disable_route_map_tag:
             description:
             - Disable match tag for Route Map FABRIC-RMAP-REDIST-SUBNET.
+            - When enabled, O(config.management.route_map_tag) is not matched by that route map.
             type: bool
             default: false
           leaf_bgp_as:
             description:
             - The BGP AS number for leaf switches.
             - Autonomous system number 1-4294967295 or dotted notation 1-65535.0-65535.
+            - Relevant when assigning leaf ASNs explicitly instead of using O(config.management.bgp_asn_auto_allocation).
             type: str
           border_bgp_as:
             description:
             - The BGP AS number for border switches.
             - Autonomous system number 1-4294967295 or dotted notation 1-65535.0-65535.
+            - Relevant when assigning border ASNs explicitly instead of using O(config.management.bgp_asn_auto_allocation).
             type: str
           super_spine_bgp_as:
             description:
             - The BGP AS number for super-spine switches.
             - Autonomous system number 1-4294967295 or dotted notation 1-65535.0-65535.
+            - Relevant when assigning super-spine ASNs explicitly instead of using O(config.management.bgp_asn_auto_allocation).
+            - Super-spine roles are not supported when O(config.management.underlay_ipv6) is enabled.
             type: str
           site_id:
             description:
@@ -186,7 +209,8 @@ options:
             - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
             - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
             - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
-            - Defaults to the value of O(config.management.bgp_asn) if not provided.
+            - When O(config.management.bgp_asn) is supplied and this option is omitted, its value defaults to that ASN.
+              Omitting both in a partial O(state=merged) update preserves the existing site ID.
             type: str
           bgp_loopback_id:
             description:
@@ -201,6 +225,7 @@ options:
           bgp_loopback_ipv6_range:
             description:
             - Typically Loopback0 IPv6 address range.
+            - Applies to IPv6 routing when O(config.management.underlay_ipv6) is enabled.
             type: str
             default: "fd00::a02:0/119"
           nve_loopback_id:
@@ -216,21 +241,25 @@ options:
           nve_loopback_ipv6_range:
             description:
             - Typically Loopback1 and Anycast Loopback IPv6 address range.
+            - Applies when O(config.management.underlay_ipv6) is enabled.
             type: str
             default: "fd00::a03:0/118"
           anycast_loopback_id:
             description:
             - Underlay anycast loopback ID. Used for vPC peering in VXLANv6 fabrics.
+            - Applies when O(config.management.underlay_ipv6) is enabled and vPC peering is configured.
             type: int
             default: 10
           anycast_rendezvous_point_ip_range:
             description:
             - Anycast or Phantom RP IP address range.
+            - Relevant when underlay multicast is used, including O(config.management.replication_mode=multicast).
             type: str
             default: "10.254.254.0/24"
           ipv6_anycast_rendezvous_point_ip_range:
             description:
             - Anycast RP IPv6 address range.
+            - Applies to IPv6 multicast underlay when O(config.management.underlay_ipv6) is enabled.
             type: str
             default: "fd00::254:254:0/118"
           intra_fabric_subnet_range:
@@ -267,6 +296,8 @@ options:
           replication_mode:
             description:
             - Replication mode for BUM traffic.
+            - When C(multicast), the IPv4 or IPv6 multicast subnet matching O(config.management.underlay_ipv6)
+              supplies BUM group addresses. Tenant routed multicast also uses multicast replication.
             type: str
             default: multicast
             choices: [ multicast, ingress ]
@@ -274,106 +305,140 @@ options:
             description:
             - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
             - A multicast group IPv4 address from this pool is used for BUM traffic for each overlay network.
+            - Applies when O(config.management.underlay_ipv6=false) and
+              O(config.management.replication_mode=multicast); it is not used for ingress replication.
             type: str
             default: "239.1.1.0/25"
           auto_generate_multicast_group_address:
             description:
             - Generate a new multicast group address from the multicast pool using a round-robin approach.
+            - Applies when O(config.management.replication_mode=multicast); uses
+              O(config.management.multicast_group_subnet) for IPv4 underlay or
+              O(config.management.ipv6_multicast_group_subnet) when O(config.management.underlay_ipv6) is enabled.
             type: bool
             default: false
           underlay_multicast_group_address_limit:
             description:
             - The maximum supported value is 128 for NX-OS version 10.2(1) or earlier
               and 512 for versions above 10.2(1).
+            - Relevant when underlay multicast is used, including O(config.management.replication_mode=multicast).
             type: int
             default: 128
             choices: [ 128, 512 ]
           tenant_routed_multicast:
             description:
             - Enable overlay IPv4 multicast support in VXLAN fabrics.
+            - Select O(config.management.replication_mode=multicast) for tenant routed multicast.
             type: bool
             default: false
           tenant_routed_multicast_ipv6:
             description:
             - Enable overlay IPv6 multicast support in VXLAN fabrics.
+            - Select O(config.management.replication_mode=multicast) for tenant routed multicast.
+            - Relevant to IPv6 multicast configuration; O(config.management.l3_vni_ipv6_multicast_group) and
+              O(config.management.ipv6_multicast_group_subnet) supply its multicast addresses.
             type: bool
             default: false
           first_hop_redundancy_protocol:
             description:
             - First hop redundancy protocol, HSRP or VRRP.
+            - Nexus Dashboard applies this setting only to routed fabrics without EVPN VXLAN overlay. This module
+              fixes the EVPN overlay on, so this option does not affect deployed VXLAN overlay configuration.
             type: str
             default: hsrp
             choices: [ hsrp, vrrp ]
           rendezvous_point_count:
             description:
             - Number of spines acting as Rendezvous-Points (RPs).
+            - Relevant when underlay multicast is used, including O(config.management.replication_mode=multicast).
             type: int
             default: 2
             choices: [ 2, 4 ]
           rendezvous_point_loopback_id:
             description:
             - The rendezvous point loopback interface ID.
+            - Relevant when underlay multicast is used, including O(config.management.replication_mode=multicast).
             type: int
             default: 254
           rendezvous_point_mode:
             description:
             - Multicast rendezvous point mode. For IPv6 underlay, use C(asm) only.
+            - Relevant when O(config.management.replication_mode=multicast).
+            - The phantom rendezvous point loopback IDs apply when this option is C(bidir).
             type: str
             default: asm
             choices: [ asm, bidir ]
           phantom_rendezvous_point_loopback_id1:
             description:
             - Underlay phantom rendezvous point loopback primary ID for PIM Bi-dir deployments.
+            - Applies when O(config.management.rendezvous_point_mode=bidir).
             type: int
             default: 2
           phantom_rendezvous_point_loopback_id2:
             description:
             - Underlay phantom rendezvous point loopback secondary ID for PIM Bi-dir deployments.
+            - Applies when O(config.management.rendezvous_point_mode=bidir).
             type: int
             default: 3
           phantom_rendezvous_point_loopback_id3:
             description:
             - Underlay phantom rendezvous point loopback tertiary ID for PIM Bi-dir deployments.
+            - Applies when O(config.management.rendezvous_point_mode=bidir) and
+              O(config.management.rendezvous_point_count=4).
             type: int
             default: 4
           phantom_rendezvous_point_loopback_id4:
             description:
             - Underlay phantom rendezvous point loopback quaternary ID for PIM Bi-dir deployments.
+            - Applies when O(config.management.rendezvous_point_mode=bidir) and
+              O(config.management.rendezvous_point_count=4).
             type: int
             default: 5
           l3vni_multicast_group:
             description:
             - Default underlay multicast group IPv4 address assigned for every overlay VRF.
+            - Relevant when O(config.management.tenant_routed_multicast) is enabled.
+            - Choose an address within O(config.management.multicast_group_subnet).
             type: str
             default: "239.1.1.0"
           l3_vni_ipv6_multicast_group:
             description:
             - Default underlay multicast group IPv6 address assigned for every overlay VRF.
+            - Relevant when O(config.management.tenant_routed_multicast_ipv6) is enabled.
+            - Choose an address within O(config.management.ipv6_multicast_group_subnet).
             type: str
             default: "ff1e::"
           ipv6_multicast_group_subnet:
             description:
             - IPv6 multicast address with prefix 112 to 128.
+            - Applies when O(config.management.underlay_ipv6=true) and
+              O(config.management.replication_mode=multicast); also supplies the default MDT group for TRMv6.
             type: str
             default: "ff1e::/121"
           mvpn_vrf_route_import_id:
             description:
             - Enable MVPN VRI ID generation for tenant routed multicast with IPv4 underlay.
+            - Relevant when O(config.management.underlay_ipv6=false), tenant routed multicast is enabled, and a VRF
+              uses Layer 3 VNI without VLAN (whose fabric default is O(config.management.l3_vni_no_vlan_default_option)).
+              With IPv6 underlay, ND generates the ID for tenant routed multicast regardless of this option.
             type: bool
             default: true
           mvpn_vrf_route_import_id_range:
             description:
             - MVPN VRI ID range (minimum 1, maximum 65535) for vPC, applicable when TRM is enabled
               with IPv6 underlay, or O(config.management.mvpn_vrf_route_import_id) is enabled with IPv4 underlay.
+            - O(config.management.vrf_route_import_id_reallocation) uses this range.
             type: str
           vrf_route_import_id_reallocation:
             description:
             - One time VRI ID re-allocation based on MVPN VRI ID Range.
+            - Uses O(config.management.mvpn_vrf_route_import_id_range); relevant when that range is configured.
             type: bool
             default: false
           target_subnet_mask:
             description:
             - Mask for underlay subnet IP range (30-31).
+            - Used when allocating subnets from O(config.management.intra_fabric_subnet_range).
             type: int
             default: 30
           anycast_gateway_mac:
@@ -395,11 +460,15 @@ options:
             description:
             - L3 VNI configuration without VLAN configuration. This value is propagated on VRF
               creation as the default value of Enable L3VNI w/o VLAN in VRF.
+            - For tenant routed multicast on IPv4 underlay, it affects
+              O(config.management.mvpn_vrf_route_import_id) generation.
             type: bool
             default: false
           underlay_ipv6:
             description:
             - Enable IPv6 underlay. If not enabled, IPv4 underlay is used.
+            - IPv6 underlay address pools and O(config.management.rendezvous_point_mode=asm) apply when enabled;
+              O(config.management.bfd) and O(config.management.pim_hello_authentication) are IPv4-underlay features.
             type: bool
             default: false
           static_underlay_ip_allocation:
@@ -416,6 +485,7 @@ options:
           sub_interface_dot1q_range:
             description:
             - Per aggregation dot1q range for VRF-Lite connectivity (minimum 2, maximum 4093).
+            - Relevant when VRF Lite connections are configured through O(config.management.vrf_lite_auto_config).
             type: str
             default: "2-511"
           vrf_lite_auto_config:
@@ -424,23 +494,28 @@ options:
             - If C(back2BackAndToExternal) is selected, VRF Lite IFCs are auto created between
               border devices of two Easy Fabrics, and between border devices in Easy Fabric and
               edge routers in External Fabric.
+            - Auto-created connections draw addresses from O(config.management.vrf_lite_subnet_range) using
+              O(config.management.vrf_lite_subnet_target_mask).
             type: str
             default: manual
             choices: [ manual, back2BackAndToExternal ]
           vrf_lite_subnet_range:
             description:
             - IPv4 address range in CIDR notation used to assign point-to-point inter-fabric connections.
+            - Used by auto-created connections when O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
             type: str
             default: "10.33.0.0/16"
           vrf_lite_subnet_target_mask:
             description:
             - VRF Lite subnet mask.
+            - Applied to addresses from O(config.management.vrf_lite_subnet_range) for VRF Lite connections.
             type: int
             default: 30
           auto_unique_vrf_lite_ip_prefix:
             description:
             - When enabled, IP prefix allocated to the VRF LITE IFC is not reused on VRF extension
               over VRF LITE IFC. Instead, a unique IP subnet is allocated for each VRF extension.
+            - Relevant when VRF Lite connections use O(config.management.vrf_lite_subnet_range).
             type: bool
             default: false
           vpc_domain_id_range:
@@ -502,6 +577,7 @@ options:
           shared_vpc_domain_id:
             description:
             - vPC domain ID to be used on all vPC pairs.
+            - Applies when O(config.management.fabric_vpc_domain_id) is enabled.
             type: int
             default: 1
           fabric_vpc_qos:
@@ -512,6 +588,7 @@ options:
           fabric_vpc_qos_policy_name:
             description:
             - QoS policy name. Should be the same on all spines.
+            - Applies when O(config.management.fabric_vpc_qos) is enabled.
             type: str
             default: spine_qos_for_fabric_vpc_peering
           enable_peer_switch:
@@ -529,6 +606,7 @@ options:
           per_vrf_loopback_ip_range:
             description:
             - Prefix pool to assign IPv4 addresses to loopbacks on VTEPs on a per VRF basis.
+            - Used when O(config.management.per_vrf_loopback_auto_provision) is enabled.
             type: str
             default: "10.5.0.0/22"
           per_vrf_loopback_auto_provision_ipv6:
@@ -539,6 +617,7 @@ options:
           per_vrf_loopback_ipv6_range:
             description:
             - Prefix pool to assign IPv6 addresses to loopbacks on VTEPs on a per VRF basis.
+            - Used when O(config.management.per_vrf_loopback_auto_provision_ipv6) is enabled.
             type: str
             default: "fd00::a05:0/112"
           vrf_template:
@@ -570,6 +649,7 @@ options:
           tenant_dhcp:
             description:
             - Enable tenant DHCP.
+            - Controls tenant DHCP separately from POAP O(config.management.local_dhcp_server).
             type: bool
             default: true
           advertise_physical_ip:
@@ -581,22 +661,27 @@ options:
             description:
             - Enable advertise-pip on vPC borders and border gateways only.
               Applicable only when vPC advertise-pip is not enabled.
+            - O(config.management.advertise_physical_ip) controls fabric-wide advertise-pip behavior.
             type: bool
             default: true
           bgp_authentication:
             description:
             - Enable BGP authentication.
+            - Not supported when O(config.management.underlay_ipv6) is enabled.
             type: bool
             default: false
           bgp_authentication_key_type:
             description:
             - BGP key encryption type. 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7.
+            - Applies when O(config.management.bgp_authentication) is enabled and a BGP key is configured.
             type: str
             default: 3des
             choices: [ 3des, type6, type7 ]
           bgp_authentication_key:
             description:
             - Encrypted BGP authentication key based on type.
+            - Applies when O(config.management.bgp_authentication) is enabled; interpret it using
+              O(config.management.bgp_authentication_key_type).
             type: str
           bfd:
             description:
@@ -611,16 +696,19 @@ options:
           bfd_authentication:
             description:
             - Enable BFD authentication. Valid for P2P interfaces only.
+            - Applies when O(config.management.bfd) is enabled.
             type: bool
             default: false
           bfd_authentication_key_id:
             description:
             - BFD authentication key ID.
+            - Applies when O(config.management.bfd_authentication) is enabled.
             type: int
             default: 100
           bfd_authentication_key:
             description:
             - Encrypted SHA1 secret value.
+            - Applies when O(config.management.bfd_authentication) is enabled.
             type: str
           pim_hello_authentication:
             description:
@@ -630,6 +718,7 @@ options:
           pim_hello_authentication_key:
             description:
             - PIM hello authentication key. 3DES encrypted.
+            - Applies when O(config.management.pim_hello_authentication) is enabled.
             type: str
           nxapi:
             description:
@@ -644,21 +733,25 @@ options:
           nxapi_https_port:
             description:
             - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi) is enabled.
             type: int
             default: 443
           nxapi_http_port:
             description:
             - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http) is enabled.
             type: int
             default: 80
           day0_bootstrap:
             description:
             - Automatic IP assignment for POAP.
+            - Enables use of O(config.management.local_dhcp_server) and bootstrap subnet settings.
             type: bool
             default: false
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - Applies when O(config.management.day0_bootstrap) and O(config.management.local_dhcp_server) are enabled.
             - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
@@ -692,11 +785,14 @@ options:
           local_dhcp_server:
             description:
             - Automatic IP assignment for POAP from local DHCP server.
+            - Applies only when O(config.management.day0_bootstrap) is enabled; its protocol is selected by
+              O(config.management.dhcp_protocol_version).
             type: bool
             default: false
           dhcp_protocol_version:
             description:
             - IP protocol version for local DHCP server.
+            - Applies when O(config.management.day0_bootstrap) and O(config.management.local_dhcp_server) are enabled.
             type: str
             default: dhcpv4
             choices: [ dhcpv4, dhcpv6 ]
@@ -704,43 +800,57 @@ options:
             description:
             - DHCP scope start address for switch POAP.
             - Must be a valid IPv4 address without a prefix length.
+            - Applies to an IPv4 local DHCP scope when O(config.management.day0_bootstrap) and
+              O(config.management.local_dhcp_server) are enabled with O(config.management.dhcp_protocol_version=dhcpv4).
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
             - DHCP scope end address for switch POAP.
             - Must be a valid IPv4 address without a prefix length.
+            - Applies to an IPv4 local DHCP scope when O(config.management.day0_bootstrap) and
+              O(config.management.local_dhcp_server) are enabled with O(config.management.dhcp_protocol_version=dhcpv4).
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - Default gateway for management VRF on the switch.
             - Must be a valid IPv4 address without a prefix length.
+            - Applies when O(config.management.day0_bootstrap) is enabled with a local or external IPv4 DHCP server;
+              keep the gateway and DHCP scope in the same subnet.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
             description:
             - Switch management IP subnet prefix for IPv4.
+            - Applies when O(config.management.day0_bootstrap) uses local or external IPv4 DHCP; with a local server,
+              select O(config.management.dhcp_protocol_version=dhcpv4).
             type: int
             default: 24
           management_ipv6_prefix:
             description:
             - Switch management IP subnet prefix for IPv6.
+            - Applies when O(config.management.day0_bootstrap) uses IPv6 DHCP; with a local server,
+              select O(config.management.dhcp_protocol_version=dhcpv6).
             type: int
             default: 64
           netflow_settings:
             description:
             - Netflow configuration settings.
+            - Collection entries are effective when O(config.management.netflow_settings.netflow) is enabled.
             type: dict
             suboptions:
               netflow:
                 description:
                 - Enable netflow collection.
+                - Exporters, records, and monitors in O(config.management.netflow_settings) configure collection
+                  when this option is enabled.
                 type: bool
                 default: false
               netflow_exporter_collection:
                 description:
                 - List of netflow exporters.
+                - Effective when O(config.management.netflow_settings.netflow) is enabled; monitors refer to exporter names.
                 type: list
                 elements: dict
                 suboptions:
@@ -771,6 +881,7 @@ options:
               netflow_record_collection:
                 description:
                 - List of netflow records.
+                - Effective when O(config.management.netflow_settings.netflow) is enabled; monitors refer to record names.
                 type: list
                 elements: dict
                 suboptions:
@@ -792,6 +903,9 @@ options:
               netflow_monitor_collection:
                 description:
                 - List of netflow monitors.
+                - Effective when O(config.management.netflow_settings.netflow) is enabled. Each monitor names a record
+                  from O(config.management.netflow_settings.netflow_record_collection) and one or two exporters from
+                  O(config.management.netflow_settings.netflow_exporter_collection).
                 type: list
                 elements: dict
                 suboptions:
@@ -803,16 +917,19 @@ options:
                   record_name:
                     description:
                     - Associated record name.
+                    - Refers to a record in O(config.management.netflow_settings.netflow_record_collection).
                     type: str
                     required: true
                   exporter1_name:
                     description:
                     - Primary exporter name.
+                    - Refers to an exporter in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     required: true
                   exporter2_name:
                     description:
                     - Secondary exporter name.
+                    - When set, refers to a second exporter in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
           real_time_backup:
@@ -823,21 +940,25 @@ options:
           scheduled_backup:
             description:
             - Enable backup at the specified time daily.
+            - Uses O(config.management.scheduled_backup_time) for the daily schedule.
             type: bool
             default: false
           scheduled_backup_time:
             description:
             - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
+            - Applies when O(config.management.scheduled_backup) is enabled.
             type: str
           leaf_tor_id_range:
             description:
             - Use specific vPC/Port-channel ID range for leaf-tor pairings.
+            - When enabled, O(config.management.leaf_tor_vpc_port_channel_id_range) supplies the range.
             type: bool
             default: false
           leaf_tor_vpc_port_channel_id_range:
             description:
             - vPC/Port-channel ID range (minimum 1, maximum 4096), used for auto-allocating
               vPC/Port-Channel IDs for leaf-tor pairings.
+            - Applies when O(config.management.leaf_tor_id_range) is enabled.
             type: str
             default: "1-499"
           allow_vlan_on_leaf_tor_pairing:
@@ -855,6 +976,7 @@ options:
           ntp_server_vrf_collection:
             description:
             - NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server.
+            - Corresponds to O(config.management.ntp_server_collection).
             type: list
             elements: str
             default: []
@@ -867,6 +989,7 @@ options:
           dns_vrf_collection:
             description:
             - DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server.
+            - Corresponds to O(config.management.dns_collection).
             type: list
             elements: str
             default: []
@@ -879,12 +1002,14 @@ options:
           syslog_server_vrf_collection:
             description:
             - Syslog Server VRFs. One VRF for all syslog servers or a list of VRFs, one per syslog server.
+            - Corresponds to O(config.management.syslog_server_collection).
             type: list
             elements: str
             default: []
           syslog_severity_collection:
             description:
             - List of syslog severity values, one per syslog server.
+            - Corresponds to O(config.management.syslog_server_collection).
             type: list
             elements: int
             default: []
@@ -923,11 +1048,13 @@ options:
           extra_config_nxos_bootstrap:
             description:
             - Additional CLIs required during device bootup/login e.g. AAA/Radius.
+            - Applied to device startup configuration when O(config.management.day0_bootstrap) is enabled.
             type: str
             default: ""
           aaa:
             description:
             - Include AAA configs from Manageability tab during device bootup.
+            - Applies to startup configuration when O(config.management.day0_bootstrap) is enabled.
             type: bool
             default: false
           pre_interface_config_leaf:
@@ -955,6 +1082,7 @@ options:
           interface_statistics_load_interval:
             description:
             - Interface statistics load interval in seconds.
+            - Relevant when O(config.management.real_time_interface_statistics_collection) is enabled.
             type: int
             default: 10
           nve_hold_down_timer:
@@ -966,21 +1094,25 @@ options:
             description:
             - Enable the Next Generation (NG) OAM feature for all switches in the fabric
               to aid in troubleshooting VXLAN EVPN fabrics.
+            - Not supported when O(config.management.underlay_ipv6) is enabled.
             type: bool
             default: true
           ngoam_south_bound_loop_detect:
             description:
             - Enable the Next Generation (NG) OAM southbound loop detection.
+            - Applies when O(config.management.next_generation_oam) is enabled.
             type: bool
             default: false
           ngoam_south_bound_loop_detect_probe_interval:
             description:
             - Next Generation (NG) OAM southbound loop detection probe interval in seconds.
+            - Applies when O(config.management.ngoam_south_bound_loop_detect) is enabled.
             type: int
             default: 300
           ngoam_south_bound_loop_detect_recovery_interval:
             description:
             - Next Generation (NG) OAM southbound loop detection recovery interval in seconds.
+            - Applies when O(config.management.ngoam_south_bound_loop_detect) is enabled.
             type: int
             default: 600
           strict_config_compliance_mode:
@@ -1045,16 +1177,19 @@ options:
           default_queuing_policy_cloudscale:
             description:
             - Queuing policy for all 92xx, -EX, -FX, -FX2, -FX3, -GX series switches in the fabric.
+            - Applies when O(config.management.default_queuing_policy) is enabled.
             type: str
             default: queuing_policy_default_8q_cloudscale
           default_queuing_policy_r_series:
             description:
             - Queueing policy for all Nexus R-series switches.
+            - Applies when O(config.management.default_queuing_policy) is enabled.
             type: str
             default: queuing_policy_default_r_series
           default_queuing_policy_other:
             description:
             - Queuing policy for all other switches in the fabric.
+            - Applies when O(config.management.default_queuing_policy) is enabled.
             type: str
             default: queuing_policy_default_other
           aiml_qos:
@@ -1067,6 +1202,7 @@ options:
             description:
             - Queuing policy based on predominant fabric link speed.
               C(User-defined) allows for custom configuration.
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: str
             default: 400G
             choices: [ 800G, 400G, 100G, 25G, User-defined ]
@@ -1075,37 +1211,44 @@ options:
             - DSCP for RDMA traffic. Numeric (0-63) with ranges/comma, or named values
               (af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43,
               cs1, cs2, cs3, cs4, cs5, cs6, cs7, default, ef).
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: str
           cnp:
             description:
             - DSCP value for Congestion Notification. Numeric (0-63) with ranges/comma, or named values
               (af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43,
               cs1, cs2, cs3, cs4, cs5, cs6, cs7, default, ef).
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: str
             default: "48"
           wred_min:
             description:
             - WRED minimum threshold in kbytes.
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: int
             default: 950
           wred_max:
             description:
             - WRED maximum threshold in kbytes.
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: int
             default: 3000
           wred_drop_probability:
             description:
             - WRED drop probability percentage.
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: int
             default: 7
           wred_weight:
             description:
             - Influences how quickly WRED reacts to queue depth changes.
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: int
             default: 0
           bandwidth_remaining:
             description:
             - Percentage of remaining bandwidth allocated to AI traffic queues.
+            - Relevant when O(config.management.aiml_qos) is enabled.
             type: int
             default: 50
           dlb:
@@ -1118,12 +1261,15 @@ options:
             description:
             - Select system-wide flowlet, per-packet (packet spraying) or policy driven mixed mode.
               Mixed mode is supported on Silicon One (S1) platform only.
+            - Applies when O(config.management.dlb) is enabled.
             type: str
             default: flowlet
             choices: [ flowlet, per-packet, policy-driven-flowlet, policy-driven-per-packet, policy-driven-mixed-mode ]
           dlb_mixed_mode_default:
             description:
             - Default load balancing mode for policy driven mixed mode DLB.
+            - Applies when O(config.management.dlb) is enabled and
+              O(config.management.dlb_mode=policy-driven-mixed-mode).
             type: str
             default: ecmp
             choices: [ ecmp, flowlet, per-packet ]
@@ -1131,12 +1277,14 @@ options:
             description:
             - Flowlet aging timer in microseconds. Valid range depends on platform.
               Cloud Scale (CS) 1-2000000 (default 500), Silicon One (S1) 1-1024 (default 256).
+            - Relevant to flowlet DLB modes when O(config.management.dlb) is enabled.
             type: int
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values
               (af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43,
               cs1, cs2, cs3, cs4, cs5, cs6, cs7, default, ef).
+            - Relevant to flowlet DLB modes when O(config.management.dlb) is enabled.
             type: str
             default: ""
           per_packet_dscp:
@@ -1144,6 +1292,7 @@ options:
             - DSCP values for per-packet load balancing. Numeric (0-63) with ranges/comma, or named values
               (af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43,
               cs1, cs2, cs3, cs4, cs5, cs6, cs7, default, ef).
+            - Relevant to per-packet DLB modes when O(config.management.dlb) is enabled.
             type: str
             default: ""
           ai_load_sharing:
@@ -1164,11 +1313,13 @@ options:
           ptp_loopback_id:
             description:
             - Precision Time Protocol source loopback ID.
+            - Applies when O(config.management.ptp) is enabled.
             type: int
             default: 0
           ptp_domain_id:
             description:
             - Multiple independent PTP clocking subdomains on a single network.
+            - Applies when O(config.management.ptp) is enabled.
             type: int
             default: 0
           private_vlan:
@@ -1179,6 +1330,7 @@ options:
           default_private_vlan_secondary_network_template:
             description:
             - Default PVLAN secondary network template.
+            - Applies when O(config.management.private_vlan) is enabled.
             type: str
             default: Pvlan_Secondary_Network
           macsec:
@@ -1190,32 +1342,39 @@ options:
           macsec_cipher_suite:
             description:
             - Configure MACsec cipher suite.
+            - Applies when O(config.management.macsec) is enabled.
             type: str
             default: GCM-AES-XPN-256
             choices: [ GCM-AES-128, GCM-AES-256, GCM-AES-XPN-128, GCM-AES-XPN-256 ]
           macsec_key_string:
             description:
             - MACsec primary key string. Cisco Type 7 encrypted octet string.
+            - Applies when O(config.management.macsec) is enabled.
             type: str
           macsec_algorithm:
             description:
             - MACsec primary cryptographic algorithm. AES_128_CMAC or AES_256_CMAC.
+            - Applies when O(config.management.macsec) is enabled.
             type: str
             default: AES_128_CMAC
             choices: [ AES_128_CMAC, AES_256_CMAC ]
           macsec_fallback_key_string:
             description:
             - MACsec fallback key string. Cisco Type 7 encrypted octet string.
+            - Applies when O(config.management.macsec) is enabled; paired with
+              O(config.management.macsec_fallback_algorithm).
             type: str
           macsec_fallback_algorithm:
             description:
             - MACsec fallback cryptographic algorithm. AES_128_CMAC or AES_256_CMAC.
+            - Applies when O(config.management.macsec_fallback_key_string) is configured.
             type: str
             default: AES_128_CMAC
             choices: [ AES_128_CMAC, AES_256_CMAC ]
           macsec_report_timer:
             description:
             - MACsec operational status periodic report timer in minutes.
+            - Applies when O(config.management.macsec) is enabled.
             type: int
             default: 5
           enable_dpu_pinning:
@@ -1226,18 +1385,22 @@ options:
           connectivity_domain_name:
             description:
             - Domain name to connect to Hypershield.
+            - Relevant when O(config.management.allow_smart_switch_onboarding) is enabled.
             type: str
           hypershield_connectivity_proxy_server:
             description:
             - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
+            - Relevant when O(config.management.allow_smart_switch_onboarding) is enabled.
             type: str
           hypershield_connectivity_proxy_server_port:
             description:
             - Proxy port number for communication with Hypershield.
+            - Applies when O(config.management.hypershield_connectivity_proxy_server) is configured.
             type: int
           hypershield_connectivity_source_intf:
             description:
             - Loopback interface on smart switch for communication with Hypershield.
+            - Relevant when O(config.management.allow_smart_switch_onboarding) is enabled.
             type: str
       telemetry_settings:
         description:
@@ -1247,6 +1410,7 @@ options:
           flow_collection:
             description:
             - Flow collection settings.
+            - Traffic analytics controls within this block apply when flow collection is active.
             type: dict
             suboptions:
               traffic_analytics:
@@ -1261,6 +1425,7 @@ options:
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
+                - Relevant when O(config.telemetry_settings.flow_collection.traffic_analytics) is not C(disabled).
                 type: str
                 choices:
                 - interFabric
@@ -1270,6 +1435,7 @@ options:
               udp_categorization:
                 description:
                 - UDP categorization.
+                - Relevant when O(config.telemetry_settings.flow_collection.traffic_analytics) is not C(disabled).
                 type: str
                 choices:
                 - disabled
@@ -1288,6 +1454,7 @@ options:
               sensitivity:
                 description:
                 - Microburst sensitivity level.
+                - Applies when O(config.telemetry_settings.microburst.microburst) is enabled.
                 type: str
                 choices:
                 - high
@@ -1317,11 +1484,13 @@ options:
               export_settings:
                 description:
                 - NAS export settings.
+                - Used when O(config.telemetry_settings.nas.server) names a configured NAS server.
                 type: dict
                 suboptions:
                   export_type:
                     description:
                     - Export type.
+                    - Applies when O(config.telemetry_settings.nas.server) is configured.
                     type: str
                     choices:
                     - base
@@ -1330,6 +1499,7 @@ options:
                   export_format:
                     description:
                     - Export format.
+                    - Applies when O(config.telemetry_settings.nas.server) is configured.
                     type: str
                     choices:
                     - json
@@ -1423,7 +1593,7 @@ notes:
 - Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
 - With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
   dynamic or controller-owned values, which are preserved from an existing fabric.
-- O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
+- When O(config.management.bgp_asn) is supplied, O(config.management.site_id) defaults to that ASN if omitted.
 - The default O(config.management.vpc_peer_keep_alive_option) for eBGP fabrics is C(management), unlike iBGP fabrics.
 """
 

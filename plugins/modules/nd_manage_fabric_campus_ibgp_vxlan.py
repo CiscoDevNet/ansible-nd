@@ -69,23 +69,27 @@ options:
       telemetry_collection_type:
         description:
         - Telemetry collection method.
+        - Applies when O(config.telemetry_collection=true).
         type: str
         default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
         - Telemetry Streaming Protocol.
+        - Applies when O(config.telemetry_collection=true).
         type: str
         default: ipv4
         choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
         - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
+        - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
         - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
+        - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         type: str
         default: default
       security_domain:
@@ -122,6 +126,7 @@ options:
           replication_mode:
             description:
             - Replication Mode for BUM Traffic.
+            - Multicast pool and rendezvous-point settings below apply when C(multicast) is selected.
             - Although the OpenAPI schema also declares C(ingress), ND 4.2.1 rejects that value for Campus fabrics.
             type: str
             default: multicast
@@ -129,16 +134,19 @@ options:
           multicast_group_subnet:
             description:
             - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
+            - Applies when O(config.management.replication_mode=multicast).
             type: str
             default: "239.1.1.0/25"
           auto_generate_multicast_group_address:
             description:
             - Generate multicast group address from pool (round-robin).
+            - Applies when O(config.management.replication_mode=multicast); addresses come from O(config.management.multicast_group_subnet).
             type: bool
             default: false
           underlay_multicast_group_address_limit:
             description:
             - Max supported multicast group address value.
+            - Applies when O(config.management.replication_mode=multicast).
             type: int
             default: 128
             choices: [ 128, 512 ]
@@ -150,12 +158,14 @@ options:
           rendezvous_point_count:
             description:
             - Number of spines acting as Rendezvous-Points.
+            - Applies when O(config.management.replication_mode=multicast).
             type: int
             default: 2
             choices: [ 2, 4 ]
           rendezvous_point_loopback_id:
             description:
             - Rendezvous point loopback Id (0-1023).
+            - Applies when O(config.management.replication_mode=multicast).
             type: int
             default: 254
           vpc_peer_link_vlan:
@@ -269,6 +279,7 @@ options:
           nxapi_https_port:
             description:
             - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi=true).
             type: int
             default: 443
           nxapi_http:
@@ -279,6 +290,7 @@ options:
           nxapi_http_port:
             description:
             - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http=true).
             type: int
             default: 80
           snmp_trap:
@@ -310,6 +322,7 @@ options:
           interface_statistics_load_interval:
             description:
             - Interface Statistics Load Interval in seconds (5-300).
+            - Applies when O(config.management.real_time_interface_statistics_collection=true).
             type: int
             default: 10
           bgp_loopback_ip_range:
@@ -325,6 +338,7 @@ options:
           anycast_rendezvous_point_ip_range:
             description:
             - Anycast or Phantom RP IP Address Range.
+            - Applies when O(config.management.replication_mode=multicast).
             type: str
             default: "10.254.254.0/24"
           intra_fabric_subnet_range:
@@ -360,42 +374,50 @@ options:
           vrf_lite_auto_config:
             description:
             - VRF Lite Inter-Fabric Connection Deployment Options.
+            - C(back2BackAndToExternal) uses O(config.management.vrf_lite_subnet_range) and O(config.management.vrf_lite_subnet_target_mask) for automatically created links.
             type: str
             default: manual
             choices: [ manual, back2BackAndToExternal ]
           vrf_lite_subnet_range:
             description:
             - IPv4 address range in CIDR notation used to assign point-to-point inter-fabric connections.
+            - Used for automatically created links when O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
             type: str
             default: "10.33.0.0/16"
           vrf_lite_subnet_target_mask:
             description:
             - VRF Lite Subnet Mask (8-31).
+            - Applies to addresses allocated from O(config.management.vrf_lite_subnet_range).
             type: int
             default: 30
           auto_unique_vrf_lite_ip_prefix:
             description:
             - Unique IP prefix per VRF extension over VRF LITE IFC.
+            - Applies when VRF-Lite inter-fabric connections are created using O(config.management.vrf_lite_subnet_range).
             type: bool
             default: false
           per_vrf_loopback_auto_provision:
             description:
             - Auto provision IPv4 loopback on VTEP on VRF attachment.
+            - Allocates addresses from O(config.management.per_vrf_loopback_ip_range) when enabled.
             type: bool
             default: false
           per_vrf_loopback_ip_range:
             description:
             - Prefix pool for IPv4 loopback addresses on VTEPs per VRF.
+            - Applies when O(config.management.per_vrf_loopback_auto_provision=true).
             type: str
             default: "10.5.0.0/22"
           per_vrf_loopback_auto_provision_ipv6:
             description:
             - Auto provision IPv6 loopback on VTEP on VRF attachment.
+            - Allocates addresses from O(config.management.per_vrf_loopback_ipv6_range) when enabled.
             type: bool
             default: false
           per_vrf_loopback_ipv6_range:
             description:
             - Prefix pool for IPv6 loopback addresses on VTEPs per VRF.
+            - Applies when O(config.management.per_vrf_loopback_auto_provision_ipv6=true).
             type: str
             default: "fd00::a05:0/112"
           banner:
@@ -406,34 +428,40 @@ options:
           day0_bootstrap:
             description:
             - Automatic IP Assignment For POAP.
+            - Enables the POAP context for O(config.management.local_dhcp_server) and O(config.management.bootstrap_subnet_collection).
             type: bool
             default: false
           local_dhcp_server:
             description:
             - Automatic IP Assignment For POAP from Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true); O(config.management.dhcp_protocol_version) selects the address family.
             type: bool
             default: false
           dhcp_protocol_version:
             description:
             - IP protocol version for Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true) and O(config.management.local_dhcp_server=true).
             type: str
             default: dhcpv4
             choices: [ dhcpv4, dhcpv6 ]
           dhcp_start_address:
             description:
             - DHCP Scope Start Address.
+            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
             - DHCP Scope End Address.
+            - Applies when O(config.management.day0_bootstrap=true), O(config.management.local_dhcp_server=true), and O(config.management.dhcp_protocol_version=dhcpv4).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - Default Gateway For Management VRF.
+            - Applies to IPv4 management addressing when O(config.management.day0_bootstrap=true).
             - Must be a valid IPv4 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
@@ -451,6 +479,7 @@ options:
           bootstrap_subnet_collection:
             description:
             - List of IPv4/IPv6 subnets for bootstrap.
+            - Used for switch bootstrap when O(config.management.day0_bootstrap=true).
             - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
@@ -492,6 +521,7 @@ options:
           scheduled_backup_time:
             description:
             - Backup time (UTC) in 24-hour C(HH:MM) format (C(00:00) to C(23:59)).
+            - Applies when O(config.management.scheduled_backup=true).
             type: str
           link_state_routing_protocol:
             description:
@@ -522,11 +552,13 @@ options:
           ospf_process_id:
             description:
             - OSPF Process Id (for Nexus - OSPF Process Tag, 1-65535).
+            - Applies when O(config.management.link_state_routing_protocol=ospf).
             type: int
             default: 1
           ospf_area_id:
             description:
             - OSPF area ID as a valid IPv4 address.
+            - Applies when O(config.management.link_state_routing_protocol=ospf).
             type: str
             default: "0.0.0.0"
           system_mtu:
@@ -577,21 +609,25 @@ options:
           auto_symmetric_vrf_lite:
             description:
             - Auto-generate VRF LITE sub-interface and BGP peering on managed neighbor devices.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
             type: bool
             default: false
           auto_vrf_lite_default_vrf:
             description:
             - Auto-generate Default VRF interface and BGP peering on VRF LITE IFC auto deployment.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
             type: bool
             default: false
           auto_symmetric_default_vrf:
             description:
             - Auto-generate Default VRF interface and BGP peering on managed neighbor devices.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
             type: bool
             default: false
           default_vrf_redistribution_bgp_route_map:
             description:
             - Route Map for redistributing BGP routes to IGP in default VRF.
+            - Applies to default-VRF peering generated by O(config.management.auto_vrf_lite_default_vrf) or O(config.management.auto_symmetric_default_vrf).
             type: str
             default: "extcon-rmap-filter"
           domain_name:
@@ -640,11 +676,13 @@ options:
               netflow:
                 description:
                 - Enable netflow collection.
+                - Enables use of the exporter, record, and monitor collections in O(config.management.netflow_settings).
                 type: bool
                 default: false
               netflow_exporter_collection:
                 description:
                 - List of netflow exporters.
+                - Used when O(config.management.netflow_settings.netflow=true); monitors reference exporters by name.
                 type: list
                 elements: dict
                 suboptions:
@@ -675,6 +713,7 @@ options:
               netflow_record_collection:
                 description:
                 - List of netflow records.
+                - Used when O(config.management.netflow_settings.netflow=true); monitors reference records by name.
                 type: list
                 elements: dict
                 suboptions:
@@ -691,11 +730,13 @@ options:
                   layer2_record:
                     description:
                     - Enable layer 2 record fields.
+                    - Applies when O(config.management.netflow_settings.netflow_record_collection.record_template=netflowLayer2Record).
                     type: bool
                     default: false
               netflow_monitor_collection:
                 description:
                 - List of netflow monitors.
+                - Used when O(config.management.netflow_settings.netflow=true); each monitor names a record and at least one exporter.
                 type: list
                 elements: dict
                 suboptions:
@@ -707,16 +748,19 @@ options:
                   record_name:
                     description:
                     - Associated record name.
+                    - Matches an entry in O(config.management.netflow_settings.netflow_record_collection).
                     type: str
                     required: true
                   exporter1_name:
                     description:
                     - Primary exporter name.
+                    - Matches an entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     required: true
                   exporter2_name:
                     description:
                     - Secondary exporter name.
+                    - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
       telemetry_settings:
@@ -741,6 +785,7 @@ options:
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
+                - Applies when O(config.telemetry_settings.flow_collection.traffic_analytics) is C(enabled) or C(compatibility).
                 type: str
                 choices:
                 - interFabric
@@ -750,6 +795,7 @@ options:
               udp_categorization:
                 description:
                 - UDP categorization.
+                - Applies when O(config.telemetry_settings.flow_collection.traffic_analytics) is C(enabled) or C(compatibility).
                 type: str
                 choices:
                 - disabled
@@ -768,6 +814,7 @@ options:
               sensitivity:
                 description:
                 - Microburst sensitivity level.
+                - Applies when O(config.telemetry_settings.microburst.microburst=true).
                 type: str
                 choices:
                 - high
@@ -797,11 +844,13 @@ options:
               export_settings:
                 description:
                 - NAS export settings.
+                - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                 type: dict
                 suboptions:
                   export_type:
                     description:
                     - Export type.
+                    - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                     type: str
                     choices:
                     - base
@@ -810,6 +859,7 @@ options:
                   export_format:
                     description:
                     - Export format.
+                    - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                     type: str
                     choices:
                     - json
@@ -891,6 +941,7 @@ options:
         - Scope of the deploy operation.
         - C(switch) deploys only to affected switches.
         - C(global) deploys to all switches in the fabric.
+        - Applies when O(config_actions.deploy=true).
         type: str
         default: switch
         choices: [ switch, global ]
