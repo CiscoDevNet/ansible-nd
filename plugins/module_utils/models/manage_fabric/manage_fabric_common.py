@@ -67,7 +67,7 @@ SITE_ID_MAX_ND_4_3_1 = 281474976710655
 
 SCHEDULED_BACKUP_TIME_RE = r"^([01]\d|2[0-3]):([0-5]\d)$"
 FABRIC_INTERFACE_RE = (
-    r"^(([Ee]([Tt][Hh][Ee][Rr][Nn][Ee][Tt])?|[Ee][Tt][Hh])\d+/\d+(-\d+)?|" r"([Pp][Oo]|[Pp][Oo][Rr][Tt][-]?[Cc][Hh][Aa][Nn][Nn][Ee][Ll])\d+(-\d+)?)$"
+    r"^(([Ee]([Tt][Hh][Ee][Rr][Nn][Ee][Tt])?|[Ee][Tt][Hh])\d+/\d+(-\d+)?|" + r"([Pp][Oo]|[Pp][Oo][Rr][Tt][-]?[Cc][Hh][Aa][Nn][Nn][Ee][Ll])\d+(-\d+)?)$"
 )
 
 
