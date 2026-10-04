@@ -78,7 +78,10 @@ options:
         description: VRF name associated with the Network.
         type: str
       layer:
-        description: Network layer.
+        description:
+          - Network layer.
+          - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
+          - New Networks and authoritative states require enough context to derive the layer. Layer 3 Networks require C(vrf_name).
         type: str
         choices: [ layer2, layer2WithVrf, layer3 ]
       x_connect:

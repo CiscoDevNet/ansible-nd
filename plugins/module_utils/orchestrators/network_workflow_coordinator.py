@@ -258,7 +258,10 @@ class NetworkWorkflowCoordinator:
         for idx, entry in enumerate(config):
             try:
                 operational_only = isinstance(entry, dict) and not NDNetworkOrchestrator.has_network_definition_intent(entry)
-                model = model_cls.from_config(entry)
+                context = {"state": state}
+                if NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
+                    context["defer_omitted_layer"] = True
+                model = model_cls.from_config(entry, context=context)
                 parsed_config = model.to_config(exclude_unset=True)
                 if operational_only:
                     sparse_config = {"network_name": parsed_config["network_name"]}

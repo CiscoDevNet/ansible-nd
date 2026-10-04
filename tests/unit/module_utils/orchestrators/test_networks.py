@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    NETWORK_DEFINITION_INTENT_FIELDS,
     NetworkConfigModel,
     NetworkParentConfigModel,
 )
@@ -1395,6 +1396,152 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
     ]
 
 
+def test_parse_config_defers_layer_for_sparse_merged_l2_update():
+    class Module:
+        check_mode = False
+        params = {"output_level": "normal"}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    strategy = StandaloneNetworkStrategy(
+        fabric_name="fab1",
+        fabric_data={"managementType": "vxlanIbgp"},
+    )
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=strategy)
+
+    parsed = coordinator._parse_config(
+        [{"network_name": "USERS", "vlan_name": "USERS_NEW"}],
+        strategy.config_model_cls,
+        "merged",
+    )
+
+    assert parsed == [{"network_name": "USERS", "vlan_name": "USERS_NEW"}]
+
+
+def test_prepare_config_data_defers_layer_for_sparse_merged_update():
+    orchestrator = _orchestrator()
+
+    prepared = orchestrator.prepare_config_data([{"network_name": "USERS", "vlan_name": "USERS_NEW"}])[0]
+
+    assert prepared["network_name"] == "USERS"
+    assert prepared["l2_data"]["vlanName"] == "USERS_NEW"
+    assert "layer" not in prepared
+    assert "vrf_name" not in prepared
+
+
+def test_sparse_merged_update_inherits_existing_layer_before_payload():
+    orchestrator = _orchestrator()
+    existing = NDNetworkOrchestrator.model_class.from_response(
+        {
+            "fabricName": "fab1",
+            "networkName": "USERS",
+            "networkType": "vxlanIbgp",
+            "networkMode": "layer2",
+            "vrfName": "NA",
+            "vlanId": 100,
+            "l2Data": {"vlanName": "USERS_OLD"},
+        }
+    )
+    proposed = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data([{"network_name": "USERS", "vlan_name": "USERS_NEW"}])[0],
+        context={"state": "merged"},
+    )
+
+    merged = existing.merge(proposed)
+    payload = orchestrator._create_or_update_payload(merged)
+
+    assert payload["networkMode"] == "layer2"
+    assert payload["vrfName"] == "NA"
+    assert payload["l2Data"]["vlanName"] == "USERS_NEW"
+
+
+def test_sparse_merged_l3_update_inherits_existing_layer_before_payload():
+    orchestrator = _orchestrator()
+    existing = NDNetworkOrchestrator.model_class.from_response(
+        {
+            "fabricName": "fab1",
+            "networkName": "USERS",
+            "networkType": "vxlanIbgp",
+            "networkMode": "layer3",
+            "vrfName": "Tenant_A",
+            "vlanId": 100,
+            "l2Data": {"vlanName": "USERS_OLD"},
+            "l3Data": {"gatewayIpv4Address": "192.0.2.1/24"},
+        }
+    )
+    proposed = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data([{"network_name": "USERS", "vlan_name": "USERS_NEW"}])[0],
+        context={"state": "merged"},
+    )
+
+    merged = existing.merge(proposed)
+    payload = orchestrator._create_or_update_payload(merged)
+
+    assert payload["networkMode"] == "layer3"
+    assert payload["vrfName"] == "Tenant_A"
+    assert payload["l2Data"]["vlanName"] == "USERS_NEW"
+
+
+def test_sparse_merged_create_without_layer_is_rejected():
+    orchestrator = _orchestrator()
+    model = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data([{"network_name": "USERS", "vlan_name": "USERS_NEW"}])[0],
+        context={"state": "merged"},
+    )
+
+    with pytest.raises(ValueError, match="layer is required when creating new networks: USERS"):
+        orchestrator.preflight_create([model])
+
+
+def test_sparse_merged_identity_update_defers_layer_until_existing_merge():
+    class Module:
+        check_mode = False
+        params = {"output_level": "normal"}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    strategy = StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=strategy)
+
+    parsed = coordinator._parse_config(
+        [
+            {
+                "network_name": "BLUE_NET",
+                "network_id": 30001,
+                "vlan_id": 2301,
+            }
+        ],
+        strategy.config_model_cls,
+        "merged",
+    )
+
+    assert parsed == [{"network_name": "BLUE_NET", "network_id": 30001, "vlan_id": 2301}]
+
+
+@pytest.mark.parametrize("state", ["deleted", "gathered"])
+@pytest.mark.parametrize("field_name, value", [("network_id", 30001), ("vlan_id", 2301)])
+def test_parse_config_defers_omitted_layer_for_non_write_states(state, field_name, value):
+    class Module:
+        check_mode = False
+        params = {"output_level": "normal"}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    strategy = StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=strategy)
+
+    parsed = coordinator._parse_config(
+        [{"network_name": "BLUE_NET", field_name: value}],
+        strategy.config_model_cls,
+        state,
+    )
+
+    assert parsed == [{"network_name": "BLUE_NET", field_name: value}]
+
+
 @pytest.mark.parametrize("check_mode", [False, True])
 @pytest.mark.parametrize(
     "strategy",
@@ -1403,7 +1550,7 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
         _mcfg_parent_orchestrator().strategy,
     ],
 )
-def test_parse_config_rejects_implicit_layer3_without_vrf_name(check_mode, strategy):
+def test_authoritative_states_reject_implicit_layer3_without_vrf_name(check_mode, strategy):
     class Module:
         params = {"output_level": "normal"}
 
@@ -1425,8 +1572,65 @@ def test_parse_config_rejects_implicit_layer3_without_vrf_name(check_mode, strat
                 }
             ],
             strategy.config_model_cls,
-            "merged",
+            "replaced",
         )
+
+
+def test_primary_network_rejects_layer3_only_fields():
+    with pytest.raises(ValueError, match="privatePrimary networks do not support layer3 intent.*gateway_ipv4_address"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "PVLAN_PRIMARY",
+                "network_id": 30001,
+                "vlan_id": 2301,
+                "vlan_network_type": "primary",
+                "gateway_ipv4_address": "192.0.2.1/24",
+            }
+        )
+
+
+def test_network_definition_intent_fields_are_shared_with_orchestrator():
+    assert NDNetworkOrchestrator.definition_intent_fields is NETWORK_DEFINITION_INTENT_FIELDS
+
+
+def test_parent_child_only_config_defers_omitted_layer():
+    class Module:
+        check_mode = False
+        params = {"output_level": "normal"}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    strategy = _mcfg_parent_orchestrator().strategy
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=strategy)
+
+    parsed = coordinator._parse_config(
+        [
+            {
+                "network_name": "BLUE_NET",
+                "child_fabric_config": [
+                    {
+                        "fabric_name": "child1",
+                        "multicast_group_address": "239.1.1.10",
+                    }
+                ],
+            }
+        ],
+        strategy.config_model_cls,
+        "merged",
+    )
+
+    assert parsed == [
+        {
+            "network_name": "BLUE_NET",
+            "child_fabric_config": [
+                {
+                    "fabric_name": "child1",
+                    "multicast_group_address": "239.1.1.10",
+                }
+            ],
+        }
+    ]
 
 
 def test_mcfg_parent_workflow_validates_but_skips_child_network_crud():

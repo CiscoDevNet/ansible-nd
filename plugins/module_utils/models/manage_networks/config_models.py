@@ -13,6 +13,7 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -74,6 +75,112 @@ _INTERFACE_MODES_WITH_INTERFACE_GROUP = frozenset(
         PublicNetworkAttachmentMode.TRUNK.value,
     }
 )
+
+NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
+    {
+        "network_template_name",
+        "networkTemplateName",
+        "network_extension_template_name",
+        "networkExtensionTemplateName",
+        "service_network_template_name",
+        "serviceNetworkTemplateName",
+        "network_template_config",
+        "networkTemplateConfig",
+        "network_id",
+        "networkId",
+        "network_type",
+        "networkType",
+        "display_name",
+        "displayName",
+        "vrf_name",
+        "vrfName",
+        "vlan_id",
+        "vlanId",
+        "layer",
+        "vlan_name",
+        "vlanName",
+        "x_connect",
+        "xConnect",
+        "multicast_group_address",
+        "multicastGroup",
+        "ds_vni",
+        "dsVni",
+        "gateway_ipv4_address",
+        "gatewayIpv4Address",
+        "gateway_ipv6_address",
+        "gatewayIpv6Address",
+        "secondary_gateway_ipv4_collection",
+        "secondaryGatewayIpv4Collection",
+        "secondary_gateway_ipv6_collection",
+        "secondaryGatewayIpv6Collection",
+        "vlan_intf_desc",
+        "vlanIntfDesc",
+        "routing_tag",
+        "routingTag",
+        "dhcp_servers",
+        "dhcpServers",
+        "loopback_id",
+        "loopbackId",
+        "igmp_version",
+        "igmpVersion",
+        "trm_enable",
+        "trmEnable",
+        "ipv6_trm",
+        "ipv6Trm",
+        "vlan_netflow_monitor",
+        "l2NetflowMonitor",
+        "interface_netflow_monitor",
+        "l3NetflowMonitor",
+        "gateway_on_border",
+        "gatewayOnBorder",
+        "child_fabric_config",
+        "childFabricConfig",
+    }
+)
+DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS = {
+    "netflow_enable": False,
+    "netflowEnable": False,
+    "arp_suppression": False,
+    "arpSuppression": False,
+    "mtu": 9216,
+}
+_L3_LAYER_INTENT_FIELDS = frozenset(
+    {
+        "vrf_name",
+        "vrfName",
+        "gateway_ipv4_address",
+        "gatewayIpv4Address",
+        "gateway_ipv6_address",
+        "gatewayIpv6Address",
+        "secondary_gateway_ipv4_collection",
+        "secondaryGatewayIpv4Collection",
+        "secondary_gateway_ipv6_collection",
+        "secondaryGatewayIpv6Collection",
+        "vlan_intf_desc",
+        "vlanIntfDesc",
+        "routing_tag",
+        "routingTag",
+        "dhcp_servers",
+        "dhcpServers",
+        "loopback_id",
+        "loopbackId",
+        "igmp_version",
+        "igmpVersion",
+        "trm_enable",
+        "trmEnable",
+        "ipv6_trm",
+        "ipv6Trm",
+        "interface_netflow_monitor",
+        "l3NetflowMonitor",
+        "gateway_on_border",
+        "gatewayOnBorder",
+    }
+)
+
+
+def has_l3_definition_intent_for_layer(data: dict[str, Any]) -> bool:
+    """Return true when omitted layer can still be inferred as layer3."""
+    return any(data.get(field) is not None for field in _L3_LAYER_INTENT_FIELDS)
 
 
 class NetworkInterfaceConfigModel(NDNestedModel):
@@ -300,7 +407,7 @@ class NetworkConfigModel(NDBaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_network_keys(cls, data):
+    def _normalize_network_keys(cls, data, info: ValidationInfo):
         """Normalize canonical nested structures before model validation."""
         if not isinstance(data, dict):
             return data
@@ -310,7 +417,11 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address and ds_vni")
 
         normalized["dhcp_servers"] = cls._normalize_dhcp_servers(normalized)
-        normalized["layer"] = cls._normalize_effective_layer(normalized)
+        context = info.context or {}
+        normalized["layer"] = cls._normalize_effective_layer(
+            normalized,
+            defer_omitted_layer=bool(context.get("defer_omitted_layer")),
+        )
 
         has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS)
         if has_custom_template_fields and not (normalized.get("network_type") or normalized.get("networkType")):
@@ -319,7 +430,7 @@ class NetworkConfigModel(NDBaseModel):
         return normalized
 
     @staticmethod
-    def _normalize_effective_layer(data: dict[str, Any]) -> str | None:
+    def _normalize_effective_layer(data: dict[str, Any], defer_omitted_layer: bool = False) -> str | None:
         """Return the explicit or derived network layer used by runtime payload construction."""
         layer = data.get("layer")
         if layer:
@@ -333,69 +444,21 @@ class NetworkConfigModel(NDBaseModel):
             vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
         if vlan_network_type in (VlanNetworkType.PRIVATE_PRIMARY.value, *_PRIVATE_SECONDARY_VLAN_NETWORK_TYPES):
             return NetworkLayer.LAYER2.value
+        if defer_omitted_layer:
+            return None
         return NetworkLayer.LAYER3.value
+
+    @staticmethod
+    def _has_l3_definition_intent_for_layer(data: dict[str, Any]) -> bool:
+        """Return true when omitted layer can still be inferred as layer3."""
+        return has_l3_definition_intent_for_layer(data)
 
     @staticmethod
     def _has_definition_intent_for_layer(data: dict[str, Any]) -> bool:
         """Return true when sparse input is intended to create or update a network definition."""
-        definition_fields = {
-            "display_name",
-            "displayName",
-            "network_id",
-            "networkId",
-            "vlan_id",
-            "vlanId",
-            "vlan_network_type",
-            "vlanNetworkType",
-            "primary_network_id",
-            "primaryNetworkId",
-            "vlan_name",
-            "vlanName",
-            "x_connect",
-            "xConnect",
-            "multicast_group_address",
-            "multicastGroup",
-            "ds_vni",
-            "dsVni",
-            "gateway_ipv4_address",
-            "gatewayIpv4Address",
-            "gateway_ipv6_address",
-            "gatewayIpv6Address",
-            "secondary_gateway_ipv4_collection",
-            "secondaryGatewayIpv4Collection",
-            "secondary_gateway_ipv6_collection",
-            "secondaryGatewayIpv6Collection",
-            "vlan_intf_desc",
-            "vlanIntfDesc",
-            "routing_tag",
-            "routingTag",
-            "dhcp_servers",
-            "dhcpServers",
-            "loopback_id",
-            "loopbackId",
-            "igmp_version",
-            "igmpVersion",
-            "trm_enable",
-            "trmEnable",
-            "ipv6_trm",
-            "ipv6Trm",
-            "vlan_netflow_monitor",
-            "l2NetflowMonitor",
-            "interface_netflow_monitor",
-            "l3NetflowMonitor",
-            "gateway_on_border",
-            "gatewayOnBorder",
-        }
-        if any(data.get(field) is not None for field in definition_fields):
+        if any(data.get(field) is not None for field in NETWORK_DEFINITION_INTENT_FIELDS):
             return True
-        default_sensitive_fields = {
-            "netflow_enable": False,
-            "netflowEnable": False,
-            "arp_suppression": False,
-            "arpSuppression": False,
-            "mtu": 9216,
-        }
-        return any(data.get(field) not in (None, default) for field, default in default_sensitive_fields.items() if field in data)
+        return any(data.get(field) not in (None, default) for field, default in DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS.items() if field in data)
 
     @staticmethod
     def _normalize_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -527,9 +590,16 @@ class NetworkConfigModel(NDBaseModel):
 
     def _check_vlan_network_type_rules(self) -> None:
         vlan_network_type = self.vlan_network_type or "normal"
-        if vlan_network_type in ("normal", "privatePrimary"):
+        if vlan_network_type == "normal":
             if self.primary_network_id is not None:
-                raise ValueError(f"{vlan_network_type} networks do not use primary_network_id")
+                raise ValueError("normal networks do not use primary_network_id")
+            return
+        if vlan_network_type == "privatePrimary":
+            if self.primary_network_id is not None:
+                raise ValueError("privatePrimary networks do not use primary_network_id")
+            rejected_l3_fields = [field for field in _L3_LAYER_INTENT_FIELDS if field in self.model_fields_set and getattr(self, field, None) is not None]
+            if rejected_l3_fields:
+                raise ValueError("privatePrimary networks do not support layer3 intent: " + ", ".join(sorted(rejected_l3_fields)))
             return
         if vlan_network_type not in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
             return

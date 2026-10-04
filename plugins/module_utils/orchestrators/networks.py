@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Sequence
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -16,6 +16,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     NetworkLayer,
     NetworkType,
     VlanNetworkType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS,
+    NETWORK_DEFINITION_INTENT_FIELDS,
+    has_l3_definition_intent_for_layer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
     NetworkRemoveRequestModel,
@@ -81,65 +86,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
     unfiltered_query_page_size: ClassVar[int] = 10000
-    definition_intent_fields: ClassVar[set[str]] = {
-        "network_template_name",
-        "networkTemplateName",
-        "network_extension_template_name",
-        "networkExtensionTemplateName",
-        "service_network_template_name",
-        "serviceNetworkTemplateName",
-        "network_template_config",
-        "networkTemplateConfig",
-        "network_id",
-        "networkId",
-        "network_type",
-        "networkType",
-        "display_name",
-        "displayName",
-        "vrf_name",
-        "vrfName",
-        "vlan_id",
-        "vlanId",
-        "layer",
-        "vlan_name",
-        "vlanName",
-        "x_connect",
-        "xConnect",
-        "multicast_group_address",
-        "multicastGroup",
-        "ds_vni",
-        "dsVni",
-        "gateway_ipv4_address",
-        "gatewayIpv4Address",
-        "gateway_ipv6_address",
-        "gatewayIpv6Address",
-        "secondary_gateway_ipv4_collection",
-        "secondaryGatewayIpv4Collection",
-        "secondary_gateway_ipv6_collection",
-        "secondaryGatewayIpv6Collection",
-        "vlan_intf_desc",
-        "vlanIntfDesc",
-        "routing_tag",
-        "routingTag",
-        "dhcp_servers",
-        "dhcpServers",
-        "loopback_id",
-        "loopbackId",
-        "igmp_version",
-        "igmpVersion",
-        "trm_enable",
-        "trmEnable",
-        "ipv6_trm",
-        "ipv6Trm",
-        "vlan_netflow_monitor",
-        "l2NetflowMonitor",
-        "interface_netflow_monitor",
-        "l3NetflowMonitor",
-        "gateway_on_border",
-        "gatewayOnBorder",
-        "child_fabric_config",
-        "childFabricConfig",
-    }
+    definition_intent_fields: ClassVar[frozenset[str]] = NETWORK_DEFINITION_INTENT_FIELDS
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
@@ -163,10 +110,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return management["type"]
         return NetworkType.VXLAN_IBGP.value
 
-    def _network_layer(self, config: dict[str, Any]) -> str:
+    def _network_layer(self, config: dict[str, Any]) -> str | None:
         explicit = self._value(config, "layer")
         if explicit:
             return explicit
+        if self.should_defer_omitted_layer(config, self.rest_send.params.get("state", "merged")):
+            return None
         return NetworkLayer.LAYER3.value
 
     @staticmethod
@@ -328,7 +277,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         transformed["vlan_network_type"] = vlan_network_type
 
         layer = self._network_layer(config)
-        transformed["layer"] = layer
+        if layer is not None:
+            transformed["layer"] = layer
         if layer == NetworkLayer.LAYER2.value and transformed.get("vrf_name") in (None, ""):
             transformed["vrf_name"] = "NA"
         l2_data = self._l2_data(config, network_type)
@@ -465,14 +415,35 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def has_network_definition_intent(cls, config: dict[str, Any]) -> bool:
         if any(key in config and config[key] is not None for key in cls.definition_intent_fields):
             return True
-        default_sensitive_fields = {
-            "netflow_enable": False,
-            "netflowEnable": False,
-            "arp_suppression": False,
-            "arpSuppression": False,
-            "mtu": 9216,
-        }
-        return any(config.get(key) not in (None, default) for key, default in default_sensitive_fields.items() if key in config)
+        return any(config.get(key) not in (None, default) for key, default in DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS.items() if key in config)
+
+    @classmethod
+    def should_defer_omitted_layer(cls, config: Any, state: str) -> bool:
+        """Return True when omitted layer must not be locally derived before existing state is known."""
+        if not isinstance(config, dict):
+            return False
+        if config.get("layer") is not None:
+            return False
+        if state in ("deleted", "gathered"):
+            return True
+        if state != "merged":
+            return False
+        if not cls.has_network_definition_intent(config):
+            return False
+        if config.get("vrf_name") is not None or config.get("vrfName") is not None:
+            return False
+        if has_l3_definition_intent_for_layer(config):
+            return True
+        vlan_network_type = config.get("vlan_network_type") or config.get("vlanNetworkType")
+        if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
+            vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
+        return vlan_network_type not in _PVLAN_NETWORK_TYPES
+
+    def preflight_create(self, model_instances: Sequence[NDNetworkModel]) -> None:
+        """Require enough layer context before creating new Network definitions."""
+        missing_layer = [model.network_name for model in model_instances if getattr(model, "layer", None) is None]
+        if missing_layer:
+            raise ValueError("layer is required when creating new networks: " + ", ".join(str(name) for name in missing_layer))
 
     def prepare_config_data(self, raw_config):
         if not isinstance(raw_config, list):
