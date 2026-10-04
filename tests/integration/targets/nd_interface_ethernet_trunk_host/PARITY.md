@@ -107,8 +107,13 @@ selected by the safe aggregate tag.
 All harness includes are opt-in and carry `never`. The safe aggregate is:
 
 ```bash
-ansible-test network-integration nd_interface_ethernet_trunk_host \
-  --inventory /absolute/path/to/inventory.networking \
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ANSIBLE_FORKS=1 \
+/absolute/path/to/ansible-env311/bin/ansible-test \
+network-integration nd_interface_ethernet_trunk_host \
+  --local \
+  --no-temp-workdir \
+  --inventory=/absolute/path/to/inventory.LOCAL.networking \
+  --requirements \
   --tags nd4x_demo -vv
 ```
 
@@ -119,20 +124,34 @@ State-specific tags are `nd4x_demo_merged`, `nd4x_demo_replaced`,
 separate:
 
 ```bash
-  ansible-test network-integration nd_interface_ethernet_trunk_host \
-  --inventory /absolute/path/to/inventory.networking \
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ANSIBLE_FORKS=1 \
+/absolute/path/to/ansible-env311/bin/ansible-test \
+network-integration nd_interface_ethernet_trunk_host \
+  --local \
+  --no-temp-workdir \
+  --inventory=/absolute/path/to/inventory.LOCAL.networking \
+  --requirements \
   --tags nd4x_demo_overridden --allow-destructive -vv
 ```
+
+Each state-specific harness tag automatically selects the shared
+`nd4x_demo_preflight`; contributors do not need to add the preflight tag
+separately. This applies to the merged, replaced, deleted, negative,
+VLAN-mapping, storm-control, overridden, and destructive tags listed above.
+Use the Python 3.11 `ansible-env311` environment and its `ansible-test`
+executable. `--local` and `--no-temp-workdir` run directly against the supplied
+local inventory instead of delegating through the placeholder
+`inventory.networking`.
 
 ## Same-environment execution record
 
 | Evidence | Result |
 |---|---|
 | Original suite | Aggregate run passed against the same virtual environment, but VLAN mapping was skipped; no successful VLAN-mapping execution exists. The original suite remains retained pending explicit retirement review. |
-| Safe aggregate harness (`nd4x_demo`) | Passed against the same environment after strict-assertion additions and cleanup-probe coverage: `ok=96 changed=31 failed=0 skipped=3`; merged, replaced, deleted, negative, and storm-control workflows completed with `always` cleanup. VLAN mapping was reached but capability-skipped. |
-| State-specific harness runs | `nd4x_demo_merged`, corrected `nd4x_demo_replaced`, `nd4x_demo_deleted`, `nd4x_demo_negative`, and `nd4x_demo_storm_control` passed. VLAN mapping remains intentionally skipped because `supports_vlan_mapping` is false; this is accepted for the available virtual environment. |
-| Destructive harness (`nd4x_demo_overridden` / `nd4x_demo_destructive`) | Passed after strict-assertion and cleanup-probe additions: `ok=38 changed=7 failed=0 skipped=3`; both destructive tags reached shared preflight, normalized default `trunkHost` interfaces were ignored, the reserved-scope scenarios completed, and cleanup ran. |
-| ND version/fabric/switch | ND 4.2.1; `VXLAN_Fabric`; discovered test switch `10.122.84.71` / `9WME34GIAPX`; second fabric switch `10.122.84.63` / `9AH5QNPD6XG`. |
+| Safe aggregate harness (`nd4x_demo`) | All executed safe harness states passed with `failed=0`; merged, replaced, deleted, negative, and storm-control workflows completed with `always` cleanup. VLAN mapping was capability-skipped. |
+| State-specific harness runs | All executed harness states passed with `failed=0`. VLAN mapping remains intentionally skipped because `supports_vlan_mapping` is false; this is accepted for the available virtual environment. |
+| Destructive harness (`nd4x_demo_overridden` / `nd4x_demo_destructive`) | Destructive harness states passed with `failed=0`; both destructive tags reached shared preflight, normalized default `trunkHost` interfaces were ignored, the reserved-scope scenarios completed, and cleanup ran. |
+| ND version/fabric/switch | ND 4.2.1; `<fabric-name>`; discovered test switch `192.0.2.x` / `<switch-id>`; second fabric switch `192.0.2.y` / `<switch-id>`. |
 | Unmapped original scenarios | None identified. VLAN mapping is mapped and intentionally capability-skipped because the available virtual platform rejects the policy before deployment; the exception is accepted for this environment. The negative validation test is supplemental, not an original mapping. Original-file retirement remains pending explicit reviewer approval. |
 
 ## Retirement decision
