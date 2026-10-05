@@ -447,7 +447,7 @@ after:
       platform_type: nx-os
 diff:
   description: Switch inventory changes calculated by the module.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -456,7 +456,7 @@ diff:
       _action: added
 proposed:
   description: Switch configuration proposed by the module before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug), and in check mode when proposed switch changes exist
+  returned: when O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -472,13 +472,6 @@ gathered:
     - seed_ip: 192.0.2.10
       role: leaf
       platform_type: nx-os
-logs:
-  description: Internal diagnostic log messages collected during the run.
-  returned: when O(output_level) is V(debug)
-  type: list
-  elements: str
-  sample:
-    - "Handling merged state"
 msg:
   description: Human-readable status or failure message.
   returned: on failure and on selected no-op paths

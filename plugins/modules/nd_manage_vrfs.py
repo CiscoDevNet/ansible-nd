@@ -679,7 +679,7 @@ after:
       vlan_id: 2001
 diff:
   description: Configuration diff calculated by the module.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -703,13 +703,13 @@ gathered:
     - vrf_name: VRF_BLUE
       vrf_id: 50010
       vlan_id: 2001
-logs:
-  description: Internal diagnostic log or workflow trace entries collected during the run.
-  returned: when O(output_level) is V(debug)
+workflow_trace:
+  description: Internal workflow trace entries collected by the VRF coordinator.
+  returned: always
   type: list
   elements: dict
   sample:
-    - event: vrf_state_machine_start
+    - event: standalone_workflow_start
       state: merged
 msg:
   description: Human-readable status or failure message.

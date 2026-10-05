@@ -565,8 +565,12 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
-        if self.layer == "layer3" and network_type != NetworkType.USER_DEFINED.value and not self.vrf_name:
-            raise ValueError("vrf_name is required for layer3 networks")
+        if (
+            self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value)
+            and network_type != NetworkType.USER_DEFINED.value
+            and not self.vrf_name
+        ):
+            raise ValueError("vrf_name is required for layer3 and layer2WithVrf networks")
         self._check_trm_rules()
         self._check_netflow_rules()
         self._check_vlan_network_type_rules()

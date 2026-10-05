@@ -122,6 +122,10 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def _allows_l3_data(vlan_network_type: str | None) -> bool:
         return vlan_network_type in (None, VlanNetworkType.NORMAL.value, VlanNetworkType.PRIVATE_PRIMARY.value)
 
+    @staticmethod
+    def _network_mode_allows_l3_data(layer: str | None) -> bool:
+        return layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value)
+
     def _l2_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         fabric_data_payload = None
         kwargs = {
@@ -286,7 +290,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             l2_data.setdefault("fabricData", {})
         if l2_data:
             transformed["l2_data"] = l2_data
-        if layer == NetworkLayer.LAYER3.value:
+        if self._network_mode_allows_l3_data(layer):
             l3_data = self._l3_data(config, network_type)
             if l3_data:
                 transformed["l3_data"] = l3_data

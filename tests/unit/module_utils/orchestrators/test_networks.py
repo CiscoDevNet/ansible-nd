@@ -1199,6 +1199,82 @@ def test_child_network_update_payload_uses_manage_schema_for_sparse_child_option
     assert payload["l2Data"]["fabricData"]["multicastGroup"] == "239.1.1.1"
 
 
+def test_layer2_with_vrf_requires_vrf_name():
+    with pytest.raises(ValueError, match="vrf_name is required for layer3 and layer2WithVrf networks"):
+        NetworkConfigModel.from_config(
+            {
+                "network_name": "SHARED_SERVICES",
+                "layer": "layer2WithVrf",
+                "network_id": 50001,
+                "vlan_id": 1001,
+            }
+        )
+
+
+def test_layer2_with_vrf_payload_includes_vrf_name():
+    orchestrator = _orchestrator()
+    transformed = orchestrator.prepare_config_data(
+        [
+            {
+                "network_name": "SHARED_SERVICES",
+                "layer": "layer2WithVrf",
+                "vrf_name": "TENANT_BLUE",
+                "network_id": 50001,
+                "vlan_id": 1001,
+            }
+        ]
+    )[0]
+    model = orchestrator.model_class.from_config(transformed)
+
+    payload = orchestrator._create_or_update_payload(model)
+
+    assert payload["networkMode"] == "layer2WithVrf"
+    assert payload["vrfName"] == "TENANT_BLUE"
+
+
+def test_layer2_with_vrf_payload_includes_l3_data():
+    orchestrator = _orchestrator()
+    transformed = orchestrator.prepare_config_data(
+        [
+            {
+                "network_name": "SHARED_SERVICES",
+                "layer": "layer2WithVrf",
+                "vrf_name": "TENANT_BLUE",
+                "network_id": 50001,
+                "vlan_id": 1001,
+                "gateway_ipv4_address": "192.0.2.21/24",
+                "gateway_ipv6_address": "2001:db8:622:8::1/64",
+                "secondary_gateway_ipv4_collection": ["192.0.2.22/24"],
+                "secondary_gateway_ipv6_collection": ["2001:db8:622:8::2/64"],
+                "vlan_intf_desc": "layer2-with-vrf-svi",
+                "mtu": 9100,
+                "arp_suppression": True,
+                "routing_tag": 12346,
+                "dhcp_servers": [{"server_address": "198.51.100.10", "server_vrf": "TENANT_BLUE"}],
+                "loopback_id": 101,
+                "gateway_on_border": True,
+            }
+        ]
+    )[0]
+    model = orchestrator.model_class.from_config(transformed)
+
+    payload = orchestrator._create_or_update_payload(model)
+
+    assert payload["networkMode"] == "layer2WithVrf"
+    assert payload["vrfName"] == "TENANT_BLUE"
+    assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.21/24"
+    assert payload["l3Data"]["gatewayIpv6Address"] == "2001:db8:622:8::1/64"
+    assert payload["l3Data"]["secondaryGatewayIpv4Collection"] == ["192.0.2.22/24"]
+    assert payload["l3Data"]["secondaryGatewayIpv6Collection"] == ["2001:db8:622:8::2/64"]
+    assert payload["l3Data"]["vlanInterfaceDescription"] == "layer2-with-vrf-svi"
+    assert payload["l3Data"]["mtu"] == 9100
+    assert payload["l3Data"]["arpSuppression"] is True
+    assert payload["l3Data"]["routingTag"] == 12346
+    assert payload["l3Data"]["fabricData"]["dhcpServers"] == [{"serverAddress": "198.51.100.10", "serverVrf": "TENANT_BLUE"}]
+    assert payload["l3Data"]["fabricData"]["loopbackId"] == 101
+    assert payload["l3Data"]["fabricData"]["gatewayOnBorder"] is True
+
+
 def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_schema():
     strategy = ChildNetworkStrategy(
         fabric_name="child1",
@@ -1562,7 +1638,7 @@ def test_authoritative_states_reject_implicit_layer3_without_vrf_name(check_mode
 
     coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=strategy)
 
-    with pytest.raises(AssertionError, match="vrf_name is required for layer3 networks"):
+    with pytest.raises(AssertionError, match="vrf_name is required for layer3 and layer2WithVrf networks"):
         coordinator._parse_config(
             [
                 {
