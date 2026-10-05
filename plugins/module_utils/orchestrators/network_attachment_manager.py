@@ -870,8 +870,9 @@ class NetworkAttachmentManager:
         if deadline is None or timeout_seconds is None:
             deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
         started_at = DeleteReadinessPolicy.now()
-        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
-        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress"}
+        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted"}
+        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress", "outofsync", "failed"}
+        blocking_statuses = {"outofsync", "failed"}
         last_statuses: dict[str, str] = {}
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str, str], int] = {}
@@ -925,6 +926,7 @@ class NetworkAttachmentManager:
                 name
                 for name in pending
                 if not blockers.get(name)
+                and str(last_statuses.get(name, "")).strip().lower() not in blocking_statuses
                 and (name in detached_attachment_networks or name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses)
             }
             pending.difference_update(ready)
@@ -1017,5 +1019,5 @@ class NetworkAttachmentManager:
         status = NetworkAttachmentManager.attachment_status(attachment).lower()
         if not status:
             return False
-        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
+        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted"}
         return status not in terminal_statuses

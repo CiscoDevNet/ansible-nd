@@ -289,7 +289,7 @@ class VrfAttachmentManager:
         status = VrfAttachmentManager.attachment_status(attachment).lower()
         if not status:
             return False
-        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
+        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted"}
         return status not in terminal_statuses
 
     def desired_attachment_map(
@@ -831,8 +831,8 @@ class VrfAttachmentManager:
 
         deadline, timeout = self._delete_wait_deadline(len(pending_vrf_names))
         started_at = DeleteReadinessPolicy.now()
-        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
-        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress"}
+        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted"}
+        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress", "outofsync", "failed"}
         last_statuses: dict[str, str] = {}
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str, str], int] = {}

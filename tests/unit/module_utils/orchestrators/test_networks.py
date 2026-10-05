@@ -4204,6 +4204,84 @@ def test_network_delete_wait_blocks_on_pending_attachment_even_when_network_stat
         )
 
 
+@pytest.mark.parametrize("status", ["failed", "outOfSync"])
+def test_network_delete_wait_blocks_and_retries_failed_or_out_of_sync_attachment(status):
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _query_current_networks_by_names(self, _module_args, _strategy, network_names):
+            assert network_names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "notApplicable"}]
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": status,
+        }
+    ]
+    deploy_payloads = []
+    manager.deploy_network_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="last_attachment_blockers"):
+        manager.wait_for_networks_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
+
+    assert deploy_payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
+
+
+@pytest.mark.parametrize("status", ["failed", "outOfSync"])
+def test_network_delete_wait_retries_and_blocks_failed_or_out_of_sync_network_status(status):
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+        def _query_current_networks_by_names(self, _module_args, _strategy, network_names):
+            assert network_names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": status}]
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "notApplicable",
+        }
+    ]
+    deploy_payloads = []
+    manager.deploy_network_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for networks"):
+        manager.wait_for_networks_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
+
+    assert deploy_payloads == [{"networkNames": ["BLUE_NET"]}]
+
+
 def test_network_response_omits_disable_rt_auto_without_normalizing_rt_auto():
     model = NDNetworkOrchestrator.model_class.from_response(
         {
