@@ -285,15 +285,7 @@ def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
     data = _get_typed_value(response, "DATA", dict, {})
     for key in _MULTISTATUS_ITEM_KEYS:
         items = _get_typed_value(data, key, list, [])
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            status = str(item.get("status") or "").strip().lower()
-            if status in _MULTISTATUS_SUCCESS_STATUSES:
-                continue
-            if _is_benign_switch_deploy_noop(response, key, item):
-                continue
-            non_success.append(item)
+        non_success.extend(item for item in items if isinstance(item, dict) and not _is_accepted_multistatus_item(response, key, item))
     return non_success
 
 
