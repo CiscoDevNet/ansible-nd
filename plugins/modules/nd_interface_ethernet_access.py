@@ -165,10 +165,14 @@ options:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
                     - Applies to all policy_type values.
-                    - For a C(accessPoMember) or C(accessVpcPoMember) interface, membership-changing and
-                      interface-context commands are rejected. This includes C(channel-group), C(no channel-group),
-                      C(default interface), C(default-interface), C(interface), C(exit), C(end), and
-                      C(configure terminal), including their ordinary CLI abbreviations.
+                    - For a C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) interface,
+                      membership-changing and interface-context commands are rejected. This includes
+                      C(channel-group), C(no channel-group), C(default interface), C(default-interface),
+                      C(interface), C(exit), C(end), and C(configure terminal), including their ordinary CLI
+                      abbreviations.
+                    - If an existing member already contains one of those unsafe commands, an update that omits
+                      O(config[].config_data.network_os.policy.extra_config) fails closed. Supply an explicit safe
+                      replacement in the same request to recover it.
                     type: str
                   fec:
                     description:
@@ -381,8 +385,10 @@ notes:
 - This module is only supported on Nexus Dashboard.
 - This module supports both NX-OS and IOS-XE access-mode ethernet interfaces (interface_type C(ethernet), mode C(access)),
   selected via O(config[].config_data.network_os.network_os_type).
-- This module manages the C(accessHost) (NX-OS) and C(iosXeAccess) (IOS-XE) policy templates. Interfaces carrying any other
-  policy type are never read or modified by this module.
+- This module manages the C(accessHost) (NX-OS) and C(iosXeAccess) (IOS-XE) host policy templates and supports
+  limited updates to the explicitly listed C(accessPoMember), C(iosXeAccessPoMember), and C(accessVpcPoMember)
+  member policies. Policies other than these host and supported member policies are outside the module's scope and
+  are never read or modified by this module.
 - IOS-XE interfaces are merge-only under O(state=overridden), they are converged when named in O(config) and
   are never reset when absent from it. To reset an IOS-XE interface, name it explicitly under O(state=deleted).
 - The ND 4.3.1 C(deviceTrackingPolicy) and C(flowMonitors) properties of the C(iosXeAccess) policy are intentionally not exposed.
@@ -392,6 +398,9 @@ notes:
   owning identifier and mode, and every other modeled configurable member-policy field. Qualified controller
   response-only echoes are not replayed; any unrecognized nested configuration field fails closed before mutation
   so a full PUT cannot silently discard future intent.
+- If an existing member's C(extraConfig) contains a membership-changing or interface-context command, even an
+  C(admin_state)-only or C(description)-only update fails closed rather than replaying that unsafe CLI. Supply an
+  explicit safe O(config[].config_data.network_os.policy.extra_config) replacement in the same request to recover it.
 - C(accessPoMember) and C(iosXeAccessPoMember) configured intent has mode C(access), even when operational data reports mode C(trunk) after
   the physical interface joins the port-channel.
 - Manage a C(accessPoMember) or C(iosXeAccessPoMember) parent and its C(ports) membership with
@@ -402,11 +411,11 @@ notes:
   parent, the parent's configured policy, mode, and network OS must be compatible, and any present positive
   operational identifier must also agree. Orphaned, multiply claimed, incompatible, or conflicting evidence fails
   closed before mutation.
-- ND returns literal identical C(peer1*) and C(peer2*) configured values in both vPC parent echoes; only the
-  C(switchId) and C(peerSwitchId) orientation swaps. Before updating C(accessVpcPoMember), the module compares that
-  shared configured state and validates the parent policy, mode, network OS, member policies, member lists,
-  port-channel identifiers, C(primaryInterface), peer identities, and unambiguous ownership on both switches using
-  cached inventories. Missing or inconsistent evidence fails closed before any interface mutation.
+- ND can return reciprocal vPC parent copies in one pair-wide C(peer1*)/C(peer2*) order or orient each switch's copy
+  with its local side in C(peer1*). Empty member lists may be absent, null, or explicit. Before updating
+  C(accessVpcPoMember), the module canonicalizes those representations and validates the parent policy, mode, network
+  OS, member policies, member lists, port-channel identifiers, C(primaryInterface), peer identities, and unambiguous
+  ownership on both switches using cached inventories. Missing or inconsistent evidence fails closed before mutation.
 - Pair-aware validation creates one cached pair proof shared by all requested members of the same vPC. Resolving
   that proof can add one C(/vpcPair) GET when peer identity is not already known and one cached interface-inventory
   GET when the peer inventory has not already been read. It never adds a GET per member.

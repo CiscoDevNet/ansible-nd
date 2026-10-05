@@ -198,6 +198,9 @@ options:
                   peer1_member_ports:
                     description:
                     - Member interface names on Peer-1 (e.g. C(Ethernet1/1)).
+                    - With O(state=merged), omitting this option preserves Peer-1 membership; setting V([]) explicitly removes every
+                      Peer-1 member. With O(state=replaced) or O(state=overridden), omission resets Peer-1 membership to V([]).
+                    - When O(config_actions.deploy=true), a membership clear is deployed and can detach live links.
                     type: list
                     elements: str
                   peer1_port_channel_configuration:
@@ -217,6 +220,9 @@ options:
                   peer2_member_ports:
                     description:
                     - Member interface names on Peer-2 (e.g. C(Ethernet1/1)).
+                    - With O(state=merged), omitting this option preserves Peer-2 membership; setting V([]) explicitly removes every
+                      Peer-2 member. With O(state=replaced) or O(state=overridden), omission resets Peer-2 membership to V([]).
+                    - When O(config_actions.deploy=true), a membership clear is deployed and can detach live links.
                     type: list
                     elements: str
                   peer2_port_channel_configuration:
@@ -350,9 +356,11 @@ options:
         - When V(true), all queued vPC interface changes are deployed in a single bulk API call at the end of module
           execution via the C(interfaceActions/deploy) API. Only the vPC interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
-          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
-          changes staged but undeployed.
+        - When V(true) and the module fails after the controller accepts a subset of the requested changes, the module attempts
+          to deploy that subset and names any unconfirmed targets in the failure message.
+        - Replaying the same vPC interface config with V(true) previews unchanged intent and deploys it when pending switch
+          configuration remains. For an accepted deletion whose controller intent is already absent, replay the exact identifiers
+          with O(state=deleted); an O(state=overridden) omission alone cannot identify an already-absent target on a later run.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -545,7 +553,9 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - The existing matching vPC configuration in the module's query scope before the module ran, structured like O(config).
+  - The list can include matching vPCs on the selected pairs that were not explicitly listed in O(config); O(state=overridden) uses
+    fabric-wide scope.
   - An empty list when no matching interface configuration existed.
   returned: always
   type: list
@@ -568,7 +578,8 @@ before:
           port_channel_mode: active
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - The matching vPC configuration in the same query scope after the module ran, structured like O(config).
+  - Successfully deleted vPCs are absent. The list can include matching vPCs not explicitly listed in O(config).
   - In check mode, the configuration that would result had the module run outside of check mode.
   returned: always
   type: list
@@ -590,17 +601,13 @@ after:
           - Ethernet1/1
           port_channel_mode: active
 diff:
-  description: The per-interface difference between C(before) and C(after).
+  description:
+  - Reserved for the per-interface difference between C(before) and C(after).
+  - Currently always an empty list for this module family; compare C(before) and C(after) directly.
   returned: always
   type: list
   elements: dict
-  sample:
-  - switch_ip: 192.168.1.1
-    interface_name: vpc500
-    config_data:
-      network_os:
-        policy:
-          allowed_vlans: "100-200,300,400"
+  sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
   returned: when O(output_level) is V(info) or V(debug)
@@ -614,12 +621,14 @@ proposed:
         policy:
           allowed_vlans: "100-200,300,400"
 logs:
-  description: Internal diagnostic log messages collected during the run.
+  description:
+  - Reserved for internal diagnostic log messages collected during the run.
+  - Currently always an empty list for this module family; use the C(ND_LOGGING_CONFIG) file-based logging
+    described in the collection docs instead.
   returned: when O(output_level) is V(debug)
   type: list
   elements: str
-  sample:
-  - "Querying existing vPC interface configuration"
+  sample: []
 msg:
   description: A human-readable error message, present only when the module fails.
   returned: on failure

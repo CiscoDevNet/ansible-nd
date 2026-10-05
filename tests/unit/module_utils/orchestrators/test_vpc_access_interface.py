@@ -56,6 +56,18 @@ def responses_vpc_access(key: str):
     return load_fixture("test_vpc_access_interface_orchestrator")[key]
 
 
+def _vpc_pair_response(switch_id: str, peer_switch_id: str) -> dict:
+    """Build one authoritative vPC-pair response."""
+
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/switches/{switch_id}/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": switch_id, "peerSwitchId": peer_switch_id},
+    }
+
+
 def _build_rest_send(
     gen_responses: ResponseGenerator,
     fabric_name: str = "fabric_1",
@@ -345,6 +357,8 @@ def test_vpc_access_orchestrator_00600_delete_uses_per_interface_endpoint() -> N
             "MESSAGE": "OK",
             "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDOAAAAAAAA"}]},
         }
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
+        yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
         yield {
             "RETURN_CODE": 204,
             "METHOD": "DELETE",
@@ -621,6 +635,8 @@ def test_vpc_access_orchestrator_00440_overridden_mixed_case_idempotent() -> Non
     def responses():
         for suffix in ("a", "b", "c", "d"):
             yield responses_vpc_access(f"test_overridden_mixed_case_00440{suffix}")
+        yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
 
     config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC100", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -659,6 +675,8 @@ def test_vpc_access_orchestrator_00445_overridden_mixed_case_idempotent_check_mo
     def responses():
         for suffix in ("a", "b", "c", "d"):
             yield responses_vpc_access(f"test_overridden_mixed_case_00445{suffix}")
+        yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
 
     config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC100", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -701,6 +719,7 @@ def test_vpc_access_orchestrator_00450_overridden_one_peer_missing_peer_switch_i
     def responses():
         for suffix in ("a", "b", "c", "d", "e"):
             yield responses_vpc_access(f"test_overridden_one_peer_missing_00450{suffix}")
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
 
     config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc100", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -728,8 +747,7 @@ def test_vpc_access_orchestrator_00455_overridden_both_peers_missing_peer_switch
 
     ## Test
 
-    - Both `vpc100` echoes omit `peerSwitchId`; one `vpcPair` GET per switch (positional replay cannot also feed pre-fix code both
-      echoes here, so the pinned request sequence is what proves the pair resolution ran for each switch)
+    - Both `vpc100` echoes omit `peerSwitchId`; the first authoritative `vpcPair` GET seeds both reciprocal cache entries
     - Config lists `vpc100` on 192.168.1.1 with a policy mirroring the echo
     - `before` holds exactly `(192.168.1.1, vpc100)`; no planned mutation; `changed` is False
 

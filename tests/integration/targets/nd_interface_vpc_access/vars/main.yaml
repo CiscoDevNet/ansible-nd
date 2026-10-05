@@ -7,6 +7,10 @@
 test_fabric_name: "{{ nd_test_vpc_access_fabric_name | default(nd_test_fabric_name | default('SITE1')) }}"
 test_switch_ip_peer1: "{{ nd_test_vpc_peer1_ip | default('192.168.12.151') }}"
 test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.152') }}"
+vpc_access_member_primary: "{{ nd_test_vpc_access_member_primary | default('Ethernet1/5') }}"
+vpc_access_member_secondary: "{{ nd_test_vpc_access_member_secondary | default('Ethernet1/6') }}"
+vpc_access_member_overridden: "{{ nd_test_vpc_access_member_overridden | default('Ethernet1/7') }}"
+vpc_access_member_multi_pair: "{{ nd_test_vpc_access_member_multi_pair | default('Ethernet1/10') }}"
 
 # vPC pair substrate created by setup via M(cisco.nd.nd_manage_vpc_pair) (from PR #197 on develop).
 # The previous nd_vpc_pair module was closed (PR #278); the shared vPC interface infrastructure was
@@ -56,10 +60,10 @@ vpc_access_baseline:
         access_vlan: 10
         peer1_port_channel_id: 100
         peer1_member_ports:
-          - Ethernet1/5
+          - "{{ vpc_access_member_primary }}"
         peer2_port_channel_id: 100
         peer2_member_ports:
-          - Ethernet1/5
+          - "{{ vpc_access_member_primary }}"
         port_channel_mode: active
         lacp_rate: fast
 
@@ -74,11 +78,11 @@ vpc_access_updated:
         access_vlan: 20
         peer1_port_channel_id: 100
         peer1_member_ports:
-          - Ethernet1/5
-          - Ethernet1/6
+          - "{{ vpc_access_member_primary }}"
+          - "{{ vpc_access_member_secondary }}"
         peer2_port_channel_id: 100
         peer2_member_ports:
-          - Ethernet1/5
+          - "{{ vpc_access_member_primary }}"
         port_channel_mode: active
         lacp_rate: fast
 
@@ -93,10 +97,10 @@ vpc_access_overridden:
         access_vlan: 30
         peer1_port_channel_id: 101
         peer1_member_ports:
-          - Ethernet1/7
+          - "{{ vpc_access_member_overridden }}"
         peer2_port_channel_id: 101
         peer2_member_ports:
-          - Ethernet1/7
+          - "{{ vpc_access_member_overridden }}"
         port_channel_mode: active
 
 # --- Multi-pair scenario (#356): second vPC pair + same-name interfaces on both pairs ---
@@ -119,10 +123,10 @@ vpc_multi_pair_pair1:
         access_vlan: 10
         peer1_port_channel_id: 211
         peer1_member_ports:
-          - Ethernet1/10
+          - "{{ vpc_access_member_multi_pair }}"
         peer2_port_channel_id: 211
         peer2_member_ports:
-          - Ethernet1/10
+          - "{{ vpc_access_member_multi_pair }}"
         port_channel_mode: active
 vpc_multi_pair_pair2:
   switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
@@ -131,11 +135,11 @@ vpc_multi_pair_pair2:
     network_os:
       policy:
         admin_state: true
-        access_vlan: 10
+        access_vlan: 11
         peer1_port_channel_id: 211
         peer1_member_ports:
-          - Ethernet1/10
+          - "{{ vpc_access_member_multi_pair }}"
         peer2_port_channel_id: 211
         peer2_member_ports:
-          - Ethernet1/10
+          - "{{ vpc_access_member_multi_pair }}"
         port_channel_mode: active

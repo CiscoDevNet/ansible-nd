@@ -825,6 +825,72 @@ def test_ethernet_routed_orchestrator_00710() -> None:
         orchestrator.preflight([model])
 
 
+def test_ethernet_routed_orchestrator_00711() -> None:
+    """
+    # Summary
+
+    Verify preflight permits an exact, undeployed replay of a contradictory
+    routed-host bystander so fabric-wide overridden can preserve it without a
+    PUT.
+
+    ## Test
+
+    - interfaceList reports routedHost intent plus stale portChannelId 10
+    - Proposed overridden intent exactly matches the current routed policy
+    - deploy is false, so preflight succeeds and no PUT is attempted
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._host_policy_replay_is_noop()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_00710a")
+        yield responses_ethernet_routed("test_preflight_00710b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "overridden"})
+    orchestrator.apply_config_actions({"config_actions": {"deploy": False}})
+    model = _user_nx_model({"admin_state": True, "ip": "10.10.10.1", "prefix": 30})
+
+    with does_not_raise():
+        orchestrator.preflight([model])
+    assert orchestrator.rest_send.verb != HttpVerbEnum.PUT.value
+
+
+def test_ethernet_routed_orchestrator_00712() -> None:
+    """
+    # Summary
+
+    Verify an exact replay of contradictory routed-host evidence still fails
+    closed when deployment is requested, because a no-diff item can be sent to
+    the switch during deploy reconciliation.
+
+    ## Test
+
+    - interfaceList reports routedHost intent plus stale portChannelId 10
+    - Proposed overridden intent exactly matches the current routed policy
+    - deploy is true, so preflight rejects the inconsistent evidence
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_00710a")
+        yield responses_ethernet_routed("test_preflight_00710b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "overridden"})
+    orchestrator.apply_config_actions({"config_actions": {"deploy": True}})
+    model = _user_nx_model({"admin_state": True, "ip": "10.10.10.1", "prefix": 30})
+
+    with pytest.raises(RuntimeError, match=r"operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
+        orchestrator.preflight([model])
+    assert orchestrator.rest_send.verb != HttpVerbEnum.PUT.value
+
+
 def test_ethernet_routed_orchestrator_00720() -> None:
     """
     # Summary

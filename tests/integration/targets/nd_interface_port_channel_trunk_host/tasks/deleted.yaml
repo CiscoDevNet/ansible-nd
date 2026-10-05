@@ -9,6 +9,16 @@
 
 # --- DELETED: SINGLE PORT-CHANNEL ---
 
+- name: "DELETED RECONCILE SETUP: Deploy port-channel502 before staging its deletion"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_502 }}"
+    config_actions:
+      deploy: true
+    state: merged
+
 - name: "DELETED: Delete port-channel502 (check mode)"
   cisco.nd.nd_interface_port_channel_trunk_host: &delete_pc502
     output_level: "{{ nd_info.output_level }}"
@@ -16,6 +26,8 @@
     config:
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel502
+    config_actions:
+      deploy: false
     state: deleted
   check_mode: true
   register: cm_deleted_502
@@ -31,15 +43,34 @@
       - nm_deleted_502 is changed
       - nm_deleted_502.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 0
 
-# --- DELETED: IDEMPOTENCY ---
+# --- DELETED: EXACT STAGED INTENT WITH DEPLOYMENT ---
 
-- name: "DELETED IDEMPOTENT: Delete port-channel502 again"
-  cisco.nd.nd_interface_port_channel_trunk_host: *delete_pc502
+- name: "DELETED RECONCILE: Check exact staged delete with deployment enabled"
+  cisco.nd.nd_interface_port_channel_trunk_host: &delete_pc502_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+    config_actions:
+      deploy: true
+    state: deleted
+  check_mode: true
+  register: cm_deleted_502_reconcile
+
+- name: "DELETED RECONCILE: Deploy exact staged delete"
+  cisco.nd.nd_interface_port_channel_trunk_host: *delete_pc502_deploy
+  register: nm_deleted_502_reconcile
+
+- name: "DELETED RECONCILE: Replay deployed delete"
+  cisco.nd.nd_interface_port_channel_trunk_host: *delete_pc502_deploy
   register: nm_deleted_502_idem
 
-- name: "DELETED IDEMPOTENT: Verify no change when already absent"
+- name: "DELETED RECONCILE: Verify pending delete deployed once"
   ansible.builtin.assert:
     that:
+      - cm_deleted_502_reconcile is changed
+      - nm_deleted_502_reconcile is changed
       - nm_deleted_502_idem is not changed
 
 # --- DELETED: MEMBER REVERT ---
@@ -53,6 +84,8 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - "{{ test_pc_501 }}"
+    config_actions:
+      deploy: true
     state: merged
 
 - name: "DELETED MEMBER REVERT: Delete port-channel501"
@@ -62,6 +95,8 @@
     config:
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel501
+    config_actions:
+      deploy: true
     state: deleted
   register: nm_deleted_501_with_members
 
@@ -81,6 +116,8 @@
     config:
       - "{{ test_pc_501 }}"
       - "{{ test_pc_502 }}"
+    config_actions:
+      deploy: true
     state: merged
 
 - name: "DELETED MULTI: Delete port-channel501, port-channel502, port-channel503 (check mode)"
@@ -94,6 +131,8 @@
         interface_name: port-channel502
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel503
+    config_actions:
+      deploy: true
     state: deleted
   check_mode: true
   register: cm_deleted_multi
@@ -120,6 +159,8 @@
     config:
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel599
+    config_actions:
+      deploy: true
     state: deleted
   register: nm_deleted_nonexistent
 

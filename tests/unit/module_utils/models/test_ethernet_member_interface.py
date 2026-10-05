@@ -393,6 +393,84 @@ def test_safe_overlay_preserves_declared_fields_and_strips_response_only_data():
 
 
 @pytest.mark.parametrize(
+    "policy_type,mode,network_os",
+    [
+        ("poMember", "trunk", "nx-os"),
+        ("accessPoMember", "access", "nx-os"),
+        ("l3PoMember", "routed", "nx-os"),
+        ("vpcMember", "trunk", "nx-os"),
+        ("accessVpcPoMember", "access", "nx-os"),
+        ("iosXeAccessPoMember", "access", "ios-xe"),
+        ("iosXeTrunkPoMember", "trunk", "ios-xe"),
+        ("iosXeL3PoMember", "routed", "ios-xe"),
+    ],
+)
+def test_safe_overlay_preserves_untouched_raw_member_strings(policy_type, mode, network_os):
+    response = member_record(policy_type, mode=mode, network_os=network_os)
+    raw_policy = response["configData"]["networkOS"]["policy"]
+    raw_policy["description"] = "  existing description  "
+    raw_policy["extraConfig"] = "  logging event link-status\n"
+
+    payload = build_member_update_payload(
+        response,
+        {"admin_state": False},
+        pair_validated=policy_type in {"vpcMember", "accessVpcPoMember"},
+    )
+
+    policy = payload["configData"]["networkOS"]["policy"]
+    assert policy["description"] == "  existing description  "
+    assert policy["extraConfig"] == "  logging event link-status\n"
+
+
+def test_safe_overlay_normalizes_only_explicit_string_update():
+    response = member_record()
+    raw_policy = response["configData"]["networkOS"]["policy"]
+    raw_policy["description"] = "  existing description  "
+    raw_policy["extraConfig"] = "  logging event link-status\n"
+
+    payload = build_member_update_payload(response, {"description": "  requested description  "})
+
+    policy = payload["configData"]["networkOS"]["policy"]
+    assert policy["description"] == "requested description"
+    assert policy["extraConfig"] == "  logging event link-status\n"
+
+
+@pytest.mark.parametrize(
+    "existing_extra_config",
+    [
+        "no channel-group 20",
+        "ch 30 mode active",
+        "description safe ; default interface Ethernet1/24",
+        "exit\ninterface port-channel20\nshutdown",
+    ],
+)
+def test_safe_overlay_rejects_unsafe_existing_extra_config(existing_extra_config):
+    """An unrelated safe update must not reconstruct dangerous existing CLI."""
+
+    response = member_record()
+    response["configData"]["networkOS"]["policy"]["extraConfig"] = existing_extra_config
+
+    with pytest.raises(UnsafeMemberUpdateError, match="Existing extraConfig.*refusing to reconstruct"):
+        build_member_update_payload(response, {"admin_state": False})
+
+
+def test_safe_overlay_allows_explicit_safe_replacement_of_unsafe_existing_extra_config():
+    """The caller can remove unsafe inherited CLI by replacing it with a safe block."""
+
+    response = member_record()
+    response["configData"]["networkOS"]["policy"]["extraConfig"] = "no channel-group 20"
+
+    payload = build_member_update_payload(
+        response,
+        {"admin_state": False, "extra_config": "logging event link-status"},
+    )
+
+    policy = payload["configData"]["networkOS"]["policy"]
+    assert policy["adminState"] is False
+    assert policy["extraConfig"] == "logging event link-status"
+
+
+@pytest.mark.parametrize(
     "policy_type,mode,forbidden_defaults",
     [
         ("iosXeAccessPoMember", "access", {"mtu"}),

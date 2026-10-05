@@ -106,6 +106,10 @@ options:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
                     - Applies to all policy_type values.
+                    - For a C(l3PoMember) or C(iosXeL3PoMember) interface, membership-changing and interface-context
+                      commands are rejected. If an existing member already contains one of those unsafe commands,
+                      an update that omits O(config[].config_data.network_os.policy.extra_config) fails closed;
+                      supply an explicit safe replacement in the same request to recover it.
                     - For C(l3PoMember) and C(iosXeL3PoMember), membership-changing and interface-context commands
                       are rejected. This includes C(channel-group), C(no channel-group), C(default interface),
                       C(default-interface), C(interface), C(exit), C(end), and C(configure terminal), including
@@ -272,6 +276,9 @@ notes:
   and all other modeled configurable fields. Qualified controller response-only echoes are not replayed; any
   unrecognized nested configuration field fails closed before mutation so a full PUT cannot silently discard future
   intent.
+- If an existing member's C(extraConfig) contains a membership-changing or interface-context command, even an
+  C(admin_state)-only or C(description)-only update fails closed rather than replaying that unsafe CLI. Supply an
+  explicit safe O(config[].config_data.network_os.policy.extra_config) replacement in the same request to recover it.
 - System routed policy types (fabric links, multi-site link members, VRF-Lite link members, C(l3PoMemberInternal),
   C(iosXeInternalL3PoMember), and similar) are never modified by this module, so O(state=overridden) cannot affect
   fabric underlay configuration.
@@ -280,9 +287,9 @@ notes:
   link member, vPC keep-alive, MPLS uplink, and similar) and an IOS-XE interface that is an endpoint of a fabric
   link, even when that interface reads as a plain C(iosXeRoutedHost). Converting a host-facing interface
   (for example a C(trunkHost) or C(accessHost) port) to routed remains allowed.
-- The collection cannot create a routed port-channel parent. C(l3PoMember) and C(iosXeL3PoMember) updates therefore
-  apply only to an aggregate and membership that already exist in controller intent; this module never attaches,
-  detaches, or reparents the member.
+- Manage a routed port-channel parent and its C(ports) membership with
+  M(cisco.nd.nd_interface_port_channel_routed). This ethernet module never attaches, detaches, or reparents an
+  C(l3PoMember) or C(iosXeL3PoMember) member.
 - A standalone routed member update proceeds only when current controller intent proves exactly one compatible routed
   port-channel parent claim. The member's configured port-channel identity must match the parent; the parent's
   configured policy, mode, and network OS must be compatible; and any present positive operational identity must

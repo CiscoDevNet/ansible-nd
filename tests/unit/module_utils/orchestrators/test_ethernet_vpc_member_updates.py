@@ -10,11 +10,12 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MethodType
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
@@ -23,6 +24,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    finalize_accepted_intent,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import (
     EthernetAccessInterfaceOrchestrator,
@@ -207,6 +211,9 @@ class _Controller:
     pair_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[dict[str, Any]] = field(default_factory=list)
     inventory_pages: dict[str, dict[int, dict[str, Any]]] = field(default_factory=dict)
+    failed_put_numbers: set[int] = field(default_factory=set)
+    put_attempts: int = 0
+    accepted_puts: list[dict[str, Any]] = field(default_factory=list)
 
     def request(
         self,
@@ -235,7 +242,38 @@ class _Controller:
             if "/api/v1/manage/links" in path:
                 return {"links": []}
         if verb_value == HttpVerbEnum.PUT.value and "/interfaces/Ethernet1%2F" in path:
-            return {}
+            self.put_attempts += 1
+            if self.put_attempts in self.failed_put_numbers:
+                raise RuntimeError(f"Injected member PUT failure #{self.put_attempts}")
+
+            if not isinstance(data, dict):
+                raise AssertionError(f"Member PUT requires a dict payload: {data!r}")
+            switch_id = data.get("switchId")
+            interface_name = unquote(path.rsplit("/", 1)[-1])
+            records = self.inventories.get(switch_id, [])
+            existing = next(
+                (record for record in records if str(record.get("interfaceName", "")).lower() == interface_name.lower()),
+                None,
+            )
+            if existing is None:
+                raise AssertionError(f"PUT target {interface_name!r} on switch {switch_id!r} is absent from controller inventory")
+            existing["configData"] = deepcopy(data["configData"])
+            accepted = {"switchId": switch_id, "interfaceName": interface_name, "data": deepcopy(data)}
+            self.accepted_puts.append(accepted)
+            return {"status": "success"}
+        if verb_value == HttpVerbEnum.POST.value and path.endswith("/interfaceActions/preview"):
+            interfaces = data.get("interfaces", []) if isinstance(data, dict) else []
+            return {
+                "configurationDiffs": [
+                    {
+                        "interfaceName": item["interfaceName"],
+                        "switchId": item["switchId"],
+                        "status": "success",
+                        "combinedConfigs": [{"configType": "pending", "lines": 0, "config": ""}],
+                    }
+                    for item in interfaces
+                ]
+            }
         if verb_value == HttpVerbEnum.POST.value and path.endswith("/interfaceActions/deploy"):
             return {}
         raise AssertionError(f"Unexpected controller request: {verb_value} {path}; data={data}")
@@ -271,6 +309,8 @@ def _state_machine(
     local_names: tuple[str, ...] = ("Ethernet1/24",),
     pair_records: dict[str, dict[str, Any]] | None = None,
     deploy: bool = False,
+    check_mode: bool = False,
+    failed_put_numbers: set[int] | None = None,
 ) -> tuple[NDStateMachine, _Controller]:
     if state == "deleted":
         config = [{"switch_ip": LOCAL_IP, "interface_name": name} for name in local_names]
@@ -291,23 +331,24 @@ def _state_machine(
         "fabric_name": "fabric_1",
         "config_actions": {"deploy": deploy},
     }
-    orchestrator = case.orchestrator_class(rest_send=_rest_send(params))
+    orchestrator = case.orchestrator_class(rest_send=_rest_send(params, check_mode=check_mode))
     orchestrator.apply_config_actions(params)
     controller = _Controller(
         inventories or _inventories(case, local_names=local_names),
         pair_records=pair_records or {},
+        failed_put_numbers=failed_put_numbers or set(),
     )
     object.__setattr__(orchestrator, "_fabric_context", _FabricContext())
     object.__setattr__(orchestrator, "_request", MethodType(controller.request, orchestrator))
     module = MockAnsibleModule()
     module.params = params
-    module.check_mode = False
+    module.check_mode = check_mode
     module.no_log_values = set()
     return NDStateMachine(module=module, model_orchestrator=orchestrator), controller
 
 
-def _rest_send(params: dict[str, Any]) -> RestSend:
-    rest_send = RestSend({**params, "check_mode": False})
+def _rest_send(params: dict[str, Any], *, check_mode: bool = False) -> RestSend:
+    rest_send = RestSend({**params, "check_mode": check_mode})
     rest_send.response_handler = ResponseHandler()
     return rest_send
 
@@ -651,3 +692,146 @@ def test_missing_parent_peer_id_without_pair_evidence_fails_before_peer_get(
     assert len(_inventory_gets(controller, LOCAL_SERIAL)) == 1
     assert len(_inventory_gets(controller, PEER_SERIAL)) == 0
     assert _writes(controller) == []
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_vpc_member_check_mode_reports_plan_without_put_or_deploy(case: _VpcCase) -> None:
+    """A dry-run plans the member overlay but never stages controller intent."""
+
+    state_machine, controller = _state_machine(
+        case,
+        requested_policy={"description": "planned vPC member update"},
+        deploy=True,
+        check_mode=True,
+    )
+
+    state_machine.manage_state()
+    state_machine.model_orchestrator.deploy_pending()
+
+    result = state_machine.output.format()
+    assert result["changed"] is True
+    assert result["before"][0]["config_data"]["network_os"]["policy"]["description"] == "existing vPC member"
+    assert result["after"][0]["config_data"]["network_os"]["policy"]["description"] == "planned vPC member update"
+    assert controller.accepted_puts == []
+    assert _writes(controller) == []
+    assert state_machine.model_orchestrator._pending_deploys == []
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_first_vpc_member_put_failure_has_nothing_to_finalize(case: _VpcCase) -> None:
+    """A rejected first PUT never enters the accepted-mutation deploy queue."""
+
+    state_machine, controller = _state_machine(
+        case,
+        requested_policy={"description": "must fail before acceptance"},
+        deploy=True,
+        failed_put_numbers={1},
+    )
+
+    with pytest.raises(NDStateMachineError, match=r"Injected member PUT failure #1"):
+        state_machine.manage_state()
+
+    finalizer_note = finalize_accepted_intent(
+        state_machine.model_orchestrator,
+        check_mode=False,
+        module_log=logging.getLogger("test_first_vpc_member_put_failure"),
+    )
+
+    writes = _writes(controller)
+    assert [call["verb"] for call in writes] == [HttpVerbEnum.PUT.value]
+    assert controller.accepted_puts == []
+    assert finalizer_note == ""
+    assert not any(call["verb"] == HttpVerbEnum.POST.value for call in writes)
+    assert state_machine.model_orchestrator._pending_deploys == []
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_second_vpc_member_put_failure_deploys_only_first_accepted_update(case: _VpcCase) -> None:
+    """The module failure path deploys the successful first PUT, never the rejected second."""
+
+    local_names = ("Ethernet1/24", "Ethernet1/26")
+    peer_names = ("Ethernet1/25", "Ethernet1/27")
+    state_machine, controller = _state_machine(
+        case,
+        requested_policy={"description": "accepted subset update"},
+        inventories=_inventories(case, local_names=local_names, peer_names=peer_names),
+        local_names=local_names,
+        deploy=True,
+        failed_put_numbers={2},
+    )
+
+    with pytest.raises(NDStateMachineError, match=r"Injected member PUT failure #2"):
+        state_machine.manage_state()
+
+    assert [item["interfaceName"] for item in controller.accepted_puts] == ["Ethernet1/24"]
+    assert state_machine.model_orchestrator._pending_deploys == [("Ethernet1/24", LOCAL_SERIAL)]
+
+    finalizer_note = finalize_accepted_intent(
+        state_machine.model_orchestrator,
+        check_mode=False,
+        module_log=logging.getLogger("test_second_vpc_member_put_failure"),
+    )
+
+    writes = _writes(controller)
+    assert [call["verb"] for call in writes] == [
+        HttpVerbEnum.PUT.value,
+        HttpVerbEnum.PUT.value,
+        HttpVerbEnum.POST.value,
+    ]
+    assert writes[-1]["data"] == {
+        "interfaces": [
+            {
+                "interfaceName": "Ethernet1/24",
+                "switchId": LOCAL_SERIAL,
+            }
+        ]
+    }
+    assert "Ethernet1/24" in finalizer_note
+    assert "Ethernet1/26" not in finalizer_note
+    assert state_machine.model_orchestrator._pending_deploys == []
+
+    after = {item["interface_name"]: item["config_data"]["network_os"]["policy"]["description"] for item in state_machine.output.format()["after"]}
+    assert after == {
+        "Ethernet1/24": "accepted subset update",
+        "Ethernet1/26": "existing vPC member",
+    }
+
+
+@pytest.mark.parametrize("case", VPC_CASES, ids=_case_id)
+def test_deployed_vpc_member_update_is_idempotent_on_replay(case: _VpcCase) -> None:
+    """Persisted wire state is preview-verified without a second PUT or deploy."""
+
+    requested_policy = {"description": "deployed idempotent update"}
+    first_state_machine, first_controller = _state_machine(
+        case,
+        requested_policy=requested_policy,
+        deploy=True,
+    )
+
+    first_state_machine.manage_state()
+    first_state_machine.model_orchestrator.deploy_pending()
+
+    first_writes = _writes(first_controller)
+    assert [call["verb"] for call in first_writes] == [
+        HttpVerbEnum.PUT.value,
+        HttpVerbEnum.POST.value,
+    ]
+    assert len(first_controller.accepted_puts) == 1
+
+    replay_state_machine, replay_controller = _state_machine(
+        case,
+        requested_policy=requested_policy,
+        inventories=first_controller.inventories,
+        deploy=True,
+    )
+
+    replay_state_machine.manage_state()
+    replay_state_machine.model_orchestrator.deploy_pending()
+
+    assert replay_state_machine.output.format()["changed"] is False
+    assert replay_controller.accepted_puts == []
+    replay_writes = _writes(replay_controller)
+    assert len(replay_writes) == 1
+    assert replay_writes[0]["verb"] == HttpVerbEnum.POST.value
+    assert replay_writes[0]["path"].endswith("/interfaceActions/preview")
+    assert replay_state_machine.model_orchestrator._pending_deploys == []

@@ -41,12 +41,22 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import (
     PortChannelAccessInterfaceOrchestrator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import (
+    load_fixture,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
@@ -114,7 +124,10 @@ def _build_pc_model(
         kwargs["config_data"] = PortChannelAccessConfigDataModel(
             network_os=PortChannelAccessNetworkOSModel(
                 policy=PortChannelAccessPolicyModel(
-                    admin_state=True, access_vlan=100, port_channel_mode="active", ports=ports if ports is not None else ["Ethernet1/1"]
+                    admin_state=True,
+                    access_vlan=100,
+                    port_channel_mode="active",
+                    ports=ports if ports is not None else ["Ethernet1/1"],
                 ),
             ),
         )
@@ -122,7 +135,9 @@ def _build_pc_model(
 
 
 def _build_xe_pc_model(
-    interface_name: str = "port-channel101", ports: list[str] | None = None, switch_ip: str = "192.168.1.1"
+    interface_name: str = "port-channel101",
+    ports: list[str] | None = None,
+    switch_ip: str = "192.168.1.1",
 ) -> PortChannelAccessInterfaceModel:
     """Build an IOS-XE `iosXeAccessPoHost` model (members default to `["GigabitEthernet1/0/2"]`)."""
     return PortChannelAccessInterfaceModel.from_config(
@@ -132,11 +147,62 @@ def _build_xe_pc_model(
             "config_data": {
                 "network_os": {
                     "network_os_type": "ios-xe",
-                    "policy": {"access_vlan": 100, "ports": ports if ports is not None else ["GigabitEthernet1/0/2"]},
+                    "policy": {
+                        "access_vlan": 100,
+                        "ports": (ports if ports is not None else ["GigabitEthernet1/0/2"]),
+                    },
                 }
             },
         }
     )
+
+
+def test_port_channel_deploy_results_allow_derived_members_only_via_preview() -> None:
+    """Port-channel deploys allow only members proven by the submitted parent."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = True
+    instance._prepare_deploy_context(_build_pc_model(ports=["Ethernet1/1", "Ethernet1/2"]), "FDO11111AAA")
+
+    assert instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")]) == {
+        ("ethernet1/1", "FDO11111AAA"),
+        ("ethernet1/2", "FDO11111AAA"),
+    }
+    assert ("loopback99", "UNRELATED") not in instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")])
+
+
+def test_port_channel_deploy_context_includes_exact_operational_member_after_staged_removal() -> None:
+    """A later deploy can prove a member still on the switch after intent cleared it."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = True
+    instance._switch_interfaces_cache["FDO11111AAA"] = {
+        "ethernet1/9": {
+            "interfaceName": "Ethernet1/9",
+            "interfaceType": "ethernet",
+            "switchId": "FDO11111AAA",
+            "operData": {"portChannelId": 501},
+        },
+        "ethernet1/10": {
+            "interfaceName": "Ethernet1/10",
+            "interfaceType": "ethernet",
+            "switchId": "FDO11111AAA",
+            "operData": {"portChannelId": 999},
+        },
+        "loopback9": {
+            "interfaceName": "loopback9",
+            "interfaceType": "loopback",
+            "switchId": "FDO11111AAA",
+            "operData": {"portChannelId": 501},
+        },
+    }
+
+    instance._prepare_deploy_context(_build_pc_model(ports=[]), "FDO11111AAA")
+
+    allowed = instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")])
+    assert ("ethernet1/9", "FDO11111AAA") in allowed
+    assert ("ethernet1/10", "FDO11111AAA") not in allowed
+    assert ("loopback9", "FDO11111AAA") not in allowed
 
 
 # =============================================================================
@@ -905,8 +971,16 @@ def test_port_channel_access_orchestrator_00600() -> None:
     rest_send = _build_rest_send(gen_responses)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
     models = [
-        _build_pc_model(switch_ip="192.168.1.1", interface_name="port-channel501", include_config=False),
-        _build_pc_model(switch_ip="192.168.1.2", interface_name="port-channel601", include_config=False),
+        _build_pc_model(
+            switch_ip="192.168.1.1",
+            interface_name="port-channel501",
+            include_config=False,
+        ),
+        _build_pc_model(
+            switch_ip="192.168.1.2",
+            interface_name="port-channel601",
+            include_config=False,
+        ),
     ]
 
     with does_not_raise():
@@ -944,7 +1018,11 @@ def test_port_channel_access_orchestrator_00610() -> None:
     rest_send = _build_rest_send(gen_responses)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
     models = [
-        _build_pc_model(switch_ip="192.168.1.1", interface_name="port-channel501", include_config=False),
+        _build_pc_model(
+            switch_ip="192.168.1.1",
+            interface_name="port-channel501",
+            include_config=False,
+        ),
         _build_xe_pc_model(switch_ip="192.168.1.2", interface_name="port-channel101"),
     ]
 
@@ -1325,6 +1403,188 @@ def test_port_channel_access_orchestrator_00970() -> None:
         instance.preflight([model])
 
 
+def test_port_channel_access_preflight_rejects_protected_member_policy(
+    monkeypatch,
+) -> None:
+    """A protected member policy without a suffix-based name is still owned."""
+
+    inventory = {
+        "ethernet1/40": {
+            "interfaceName": "Ethernet1/40",
+            "interfaceType": "ethernet",
+            "switchId": "FDO11111AAA",
+            "configData": {"networkOS": {"policy": {"policyType": "l3PoMemberInternal"}}},
+        }
+    }
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_switch_interfaces", lambda switch_id: inventory)
+    proposed = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/40"])
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Ethernet1/40.*unknown parent.*l3PoMemberInternal",
+    ):
+        instance._validate_members_available([proposed])
+
+
+def test_port_channel_access_preflight_rejects_vpc_parent_list_claim(
+    monkeypatch,
+) -> None:
+    """A vPC parent list remains ownership evidence while the ethernet looks host-shaped."""
+
+    def vpc_record(switch_id: str, peer_switch_id: str) -> dict:
+        return {
+            "interfaceName": "vpc501",
+            "interfaceType": "vpc",
+            "switchId": switch_id,
+            "configData": {
+                "mode": "access",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "accessVpcHost",
+                        "peerSwitchId": peer_switch_id,
+                        "peer1PortChannelId": 501,
+                        "peer1MemberPorts": ["Ethernet1/41"],
+                        "peer2PortChannelId": 501,
+                        "peer2MemberPorts": ["Ethernet1/42"],
+                    },
+                },
+            },
+        }
+
+    inventories = {
+        "FDO11111AAA": {
+            "vpc501": vpc_record("FDO11111AAA", "FDO22222BBB"),
+            "ethernet1/41": {
+                "interfaceName": "Ethernet1/41",
+                "interfaceType": "ethernet",
+                "switchId": "FDO11111AAA",
+                "configData": {"networkOS": {"policy": {"policyType": "accessHost"}}},
+            },
+        },
+        "FDO22222BBB": {
+            "vpc501": vpc_record("FDO22222BBB", "FDO11111AAA"),
+            "ethernet1/42": {
+                "interfaceName": "Ethernet1/42",
+                "interfaceType": "ethernet",
+                "switchId": "FDO22222BBB",
+                "configData": {"networkOS": {"policy": {"policyType": "accessHost"}}},
+            },
+        },
+    }
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_switch_interfaces", lambda switch_id: inventories[switch_id])
+    proposed = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/41"])
+
+    with pytest.raises(RuntimeError, match=r"Ethernet1/41.*current owner=vpc501"):
+        instance._validate_members_available([proposed])
+
+
+def test_port_channel_access_preflight_orients_missing_vpc_peer_echo(
+    monkeypatch,
+) -> None:
+    """Authoritative pair identity keeps a remote-only vPC member from becoming a local claim."""
+
+    local_parent = {
+        "interfaceName": "vpc501",
+        "interfaceType": "vpc",
+        "switchId": "FDO11111AAA",
+        "configData": {
+            "mode": "access",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": "accessVpcHost",
+                    "peer1PortChannelId": 501,
+                    "peer1MemberPorts": [],
+                    "peer2PortChannelId": 501,
+                    "peer2MemberPorts": ["Ethernet1/42"],
+                },
+            },
+        },
+    }
+    peer_parent = {
+        **local_parent,
+        "switchId": "FDO22222BBB",
+    }
+    inventories = {
+        "FDO11111AAA": {
+            "vpc501": local_parent,
+            "ethernet1/42": {
+                "interfaceName": "Ethernet1/42",
+                "interfaceType": "ethernet",
+                "switchId": "FDO11111AAA",
+                "configData": {"networkOS": {"policy": {"policyType": "accessHost"}}},
+            },
+        },
+        "FDO22222BBB": {
+            "vpc501": peer_parent,
+            "ethernet1/42": {
+                "interfaceName": "Ethernet1/42",
+                "interfaceType": "ethernet",
+                "switchId": "FDO22222BBB",
+                "configData": {
+                    "mode": "access",
+                    "networkOS": {
+                        "policy": {
+                            "policyType": "accessVpcPoMember",
+                            "primaryInterface": "vpc501",
+                        }
+                    },
+                },
+            },
+        },
+    }
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    switch_reads: list[str] = []
+    peer_resolutions: list[str] = []
+
+    def switch_interfaces(switch_id: str):
+        switch_reads.append(switch_id)
+        return inventories[switch_id]
+
+    def resolve_peer(switch_id: str) -> str:
+        peer_resolutions.append(switch_id)
+        return "FDO22222BBB"
+
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_switch_interfaces", switch_interfaces)
+    monkeypatch.setattr(instance, "_resolve_membership_peer_switch_id", resolve_peer)
+    proposed = _build_pc_model(interface_name="port-channel702", ports=["Ethernet1/42"])
+
+    instance._validate_members_available([proposed, proposed])
+
+    assert peer_resolutions == ["FDO11111AAA"]
+    assert switch_reads == ["FDO11111AAA", "FDO22222BBB"]
+    assert instance._member_owners("FDO11111AAA").get("ethernet1/42") is None
+
+
+def test_port_channel_access_membership_peer_resolution_is_reciprocal_and_cached() -> None:
+    """Missing interface echoes fall back to two authoritative vpcPair reads once per pair."""
+
+    def pair_response(switch_id: str, peer_switch_id: str) -> dict:
+        return {
+            "RETURN_CODE": 200,
+            "METHOD": "GET",
+            "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/switches/{switch_id}/vpcPair",
+            "MESSAGE": "OK",
+            "DATA": {"switchId": switch_id, "peerSwitchId": peer_switch_id},
+        }
+
+    def responses():
+        yield pair_response("FDO11111AAA", "FDO22222BBB")
+        yield pair_response("FDO22222BBB", "FDO11111AAA")
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    assert instance._resolve_membership_peer_switch_id("FDO11111AAA") == "FDO22222BBB"
+    assert instance._resolve_membership_peer_switch_id("FDO22222BBB") == "FDO11111AAA"
+    assert instance.rest_send.response_count == 2
+
+
 # =============================================================================
 # Test: create_bulk -- grouped by (switch, policyType) (issue #409); IOS-XE managed types (issue #536)
 # =============================================================================
@@ -1382,7 +1642,10 @@ def test_port_channel_access_orchestrator_01010() -> None:
     body = rest_send.committed_payload
     assert [item["interfaceName"] for item in body["interfaces"]] == ["Port-channel101"]
     assert body["interfaces"][0]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeAccessPoHost"
-    assert instance._pending_deploys == [("port-channel501", "FDO11111AAA"), ("port-channel101", "FDO11111AAA")]
+    assert instance._pending_deploys == [
+        ("port-channel501", "FDO11111AAA"),
+        ("port-channel101", "FDO11111AAA"),
+    ]
 
 
 def test_port_channel_access_orchestrator_01020() -> None:
@@ -1447,7 +1710,10 @@ def test_port_channel_access_orchestrator_01030() -> None:
         _build_xe_pc_model(interface_name="port-channel101", ports=["GigabitEthernet1/0/2"]),
         _build_xe_pc_model(interface_name="port-channel102", ports=["GigabitEthernet1/0/3"]),
     ]
-    with pytest.raises(RuntimeError, match=r"Bulk create failed.*accepted \['port-channel101'\] from the same request"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"Bulk create failed.*accepted \['port-channel101'\] from the same request",
+    ):
         instance.create_bulk(models)
     assert len(rest_send.responses) == 2
     assert instance._pending_deploys == [("port-channel101", "FDO11111AAA")]
@@ -1466,8 +1732,14 @@ def test_port_channel_access_orchestrator_01030() -> None:
 @pytest.mark.parametrize(
     "ports, match",
     [
-        (["GigabitEthernet1/0/2"], r"member=GigabitEthernet1/0/2, current policy=iosXeTrunkHost, required=iosXeAccess.*nd_interface_ethernet_access"),
-        (["GigabitEthernet1/0/9"], r"member=GigabitEthernet1/0/9, current policy=absent from the switch inventory"),
+        (
+            ["GigabitEthernet1/0/2"],
+            r"member=GigabitEthernet1/0/2, current policy=iosXeTrunkHost, required=iosXeAccess.*nd_interface_ethernet_access",
+        ),
+        (
+            ["GigabitEthernet1/0/9"],
+            r"member=GigabitEthernet1/0/9, current policy=absent from the switch inventory",
+        ),
     ],
 )
 def test_port_channel_access_orchestrator_01100(ports, match) -> None:
@@ -1527,7 +1799,12 @@ def test_port_channel_access_orchestrator_01110() -> None:
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with does_not_raise():
-        instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3", "GigabitEthernet1/0/4"]), _build_pc_model(ports=["Ethernet1/1"])])
+        instance.preflight(
+            [
+                _build_xe_pc_model(ports=["GigabitEthernet1/0/3", "GigabitEthernet1/0/4"]),
+                _build_pc_model(ports=["Ethernet1/1"]),
+            ]
+        )
 
 
 def test_port_channel_access_orchestrator_01120() -> None:
@@ -1696,14 +1973,25 @@ def _xe_existing_model(interface_name: str, ports: list[str]) -> PortChannelAcce
     return _build_xe_pc_model(interface_name=interface_name, ports=ports)
 
 
-def _guard_orchestrator(method_name: str, keys: str, state: str, config: list[dict], check_mode: bool = False) -> PortChannelAccessInterfaceOrchestrator:
+def _guard_orchestrator(
+    method_name: str,
+    keys: str,
+    state: str,
+    config: list[dict],
+    check_mode: bool = False,
+) -> PortChannelAccessInterfaceOrchestrator:
     """Build an orchestrator fed the `<method_name><key>` fixtures in order."""
 
     def responses():
         for key in keys:
             yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared" if key == "+" else f"{method_name}{key}")
 
-    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config, check_mode=check_mode)
+    rest_send = _build_rest_send(
+        ResponseGenerator(responses()),
+        state=state,
+        config=config,
+        check_mode=check_mode,
+    )
     return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
 
 
@@ -1727,9 +2015,18 @@ def test_port_channel_access_orchestrator_01300(check_mode: bool) -> None:
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
     """
     config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel102"}]
-    instance = _guard_orchestrator("test_port_channel_access_orchestrator_01300", "abc", "deleted", config, check_mode=check_mode)
+    instance = _guard_orchestrator(
+        "test_port_channel_access_orchestrator_01300",
+        "abc",
+        "deleted",
+        config,
+        check_mode=check_mode,
+    )
 
-    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*port-channel102.*operationalStatus=unknown"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"Cannot remove IOS-XE interface.*port-channel102.*operationalStatus=unknown",
+    ):
         instance.preflight_delete([_xe_existing_model("port-channel102", ["GigabitEthernet1/0/3"])])
 
     assert instance._pending_removes == []
@@ -1756,7 +2053,10 @@ def test_port_channel_access_orchestrator_01310() -> None:
     """
     config = [{"switch_ip": "192.168.1.1", "interface_name": name} for name in ("port-channel101", "port-channel102")]
     instance = _guard_orchestrator(inspect.stack()[0][3], "abc", "deleted", config)
-    models = [_xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"]), _xe_existing_model("port-channel102", ["GigabitEthernet1/0/3"])]
+    models = [
+        _xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"]),
+        _xe_existing_model("port-channel102", ["GigabitEthernet1/0/3"]),
+    ]
 
     with does_not_raise():
         instance.preflight_delete(models)
@@ -1847,15 +2147,26 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
     models = [
         _build_pc_model(interface_name="port-channel501", ports=["Ethernet1/1"]),
         _build_pc_model(interface_name="port-channel502", ports=["Ethernet1/2"]),
-        _build_xe_pc_model(interface_name="port-channel101", ports=["GigabitEthernet1/0/2"], switch_ip="192.168.12.181"),
-        _build_xe_pc_model(interface_name="port-channel109", ports=["GigabitEthernet1/0/3"], switch_ip="192.168.12.181"),
+        _build_xe_pc_model(
+            interface_name="port-channel101",
+            ports=["GigabitEthernet1/0/2"],
+            switch_ip="192.168.12.181",
+        ),
+        _build_xe_pc_model(
+            interface_name="port-channel109",
+            ports=["GigabitEthernet1/0/3"],
+            switch_ip="192.168.12.181",
+        ),
     ]
 
     with does_not_raise():
         instance.preflight(models)
 
     paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
-    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access"]
+    assert paths[:2] == [
+        "/api/v1/manage/fabrics/fabric_1/switches",
+        "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access",
+    ]
     assert len(rest_send.responses) == 4
 
 
@@ -1884,7 +2195,14 @@ def test_port_channel_access_orchestrator_01410() -> None:
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
-    model = _build_xe_pc_model(interface_name="port-channel101", ports=["GigabitEthernet1/0/2"], switch_ip="192.168.12.181")
+    model = _build_xe_pc_model(
+        interface_name="port-channel101",
+        ports=["GigabitEthernet1/0/2"],
+        switch_ip="192.168.12.181",
+    )
 
-    with pytest.raises(RuntimeError, match=r"not capable of hosting interface_type='portChannel' mode='access'.*CAT9KV1701"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"not capable of hosting interface_type='portChannel' mode='access'.*CAT9KV1701",
+    ):
         instance.preflight([model])

@@ -757,17 +757,41 @@ def build_member_update_payload(
     the caller to attest that both peer records and their common parent were validated.
     """
 
+    raw_policy: Mapping[str, object] | None = None
+    if isinstance(member, Mapping):
+        raw_config_data = member.get("configData")
+        raw_network_os = raw_config_data.get("networkOS") if isinstance(raw_config_data, Mapping) else None
+        candidate_policy = raw_network_os.get("policy") if isinstance(raw_network_os, Mapping) else None
+        raw_policy = candidate_policy if isinstance(candidate_policy, Mapping) else None
+
     model = member if isinstance(member, EthernetMemberInterfaceModel) else parse_member_interface_response(member)
     descriptor = model.descriptor
     if descriptor.pair_aware and not pair_validated:
         raise UnsafeMemberUpdateError(f"policyType {descriptor.policy_type!r} requires pair-aware ownership validation before update")
 
     normalized_updates = normalize_safe_member_updates(updates)
+    if "extra_config" not in normalized_updates:
+        existing_extra_config = raw_policy.get("extraConfig") if raw_policy is not None else model.policy.extra_config
+        if isinstance(existing_extra_config, str) and _extra_config_changes_membership(existing_extra_config):
+            raise UnsafeMemberUpdateError(
+                "Existing extraConfig for an attached member changes channel-group membership or interface context; "
+                "refusing to reconstruct it in a safe member PUT. Replace it explicitly with safe extra_config first."
+            )
     updated = model.model_copy(deep=True)
     for field_name, value in normalized_updates.items():
         setattr(updated.policy, field_name, value)
 
     payload = updated.to_payload()
+    payload_policy = payload["configData"]["networkOS"]["policy"]
+    if raw_policy is not None:
+        # NDBaseModel strips surrounding whitespace from strings during response
+        # validation.  Full-policy member PUTs must not rewrite an untouched
+        # description or CLI block merely because another safe field changed.
+        # Explicit user updates still flow through normal model validation.
+        for field_name, wire_name in (("description", "description"), ("extra_config", "extraConfig")):
+            raw_value = raw_policy.get(wire_name)
+            if field_name not in normalized_updates and isinstance(raw_value, str):
+                payload_policy[wire_name] = raw_value
     resolved_switch_id = switch_id if switch_id is not None else updated.switch_id
     if resolved_switch_id is not None:
         payload["switchId"] = resolved_switch_id

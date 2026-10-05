@@ -12,6 +12,8 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - "{{ vpc_trunk_host_baseline }}"
+    config_actions:
+      deploy: true
     state: merged
   check_mode: true
   register: cm_merged_create
@@ -46,6 +48,305 @@
     that:
       - cm_merged_idem is not changed
       - nm_merged_idem is not changed
+
+# --- OWNERSHIP PREFLIGHT: conflicting parents must never reach ND ---
+
+- name: "MERGED OWNERSHIP GUARD: Reject one-sided and two-sided conflicting members"
+  block:
+    - name: "MERGED OWNERSHIP GUARD: Check one-sided conflict without deployment"
+      cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_one_sided_conflict
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc298
+            config_data:
+              network_os:
+                policy:
+                  allowed_vlans: "100-200"
+                  native_vlan: 99
+                  peer1_port_channel_id: 298
+                  peer1_member_ports:
+                    - "{{ vpc_trunk_member_primary }}"
+                  peer2_port_channel_id: 298
+                  peer2_member_ports: []
+        config_actions:
+          deploy: false
+        state: merged
+      check_mode: true
+      register: cm_vpc_trunk_one_sided_conflict
+      ignore_errors: true
+
+    - name: "MERGED OWNERSHIP GUARD: Apply one-sided conflict without deployment"
+      cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_one_sided_conflict
+      register: nm_vpc_trunk_one_sided_conflict
+      ignore_errors: true
+
+    - name: "MERGED OWNERSHIP GUARD: Check two-sided conflict with deployment"
+      cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_two_sided_conflict
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc299
+            config_data:
+              network_os:
+                policy:
+                  allowed_vlans: "100-200"
+                  native_vlan: 99
+                  peer1_port_channel_id: 299
+                  peer1_member_ports:
+                    - "{{ vpc_trunk_member_primary }}"
+                  peer2_port_channel_id: 299
+                  peer2_member_ports:
+                    - "{{ vpc_trunk_member_primary }}"
+        config_actions:
+          deploy: true
+        state: merged
+      check_mode: true
+      register: cm_vpc_trunk_two_sided_conflict
+      ignore_errors: true
+
+    - name: "MERGED OWNERSHIP GUARD: Apply two-sided conflict with deployment"
+      cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_two_sided_conflict
+      register: nm_vpc_trunk_two_sided_conflict
+      ignore_errors: true
+
+    - name: "MERGED OWNERSHIP GUARD: Verify all conflicts failed locally"
+      ansible.builtin.assert:
+        that:
+          - cm_vpc_trunk_one_sided_conflict is failed
+          - cm_vpc_trunk_one_sided_conflict is not changed
+          - "'Preflight failed: Cannot configure vPC member(s)' in cm_vpc_trunk_one_sided_conflict.msg"
+          - nm_vpc_trunk_one_sided_conflict is failed
+          - nm_vpc_trunk_one_sided_conflict is not changed
+          - "'Preflight failed: Cannot configure vPC member(s)' in nm_vpc_trunk_one_sided_conflict.msg"
+          - cm_vpc_trunk_two_sided_conflict is failed
+          - cm_vpc_trunk_two_sided_conflict is not changed
+          - "'Preflight failed: Cannot configure vPC member(s)' in cm_vpc_trunk_two_sided_conflict.msg"
+          - nm_vpc_trunk_two_sided_conflict is failed
+          - nm_vpc_trunk_two_sided_conflict is not changed
+          - "'Preflight failed: Cannot configure vPC member(s)' in nm_vpc_trunk_two_sided_conflict.msg"
+  always:
+    - name: "MERGED OWNERSHIP GUARD: Remove any unexpected candidate residue"
+      cisco.nd.nd_interface_vpc_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc298
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc299
+        config_actions:
+          deploy: true
+        state: deleted
+      ignore_errors: true
+
+# --- ONE-SIDED MEMBERSHIP: update the populated peer safely ---
+
+- name: "MERGED ONE-SIDED MEMBER: Deploy peer2 membership removal"
+  cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_peer2_empty
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc200
+        config_data:
+          network_os:
+            policy:
+              peer2_member_ports: []
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_peer2_empty
+
+- name: "MERGED ONE-SIDED MEMBER: Update the populated peer1 member"
+  cisco.nd.nd_interface_ethernet_trunk_host: &vpc_trunk_peer1_member_down
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_names:
+          - "{{ vpc_trunk_member_primary }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: false
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_peer1_member_down
+
+- name: "MERGED ONE-SIDED MEMBER: Replay the populated peer1 member update"
+  cisco.nd.nd_interface_ethernet_trunk_host: *vpc_trunk_peer1_member_down
+  register: nm_peer1_member_down_idem
+
+- name: "MERGED ONE-SIDED MEMBER: Restore the populated peer1 member"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_names:
+          - "{{ vpc_trunk_member_primary }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              admin_state: true
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_peer1_member_restore
+
+- name: "MERGED ONE-SIDED MEMBER: Restore both parent member lists"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_trunk_host_baseline }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_peer2_members_restore
+
+- name: "MERGED ONE-SIDED MEMBER: Verify update, replay, and restoration"
+  vars:
+    one_sided_parent: "{{ nm_peer2_empty.after | selectattr('interface_name', 'equalto', 'vpc200') | first }}"
+    one_sided_member: "{{ nm_peer1_member_down.after | selectattr('interface_name', 'equalto', vpc_trunk_member_primary) | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_peer2_empty is changed
+      - one_sided_parent.config_data.network_os.policy.peer1_member_ports == [vpc_trunk_member_primary]
+      - one_sided_parent.config_data.network_os.policy.peer2_member_ports == []
+      - nm_peer1_member_down is changed
+      - one_sided_member.config_data.network_os.policy.admin_state is false
+      - nm_peer1_member_down_idem is not changed
+      - nm_peer1_member_restore is changed
+      - nm_peer2_members_restore is changed
+
+# --- EXPLICIT EMPTY MEMBERSHIP: populated -> empty -> idempotent replay ---
+
+- name: "MERGED EMPTY MEMBERS: Stage both peer lists empty without deployment"
+  cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_empty_no_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc200
+        config_data:
+          network_os:
+            policy:
+              peer1_member_ports: []
+              peer2_member_ports: []
+    config_actions:
+      deploy: false
+    state: merged
+  register: nm_empty_no_deploy
+
+- name: "MERGED EMPTY MEMBERS: Replay staged empty peer lists"
+  cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_empty_no_deploy
+  register: nm_empty_no_deploy_idem
+
+- name: "MERGED EMPTY MEMBERS: Verify staged clear and replay"
+  vars:
+    cleared: "{{ nm_empty_no_deploy.after | selectattr('interface_name', 'equalto', 'vpc200') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_empty_no_deploy is changed
+      - cleared.config_data.network_os.policy.peer1_member_ports == []
+      - cleared.config_data.network_os.policy.peer2_member_ports == []
+      - nm_empty_no_deploy_idem is not changed
+
+- name: "MERGED EMPTY MEMBERS: Check exact staged peer intent with deployment enabled"
+  cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_empty_reconcile_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc200
+        config_data:
+          network_os:
+            policy:
+              peer1_member_ports: []
+              peer2_member_ports: []
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_empty_reconcile_deploy
+
+- name: "MERGED EMPTY MEMBERS: Deploy exact staged peer intent"
+  cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_empty_reconcile_deploy
+  register: nm_empty_reconcile_deploy
+
+- name: "MERGED EMPTY MEMBERS: Replay deployed exact staged peer intent"
+  cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_empty_reconcile_deploy
+  register: nm_empty_reconcile_deploy_idem
+
+- name: "MERGED EMPTY MEMBERS: Verify peer no-diff deployment reconciliation"
+  vars:
+    cleared: "{{ nm_empty_reconcile_deploy.after | selectattr('interface_name', 'equalto', 'vpc200') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_empty_reconcile_deploy is changed
+      - nm_empty_reconcile_deploy is changed
+      - cleared.config_data.network_os.policy.peer1_member_ports == []
+      - cleared.config_data.network_os.policy.peer2_member_ports == []
+      - nm_empty_reconcile_deploy_idem is not changed
+
+- name: "MERGED EMPTY MEMBERS: Restore populated peer lists with deployment"
+  cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_restore_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_trunk_host_baseline }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_empty_no_deploy_restore
+
+- name: "MERGED EMPTY MEMBERS: Clear populated peer lists with deployment"
+  cisco.nd.nd_interface_vpc_trunk_host: &vpc_trunk_empty_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc200
+        config_data:
+          network_os:
+            policy:
+              peer1_member_ports: []
+              peer2_member_ports: []
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_empty_deploy
+
+- name: "MERGED EMPTY MEMBERS: Replay deployed empty peer lists"
+  cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_empty_deploy
+  register: nm_empty_deploy_idem
+
+- name: "MERGED EMPTY MEMBERS: Verify deployed clear and replay"
+  vars:
+    cleared: "{{ nm_empty_deploy.after | selectattr('interface_name', 'equalto', 'vpc200') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_empty_no_deploy_restore is changed
+      - nm_empty_deploy is changed
+      - cleared.config_data.network_os.policy.peer1_member_ports == []
+      - cleared.config_data.network_os.policy.peer2_member_ports == []
+      - nm_empty_deploy_idem is not changed
+
+- name: "MERGED EMPTY MEMBERS: Restore baseline after deployed clear"
+  cisco.nd.nd_interface_vpc_trunk_host: *vpc_trunk_restore_deploy
+  register: nm_empty_deploy_restore
+
+- name: "MERGED EMPTY MEMBERS: Verify final baseline restoration"
+  ansible.builtin.assert:
+    that:
+      - nm_empty_deploy_restore is changed
 
 # --- VLAN MAPPING (gated on supports_vlan_mapping) ---
 # Skipped by default because Nexus 9000v virtual switches reject

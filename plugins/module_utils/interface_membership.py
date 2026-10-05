@@ -368,17 +368,21 @@ class EthernetMembershipIndex:
                 policy = self._policy(record)
                 if policy is None:
                     continue
+                parent_name = record.get("interfaceName")
+                interface_type = record.get("interfaceType")
+                if not isinstance(parent_name, str) or not isinstance(interface_type, str):
+                    raise MembershipValidationError(f"A parent membership record on switch {switch_id!r} lacks " "interfaceName or interfaceType")
+
+                member_fields = _LOCAL_PARENT_MEMBER_FIELDS
+                if interface_type == "vpc":
+                    member_fields = self._local_vpc_parent_member_fields(switch_id, parent_name, policy)
                 claim_fields_by_member: dict[str, list[str]] = {}
-                for field in _LOCAL_PARENT_MEMBER_FIELDS:
+                for field in member_fields:
                     for member_name in self._normalized_member_names(policy.get(field)):
                         claim_fields_by_member.setdefault(member_name, []).append(field)
                 if not claim_fields_by_member:
                     continue
 
-                parent_name = record.get("interfaceName")
-                interface_type = record.get("interfaceType")
-                if not isinstance(parent_name, str) or not isinstance(interface_type, str):
-                    raise MembershipValidationError(f"A parent membership record on switch {switch_id!r} lacks " "interfaceName or interfaceType")
                 policy_type = policy_type_from_interface_record(record)
                 for member_name, claim_fields in claim_fields_by_member.items():
                     key = (switch_id, member_name)
@@ -393,6 +397,63 @@ class EthernetMembershipIndex:
                         )
                     )
         self._claims = {key: tuple(claims) for key, claims in mutable_claims.items()}
+
+    def _local_vpc_parent_member_fields(
+        self,
+        switch_id: str,
+        parent_name: str,
+        policy: Mapping[str, Any],
+    ) -> tuple[str, ...]:
+        """Return only the peer slot(s) that can belong to this switch.
+
+        ND can return reciprocal vPC parent copies either with one pair-wide slot
+        order or with each switch's local side in ``peer1``.  The physical member
+        records are switch-scoped and declare their parent, so their exact set is
+        the authoritative orientation evidence available while the index is built.
+
+        If neither slot matches that evidence, retain both fields deliberately so
+        inconsistent or incomplete inventory continues to fail closed.  An empty
+        local member set is trusted only when authoritative peer identity and the
+        peer's physical members prove that the non-empty slot belongs remotely;
+        otherwise a stale non-empty slot must remain visible as a conflicting
+        ownership claim.  When both slots match they contain the same member names,
+        so recording both field labels does not create a second owner.
+        """
+
+        actual_names = frozenset(member.interface_name.lower() for member in self._vpc_members_by_parent.get((switch_id, parent_name.lower()), ()))
+        member_names_by_field = {field: self._valid_vpc_member_names(policy.get(field)) for field in ("peer1MemberPorts", "peer2MemberPorts")}
+        matching_fields: list[str] = []
+        for field, member_names in member_names_by_field.items():
+            if member_names is not None and member_names == actual_names:
+                matching_fields.append(field)
+        if actual_names or len(matching_fields) != 1:
+            if matching_fields:
+                return tuple(matching_fields)
+            return ("peer1MemberPorts", "peer2MemberPorts")
+
+        # Exactly one slot is empty while the other names members.  Do not assume
+        # the empty slot is local merely because this switch currently has no
+        # physical member records: that would hide a stale claim in the non-empty
+        # slot.  Resolve the peer without signature inference (the parent index is
+        # still being built) and require the peer's actual member set to prove the
+        # non-empty slot is remote.
+        mapped_peer = self._peer_switch_ids.get(switch_id)
+        raw_declared_peer = policy.get("peerSwitchId")
+        declared_peer = raw_declared_peer if isinstance(raw_declared_peer, str) and raw_declared_peer else None
+        if raw_declared_peer not in (None, "") and declared_peer is None:
+            return ("peer1MemberPorts", "peer2MemberPorts")
+        if mapped_peer is not None and declared_peer is not None and mapped_peer != declared_peer:
+            return ("peer1MemberPorts", "peer2MemberPorts")
+        peer_switch_id = mapped_peer or declared_peer
+        if peer_switch_id is None or peer_switch_id == switch_id or peer_switch_id not in self._inventories:
+            return ("peer1MemberPorts", "peer2MemberPorts")
+
+        nonempty_field = next(field for field in member_names_by_field if field not in matching_fields)
+        nonempty_names = member_names_by_field[nonempty_field]
+        peer_actual_names = frozenset(member.interface_name.lower() for member in self._vpc_members_by_parent.get((peer_switch_id, parent_name.lower()), ()))
+        if nonempty_names and peer_actual_names == nonempty_names:
+            return tuple(matching_fields)
+        return ("peer1MemberPorts", "peer2MemberPorts")
 
     def _build_vpc_parent_index(self) -> None:
         """Index valid literal parent signatures once for constant-time peer inference."""
@@ -465,9 +526,9 @@ class EthernetMembershipIndex:
             peer2_id = normalize_port_channel_id(policy.get("peer2PortChannelId"))
         except ValueError:
             return None
-        peer1_members = cls._normalized_member_names(policy.get("peer1MemberPorts"))
-        peer2_members = cls._normalized_member_names(policy.get("peer2MemberPorts"))
-        if peer1_id is None or peer2_id is None or not peer1_members or not peer2_members:
+        peer1_members = cls._valid_vpc_member_names(policy.get("peer1MemberPorts"))
+        peer2_members = cls._valid_vpc_member_names(policy.get("peer2MemberPorts"))
+        if peer1_id is None or peer2_id is None or peer1_members is None or peer2_members is None:
             return None
         fingerprint = cls._vpc_parent_fingerprint(record)
         if fingerprint is None:
@@ -513,16 +574,22 @@ class EthernetMembershipIndex:
 
     @classmethod
     def _vpc_peer_slot_fingerprint(cls, policy: Mapping[str, Any], number: int) -> tuple[Any, ...]:
-        """Return every field in one literal ND peer slot with its prefix removed."""
+        """Return one literal ND peer slot with empty member-list echoes normalized."""
 
         prefix = f"peer{number}"
-        return tuple(
-            sorted(
-                (key[len(prefix) :], cls._freeze_vpc_value(value, field_name=key))
-                for key, value in policy.items()
-                if isinstance(key, str) and key.startswith(prefix) and len(key) > len(prefix)
-            )
-        )
+        member_field = f"{prefix}MemberPorts"
+        fields = [
+            (key[len(prefix) :], cls._freeze_vpc_value(value, field_name=key))
+            for key, value in policy.items()
+            if isinstance(key, str) and key.startswith(prefix) and len(key) > len(prefix) and key != member_field
+        ]
+        member_names = cls._valid_vpc_member_names(policy.get(member_field))
+        if member_names is None:
+            member_fingerprint = cls._freeze_vpc_value(policy.get(member_field), field_name=member_field)
+        else:
+            member_fingerprint = tuple(sorted(member_names))
+        fields.append(("MemberPorts", member_fingerprint))
+        return tuple(sorted(fields))
 
     @classmethod
     def _freeze_vpc_value(cls, value: Any, *, field_name: str = "") -> Any:
@@ -1098,10 +1165,31 @@ class EthernetMembershipIndex:
     ) -> frozenset[str]:
         policy = EthernetMembershipIndex._required_policy(record)
         raw_names = policy.get(field)
-        names = EthernetMembershipIndex._normalized_member_names(raw_names)
-        if not names:
-            raise MembershipValidationError(f"vPC parent {parent_name!r} on switch {switch_id!r} lacks a " f"non-empty {field} list")
+        names = EthernetMembershipIndex._valid_vpc_member_names(raw_names)
+        if names is None:
+            raise MembershipValidationError(f"vPC parent {parent_name!r} on switch {switch_id!r} lacks a valid {field} list")
         return names
+
+    @staticmethod
+    def _valid_vpc_member_names(value: object) -> frozenset[str] | None:
+        """Return a normalized member set for a structurally valid list.
+
+        ND 4.3.1 omits a peer member-list key when that side is empty, while the
+        public parent models normalize both missing and null echoes to ``[]``.
+        Preserve that controller contract here. Scalars and list entries that
+        are not non-empty strings remain malformed and fail closed.
+        """
+
+        if value is None:
+            return frozenset()
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+            return None
+        names: set[str] = set()
+        for name in value:
+            if not isinstance(name, str) or not name.strip():
+                return None
+            names.add(name.strip().lower())
+        return frozenset(names)
 
     @staticmethod
     def _normalized_member_names(value: object) -> frozenset[str]:

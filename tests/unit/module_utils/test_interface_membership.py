@@ -609,6 +609,24 @@ def test_vpc_target_member_rejects_a_second_stale_parent_claim():
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
 
 
+def test_vpc_empty_local_slot_does_not_hide_a_stale_nonempty_parent_claim():
+    """An unproved empty-slot orientation must retain a conflicting stale claim."""
+
+    inventories = _valid_vpc_inventories()
+    inventories["SERIAL1"]["vpc200"] = _vpc_parent(
+        "SERIAL1",
+        "SERIAL2",
+        interface_name="vpc200",
+        peer1_id=40,
+        peer2_id=50,
+        peer1_members=(),
+        peer2_members=("Ethernet1/24",),
+    )
+
+    with pytest.raises(MembershipValidationError, match="multiple parent owners"):
+        EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
+
+
 def test_vpc_non_target_peer_member_rejects_a_second_stale_parent_claim():
     inventories = _valid_vpc_inventories()
     inventories["SERIAL2"]["vpc200"] = _vpc_parent(
@@ -623,6 +641,148 @@ def test_vpc_non_target_peer_member_rejects_a_second_stale_parent_claim():
 
     with pytest.raises(MembershipValidationError, match="multiple parent owners"):
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
+
+
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+def test_vpc_remote_slot_name_reuse_does_not_create_a_local_owner(policy_type):
+    """A remote member name reused by another local vPC is not a second claim."""
+
+    inventories = _valid_vpc_inventories(policy_type=policy_type)
+    parent_policy = {
+        "vpcMember": "trunkVpcHost",
+        "accessVpcPoMember": "accessVpcHost",
+    }[policy_type]
+    parent_side_policy = {
+        "vpcMember": "trunkVpcMember",
+        "accessVpcPoMember": "accessVpcMember",
+    }[policy_type]
+    inventories["SERIAL1"]["ethernet1/25"] = _member(
+        "SERIAL1",
+        "Ethernet1/25",
+        policy_type=policy_type,
+        configured_id=40,
+        operational_id=40,
+        primary_interface="vpc200",
+    )
+    inventories["SERIAL2"]["ethernet1/26"] = _member(
+        "SERIAL2",
+        "Ethernet1/26",
+        policy_type=policy_type,
+        configured_id=50,
+        operational_id=50,
+        primary_interface="vpc200",
+    )
+    inventories["SERIAL1"]["vpc200"] = _vpc_parent(
+        "SERIAL1",
+        "SERIAL2",
+        interface_name="vpc200",
+        policy_type=parent_policy,
+        peer1_id=40,
+        peer2_id=50,
+        peer1_members=("Ethernet1/25",),
+        peer2_members=("Ethernet1/26",),
+    )
+    inventories["SERIAL2"]["vpc200"] = _vpc_parent(
+        "SERIAL2",
+        "SERIAL1",
+        interface_name="vpc200",
+        policy_type=parent_policy,
+        peer1_id=40,
+        peer2_id=50,
+        peer1_members=("Ethernet1/25",),
+        peer2_members=("Ethernet1/26",),
+    )
+    side1 = _vpc_parent_side_port_channel("SERIAL1", 40, parent_side_policy)
+    side2 = _vpc_parent_side_port_channel("SERIAL2", 50, parent_side_policy)
+    side1["configData"]["networkOS"]["policy"]["primaryInterface"] = "vpc200"
+    side2["configData"]["networkOS"]["policy"]["primaryInterface"] = "vpc200"
+    inventories["SERIAL1"]["port-channel40"] = side1
+    inventories["SERIAL2"]["port-channel50"] = side2
+
+    index = EthernetMembershipIndex(inventories)
+
+    first = index.validate("SERIAL1", "Ethernet1/24")
+    reused = index.validate("SERIAL1", "Ethernet1/25")
+    assert first.owner.interface_name == "vpc100"
+    assert reused.owner.interface_name == "vpc200"
+
+
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("empty_side", ["SERIAL1", "SERIAL2"])
+@pytest.mark.parametrize("switch_local_peer1", [False, True])
+@pytest.mark.parametrize("empty_echo", ["explicit", "missing", "null"])
+def test_vpc_accepts_one_valid_empty_peer_member_list(policy_type, empty_side, switch_local_peer1, empty_echo):
+    """One peer may have no members, including switch-local peer1 echoes."""
+
+    inventories = _valid_vpc_inventories(policy_type=policy_type)
+    if empty_side == "SERIAL1":
+        inventories["SERIAL1"].pop("ethernet1/24")
+        target_switch, target_name = "SERIAL2", "Ethernet1/25"
+        for inventory in inventories.values():
+            inventory["vpc100"]["configData"]["networkOS"]["policy"]["peer1MemberPorts"] = []
+    else:
+        inventories["SERIAL2"].pop("ethernet1/25")
+        target_switch, target_name = "SERIAL1", "Ethernet1/24"
+        for inventory in inventories.values():
+            inventory["vpc100"]["configData"]["networkOS"]["policy"]["peer2MemberPorts"] = []
+
+    if switch_local_peer1:
+        peer_policy = inventories["SERIAL2"]["vpc100"]["configData"]["networkOS"]["policy"]
+        for suffix in ("PortChannelId", "MemberPorts"):
+            peer_policy[f"peer1{suffix}"], peer_policy[f"peer2{suffix}"] = (
+                peer_policy[f"peer2{suffix}"],
+                peer_policy[f"peer1{suffix}"],
+            )
+        peer_policy["peer1PortChannelDescription"] = "local side"
+        peer_policy["peer2PortChannelDescription"] = "peer side"
+        local_policy = inventories["SERIAL1"]["vpc100"]["configData"]["networkOS"]["policy"]
+        local_policy["peer1PortChannelDescription"] = "peer side"
+        local_policy["peer2PortChannelDescription"] = "local side"
+
+    if empty_echo != "explicit":
+        for inventory in inventories.values():
+            policy = inventory["vpc100"]["configData"]["networkOS"]["policy"]
+            empty_field = next(field for field in ("peer1MemberPorts", "peer2MemberPorts") if policy.get(field) == [])
+            if empty_echo == "missing":
+                policy.pop(empty_field)
+            else:
+                policy[empty_field] = None
+
+    result = EthernetMembershipIndex(inventories).validate(target_switch, target_name)
+
+    assert result.pair_validated is True
+    assert result.owner.switch_id == target_switch
+
+
+@pytest.mark.parametrize(
+    "local_echo,peer_echo",
+    [
+        ("missing", "empty"),
+        ("null", "missing"),
+        ("empty", "null"),
+    ],
+)
+def test_vpc_empty_member_list_echoes_are_fingerprint_equivalent(local_echo, peer_echo):
+    """Missing, null, and explicit-empty peer lists are equivalent across copies."""
+
+    inventories = _valid_vpc_inventories()
+    inventories["SERIAL2"].pop("ethernet1/25")
+
+    def apply_echo(policy, echo):
+        if echo == "missing":
+            policy.pop("peer2MemberPorts")
+        elif echo == "null":
+            policy["peer2MemberPorts"] = None
+        else:
+            policy["peer2MemberPorts"] = []
+
+    apply_echo(inventories["SERIAL1"]["vpc100"]["configData"]["networkOS"]["policy"], local_echo)
+    apply_echo(inventories["SERIAL2"]["vpc100"]["configData"]["networkOS"]["policy"], peer_echo)
+
+    result = EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
+
+    assert result.pair_validated is True
+    assert result.owner.switch_id == "SERIAL1"
 
 
 @pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])

@@ -885,7 +885,42 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         )
         return True
 
-    def _check_port_channel_restrictions(self, model_instance: ModelType, existing_data: dict | None = None) -> None:
+    def _host_policy_replay_is_noop(self, model_instance: ModelType, existing_data: dict | None) -> bool:
+        """Return whether host-shaped intent would leave the current wire policy unchanged.
+
+        Contradictory controller evidence (a host policy plus an operational
+        port-channel ID) must normally fail closed.  Fabric-wide overridden
+        input can nevertheless contain an exact replay of an unrelated
+        bystander so that it is preserved while another interface is reset.
+        With deployment disabled, that exact replay causes no controller
+        write and is safe to let the state machine classify as ``no_diff``.
+
+        Any parsing or comparison uncertainty returns ``False`` so the caller
+        retains the fail-closed behavior.
+        """
+        if existing_data is None:
+            return False
+        try:
+            response = deepcopy(existing_data)
+            response.setdefault("switchIp", model_instance.switch_ip)
+            response.setdefault("interfaceName", model_instance.interface_name)
+            existing_model = self.model_class.from_response(response)
+            state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+            exclude_unset = state == "merged"
+            candidate = model_instance
+            if not exclude_unset:
+                candidate = model_instance.prepare_for_replacement(existing_model)
+            return existing_model.get_diff(candidate, exclude_unset=exclude_unset)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    def _check_port_channel_restrictions(
+        self,
+        model_instance: ModelType,
+        existing_data: dict | None = None,
+        *,
+        allow_unchanged: bool = False,
+    ) -> None:
         """
         # Summary
 
@@ -915,6 +950,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return
         policy_type = self._existing_policy_type(existing_data)
         if classify_member_policy(policy_type) == MemberPolicyDisposition.NOT_MEMBER:
+            if allow_unchanged and not self.deploy and self._host_policy_replay_is_noop(model_instance, existing_data):
+                return
             raise RuntimeError(
                 f"Interface {model_instance.interface_name} has operational port-channel "
                 f"membership {port_channel_id}, but its configured policy is "
@@ -1081,7 +1118,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             member_target = self._prepare_member_intent(model_instance, existing_data)
             self._check_fabric_ownership(model_instance, existing_data)
             if not member_target:
-                self._check_port_channel_restrictions(model_instance, existing_data)
+                self._check_port_channel_restrictions(model_instance, existing_data, allow_unchanged=True)
 
     def preflight_delete(self, model_instances: Sequence[ModelType]) -> None:
         """

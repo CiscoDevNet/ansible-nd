@@ -85,13 +85,27 @@ class InterfaceOffsetPaginator:
             page_identities = self._page_identities(page, identity, context, offset, page_number, len(records))
             signature = tuple(page_identities)
             if signature and signature in signatures:
-                self._raise(context, "repeated page", offset, page_number, len(records), metadata)
+                self._raise(
+                    context,
+                    "repeated page",
+                    offset,
+                    page_number,
+                    len(records),
+                    metadata,
+                )
             if signature:
                 signatures.add(signature)
 
             duplicates = [item_identity for item_identity in page_identities if item_identity in identities]
             if duplicates:
-                self._raise(context, f"duplicate interface identity {duplicates[0]!r}", offset, page_number, len(records), metadata)
+                self._raise(
+                    context,
+                    f"duplicate interface identity {duplicates[0]!r}",
+                    offset,
+                    page_number,
+                    len(records),
+                    metadata,
+                )
 
             records.extend(page)
             identities.update(page_identities)
@@ -109,9 +123,23 @@ class InterfaceOffsetPaginator:
             if not more:
                 return records
             if not page or next_offset <= offset:
-                self._raise(context, "pagination made no progress", offset, page_number, len(records), metadata)
+                self._raise(
+                    context,
+                    "pagination made no progress",
+                    offset,
+                    page_number,
+                    len(records),
+                    metadata,
+                )
             if page_number == self.max_pages:
-                self._raise(context, f"maximum page limit {self.max_pages} reached", offset, page_number, len(records), metadata)
+                self._raise(
+                    context,
+                    f"maximum page limit {self.max_pages} reached",
+                    offset,
+                    page_number,
+                    len(records),
+                    metadata,
+                )
             offset = next_offset
 
         raise AssertionError("InterfaceOffsetPaginator loop exited without returning or raising")
@@ -128,43 +156,120 @@ class InterfaceOffsetPaginator:
         """Validate one response and normalize its rows and page metadata."""
 
         if not isinstance(response, Mapping):
-            self._raise(context, f"invalid response type {type(response).__name__}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid response type {type(response).__name__}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         if collection_key not in response:
             if response:
-                self._raise(context, f"response lacks required {collection_key!r} wrapper", offset, page_number, record_count, None)
+                self._raise(
+                    context,
+                    f"response lacks required {collection_key!r} wrapper",
+                    offset,
+                    page_number,
+                    record_count,
+                    None,
+                )
             raw_page: Any = []
         else:
             raw_page = response.get(collection_key)
         if not isinstance(raw_page, list):
-            self._raise(context, f"invalid {collection_key!r} wrapper type {type(raw_page).__name__}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid {collection_key!r} wrapper type {type(raw_page).__name__}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         page: list[dict[str, Any]] = []
         for index, item in enumerate(raw_page):
             if not isinstance(item, dict):
-                self._raise(context, f"row {index} has invalid type {type(item).__name__}", offset, page_number, record_count, None)
+                self._raise(
+                    context,
+                    f"row {index} has invalid type {type(item).__name__}",
+                    offset,
+                    page_number,
+                    record_count,
+                    None,
+                )
             page.append(item)
         metadata = self._metadata(response, context, offset, page_number, record_count)
         return page, metadata
 
-    def _metadata(self, response: Mapping[str, Any], context: str, offset: int, page_number: int, record_count: int) -> _PageMetadata:
+    def _metadata(
+        self,
+        response: Mapping[str, Any],
+        context: str,
+        offset: int,
+        page_number: int,
+        record_count: int,
+    ) -> _PageMetadata:
         """Return normalized ``total``, ``remaining``, and ``links.next`` evidence."""
 
         if "meta" in response and "metadata" in response:
-            self._raise(context, "response supplies both 'meta' and 'metadata' wrappers", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                "response supplies both 'meta' and 'metadata' wrappers",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         metadata_key = "meta" if "meta" in response else "metadata" if "metadata" in response else None
         if metadata_key is None:
             return _PageMetadata()
         raw_metadata = response.get(metadata_key)
         if not isinstance(raw_metadata, Mapping):
-            self._raise(context, f"invalid {metadata_key!r} type {type(raw_metadata).__name__}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid {metadata_key!r} type {type(raw_metadata).__name__}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
 
         raw_counts = raw_metadata.get("counts")
         if raw_counts is not None and not isinstance(raw_counts, Mapping):
-            self._raise(context, f"invalid {metadata_key}.counts type {type(raw_counts).__name__}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid {metadata_key}.counts type {type(raw_counts).__name__}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         counts = raw_counts or {}
         nested_total = self._count_value(counts.get("total"), "total", context, offset, page_number, record_count)
-        top_total = self._count_value(raw_metadata.get("total"), "total", context, offset, page_number, record_count)
-        nested_remaining = self._count_value(counts.get("remaining"), "remaining", context, offset, page_number, record_count)
-        top_remaining = self._count_value(raw_metadata.get("remaining"), "remaining", context, offset, page_number, record_count)
+        top_total = self._count_value(
+            raw_metadata.get("total"),
+            "total",
+            context,
+            offset,
+            page_number,
+            record_count,
+        )
+        nested_remaining = self._count_value(
+            counts.get("remaining"),
+            "remaining",
+            context,
+            offset,
+            page_number,
+            record_count,
+        )
+        top_remaining = self._count_value(
+            raw_metadata.get("remaining"),
+            "remaining",
+            context,
+            offset,
+            page_number,
+            record_count,
+        )
         total = self._coalesce_count(
             nested_total,
             top_total,
@@ -186,17 +291,36 @@ class InterfaceOffsetPaginator:
 
         raw_links = raw_metadata.get("links")
         if raw_links is not None and not isinstance(raw_links, Mapping):
-            self._raise(context, f"invalid {metadata_key}.links type {type(raw_links).__name__}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid {metadata_key}.links type {type(raw_links).__name__}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         next_present: bool | None = None
         next_offset: int | None = None
         if isinstance(raw_links, Mapping) and "next" in raw_links:
             next_value = raw_links.get("next")
             if next_value is not None and not isinstance(next_value, str):
-                self._raise(context, f"invalid {metadata_key}.links.next type {type(next_value).__name__}", offset, page_number, record_count, None)
+                self._raise(
+                    context,
+                    f"invalid {metadata_key}.links.next type {type(next_value).__name__}",
+                    offset,
+                    page_number,
+                    record_count,
+                    None,
+                )
             next_present = bool(next_value)
             if next_present:
                 next_offset = self._next_link_offset(next_value, context, offset, page_number, record_count)
-        return _PageMetadata(total=total, remaining=remaining, next_present=next_present, next_offset=next_offset)
+        return _PageMetadata(
+            total=total,
+            remaining=remaining,
+            next_present=next_present,
+            next_offset=next_offset,
+        )
 
     def _coalesce_count(
         self,
@@ -234,10 +358,24 @@ class InterfaceOffsetPaginator:
         query = parse_qs(urlsplit(value).query, keep_blank_values=True)
         values = query.get("offset")
         if values is None or len(values) != 1:
-            self._raise(context, f"links.next must contain exactly one offset query value: {value!r}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"links.next must contain exactly one offset query value: {value!r}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         raw_offset = values[0].strip()
         if not raw_offset.isdigit():
-            self._raise(context, f"links.next has invalid offset {values[0]!r}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"links.next has invalid offset {values[0]!r}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         return int(raw_offset)
 
     def _count_value(
@@ -254,13 +392,34 @@ class InterfaceOffsetPaginator:
         if value is None:
             return None
         if isinstance(value, bool):
-            self._raise(context, f"invalid boolean {name} metadata", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid boolean {name} metadata",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         if isinstance(value, str):
             if not value.strip().isdigit():
-                self._raise(context, f"invalid {name} metadata {value!r}", offset, page_number, record_count, None)
+                self._raise(
+                    context,
+                    f"invalid {name} metadata {value!r}",
+                    offset,
+                    page_number,
+                    record_count,
+                    None,
+                )
             value = int(value.strip())
         if not isinstance(value, int) or value < 0:
-            self._raise(context, f"invalid {name} metadata {value!r}", offset, page_number, record_count, None)
+            self._raise(
+                context,
+                f"invalid {name} metadata {value!r}",
+                offset,
+                page_number,
+                record_count,
+                None,
+            )
         return value
 
     def _page_identities(
@@ -281,9 +440,24 @@ class InterfaceOffsetPaginator:
                 item_identity = identity(item)
                 hash(item_identity)
             except Exception as error:
-                self._raise(context, f"row {index} has invalid identity: {error}", offset, page_number, record_count, None)
+                self._raise(
+                    context,
+                    f"row {index} has invalid identity: {error}",
+                    offset,
+                    page_number,
+                    record_count,
+                    None,
+                    cause=error,
+                )
             if item_identity in page_seen:
-                self._raise(context, f"duplicate interface identity {item_identity!r} within one page", offset, page_number, record_count, None)
+                self._raise(
+                    context,
+                    f"duplicate interface identity {item_identity!r} within one page",
+                    offset,
+                    page_number,
+                    record_count,
+                    None,
+                )
             page_seen.add(item_identity)
             identities.append(item_identity)
         return identities
@@ -305,7 +479,14 @@ class InterfaceOffsetPaginator:
         signals: list[tuple[str, bool]] = []
         if metadata.total is not None:
             if next_offset > metadata.total:
-                self._raise(context, "received rows exceed total metadata", offset, page_number, record_count, metadata)
+                self._raise(
+                    context,
+                    "received rows exceed total metadata",
+                    offset,
+                    page_number,
+                    record_count,
+                    metadata,
+                )
             page_total = metadata.total
         elif metadata.remaining is not None:
             page_total = next_offset + metadata.remaining
@@ -325,7 +506,14 @@ class InterfaceOffsetPaginator:
             expected_total = page_total
         if expected_total is not None:
             if next_offset > expected_total:
-                self._raise(context, "received rows exceed expected total", offset, page_number, record_count, metadata)
+                self._raise(
+                    context,
+                    "received rows exceed expected total",
+                    offset,
+                    page_number,
+                    record_count,
+                    metadata,
+                )
             signals.append(("total", next_offset < expected_total))
         if metadata.remaining is not None:
             signals.append(("remaining", metadata.remaining > 0))
@@ -344,7 +532,14 @@ class InterfaceOffsetPaginator:
         values = {value for _name, value in signals}
         if len(values) > 1:
             detail = ", ".join(f"{name}={value}" for name, value in signals)
-            self._raise(context, f"contradictory pagination metadata ({detail})", offset, page_number, record_count, metadata)
+            self._raise(
+                context,
+                f"contradictory pagination metadata ({detail})",
+                offset,
+                page_number,
+                record_count,
+                metadata,
+            )
         if metadata.total is not None and metadata.remaining is not None:
             expected_remaining = metadata.total - next_offset
             if metadata.remaining != expected_remaining:
@@ -359,7 +554,14 @@ class InterfaceOffsetPaginator:
         if signals:
             more = signals[0][1]
             if more and page_length == 0:
-                self._raise(context, "empty page while metadata reports more records", offset, page_number, record_count, metadata)
+                self._raise(
+                    context,
+                    "empty page while metadata reports more records",
+                    offset,
+                    page_number,
+                    record_count,
+                    metadata,
+                )
             return more, expected_total
         return page_length >= self.page_size, expected_total
 
@@ -371,10 +573,14 @@ class InterfaceOffsetPaginator:
         page_number: int,
         record_count: int,
         metadata: _PageMetadata | None,
+        cause: Exception | None = None,
     ) -> NoReturn:
         """Raise a diagnostic pagination error without returning partial state."""
 
-        raise InterfacePaginationError(
+        error = InterfacePaginationError(
             f"Cannot complete {context}: {reason}; offset={offset}, page_size={self.page_size}, "
             f"pages_fetched={page_number}, unique_records={record_count}, metadata={metadata!r}."
         )
+        if cause is not None:
+            raise error from cause
+        raise error

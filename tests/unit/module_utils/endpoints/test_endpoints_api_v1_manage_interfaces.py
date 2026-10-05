@@ -26,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesListGet,
     EpManageInterfacesNormalize,
     EpManageInterfacesPost,
+    EpManageInterfacesPreview,
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
     ManageInterfacesListEndpointParams,
@@ -901,22 +902,27 @@ def test_ep_manage_interfaces_00730():
     """
     # Summary
 
-    Verify fabric_name is encoded in the deploy/normalize/remove paths (interfaceActions endpoints).
+    Verify fabric_name is encoded in the deploy/preview/normalize/remove paths (interfaceActions endpoints).
 
     ## Test
 
     - fabric_name = "fab/odd"
-    - Deploy, Normalize, and Remove paths all encode the slash
+    - Deploy, Preview, Normalize, and Remove paths all encode the slash
 
     ## Classes and Methods
 
     - EpManageInterfacesDeploy.path
+    - EpManageInterfacesPreview.path
     - EpManageInterfacesNormalize.path
     - EpManageInterfacesRemove.path
     """
     deploy = EpManageInterfacesDeploy()
     deploy.fabric_name = "fab/odd"
     assert deploy.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/deploy"
+
+    preview = EpManageInterfacesPreview()
+    preview.fabric_name = "fab/odd"
+    assert preview.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/preview"
 
     normalize = EpManageInterfacesNormalize()
     normalize.fabric_name = "fab/odd"
@@ -1014,5 +1020,96 @@ def test_ep_manage_interfaces_00830():
     - EpManageInterfacesNormalize.__init__()
     """
     instance = EpManageInterfacesNormalize()
+    assert not hasattr(instance, "switch_sn")
+    assert not hasattr(instance, "interface_name")
+
+
+# =============================================================================
+# Test: EpManageInterfacesPreview
+# =============================================================================
+
+
+def test_ep_manage_interfaces_00900():
+    """
+    # Summary
+
+    Verify EpManageInterfacesPreview basic instantiation.
+
+    ## Test
+
+    - Instance can be created
+    - class_name is set correctly
+    - verb is POST
+
+    ## Classes and Methods
+
+    - EpManageInterfacesPreview.__init__()
+    - EpManageInterfacesPreview.verb
+    - EpManageInterfacesPreview.class_name
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesPreview()
+    assert instance.class_name == "EpManageInterfacesPreview"
+    assert instance.verb == HttpVerbEnum.POST
+
+
+def test_ep_manage_interfaces_00910():
+    """
+    # Summary
+
+    Verify path raises ValueError when fabric_name is None.
+
+    ## Test
+
+    - fabric_name not set
+    - Accessing path raises ValueError
+
+    ## Classes and Methods
+
+    - EpManageInterfacesPreview.path
+    """
+    instance = EpManageInterfacesPreview()
+    with pytest.raises(ValueError, match="fabric_name must be set"):
+        result = instance.path  # pylint: disable=unused-variable
+
+
+def test_ep_manage_interfaces_00920():
+    """
+    # Summary
+
+    Verify path returns correct preview URL.
+
+    ## Test
+
+    - fabric_name set
+    - path returns /api/v1/manage/fabrics/fab1/interfaceActions/preview
+
+    ## Classes and Methods
+
+    - EpManageInterfacesPreview.path
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesPreview()
+        instance.fabric_name = "fab1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/fab1/interfaceActions/preview"
+
+
+def test_ep_manage_interfaces_00930():
+    """
+    # Summary
+
+    Verify Preview does NOT have switch_sn or interface_name attributes.
+
+    ## Test
+
+    - EpManageInterfacesPreview only has FabricNameMixin
+    - Accessing switch_sn or interface_name raises AttributeError
+
+    ## Classes and Methods
+
+    - EpManageInterfacesPreview.__init__()
+    """
+    instance = EpManageInterfacesPreview()
     assert not hasattr(instance, "switch_sn")
     assert not hasattr(instance, "interface_name")

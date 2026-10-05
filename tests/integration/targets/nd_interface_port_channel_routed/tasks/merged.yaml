@@ -59,6 +59,125 @@
       - cm_merged_idem is not changed
       - nm_merged_idem is not changed
 
+# --- EXPLICIT EMPTY MEMBERSHIP: populated -> empty -> idempotent replay ---
+
+- name: "MERGED EMPTY MEMBERS: Stage explicit ports empty without deployment"
+  cisco.nd.nd_interface_port_channel_routed: &pc_routed_empty_no_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports: []
+    config_actions:
+      deploy: false
+    state: merged
+  register: nm_empty_no_deploy
+
+- name: "MERGED EMPTY MEMBERS: Replay staged explicit ports empty"
+  cisco.nd.nd_interface_port_channel_routed: *pc_routed_empty_no_deploy
+  register: nm_empty_no_deploy_idem
+
+- name: "MERGED EMPTY MEMBERS: Verify staged clear and replay"
+  vars:
+    cleared: "{{ nm_empty_no_deploy.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_empty_no_deploy is changed
+      - cleared.config_data.network_os.policy.ports == []
+      - nm_empty_no_deploy_idem is not changed
+
+- name: "MERGED EMPTY MEMBERS: Check exact staged intent with deployment enabled"
+  cisco.nd.nd_interface_port_channel_routed: &pc_routed_empty_reconcile_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports: []
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_empty_reconcile_deploy
+
+- name: "MERGED EMPTY MEMBERS: Deploy exact staged intent"
+  cisco.nd.nd_interface_port_channel_routed: *pc_routed_empty_reconcile_deploy
+  register: nm_empty_reconcile_deploy
+
+- name: "MERGED EMPTY MEMBERS: Replay deployed exact staged intent"
+  cisco.nd.nd_interface_port_channel_routed: *pc_routed_empty_reconcile_deploy
+  register: nm_empty_reconcile_deploy_idem
+
+- name: "MERGED EMPTY MEMBERS: Verify no-diff deployment reconciliation"
+  vars:
+    cleared: "{{ nm_empty_reconcile_deploy.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_empty_reconcile_deploy is changed
+      - nm_empty_reconcile_deploy is changed
+      - cleared.config_data.network_os.policy.ports == []
+      - nm_empty_reconcile_deploy_idem is not changed
+
+- name: "MERGED EMPTY MEMBERS: Restore populated membership with deployment"
+  cisco.nd.nd_interface_port_channel_routed: &pc_routed_restore_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520 }}"
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_empty_no_deploy_restore
+
+- name: "MERGED EMPTY MEMBERS: Clear populated membership with deployment"
+  cisco.nd.nd_interface_port_channel_routed: &pc_routed_empty_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports: []
+    config_actions:
+      deploy: true
+    state: merged
+  register: nm_empty_deploy
+
+- name: "MERGED EMPTY MEMBERS: Replay deployed explicit ports empty"
+  cisco.nd.nd_interface_port_channel_routed: *pc_routed_empty_deploy
+  register: nm_empty_deploy_idem
+
+- name: "MERGED EMPTY MEMBERS: Verify deployed clear and replay"
+  vars:
+    cleared: "{{ nm_empty_deploy.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_empty_no_deploy_restore is changed
+      - nm_empty_deploy is changed
+      - cleared.config_data.network_os.policy.ports == []
+      - nm_empty_deploy_idem is not changed
+
+- name: "MERGED EMPTY MEMBERS: Restore baseline after deployed clear"
+  cisco.nd.nd_interface_port_channel_routed: *pc_routed_restore_deploy
+  register: nm_empty_deploy_restore
+
+- name: "MERGED EMPTY MEMBERS: Verify final baseline restoration"
+  ansible.builtin.assert:
+    that:
+      - nm_empty_deploy_restore is changed
+
 # --- MERGED DEFAULTS-ONLY: a port-channel that names only its member is idempotent against ND's default echoes ---
 
 - name: "MERGED DEFAULTS-ONLY: Create port-channel522 with only a member"

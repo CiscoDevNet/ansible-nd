@@ -208,6 +208,19 @@ class _Controller:
             if self.fail_put or put_number == self.fail_put_number:
                 raise RuntimeError("injected member PUT failure")
             return {}
+        if verb_value == HttpVerbEnum.POST.value and path.endswith("/interfaceActions/preview"):
+            interfaces = data.get("interfaces", []) if isinstance(data, dict) else []
+            return {
+                "configurationDiffs": [
+                    {
+                        "interfaceName": item["interfaceName"],
+                        "switchId": item["switchId"],
+                        "status": "success",
+                        "combinedConfigs": [{"configType": "pending", "lines": 0, "config": ""}],
+                    }
+                    for item in interfaces
+                ]
+            }
         if verb_value == HttpVerbEnum.POST.value and path.endswith("/interfaceActions/deploy"):
             return {}
         raise AssertionError(f"Unexpected controller request: {verb_value} {path}; data={data}")
@@ -613,8 +626,8 @@ def test_member_update_deploys_exactly_once_when_enabled(case: _MemberCase) -> N
 
 
 @pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)
-def test_idempotent_member_replay_never_deploys_when_enabled(case: _MemberCase) -> None:
-    """Deploy true does not turn an idempotent member replay into controller I/O."""
+def test_idempotent_member_replay_verifies_but_never_redeploys_when_converged(case: _MemberCase) -> None:
+    """Deploy true verifies execution convergence without repeating PUT or deploy."""
     state_machine, controller = _state_machine(
         case,
         state="merged",
@@ -625,7 +638,10 @@ def test_idempotent_member_replay_never_deploys_when_enabled(case: _MemberCase) 
     state_machine.manage_state()
     state_machine.model_orchestrator.deploy_pending()
 
-    assert _write_calls(controller) == []
+    writes = _write_calls(controller)
+    assert len(writes) == 1
+    assert writes[0]["verb"] == HttpVerbEnum.POST.value
+    assert writes[0]["path"].endswith("/interfaceActions/preview")
     assert state_machine.output.format()["changed"] is False
 
 

@@ -40,7 +40,9 @@ import inspect
 from typing import ClassVar, Literal, Type
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDelete,
     EpManageInterfacesGet,
@@ -50,15 +52,44 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import VpcInterfaceBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import (
+    AccessVpcHostInterfaceModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
+    TrunkVpcHostInterfaceModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import (
+    AccessVpcHostInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import (
+    VpcInterfaceBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import (
+    TrunkVpcHostInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import (
+    load_fixture,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 # =============================================================================
@@ -71,6 +102,10 @@ class _StubVpcPolicyModel(NDNestedModel):
 
     policy_type: Literal["accessVpcHost"] = Field(default="accessVpcHost", alias="policyType", frozen=True)
     access_vlan: int | None = Field(default=None, alias="accessVlan")
+    peer1_member_ports: list[str] = Field(default_factory=list, alias="peer1MemberPorts")
+    peer1_port_channel_id: int | None = Field(default=None, alias="peer1PortChannelId")
+    peer2_member_ports: list[str] = Field(default_factory=list, alias="peer2MemberPorts")
+    peer2_port_channel_id: int | None = Field(default=None, alias="peer2PortChannelId")
     peer_switch_id: str | None = Field(default=None, alias="peerSwitchId")
 
 
@@ -118,6 +153,18 @@ class _StubVpcOrchestrator(VpcInterfaceBaseOrchestrator):
 def responses_vpc_base(key: str):
     """Load fixture data for the test_vpc_interface_base.json file."""
     return load_fixture("test_vpc_interface_base")[key]
+
+
+def _vpc_pair_response(switch_id: str, peer_switch_id: str) -> dict:
+    """Build one authoritative vPC-pair response for reciprocal-safety tests."""
+
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/switches/{switch_id}/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": switch_id, "peerSwitchId": peer_switch_id},
+    }
 
 
 def _build_rest_send(
@@ -174,14 +221,143 @@ def _build_model(
     switch_ip: str = "192.168.1.1",
     interface_name: str = "vpc501",
     include_config: bool = True,
+    peer1_member_ports: list[str] | None = None,
+    peer2_member_ports: list[str] | None = None,
 ) -> _StubVpcInterfaceModel:
     """Build a minimal `_StubVpcInterfaceModel` instance for CRUD tests."""
     kwargs: dict = {"switch_ip": switch_ip, "interface_name": interface_name}
     if include_config:
         kwargs["config_data"] = _StubVpcConfigDataModel(
-            network_os=_StubVpcNetworkOSModel(policy=_StubVpcPolicyModel(access_vlan=100)),
+            network_os=_StubVpcNetworkOSModel(
+                policy=_StubVpcPolicyModel(
+                    access_vlan=100,
+                    peer1_member_ports=peer1_member_ports or [],
+                    peer1_port_channel_id=501,
+                    peer2_member_ports=peer2_member_ports or [],
+                    peer2_port_channel_id=501,
+                )
+            ),
         )
     return _StubVpcInterfaceModel(**kwargs)
+
+
+_MEMBERSHIP_PRIMARY = "FDO11111AAA"
+_MEMBERSHIP_PEER = "FDO22222BBB"
+
+
+def _vpc_parent_record(
+    switch_id: str,
+    peer_switch_id: str,
+    *,
+    parent_name: str = "vpc501",
+    mode: str = "access",
+    policy_type: str = "accessVpcHost",
+) -> dict:
+    """Return a pair-wide one-sided vPC parent echo for membership preflight tests."""
+
+    return {
+        "switchId": switch_id,
+        "interfaceName": parent_name,
+        "interfaceType": "vpc",
+        "configData": {
+            "mode": mode,
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": policy_type,
+                    "peerSwitchId": peer_switch_id,
+                    "peer1PortChannelId": 501,
+                    "peer1MemberPorts": ["Ethernet1/42"],
+                    "peer2PortChannelId": 501,
+                    "peer2MemberPorts": [],
+                },
+            },
+        },
+    }
+
+
+def _vpc_member_record(*, mode: str = "access", policy_type: str = "accessVpcPoMember") -> dict:
+    """Return the physical member that proves the parent slot belongs to peer 1."""
+
+    return {
+        "switchId": _MEMBERSHIP_PRIMARY,
+        "interfaceName": "Ethernet1/42",
+        "interfaceType": "ethernet",
+        "configData": {
+            "mode": mode,
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {
+                    "policyType": policy_type,
+                    "portChannelId": "501",
+                    "primaryInterface": "vpc501",
+                },
+            },
+        },
+        "operData": {"portChannelId": 501},
+    }
+
+
+def _membership_inventories(
+    *,
+    mode: str = "access",
+    parent_policy_type: str = "accessVpcHost",
+    member_policy_type: str = "accessVpcPoMember",
+) -> dict[str, dict[str, dict]]:
+    """Return reciprocal parent copies with one physical member on the primary."""
+
+    primary_parent = _vpc_parent_record(
+        _MEMBERSHIP_PRIMARY,
+        _MEMBERSHIP_PEER,
+        mode=mode,
+        policy_type=parent_policy_type,
+    )
+    peer_parent = _vpc_parent_record(
+        _MEMBERSHIP_PEER,
+        _MEMBERSHIP_PRIMARY,
+        mode=mode,
+        policy_type=parent_policy_type,
+    )
+    member = _vpc_member_record(mode=mode, policy_type=member_policy_type)
+    return {
+        _MEMBERSHIP_PRIMARY: {
+            "vpc501": primary_parent,
+            "ethernet1/42": member,
+        },
+        _MEMBERSHIP_PEER: {"vpc501": peer_parent},
+    }
+
+
+def _wire_membership_pair(
+    monkeypatch,
+    inventories: dict[str, dict[str, dict]],
+    orchestrator_class: type[VpcInterfaceBaseOrchestrator] = _StubVpcOrchestrator,
+) -> None:
+    """Replace REST-backed identity/inventory lookups with one deterministic pair."""
+
+    switch_ids = {
+        "192.168.1.1": _MEMBERSHIP_PRIMARY,
+        "192.168.1.2": _MEMBERSHIP_PEER,
+    }
+    peer_ids = {
+        _MEMBERSHIP_PRIMARY: _MEMBERSHIP_PEER,
+        _MEMBERSHIP_PEER: _MEMBERSHIP_PRIMARY,
+    }
+    monkeypatch.setattr(
+        orchestrator_class,
+        "_resolve_switch_id",
+        lambda self, switch_ip: switch_ids[switch_ip],
+    )
+    monkeypatch.setattr(
+        orchestrator_class,
+        "_resolve_peer_switch_id",
+        lambda self, switch_ip, primary_serial: peer_ids[primary_serial],
+    )
+    monkeypatch.setattr(
+        orchestrator_class,
+        "_switch_interfaces",
+        lambda self, switch_id: inventories[switch_id],
+    )
 
 
 # =============================================================================
@@ -282,6 +458,124 @@ def test_vpc_interface_base_00100() -> None:
 # =============================================================================
 
 
+def test_vpc_preview_verification_expands_to_both_cached_peers() -> None:
+    """One submitted vPC deploy must preview both switch copies when needed."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance._peer_serial_cache["FDO11111AAA"] = "FDO22222BBB"
+
+    pairs = instance._preview_verification_pairs([("vpc501", "FDO11111AAA")])
+
+    assert pairs == [
+        ("vpc501", "FDO11111AAA"),
+        ("vpc501", "FDO22222BBB"),
+    ]
+
+
+def test_vpc_exact_deploy_result_does_not_resolve_peer_or_preview() -> None:
+    """Exact deploy evidence is matched to the one submitted vPC identity."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "results": [
+                    {
+                        "interfaceName": "vpc501",
+                        "switchId": "FDO11111AAA",
+                        "status": "success",
+                    }
+                ]
+            },
+        }
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+    instance.deploy = True
+    instance._queue_deploy("vpc501", "FDO11111AAA")
+
+    instance.deploy_pending()
+
+    assert instance.rest_send.response_count == 1
+    assert instance._peer_serial_cache == {}
+    assert instance._pending_deploys == []
+
+
+def test_vpc_derived_deploy_results_require_exact_pair_preview() -> None:
+    """ND's derived port-channel rows defer vPC convergence proof to preview."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "results": [
+                    {
+                        "interfaceName": "port-channel501",
+                        "switchId": "FDO11111AAA",
+                        "status": "success",
+                    },
+                    {
+                        "interfaceName": "port-channel501",
+                        "switchId": "FDO22222BBB",
+                        "status": "success",
+                    },
+                ]
+            },
+        }
+        yield {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/preview",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "configurationDiffs": [
+                    {
+                        "interfaceName": "vpc501",
+                        "switchId": switch_id,
+                        "status": "success",
+                        "combinedConfigs": [
+                            {
+                                "configType": "pending",
+                                "lines": 0,
+                                "config": "interface vpc501\n",
+                            },
+                        ],
+                    }
+                    for switch_id in ("FDO11111AAA", "FDO22222BBB")
+                ]
+            },
+        }
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+    instance.deploy = True
+    instance._peer_serial_cache.update(
+        {
+            "FDO11111AAA": "FDO22222BBB",
+            "FDO22222BBB": "FDO11111AAA",
+        }
+    )
+    instance._register_deploy_derived_identities(
+        "vpc501",
+        "FDO11111AAA",
+        [
+            ("port-channel501", "FDO11111AAA"),
+            ("port-channel501", "FDO22222BBB"),
+        ],
+    )
+    instance._queue_deploy("vpc501", "FDO11111AAA")
+
+    instance.deploy_pending()
+
+    assert instance.rest_send.response_count == 2
+    assert instance.rest_send.path.endswith("/interfaceActions/preview")
+    assert instance._pending_deploys == []
+
+
 def test_vpc_interface_base_00200() -> None:
     """
     # Summary
@@ -309,6 +603,8 @@ def test_vpc_interface_base_00200() -> None:
         peer = instance._resolve_peer_switch_id("192.168.1.1", "FDO11111AAA")
 
     assert peer == "FDO22222BBB"
+    # A one-sided endpoint record is cached only in the direction observed; it
+    # must not fabricate reciprocal evidence for the peer.
     assert instance._peer_serial_cache == {"FDO11111AAA": "FDO22222BBB"}
 
 
@@ -404,6 +700,45 @@ def test_vpc_interface_base_00230() -> None:
         instance._resolve_peer_switch_id("192.168.1.1", "FDO11111AAA")
 
     assert instance._peer_serial_cache == {}
+
+
+def test_vpc_reciprocal_pair_resolution_rejects_a_to_b_b_to_c() -> None:
+    """Mutation-grade pair resolution requires B to identify A as its peer."""
+
+    def responses():
+        yield _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
+        yield _vpc_pair_response("FDO22222BBB", "FDO33333CCC")
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with pytest.raises(RuntimeError, match=r"not reciprocal.*FDO33333CCC"):
+        instance._resolve_reciprocal_peer_switch_id("192.168.1.1", "FDO11111AAA")
+
+
+def test_vpc_pair_resolution_rejects_mismatched_returned_switch_id() -> None:
+    """A switch-scoped vpcPair response cannot identify another switch."""
+
+    response = _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
+    response["DATA"]["switchId"] = "FDO99999ZZZ"
+    instance = _build_orchestrator(ResponseGenerator(iter((response,))))
+
+    with pytest.raises(RuntimeError, match=r"declares switchId 'FDO99999ZZZ'"):
+        instance._resolve_peer_switch_id("192.168.1.1", "FDO11111AAA")
+
+
+def test_vpc_pair_resolution_reconciles_interface_echo_before_mutation() -> None:
+    """Authoritative pair evidence may not contradict a cached interface echo."""
+
+    def responses():
+        yield _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+    conflicting_echo = _vpc_parent_record("FDO11111AAA", "FDO33333CCC")
+    instance._pair_key(conflicting_echo, "192.168.1.1", "FDO11111AAA")
+
+    with pytest.raises(RuntimeError, match=r"conflicts with interface inventory"):
+        instance._resolve_reciprocal_peer_switch_id("192.168.1.1", "FDO11111AAA")
+    assert instance.rest_send.response_count == 1
 
 
 # =============================================================================
@@ -506,6 +841,7 @@ def test_vpc_interface_base_00400() -> None:
     def responses():
         yield responses_vpc_base(f"{method_name}a")
         yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
@@ -551,6 +887,7 @@ def test_vpc_interface_base_00410() -> None:
     def responses():
         yield responses_vpc_base(f"{method_name}a")
         yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
@@ -625,6 +962,7 @@ def test_vpc_interface_base_00500() -> None:
     def responses():
         yield responses_vpc_base(f"{method_name}a")
         yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
@@ -667,6 +1005,7 @@ def test_vpc_interface_base_00510() -> None:
     def responses():
         yield responses_vpc_base(f"{method_name}a")
         yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
@@ -678,6 +1017,228 @@ def test_vpc_interface_base_00510() -> None:
         instance.update(model)
 
     assert instance._pending_deploys == []
+
+
+def test_vpc_update_defers_removed_member_identity_to_parent_preview(monkeypatch) -> None:
+    """An update must not guess a removed member's switch from peer-slot order."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 200,
+            "METHOD": "PUT",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/vpc501",
+            "MESSAGE": "OK",
+            "DATA": {},
+        }
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(
+        instance,
+        "_resolve_reciprocal_peer_switch_id",
+        lambda switch_ip, switch_id: "FDO22222BBB",
+    )
+    instance.deploy = True
+    previous = _build_model(peer2_member_ports=["Ethernet1/42"])
+    desired = _build_model(peer2_member_ports=[])
+
+    instance.update(desired, previous_model=previous)
+
+    assert instance._pending_preview_derived_discovery == {("vpc501", "FDO11111AAA")}
+    allowed = instance._allowed_derived_deploy_pairs([("vpc501", "FDO11111AAA")])
+    assert allowed == set()
+    assert instance._classify_deploy_results(
+        {
+            "results": [
+                {
+                    "interfaceName": "Ethernet1/42",
+                    "switchId": "FDO22222BBB",
+                    "status": "success",
+                }
+            ]
+        },
+        [("vpc501", "FDO11111AAA")],
+    ) == (False, "results contains unexpected identity ('ethernet1/42', 'FDO22222BBB')")
+
+
+def test_vpc_deploy_context_does_not_assign_operational_members_from_peer_slots(
+    monkeypatch,
+) -> None:
+    """Pair-wide peer-slot ordering cannot assign cached children to a switch."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    monkeypatch.setattr(
+        instance,
+        "_resolve_reciprocal_peer_switch_id",
+        lambda switch_ip, switch_id: "FDO22222BBB",
+    )
+    instance.deploy = True
+    instance._switch_interfaces_cache = {
+        "FDO11111AAA": {
+            "ethernet1/41": {
+                "interfaceName": "Ethernet1/41",
+                "interfaceType": "ethernet",
+                "switchId": "FDO11111AAA",
+                "operData": {"portChannelId": 501},
+            }
+        },
+        "FDO22222BBB": {
+            "ethernet1/42": {
+                "interfaceName": "Ethernet1/42",
+                "interfaceType": "ethernet",
+                "switchId": "FDO22222BBB",
+                "operData": {"portChannelId": 501},
+            }
+        },
+    }
+    model = _build_model(peer1_member_ports=[], peer2_member_ports=[])
+
+    instance._prepare_deploy_context(model, "FDO11111AAA")
+
+    assert instance._pending_preview_derived_discovery == {("vpc501", "FDO11111AAA")}
+    allowed = instance._allowed_derived_deploy_pairs([("vpc501", "FDO11111AAA")])
+    assert allowed == set()
+
+
+def test_vpc_pending_preview_registers_exact_children_on_both_peers() -> None:
+    """Pair-expanded pending preview proves stale members per exact switch identity."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance._peer_serial_cache = {
+        "FDO11111AAA": "FDO22222BBB",
+        "FDO22222BBB": "FDO11111AAA",
+    }
+    instance._switch_interfaces_cache = {
+        "FDO11111AAA": {
+            "ethernet1/41": {
+                "interfaceName": "Ethernet1/41",
+                "interfaceType": "ethernet",
+                "switchId": "FDO11111AAA",
+            }
+        },
+        "FDO22222BBB": {
+            "ethernet1/42": {
+                "interfaceName": "Ethernet1/42",
+                "interfaceType": "ethernet",
+                "switchId": "FDO22222BBB",
+            }
+        },
+    }
+    instance._queue_preview_derived_discovery("vpc501", "FDO11111AAA")
+    rows = []
+    for switch_id, member_name in (
+        ("FDO11111AAA", "Ethernet1/41"),
+        ("FDO22222BBB", "Ethernet1/42"),
+    ):
+        rows.append(
+            {
+                "interfaceName": "vpc501",
+                "switchId": switch_id,
+                "status": "success",
+                "combinedConfigs": [
+                    {
+                        "configType": "running",
+                        "lines": 1,
+                        "config": "interface port-channel501\n",
+                    },
+                    {
+                        "configType": "pending",
+                        "lines": 2,
+                        "config": f"interface {member_name}\n  no channel-group 501\n",
+                    },
+                    {"configType": "expected", "lines": 0, "config": ""},
+                ],
+            }
+        )
+
+    processed = instance._register_pending_preview_derived_identities(
+        {"configurationDiffs": rows},
+        [("vpc501", "FDO11111AAA")],
+    )
+
+    assert processed == {("vpc501", "FDO11111AAA")}
+    allowed = instance._allowed_derived_deploy_pairs([("vpc501", "FDO11111AAA")])
+    assert ("ethernet1/41", "FDO11111AAA") in allowed
+    assert ("ethernet1/42", "FDO22222BBB") in allowed
+
+
+def test_vpc_pending_preview_allows_omitted_peer_children_only_with_post_preview() -> None:
+    """ND 4.3.1 may omit peer child CLI before returning those children in the 207."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance._peer_serial_cache = {
+        "FDO11111AAA": "FDO22222BBB",
+        "FDO22222BBB": "FDO11111AAA",
+    }
+    instance._queue_preview_derived_discovery("vpc501", "FDO11111AAA")
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "vpc501",
+                "switchId": "FDO11111AAA",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "lines": 1, "config": "interface port-channel501\n"},
+                    {
+                        "configType": "pending",
+                        "lines": 3,
+                        "config": "no interface port-channel501\ninterface Ethernet1/41\n  no channel-group 501\n",
+                    },
+                    {"configType": "expected", "lines": 0, "config": ""},
+                ],
+            },
+            {
+                "interfaceName": "vpc501",
+                "switchId": "FDO22222BBB",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "lines": 1, "config": "Interface is not discovered"},
+                    {"configType": "pending", "lines": 0, "config": ""},
+                    {"configType": "expected", "lines": 0, "config": ""},
+                ],
+            },
+        ]
+    }
+
+    processed = instance._register_pending_preview_derived_identities(
+        preview,
+        [("vpc501", "FDO11111AAA")],
+    )
+
+    assert processed == {("vpc501", "FDO11111AAA")}
+    assert instance._preview_scoped_child_switches == {("vpc501", "FDO11111AAA"): {"FDO11111AAA", "FDO22222BBB"}}
+    allowed = instance._allowed_derived_deploy_pairs([("vpc501", "FDO11111AAA")])
+    assert allowed == {("ethernet1/41", "FDO11111AAA")}
+
+    live_207 = {
+        "results": [
+            {"interfaceName": "port-channel501", "switchId": "FDO22222BBB", "status": "success"},
+            {"interfaceName": "Ethernet1/41", "switchId": "FDO22222BBB", "status": "success"},
+            {"interfaceName": "port-channel501", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "Ethernet1/41", "switchId": "FDO11111AAA", "status": "success"},
+        ]
+    }
+    assert instance._classify_deploy_results(live_207, [("vpc501", "FDO11111AAA")]) == (False, None)
+
+    outside_pair = {
+        "results": [
+            {"interfaceName": "Ethernet1/41", "switchId": "FDO33333CCC", "status": "success"},
+        ]
+    }
+    assert instance._classify_deploy_results(outside_pair, [("vpc501", "FDO11111AAA")]) == (
+        False,
+        "results contains unexpected identity ('ethernet1/41', 'FDO33333CCC')",
+    )
+
+    non_child = {
+        "results": [
+            {"interfaceName": "loopback501", "switchId": "FDO22222BBB", "status": "success"},
+        ]
+    }
+    assert instance._classify_deploy_results(non_child, [("vpc501", "FDO11111AAA")]) == (
+        False,
+        "results contains unexpected identity ('loopback501', 'FDO22222BBB')",
+    )
 
 
 # =============================================================================
@@ -706,6 +1267,8 @@ def test_vpc_interface_base_00600() -> None:
 
     def responses():
         yield responses_vpc_base(f"{method_name}a")
+        yield _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
@@ -743,6 +1306,8 @@ def test_vpc_interface_base_00610() -> None:
 
     def responses():
         yield responses_vpc_base(f"{method_name}a")
+        yield _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
@@ -786,6 +1351,7 @@ def test_vpc_interface_base_00700() -> None:
     def responses():
         yield responses_vpc_base(f"{method_name}a")
         yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
@@ -799,8 +1365,11 @@ def test_vpc_interface_base_00700() -> None:
     with does_not_raise():
         instance.create_bulk(models)
 
-    # A single vpcPair lookup served both interfaces on the same primary switch.
-    assert instance._peer_serial_cache == {"FDO11111AAA": "FDO22222BBB"}
+    # One reciprocal lookup pair served both interfaces on the same primary.
+    assert instance._peer_serial_cache == {
+        "FDO11111AAA": "FDO22222BBB",
+        "FDO22222BBB": "FDO11111AAA",
+    }
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces"
     assert rest_send.verb == HttpVerbEnum.POST.value
     body = rest_send.committed_payload
@@ -832,6 +1401,7 @@ def test_vpc_interface_base_00710() -> None:
     def responses():
         yield responses_vpc_base(f"{method_name}a")
         yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
@@ -841,6 +1411,31 @@ def test_vpc_interface_base_00710() -> None:
 
     with pytest.raises(RuntimeError, match=r"Bulk create failed"):
         instance.create_bulk(models)
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_vpc_interface_base_00720(deploy: bool) -> None:
+    """A mixed vPC bulk-create response retains the accepted item for failure-path deployment."""
+
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_vpc_base(f"{method_name}a")
+        yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
+        yield responses_vpc_base(f"{method_name}c")
+
+    instance = _StubVpcOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.deploy = deploy
+    models = [
+        _build_model(interface_name="vpc501"),
+        _build_model(interface_name="vpc502"),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"accepted \['vpc501'\].*deploy stays queued"):
+        instance.create_bulk(models)
+
+    assert instance._pending_deploys == [("vpc501", "FDO11111AAA")]
 
 
 # =============================================================================
@@ -999,7 +1594,10 @@ def test_vpc_interface_base_00910() -> None:
     gen_responses = ResponseGenerator(responses())
 
     instance = _build_orchestrator(gen_responses, state="overridden")
-    with pytest.raises(RuntimeError, match=r"Query all failed.*interfaceName must be a non-empty string"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"Query all failed.*interfaceName must be a non-empty string",
+    ):
         instance.query_all()
 
 
@@ -1300,7 +1898,6 @@ def test_vpc_interface_base_01010() -> None:
     assert len(result) == 1
     assert result[0]["interfaceName"] == "vpc300"
     assert result[0]["switchIp"] == "192.168.1.1"
-
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
     assert [path.split("?", 1)[0] for path in results.path] == [
@@ -1349,6 +1946,7 @@ def test_vpc_interface_base_01020() -> None:
     assert len(result) == 1
     assert result[0]["interfaceName"] == "vpc300"
     assert result[0]["switchIp"] == "192.168.1.1"
+    assert instance._peer_serial_cache == {"FDO22222BBB": "FDO11111AAA"}
 
     # The file-based Sender replays responses positionally, so pin the request sequence: this proves the vpcPair lookup
     # actually happens (and where), rather than a later interfaces GET silently consuming the vpcPair fixture.
@@ -1363,15 +1961,15 @@ def test_vpc_interface_base_01030() -> None:
     """
     # Summary
 
-    Verify the two peer copies of one vPC interface collapse to a single entry when BOTH echoes omit `peerSwitchId`: each
-    switch's pair is resolved from its `vpcPair` record and the two resolved keys are the same unordered set (PR #411 review).
+    Verify the two peer copies of one vPC interface collapse to a single entry when BOTH echoes omit `peerSwitchId`: the first
+    switch's authoritative `vpcPair` response seeds the reciprocal cache, so both keys are the same unordered set (PR #411 review).
 
     ## Test
 
     - `state=overridden`, two peers; both `vpc300` echoes omit `peerSwitchId`
-    - One `vpcPair` GET per switch supplies the peer serials
+    - One `vpcPair` GET supplies both reciprocal peer serials
     - `query_all` returns exactly ONE `vpc300`, stamped with the lower-`switchId` peer 192.168.1.1
-    - Request sequence (via `Results.path`) is: interfaces(A), vpcPair(A), interfaces(B), vpcPair(B)
+    - Request sequence (via `Results.path`) is: interfaces(A), vpcPair(A), interfaces(B)
 
     ## Classes and Methods
 
@@ -1438,6 +2036,50 @@ def test_vpc_interface_base_01040() -> None:
         instance.query_all()
 
 
+def test_vpc_interface_base_01050() -> None:
+    """A controller echo may not identify its own switch as the vPC peer."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    echo = _vpc_parent_record("FDO11111AAA", "FDO11111AAA")
+
+    with pytest.raises(RuntimeError, match="identifies itself as its peer"):
+        instance._pair_key(echo, "192.168.1.1", "FDO11111AAA")
+
+
+def test_vpc_interface_base_01060() -> None:
+    """Non-reciprocal A-to-B and B-to-C echoes fail before override deduplication."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    first = _vpc_parent_record("FDO11111AAA", "FDO22222BBB")
+    second = _vpc_parent_record("FDO22222BBB", "FDO33333CCC")
+
+    assert instance._pair_key(first, "192.168.1.1", "FDO11111AAA") == frozenset({"FDO11111AAA", "FDO22222BBB"})
+    with pytest.raises(RuntimeError, match="non-reciprocal peer identity"):
+        instance._pair_key(second, "192.168.1.2", "FDO22222BBB")
+
+
+def test_vpc_interface_base_01070() -> None:
+    """Raw interface peer evidence cannot contradict authoritative vpcPair evidence."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance._peer_serial_cache.update({"FDO11111AAA": "FDO33333CCC", "FDO33333CCC": "FDO11111AAA"})
+    echo = _vpc_parent_record("FDO11111AAA", "FDO22222BBB")
+
+    with pytest.raises(RuntimeError, match="conflicts with the authoritative vpcPair peer"):
+        instance._pair_key(echo, "192.168.1.1", "FDO11111AAA")
+
+
+def test_vpc_interface_base_01080() -> None:
+    """Malformed non-string peer identities fail closed."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    echo = _vpc_parent_record("FDO11111AAA", "FDO22222BBB")
+    echo["configData"]["networkOS"]["policy"]["peerSwitchId"] = 42
+
+    with pytest.raises(RuntimeError, match="invalid peerSwitchId"):
+        instance._pair_key(echo, "192.168.1.1", "FDO11111AAA")
+
+
 # =============================================================================
 # Test: preflight same-pair-duplicate guard (#356)
 # =============================================================================
@@ -1496,8 +2138,11 @@ def test_vpc_interface_base_01110() -> None:
     method_name = inspect.stack()[0][3]
 
     def responses():
-        for suffix in ("a", "b", "c"):
-            yield responses_vpc_base(f"{method_name}{suffix}")
+        yield responses_vpc_base(f"{method_name}a")
+        yield responses_vpc_base(f"{method_name}b")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
+        yield responses_vpc_base(f"{method_name}c")
+        yield _vpc_pair_response("FDO44444DDD", "FDO33333CCC")
 
     gen_responses = ResponseGenerator(responses())
     instance = _build_orchestrator(gen_responses)
@@ -1514,16 +2159,14 @@ def test_vpc_interface_base_01120() -> None:
     """
     # Summary
 
-    Verify `preflight` issues NO pair-resolution request when every proposed `interface_name` is unique (the overwhelmingly common
-    case): pair resolution only runs for duplicated names, so idempotent runs pay no extra API cost (CLAUDE.md performance rule,
-    issue #356). The only request consumed is the switches-list fetch behind the shared switch resolution in
-    `NDBaseInterfaceOrchestrator.preflight` (PR #550 review) — served from the `FabricContext` cache `query_all` already filled in a
-    real run, so it adds no request there either.
+    Verify `preflight` validates reciprocal pair identity even when every proposed `interface_name` is unique. Mutation safety takes
+    precedence over the former lazy duplicate-name optimization: the first item fetches both authoritative pair records and the
+    second item on the same primary reuses that validated cache.
 
     ## Test
 
-    - Two proposed items with distinct names
-    - The response generator yields only the switches list — a `vpcPair` GET would raise StopIteration and fail the test
+    - Two proposed items with distinct names on the same primary
+    - One switches-list request and two reciprocal `vpcPair` requests are sufficient for both items
 
     ## Classes and Methods
 
@@ -1533,6 +2176,8 @@ def test_vpc_interface_base_01120() -> None:
 
     def responses():
         yield responses_vpc_base("test_vpc_interface_base_01120a")
+        yield _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
+        yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
 
     gen_responses = ResponseGenerator(responses())
     instance = _build_orchestrator(gen_responses)
@@ -1543,3 +2188,118 @@ def test_vpc_interface_base_01120() -> None:
 
     with does_not_raise():
         instance.preflight(items)
+
+
+def test_vpc_member_preflight_rejects_member_owned_by_another_vpc(monkeypatch) -> None:
+    """A conflicting vPC parent must fail before its create reaches ND."""
+
+    _wire_membership_pair(monkeypatch, _membership_inventories())
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", lambda self, model_instances: None)
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    proposed = _build_model(interface_name="vpc502", peer1_member_ports=["Ethernet1/42"])
+
+    with pytest.raises(RuntimeError, match=r"vPC=vpc502.*member=Ethernet1/42.*current owner=vpc501"):
+        instance.preflight([proposed])
+
+    assert instance.rest_send.response_count == 0
+
+
+def test_vpc_member_preflight_allows_idempotent_same_parent_reapply(
+    monkeypatch,
+) -> None:
+    """The validated current owner may retain its own physical member."""
+
+    _wire_membership_pair(monkeypatch, _membership_inventories())
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    proposed = _build_model(interface_name="vpc501", peer1_member_ports=["Ethernet1/42"])
+
+    with does_not_raise():
+        instance._validate_members_available([proposed])
+
+    assert instance.rest_send.response_count == 0
+
+
+def test_vpc_member_preflight_keeps_same_member_name_switch_scoped(monkeypatch) -> None:
+    """A remote-slot name on peer 1 must not reserve that name on peer 2."""
+
+    _wire_membership_pair(monkeypatch, _membership_inventories())
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    proposed = _build_model(interface_name="vpc502", peer2_member_ports=["Ethernet1/42"])
+
+    with does_not_raise():
+        instance._validate_members_available([proposed])
+
+    assert instance.rest_send.response_count == 0
+
+
+def test_vpc_member_preflight_rejects_same_task_double_claim(monkeypatch) -> None:
+    """Two proposed vPCs cannot claim one switch-scoped member in one task."""
+
+    _wire_membership_pair(
+        monkeypatch,
+        {
+            _MEMBERSHIP_PRIMARY: {},
+            _MEMBERSHIP_PEER: {},
+        },
+    )
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", lambda self, model_instances: None)
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    proposed = [
+        _build_model(interface_name="vpc502", peer1_member_ports=["Ethernet1/43"]),
+        _build_model(interface_name="vpc503", peer1_member_ports=["Ethernet1/43"]),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"vPC=vpc503.*member=Ethernet1/43.*proposed vPC=vpc502"):
+        instance.preflight(proposed)
+
+    assert instance.rest_send.response_count == 0
+
+
+@pytest.mark.parametrize(
+    "orchestrator_class,model_class,mode,parent_policy_type,member_policy_type",
+    [
+        (
+            AccessVpcHostInterfaceOrchestrator,
+            AccessVpcHostInterfaceModel,
+            "access",
+            "accessVpcHost",
+            "accessVpcPoMember",
+        ),
+        (
+            TrunkVpcHostInterfaceOrchestrator,
+            TrunkVpcHostInterfaceModel,
+            "trunk",
+            "trunkVpcHost",
+            "vpcMember",
+        ),
+    ],
+    ids=("access-vpc", "trunk-vpc"),
+)
+def test_vpc_member_public_preflight_rejects_existing_owner_for_each_family(
+    monkeypatch,
+    orchestrator_class,
+    model_class,
+    mode,
+    parent_policy_type,
+    member_policy_type,
+) -> None:
+    """Both public vPC module families wire IFACE-006 before any mutation."""
+
+    inventories = _membership_inventories(
+        mode=mode,
+        parent_policy_type=parent_policy_type,
+        member_policy_type=member_policy_type,
+    )
+    _wire_membership_pair(monkeypatch, inventories, orchestrator_class)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", lambda self, model_instances: None)
+    instance = orchestrator_class(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    proposed = model_class(
+        switch_ip="192.168.1.1",
+        interface_name="vpc502",
+        config_data={"network_os": {"policy": {"peer1_member_ports": ["Ethernet1/42"]}}},
+    )
+
+    with pytest.raises(RuntimeError, match=r"vPC=vpc502.*member=Ethernet1/42.*current owner=vpc501"):
+        instance.preflight([proposed])
+
+    assert instance.rest_send.response_count == 0
