@@ -17,6 +17,7 @@ The `merged` path (`exclude_unset=True`) is unaffected: omitted fields mean "lea
 """
 
 # pylint: disable=line-too-long
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
@@ -26,7 +27,10 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+    EthernetTrunkHostInterfaceModel,
+    EthernetTrunkHostPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     Csr1kvLoopbackPolicyModel,
     CsrLoopbackPolicyModel,
@@ -40,11 +44,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     XeUnderlayLoopbackPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import PortChannelAccessPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import PortChannelTrunkHostPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import (
+    PortChannelTrunkHostInterfaceModel,
+    PortChannelTrunkHostPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import SubinterfaceManagedPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.svi_interface import SviPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import AccessVpcHostInterfaceModel, AccessVpcHostPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import TrunkVpcHostPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
+    TrunkVpcHostInterfaceModel,
+    TrunkVpcHostPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel, VxlanEbgpManagementModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -921,3 +931,192 @@ def test_base_model_reverse_diff_00620(exclude_unset: bool) -> None:
     with pytest.raises(TypeError, match=r"Cannot diff SviPolicyModel against NexusLoopbackPolicyModel"):
         existing.get_diff(SviPolicyModel(), exclude_unset=exclude_unset)
     assert existing.get_diff(NexusLoopbackPolicyModel(policy_type="loopback", description="kept"), exclude_unset=exclude_unset) is True
+
+
+# --- 007xx: list items honor the item model's reverse_diff_defaults (issue #598) ---
+
+
+class _MappingEntryModel(NDNestedModel):
+    """List-item model declaring an ND default: ND echoes `tunnel: false` on every entry the user wrote without it."""
+
+    reverse_diff_defaults: ClassVar[dict] = {"tunnel": False}
+
+    vlan: int | None = Field(default=None, alias="vlan")
+    tunnel: bool | None = Field(default=None, alias="tunnel")
+
+
+class _UndeclaredEntryModel(NDNestedModel):
+    """List-item model with no default declaration: its items keep strict bidirectional matching."""
+
+    vlan: int | None = Field(default=None, alias="vlan")
+    tunnel: bool | None = Field(default=None, alias="tunnel")
+
+
+class _GroupModel(NDNestedModel):
+    """List-item model that itself carries a list of default-declaring items (a list inside a list item)."""
+
+    members: list[_MappingEntryModel] | None = Field(default=None, alias="members")
+
+
+class _ListPolicyModel(NDNestedModel):
+    """Nested policy carrying the entry lists, so the list handling is exercised below the top level."""
+
+    entries: list[_MappingEntryModel] | None = Field(default=None, alias="entries")
+    undeclared_entries: list[_UndeclaredEntryModel] | None = Field(default=None, alias="undeclaredEntries")
+    groups: list[_GroupModel] | None = Field(default=None, alias="groups")
+
+
+class _ListModel(NDBaseModel):
+    """Top-level model whose nested policy carries lists of nested models."""
+
+    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+
+    name: str = Field(alias="name")
+    policy: _ListPolicyModel | None = Field(default=None, alias="policy")
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize(
+    "existing_entries, proposed_entries, no_diff",
+    [
+        # ND echoes the declared default on an entry the proposed config wrote without it: idempotent.
+        ([{"vlan": 10, "tunnel": False}], [{"vlan": 10}], True),
+        # Same echo against an explicit default on the proposed side: idempotent.
+        ([{"vlan": 10, "tunnel": False}], [{"vlan": 10, "tunnel": False}], True),
+        # An explicit default against an entry that reads back without the key: idempotent.
+        ([{"vlan": 10}], [{"vlan": 10, "tunnel": False}], True),
+        # A non-default existing value the proposed entry omits is a real difference (the PUT resets it).
+        ([{"vlan": 10, "tunnel": True}], [{"vlan": 10}], False),
+        # A non-default proposed value against the echoed default is a real difference.
+        ([{"vlan": 10, "tunnel": False}], [{"vlan": 10, "tunnel": True}], False),
+        # A difference in a field with no declared default is still a difference.
+        ([{"vlan": 10, "tunnel": False}], [{"vlan": 20}], False),
+        # Entry count still matters.
+        ([{"vlan": 10, "tunnel": False}, {"vlan": 20, "tunnel": False}], [{"vlan": 10}], False),
+        # Order does not: each proposed entry matches one distinct existing entry.
+        ([{"vlan": 10, "tunnel": False}, {"vlan": 20, "tunnel": True}], [{"vlan": 20, "tunnel": True}, {"vlan": 10}], True),
+    ],
+)
+def test_base_model_reverse_diff_00700(existing_entries: list, proposed_entries: list, no_diff: bool, exclude_unset: bool) -> None:
+    """
+    # Summary
+
+    List items are matched bidirectionally, so an ND-echoed default inside an item used to break the match on every
+    run (issue #598). A value equal to the item model's own `reverse_diff_defaults` entry is equivalent to an absent
+    key on both sides of the comparison, on the merged path and on the replaced/overridden path.
+
+    ## Test
+
+    - An existing model is built from a response whose nested `policy.entries` carry the listed items.
+    - A proposed model is built from config carrying the proposed items.
+    - `get_diff(proposed, exclude_unset=...)` matches the expected classification.
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    existing = _ListModel.from_response({"name": "item1", "policy": {"entries": existing_entries}})
+    proposed = _ListModel.from_config({"name": "item1", "policy": {"entries": proposed_entries}})
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset) is no_diff
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_base_model_reverse_diff_00710(exclude_unset: bool) -> None:
+    """
+    # Summary
+
+    The list-item normalization is opt-in per item model: items of a model that declares no `reverse_diff_defaults`
+    keep strict bidirectional matching, so an extra existing-side key in such an item is still a difference.
+
+    ## Test
+
+    - The existing `undeclaredEntries` item carries `tunnel: false`; the proposed item omits it.
+    - `get_diff(proposed, exclude_unset=...)` is `False` (difference detected).
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    existing = _ListModel.from_response({"name": "item1", "policy": {"undeclaredEntries": [{"vlan": 10, "tunnel": False}]}})
+    proposed = _ListModel.from_config({"name": "item1", "policy": {"undeclared_entries": [{"vlan": 10}]}})
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset) is False
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_base_model_reverse_diff_00715(exclude_unset: bool) -> None:
+    """
+    # Summary
+
+    The list-item normalization recurses: a list carried by a list item applies its own item model's declarations, so
+    an echoed default two lists deep is still equivalent to an absent key, and a non-default value there still differs.
+
+    ## Test
+
+    - The existing `groups[0].members[0]` carries `tunnel: false`; the proposed member omits it: no difference.
+    - The existing member carries `tunnel: true`; the proposed member omits it: difference detected.
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    proposed = _ListModel.from_config({"name": "item1", "policy": {"groups": [{"members": [{"vlan": 10}]}]}})
+    echoed_default = _ListModel.from_response({"name": "item1", "policy": {"groups": [{"members": [{"vlan": 10, "tunnel": False}]}]}})
+    assert echoed_default.get_diff(proposed, exclude_unset=exclude_unset) is True
+    non_default = _ListModel.from_response({"name": "item1", "policy": {"groups": [{"members": [{"vlan": 10, "tunnel": True}]}]}})
+    assert non_default.get_diff(proposed, exclude_unset=exclude_unset) is False
+
+
+def trunk_host_response(interface_name: str, policy_type: str, entries: list) -> dict:
+    """Build an ND-shaped trunk-host GET response dict whose policy carries the given `vlanMappingEntries`."""
+    policy = {"policyType": policy_type, "allowedVlans": "100-200", "vlanMapping": True, "vlanMappingEntries": entries}
+    return {"switchIp": SWITCH_IP, "interfaceName": interface_name, "configData": {"networkOS": {"networkOSType": "nx-os", "policy": policy}}}
+
+
+def trunk_host_config(interface_name: str, policy_type: str, entries: list) -> dict:
+    """Build an Ansible-shaped proposed trunk-host config dict whose policy carries the given `vlan_mapping_entries`."""
+    policy = {"policy_type": policy_type, "allowed_vlans": "100-200", "vlan_mapping": True, "vlan_mapping_entries": entries}
+    return {"switch_ip": SWITCH_IP, "interface_name": interface_name, "config_data": {"network_os": {"network_os_type": "nx-os", "policy": policy}}}
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize(
+    "model_cls, interface_name, policy_type",
+    [
+        (EthernetTrunkHostInterfaceModel, "Ethernet1/10", "trunkHost"),
+        (PortChannelTrunkHostInterfaceModel, "port-channel501", "trunkPoHost"),
+        (TrunkVpcHostInterfaceModel, "vpc500", "trunkVpcHost"),
+    ],
+)
+def test_base_model_reverse_diff_00720(model_cls, interface_name: str, policy_type: str, exclude_unset: bool) -> None:
+    """
+    # Summary
+
+    The trunk-host families stay idempotent against the ND 4.3.1 `vlanMappingEntries` echo, which carries
+    `dot1qTunnel: false` on every entry written without it (issue #598; echo shape lab-verified on 4.3.1.175).
+
+    ## Test
+
+    - The existing model is built from a response whose single entry is the lab-verified 4.3.1 echo.
+    - A proposed entry that omits `dot1q_tunnel` is no difference, on the merged and replaced/overridden paths.
+    - A proposed entry that sets `dot1q_tunnel: true` is a difference.
+    - An existing entry with `dot1qTunnel: true` against a proposed entry that omits it is a difference.
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    """
+    echo = [{"customerVlanId": ["10"], "dot1qTunnel": False, "providerVlanId": 100}]
+    existing = model_cls.from_response(trunk_host_response(interface_name, policy_type, echo))
+
+    proposed = model_cls.from_config(trunk_host_config(interface_name, policy_type, [{"customer_vlan_id": ["10"], "provider_vlan_id": 100}]))
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset) is True
+
+    tunnel_on = model_cls.from_config(
+        trunk_host_config(interface_name, policy_type, [{"customer_vlan_id": ["10"], "dot1q_tunnel": True, "provider_vlan_id": 100}])
+    )
+    assert existing.get_diff(tunnel_on, exclude_unset=exclude_unset) is False
+
+    tunnel_echo = [{"customerVlanId": ["10"], "dot1qTunnel": True, "providerVlanId": 100}]
+    existing_tunnel = model_cls.from_response(trunk_host_response(interface_name, policy_type, tunnel_echo))
+    assert existing_tunnel.get_diff(proposed, exclude_unset=exclude_unset) is False
