@@ -45,8 +45,9 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     explicitly clear them via `state: merged` again or `state: replaced` — `state: deleted` will leave them at
     the prior non-default value.
 
-    `vlan_mapping_entries` is deferred until lab-verified on a hardware testbed (N9Kv rejects the parent
-    `vlan_mapping` config with HTTP 400, so the wire shape cannot be probed here).
+    `vlan_mapping_entries` needs no sentinel: normalize with `vlanMapping: false` drops the entry list (lab-verified on
+    ND 4.3.1.175, N9Kv, issue #598; the read then carries no `vlanMappingEntries` key). ND 4.2.1 rejects the parent
+    `vlan_mapping` write on N9Kv, so there is no entry list to reset there.
 
     ## Raises
 
