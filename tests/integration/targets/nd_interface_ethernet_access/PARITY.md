@@ -93,8 +93,10 @@ that idempotency and REST phases did not execute.
 ### Added multi-switch coverage
 
 The multi-switch scenarios configure, replace, and delete Ethernet1/41 on both
-test switches in one module call. The 2026-09-29 live runs used
-`<fabric-name>`, with test switches `192.0.2.x` and `192.0.2.y`.
+test switches in one module call. The 2026-09-29 live runs used two leaf
+switches in a dedicated VXLAN fabric. Their management addresses are shown as
+the documentation-only values `192.0.2.x` and `192.0.2.y`; the fabric name and
+switch IDs are omitted.
 Preflight resolves both switch IDs from ND,
 checks that the second switch ID matches the inventory value, and confirms the
 test port exists and is not a port-channel member on both switches. Each
