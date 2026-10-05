@@ -1939,12 +1939,14 @@ def test_manage_policy_group_orchestrator_00810() -> None:
     """
     # Summary
 
-    ``notExecuted`` per-switch entries are logged but do *not* raise -- the
-    controller considers those switches already in-sync.
+    The centralized ``NdV1Strategy`` 207/multi-status handling accepts the
+    recognized ``switchActions/deploy`` no-op alongside successful per-switch
+    entries, so ``_switch_deploy`` does not raise.
 
     ## Classes and Methods
 
     - PolicyGroupOrchestrator._switch_deploy
+    - NdV1Strategy.is_success
     """
     body = {
         "switchIds": [
