@@ -1,14 +1,15 @@
 # `nd_interface_ethernet_access` Harness Parity
 
-This document maps every scenario in the original
-`nd_interface_ethernet_access` integration suite to its ND 4.x harness-based
-replacement.
+This document records the disposition of scenarios in the
+`nd_interface_ethernet_access` integration target. The NX-OS scenarios are
+mapped to their ND 4.x harness replacements below. The optional IOS-XE suites
+are retained and documented separately; their live validation is pending.
 
-All original scenarios have implemented replacements. The 2026-08-31 full
-safe and destructive runs were against `<fabric-name>`; the 2026-09-06
-follow-up harness and legacy runs were against `<fabric-name>`. The subsequently
-added multi-switch scenarios were run on 2026-09-29 against `<fabric-name>`; the
-scenario-specific results are recorded separately.
+The 2026-08-31 full safe and destructive NX-OS harness runs were against
+`<fabric-name>`; the 2026-09-06 follow-up harness and legacy runs were against
+`<fabric-name>`. The subsequently added multi-switch scenarios were run on
+2026-09-29 against `<fabric-name>`; the scenario-specific results are recorded
+separately. These results do not establish live IOS-XE coverage.
 
 ## Status definitions
 
@@ -130,6 +131,21 @@ scenario makes no normal-mode module call and does not alter the interface.
 This scenario is implemented but has not been run because the current local
 inventory does not identify a dedicated port-channel member fixture. **Live
 validation pending.**
+
+### Optional IOS-XE scenarios
+
+These suites are included conditionally from `tasks/main.yaml`. When their
+required inventory variables are absent, Ansible skips them; a passing NX-OS
+run therefore does not validate IOS-XE behavior.
+
+| Existing suite | Harness disposition | Inclusion gate | Status |
+|---|---|---|---|
+| `tasks/xe.yaml` | Retained as optional IOS-XE state coverage. It exercises baseline replacement, merged updates and idempotency, replacement clearing `mtu`, IOS-XE `overridden` merge-only behavior (including retaining an omitted IOS-XE interface), and deletion/reset behavior. | Set `nd_test_xe_switch_ip`; optionally set `nd_test_xe_fabric_name` and `nd_test_xe_interface_name`. The target interface must exist on a Catalyst switch. | Implemented; live validation pending. The task file records that it has not been lab-verified. |
+| `tasks/xe_fabric_link_guard.yaml` | Retained as optional protection coverage for an IOS-XE interface that is an endpoint of an ND fabric link carrying a link policy. It expects merged and replaced requests to be refused and verifies that the link and interface records remain unchanged. | Set both `nd_test_xe_fabric_link_switch_ip` and `nd_test_xe_fabric_link_interface_name`; optionally set `nd_test_xe_fabric_name` if the XE fabric differs from the default. | Implemented; live validation pending. |
+
+Keep the legacy IOS-XE coverage until these optional suites have been run
+against a suitable Catalyst/ND lab and their results have been reviewed. The
+NX-OS parity results above do not approve retirement of the IOS-XE scenarios.
 
 ## Assertion and safety coverage
 
@@ -273,7 +289,7 @@ ND 4.2.1 environment on 2026-08-31 using collection commit
 | Multi-switch overridden run | 2026-09-29 on `<fabric-name>`; `ok=45 changed=3 failed=0 skipped=3` |
 | Current legacy run | Passed; `ok=89 changed=30 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
 | Earlier testbed | ND `4.2.1`; `<fabric-name>`; selected switch `192.0.2.x` |
-| Static scenario mapping | Complete for the current Ethernet access scenario set |
+| Static scenario mapping | NX-OS scenarios mapped; both optional IOS-XE suites retained with live validation pending |
 
 The safe replacement run used the `nd4x_demo` tag. The destructive replacement
 run used the `nd4x_demo_overridden` tag with explicit destructive-test opt-in.
