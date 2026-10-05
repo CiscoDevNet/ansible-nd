@@ -253,6 +253,36 @@ def _is_benign_switch_deploy_noop(response: Mapping[str, Any], envelope_key: str
     return status == _SWITCH_DEPLOY_NOOP_STATUS and message == _SWITCH_DEPLOY_NOOP_MESSAGE
 
 
+def _is_accepted_multistatus_item(response: Mapping[str, Any], envelope_key: str, item: Mapping[str, Any]) -> bool:
+    """
+    # Summary
+
+    Return whether a Multi-Status item is an accepted outcome.
+
+    ## Description
+
+    Accept an exact normalized ``success`` status or the narrowly scoped
+    ``switchActions/deploy`` no-command outcome recognized by
+    ``_is_benign_switch_deploy_noop``. All other outcomes remain untrusted.
+
+    ## Parameters
+
+    - response: Full response dict, including ``REQUEST_PATH``.
+    - envelope_key: The DATA envelope currently being inspected.
+    - item: One per-item result from the envelope.
+
+    ## Returns
+
+    - True when the item is accepted, False otherwise.
+
+    ## Raises
+
+    None
+    """
+    status = str(item.get("status") or "").strip().lower()
+    return status in _MULTISTATUS_SUCCESS_STATUSES or _is_benign_switch_deploy_noop(response, envelope_key, item)
+
+
 def _non_success_multistatus_items(response: dict) -> list[dict[str, Any]]:
     """
     # Summary
