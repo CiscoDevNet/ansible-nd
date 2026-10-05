@@ -200,6 +200,12 @@ class PortChannelTrunkHostVlanMappingEntryModel(NDNestedModel):
     None
     """
 
+    # TODO(4.3.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.3.1 echoes `dot1qTunnel: false` on every `vlanMappingEntries` item written without it (the OpenAPI schema declares no
+    # default for it; issue #598). `get_diff` matches list items bidirectionally, so it normalizes an item value equal to this
+    # table to absent on both sides. ND 4.2.1 rejects the VLAN-mapping write on 9000v, so the echo is only observable on 4.3.1.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {"dot1qTunnel": False}
+
     customer_inner_vlan_id: int | None = Field(
         default=None, alias="customerInnerVlanId", ge=1, le=4094, description="Inner customer VLAN id (selective dot1q-tunnel only)"
     )
