@@ -33,8 +33,10 @@ merged/replaced scenario in the legacy suite.
   only the controller-owned `lastUpdateTimestamp` field. A request failure or
   page-limit hit fails the snapshot instead of treating a partial collection
   as complete.
-- Every harness mutation enables idempotency and validates both the module's
-  returned `after` state and persisted ND REST state.
+- Each primary state-changing scenario operation uses
+  `nd4x_module_test` to check idempotency, the module's returned `after` state,
+  and persisted ND REST state. Scenario setup and cleanup call the module
+  directly.
 - The overridden workflow requires
   `nd_route_map_destructive_tests_enabled=true` and refuses to run when the
   complete, paginated fabric inventory contains route maps outside the three
@@ -52,16 +54,18 @@ Safe harness execution:
 ```bash
 ansible-test network-integration nd_manage_route_map \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo,nd4x_demo_preflight \
-  --skip-tags nd4x_demo_overridden,nd4x_demo_tenant_identity -vv
+  --tags nd4x_demo_merged,nd4x_demo_replaced,nd4x_demo_deleted,nd4x_demo_preflight -vv
 ```
+
+This selects the merged, replaced, and deleted scenarios with their shared
+preflight. It does not select the overridden or tenant-identity scenarios.
 
 Run tenant identity coverage separately with two existing tenant names:
 
 ```bash
 ansible-test network-integration nd_manage_route_map \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo_tenant_identity,nd4x_demo_preflight -vv
+  --tags nd4x_demo_tenant_identity,nd4x_demo_preflight -vv
 ```
 
 The overridden replacement requires a dedicated fabric, the inventory
@@ -74,10 +78,37 @@ nd_route_map_destructive_tests_enabled=true
 ```bash
 ansible-test network-integration nd_manage_route_map \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo_overridden,nd4x_demo_preflight \
+  --tags nd4x_demo_overridden,nd4x_demo_preflight \
   --allow-destructive -vv
 ```
 
-Do not retire `setup.yaml`, `merged.yaml`, `replaced.yaml`, `overridden.yaml`,
-or `deleted.yaml` until the legacy and replacement suites have both passed
-against the same environment and the results are recorded.
+The preflight is also tagged with each state-specific harness tag, so it runs
+when selecting an individual scenario. The commands above include
+`nd4x_demo_preflight` explicitly for clarity. Do not include `never` in
+`--tags`: selecting it activates every harness include carrying that tag.
+
+## Harness execution status
+
+The following harness results have been reported:
+
+| Scenario | Status | Notes |
+|---|---|---|
+| Merged | Passed | Harness run completed successfully |
+| Replaced | Passed | Harness run completed successfully |
+| Deleted | Passed | Harness run completed successfully |
+| Overridden | Passed | Harness run completed successfully |
+| Tenant identity | Pending | Configure two valid, distinct tenant names in `nd_test_tenant_name_a` and `nd_test_tenant_name_b`, then run and record this scenario |
+
+The legacy integration target was run against
+`tests/integration/inventory.LOCAL.networking`:
+
+| Run | Recap |
+|---|---|
+| Default configuration | `ok=25 changed=8 unreachable=0 failed=0 skipped=2 rescued=0 ignored=0` |
+| With `nd_test_route_map_enable_overridden=true` | `ok=29 changed=10 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0` |
+
+The opt-in run covers the legacy overridden scenario as well.
+
+The reported legacy and harness runs cover the legacy-backed scenarios on the
+same environment. Tenant identity remains a harness-only extension and is
+pending its separate run.

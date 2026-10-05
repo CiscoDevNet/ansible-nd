@@ -39,8 +39,12 @@
 - name: "OVERRIDDEN SAFETY: Verify route-map total is stable across pages"
   ansible.builtin.assert:
     that:
-      - nd4x_route_map_inventory_page.current.meta.counts.total == nd4x_route_map_inventory_total
-      - nd4x_route_map_inventory | length <= nd4x_route_map_inventory_total
+      - >-
+        (nd4x_route_map_inventory_page.current.meta.counts.total | int)
+        == (nd4x_route_map_inventory_total | int)
+      - >-
+        (nd4x_route_map_inventory | length)
+        <= (nd4x_route_map_inventory_total | int)
     fail_msg: >-
       The route-map inventory total changed while paging or more rows were
       returned than the advertised total. Refusing the fabric-wide overridden
@@ -74,7 +78,9 @@
 - name: "OVERRIDDEN SAFETY: Verify route-map inventory count"
   ansible.builtin.assert:
     that:
-      - nd4x_route_map_inventory | length == nd4x_route_map_inventory_total
+      - >-
+        (nd4x_route_map_inventory | length)
+        == (nd4x_route_map_inventory_total | int)
     fail_msg: >-
       Retrieved {{ nd4x_route_map_inventory | length }} route maps but the
       controller advertised {{ nd4x_route_map_inventory_total }}. Refusing the
