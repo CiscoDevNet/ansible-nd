@@ -75,10 +75,15 @@ _MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "linkId", "i
 # (fabric update-group attach) are both in use.
 _MULTISTATUS_ITEM_MESSAGE_KEYS = ("message", "warningMessage", "status")
 
-# ``switchActions/deploy`` reports an already-in-sync switch as a per-item
-# ``notExecuted`` outcome on HTTP 207.  That exact status/message pair is a
-# successful no-op for this endpoint, but ``notExecuted`` remains untrusted for
-# every other endpoint and response envelope.
+# The Manage OpenAPI documents HTTP 207 for ``switchActions/deploy`` and defines
+# ``DATA.switchIds[].status`` as ``configDeploymentStatus``
+# (success|failed|notExecuted|completed|started|warning), so ``notExecuted`` is
+# a documented outcome for this endpoint. Its ``message`` is undocumented free
+# text (described only as "Detail about the status"); ND 4.2.1 and 4.3.1 labs
+# report ``No Commands to execute`` for an already-in-sync switch. Accept only
+# that exact normalized pair. Every other ``notExecuted`` outcome remains a
+# failure, and a controller wording change intentionally fails closed until it
+# is verified.
 _SWITCH_DEPLOY_PATH_SUFFIX = "/switchactions/deploy"
 _SWITCH_DEPLOY_NOOP_STATUS = "notexecuted"
 _SWITCH_DEPLOY_NOOP_MESSAGE = "no commands to execute"
@@ -231,7 +236,7 @@ def _is_benign_switch_deploy_noop(response: Mapping[str, Any], envelope_key: str
 
     ## Returns
 
-    - True only for the documented switch-deploy no-op, False otherwise.
+    - True only for the recognized, lab-observed switch-deploy no-op, False otherwise.
 
     ## Raises
 
