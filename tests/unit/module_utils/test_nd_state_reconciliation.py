@@ -52,7 +52,11 @@ def test_duplicate_normalized_evidence_is_not_success(other):
     journal, cp = checkpoint()
     cp.resolve_resources(
         MutationResult(
-            (MutationResourceOutcome("a", MutationOutcome.SUCCEEDED), MutationResourceOutcome("a", other), MutationResourceOutcome("b", MutationOutcome.FAILED))
+            (
+                MutationResourceOutcome("a", MutationOutcome.SUCCEEDED),
+                MutationResourceOutcome("a", other),
+                MutationResourceOutcome("b", MutationOutcome.FAILED),
+            )
         )
     )
     assert cp.outcome == MutationOutcome.UNKNOWN
