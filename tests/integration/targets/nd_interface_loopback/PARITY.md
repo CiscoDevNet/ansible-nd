@@ -84,6 +84,8 @@ task files, so there is no non-XE OSPF parity case to map.
 
 Harness scenarios retain the `never` tag while parity validation is in
 progress. A normal target run continues to execute only the original suite.
+Do not include `never` in `--tags`: Ansible treats selected tags as
+alternatives, so selecting `never` can activate every opt-in harness include.
 The aggregate `nd4x_demo` tag selects both preflight and harness scenarios. A
 state-specific tag such as `nd4x_demo_merged` selects the preflight
 automatically. Contributors do not need to add `nd4x_demo_preflight`
@@ -95,7 +97,7 @@ The safe replacement run excludes `overridden`:
 ```bash
 ansible-test network-integration nd_interface_loopback \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo \
+  --tags nd4x_demo,nd4x_demo_preflight \
   --skip-tags nd4x_demo_overridden \
   -vv
 ```
@@ -112,7 +114,7 @@ Run it with:
 ```bash
 ansible-test network-integration nd_interface_loopback \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo_overridden \
+  --tags nd4x_demo_overridden,nd4x_demo_preflight \
   --allow-destructive \
   -vv
 ```
