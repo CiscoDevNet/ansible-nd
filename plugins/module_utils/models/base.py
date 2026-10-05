@@ -5,9 +5,16 @@
 from __future__ import absolute_import, division, print_function
 
 from abc import ABC
+from copy import deepcopy
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    SerializationInfo,
+    model_serializer,
+    model_validator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER, has_removals, issubset
 
 
@@ -41,6 +48,11 @@ class NDBaseModel(BaseModel, ABC):
             (e.g., because they are restructured into nested keys).
         config_exclude_fields: Fields to exclude from config output
             (e.g., computed payload-only structures).
+        replacement_preserve_fields: Wire aliases copied from the existing
+            object when omitted from a replaced/overridden proposal.
+        replacement_preserve_secret_fields: Preserved wire aliases whose
+            controller-returned values must also be registered for no-log
+            scrubbing.
     """
 
     model_config = ConfigDict(
@@ -72,6 +84,25 @@ class NDBaseModel(BaseModel, ABC):
     payload_exclude_fields: ClassVar[Set[str]] = set()
     config_exclude_fields: ClassVar[Set[str]] = set()
 
+    # Wire aliases that a full replacement PUT must carry forward from the
+    # existing object when the user omitted them. This is for dynamic,
+    # controller-assigned values and intentionally unsupported writable fields;
+    # deterministic controller defaults belong in reverse_diff_defaults instead.
+    replacement_preserve_fields: ClassVar[Set[str]] = set()
+
+    # Subset of replacement_preserve_fields whose values contain secret
+    # material. Unlike public secret fields, opaque response extras have no
+    # Field metadata from which secret handling can be inferred. The state
+    # machine recursively registers these controller-returned values with
+    # Ansible's value-based no-log scrubber before producing module output.
+    replacement_preserve_secret_fields: ClassVar[Set[str]] = set()
+
+    # Opt-in for `_treat_empty_string_as_unset`. Off by default: for most models "" is a
+    # legitimate value that clears a field, so coercing it to unset would silently drop the
+    # user's intent. Fabric families enable it because ND 4.3.1 rejects "" on schema-
+    # constrained fields with HTTP 400 (see the validator docstring).
+    empty_string_means_unset: ClassVar[bool] = False
+
     # ND template defaults for the reverse pass of `get_diff` (issue #410), keyed by field ALIAS (wire key).
     # ND echoes the schema-declared template default for every field the user never set, so an existing-side
     # value equal to its declared default is normalized to absent during removal detection -- omitting it from
@@ -88,6 +119,16 @@ class NDBaseModel(BaseModel, ABC):
     # unlike `reverse_diff_defaults` they have no single constant value to match against. Applies at the
     # declaring model's own nesting level, so nested models scope their own exclusions.
     reverse_diff_exclude: ClassVar[Set[str]] = set()
+
+    # ND template defaults the WIRE body must always carry, keyed by field ALIAS (wire key). ND 4.3.1 rejects create/update
+    # bodies that omit certain template fields 4.2.1 silently defaulted (issue #564; vault `ethernet-create-required-fields-431`
+    # and `vpc-trunk-allowedvlans-required-431`). Only `to_payload` injects these (`_apply_payload_defaults`, gated on the
+    # payload serialization context): config and diff dumps carry no payload context, so before/after output and diff
+    # classification are unchanged, and the read side already normalizes the echoed default via `reverse_diff_defaults`.
+    # Values MUST be the template default in wire form so the body is version-agnostic (4.2.1 stores the same value whether
+    # or not it is sent). Applies at the declaring model's own nesting level. A model that declares its own wrap-mode
+    # `model_serializer` replaces `_serialize_with_payload_defaults` and must call `_apply_payload_defaults` itself.
+    payload_defaults: ClassVar[Dict[str, Any]] = {}
 
     # --- Subclass Validation ---
 
@@ -171,6 +212,85 @@ class NDBaseModel(BaseModel, ABC):
                 values.add(value)
         return values
 
+    def collect_replacement_secret_values(self) -> set[str]:
+        """Return secret strings held in opaque replacement-preserved fields.
+
+        These values originate in a controller response rather than the
+        Ansible argument specification, so Ansible cannot discover them from a
+        ``no_log`` option declaration. Collection is recursive because fabric
+        replacement fields are declared on the nested management model.
+        """
+        values: set[str] = set()
+        fields_by_wire_key = {field_info.alias or field_name: field_name for field_name, field_info in type(self).model_fields.items()}
+
+        for wire_key in self.replacement_preserve_secret_fields:
+            field_name = fields_by_wire_key.get(wire_key)
+            if field_name is not None:
+                value = getattr(self, field_name, None)
+            else:
+                value = (self.model_extra or {}).get(wire_key)
+            values.update(self._secret_strings(value))
+
+        for field_name in type(self).model_fields:
+            value = getattr(self, field_name, None)
+            if isinstance(value, NDBaseModel):
+                values.update(value.collect_replacement_secret_values())
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, NDBaseModel):
+                        values.update(child.collect_replacement_secret_values())
+        return values
+
+    @staticmethod
+    def _secret_strings(value: Any) -> set[str]:
+        """Recursively extract non-empty secret strings without collecting keys."""
+        if hasattr(value, "get_secret_value"):
+            value = value.get_secret_value()
+        if isinstance(value, str):
+            return {value} if value else set()
+        if isinstance(value, dict):
+            return {secret for child in value.values() for secret in NDBaseModel._secret_strings(child)}  # pylint: disable=protected-access
+        if isinstance(value, (list, tuple, set)):
+            return {secret for child in value for secret in NDBaseModel._secret_strings(child)}  # pylint: disable=protected-access
+        return set()
+
+    def _apply_payload_defaults(self, data: Dict[str, Any], info: SerializationInfo) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Inject each `payload_defaults` entry whose key is absent from `data`, but only for a payload-mode dump (serialization
+        context `mode == "payload"`, set by `to_payload`). Every other dump (config, diff, contextless) returns `data` unchanged,
+        so a wrap serializer that defaults a missing context to payload mode (e.g. the vPC per-peer fan-out) still never injects
+        into a diff. Models that declare their own wrap-mode `model_serializer` call this from it, since the subclass serializer
+        replaces `_serialize_with_payload_defaults`.
+
+        ## Raises
+
+        None
+        """
+        if not self.payload_defaults or (info.context or {}).get("mode") != "payload":
+            return data
+        for key, value in self.payload_defaults.items():
+            data.setdefault(key, value)
+        return data
+
+    @model_serializer(mode="wrap")
+    def _serialize_with_payload_defaults(self, handler, info: SerializationInfo) -> Any:
+        """
+        # Summary
+
+        Default wrap-mode serializer: run the standard serialization, then apply `payload_defaults` (`_apply_payload_defaults`)
+        when the dump is a payload. A no-op for every model that declares no defaults.
+
+        ## Raises
+
+        None
+        """
+        data = handler(self)
+        if isinstance(data, dict):
+            return self._apply_payload_defaults(data, info)
+        return data
+
     def to_payload(self, **kwargs) -> Dict[str, Any]:
         """Convert model to API payload format (aliased keys, nested structures)."""
         data = self.model_dump(
@@ -201,7 +321,32 @@ class NDBaseModel(BaseModel, ABC):
         for key in self.secret_field_keys(by_alias=False):
             if key in data:
                 data[key] = NO_LOG_PLACEHOLDER
+        self._apply_config_exclude_scope(data)
         return data
+
+    def _apply_config_exclude_scope(self, data: Dict[str, Any]) -> None:
+        """Apply each nested model's config exclusions to a config-mode dump.
+
+        ``model_dump(exclude=...)`` only applies the root model's exclusion
+        declaration. This recursive pass lets nested models hide their own
+        declared fields and retained ``extra="allow"`` keys without excluding
+        those values from API payloads.
+        """
+        for configured_key in self.config_exclude_fields:
+            data.pop(configured_key, None)
+            for field_name, field_info in type(self).model_fields.items():
+                if configured_key in {field_name, field_info.alias or field_name}:
+                    data.pop(field_name, None)
+
+        for field_name in type(self).model_fields:
+            value = getattr(self, field_name, None)
+            nested = data.get(field_name)
+            if isinstance(value, NDBaseModel) and isinstance(nested, dict):
+                value._apply_config_exclude_scope(nested)  # pylint: disable=protected-access
+            elif isinstance(value, list) and isinstance(nested, list):
+                for child, child_data in zip(value, nested):
+                    if isinstance(child, NDBaseModel) and isinstance(child_data, dict):
+                        child._apply_config_exclude_scope(child_data)  # pylint: disable=protected-access
 
     def to_gathered_config(self, **kwargs) -> Dict[str, Any]:
         """Convert the model to replay-safe gathered configuration.
@@ -214,6 +359,51 @@ class NDBaseModel(BaseModel, ABC):
         return self.to_config(**kwargs)
 
     # --- Core Deserialization ---
+
+    @model_validator(mode="before")
+    @classmethod
+    def _treat_empty_string_as_unset(cls, data: Any, info: Any) -> Any:
+        """Drop empty-string config input for fields declared ``Optional[...] = None``.
+
+        A field defaulting to ``None`` is declaring "when unset, omit me from the
+        payload". Ansible playbooks and vars files routinely spell "unset" as ``""``,
+        so both spellings must mean the same thing. This matters because ND 4.3.1
+        enforces request-body schema validation: fields carrying ``minLength``,
+        ``pattern`` or ``format`` (for example ``dhcpStartAddress``) reject ``""``
+        with HTTP 400, whereas omitting them lets ND apply its own default.
+
+        Only applied to config input on models that opt in via ``empty_string_means_unset``.
+        Fields that legitimately accept "" declare a ``str = ""`` default instead and are
+        therefore untouched.
+        """
+        if not cls.empty_string_means_unset:
+            return data
+        if not isinstance(data, dict):
+            return data
+        context = getattr(info, "context", None) or {}
+        if context.get("mode") != "config":
+            return data
+        nullable_keys = cls._nullable_default_keys()
+        if not nullable_keys:
+            return data
+        return {key: value for key, value in data.items() if not (value == "" and key in nullable_keys)}
+
+    @classmethod
+    def _nullable_default_keys(cls) -> set[str]:
+        """Field names and aliases whose declared default is None."""
+        keys: set[str] = set()
+        for field_name, field_info in getattr(cls, "model_fields", {}).items():
+            # Fields with no declared default carry PydanticUndefined here, so an
+            # identity check against None selects only explicit ``= None`` defaults.
+            if field_info.default is not None:
+                continue
+            if getattr(field_info, "default_factory", None) is not None:
+                continue
+            keys.add(field_name)
+            alias = getattr(field_info, "alias", None)
+            if alias:
+                keys.add(alias)
+        return keys
 
     @classmethod
     def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
@@ -290,6 +480,56 @@ class NDBaseModel(BaseModel, ABC):
             raise ValueError(f"Unknown identifier strategy: {strategy}")
 
     # --- Diff & Merge ---
+
+    def prepare_for_replacement(self, existing: "NDBaseModel") -> "NDBaseModel":
+        """Return the exact-state candidate with allowlisted values preserved.
+
+        Replaced and overridden states issue full payloads. Some controller
+        values cannot safely be reconstructed from user input: they may be
+        dynamically allocated or intentionally unsupported by the module. Each
+        model declares the corresponding wire aliases in
+        ``replacement_preserve_fields``. Omitted values are copied recursively
+        from ``existing`` before both diffing and payload construction; explicit
+        proposed values always win.
+        """
+        if not isinstance(existing, type(self)):
+            raise TypeError(f"Cannot prepare {type(self).__name__} from {type(existing).__name__}. " "Both must be the same type.")
+
+        candidate = self.model_copy(deep=True)
+        if candidate._preserve_replacement_fields(existing):  # pylint: disable=protected-access
+            return candidate
+        return self
+
+    def _preserve_replacement_fields(self, existing: "NDBaseModel") -> bool:
+        """Copy omitted allowlisted values from ``existing`` into ``self``."""
+        changed = False
+        fields_by_wire_key = {field_info.alias or field_name: field_name for field_name, field_info in type(self).model_fields.items()}
+
+        for wire_key in self.replacement_preserve_fields:
+            field_name = fields_by_wire_key.get(wire_key)
+            if field_name is not None:
+                if field_name in self.model_fields_set:
+                    continue
+                existing_value = getattr(existing, field_name, None)
+                if existing_value is not None:
+                    setattr(self, field_name, deepcopy(existing_value))
+                    changed = True
+                continue
+
+            proposed_extras = self.model_extra or {}
+            existing_extras = existing.model_extra or {}
+            if wire_key not in proposed_extras and wire_key in existing_extras:
+                setattr(self, wire_key, deepcopy(existing_extras[wire_key]))
+                changed = True
+
+        for field_name in type(self).model_fields:
+            proposed_value = getattr(self, field_name, None)
+            existing_value = getattr(existing, field_name, None)
+            if isinstance(proposed_value, NDBaseModel) and isinstance(existing_value, type(proposed_value)):
+                if proposed_value._preserve_replacement_fields(existing_value):  # pylint: disable=protected-access
+                    changed = True
+
+        return changed
 
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
         """Export for diff comparison, excluding sensitive fields.

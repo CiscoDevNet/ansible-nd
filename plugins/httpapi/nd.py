@@ -109,8 +109,9 @@ class HttpApi(HttpApiBase):
             return self.version
         elif platform == "nd":
             if self.version is None:
-                response_json = self._send_nd_request("GET", "/version.json", self.headers)
-                self.version = ".".join(str(response_json.get("body")[key]) for key in ["major", "minor", "maintenance"])
+                # Unified ND 4.2.1+ reports the build version (e.g. "4.2.1.10") from /api/v1/infra/about.
+                response_json = self._send_nd_request("GET", "/api/v1/infra/about", self.headers)
+                self.version = response_json.get("body", {}).get("buildVersion")
             return self.version
         else:
             raise ValueError("Unknown platform type: {0}".format(platform))

@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
@@ -120,6 +119,8 @@ options:
             description:
             - The BGP ASN range to use for automatic ASN allocation (e.g. C(65000-65535)).
             - Required when O(config.management.bgp_asn_auto_allocation) is C(true).
+            - When O(state=replaced) or O(state=overridden) targets an existing fabric, omitting this option preserves
+              the range allocated by Nexus Dashboard.
             type: str
           bgp_as_mode:
             description:
@@ -1358,10 +1359,13 @@ options:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new fabrics and update existing ones as defined in the configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-    - Use O(state=replaced) to replace the fabric configuration specified in the configuration.
-      Any settings not explicitly provided will revert to their defaults.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      Any fabric existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=replaced) to replace the supported configuration of each fabric specified in O(config).
+      Omitted settings revert to their documented defaults except for dynamic or controller-owned settings identified
+      by the module for preservation; those settings retain their existing values. Explicitly supplied values take precedence.
+    - See O(config.management.bgp_asn_range) for option-specific preservation behavior.
+    - Use O(state=overridden) to apply the same per-fabric replacement behavior and enforce O(config) as the complete
+      inventory for this fabric type. Existing fabrics of this type that are absent from O(config) are deleted.
+      Use with extra caution.
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
@@ -1399,7 +1403,8 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only AI/ML eBGP VXLAN fabric type (C(aimlVxlanEbgp)) is supported by this module.
-- When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
+- With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
+  dynamic or controller-owned values, which are preserved from an existing fabric.
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 - The default O(config.management.vpc_peer_keep_alive_option) for eBGP fabrics is C(management), unlike iBGP fabrics.
 """
@@ -1570,7 +1575,7 @@ EXAMPLES = r"""
           banner: "^ Managed by Ansible ^"
   register: result
 
-- name: Replace fabric with only required fields (all optional settings revert to defaults)
+- name: Replace fabric with only required fields
   cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
     state: replaced
     config:
@@ -1663,15 +1668,15 @@ changed:
     sample: true
 before:
     description:
-    - AI/ML eBGP VXLAN fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported AI/ML eBGP VXLAN fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - AI/ML eBGP VXLAN fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported AI/ML eBGP VXLAN fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ai_ebgp_fabric", "management": {"bgp_asn": "65002"}}]
@@ -1736,6 +1741,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import ManageAiEbgpVxlanFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 
 
 def main():
@@ -1752,14 +1760,14 @@ def main():
     # Parse and validate config_actions BEFORE any state mutation so invalid
     # input fails deterministically on every run, including idempotent no-drift
     # runs, and never mutates ND before failing.
-    config_actions = module.params.get("config_actions") or {}
-    save = config_actions.get("save", False)
-    deploy = config_actions.get("deploy", False)
-    deploy_type = config_actions.get("type", "switch")
     state = module.params.get("state", "merged")
-
     try:
-        ManageAiEbgpVxlanFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
     except ValueError as e:
         module.fail_json(msg=str(e))
 
@@ -1774,7 +1782,7 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        # Execute config save/deploy actions via the shared controller (only on real changes)
         if state != "deleted" and len(nd_state_machine.sent) > 0:
             fabric_names = []
             for item in nd_state_machine.sent:
@@ -1782,11 +1790,11 @@ def main():
                 if name and name not in fabric_names:
                     fabric_names.append(name)
             if fabric_names:
-                nd_state_machine.model_orchestrator.execute_config_actions(
+                nd_state_machine.model_orchestrator.run_config_actions(
+                    actions=config_actions,
                     fabric_names=fabric_names,
-                    save=save,
-                    deploy=deploy,
-                    deploy_type=deploy_type,
+                    state=state,
+                    check_mode=module.check_mode,
                 )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0

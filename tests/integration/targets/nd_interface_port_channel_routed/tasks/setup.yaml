@@ -1,0 +1,38 @@
+---
+# Pre-test cleanup for nd_interface_port_channel_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the state blocks. Ensures no test port-channels (or the test subinterface) exist on the
+# target switch before the state tests run. Deploys, because a previous aborted run may have deployed them.
+
+- name: "SETUP: Remove the test subinterface before state tests"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Port-channel523.5
+    config_actions:
+      deploy: true
+    state: deleted
+  tags: always
+
+- name: "SETUP: Remove test port-channels before state tests"
+  cisco.nd.nd_interface_port_channel_routed: &setup_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel521
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel522
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel523
+    config_actions:
+      deploy: true
+    state: deleted
+  tags: always

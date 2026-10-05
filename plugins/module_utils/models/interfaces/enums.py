@@ -26,6 +26,18 @@ class AccessHostPolicyTypeEnum(str, Enum):
     ACCESS_HOST = "accessHost"
 
 
+class XeAccessHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_access` (issue #534): the `iosXeAccess` member of the ND create-side
+    `createInterfaceEthernetAccessXeType` mapping (`ios_xe_int_access_host` template). `iosXeAccessPoMember` is a port-channel
+    member type provisioned through the port-channel modules and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS = "iosXeAccess"
+
+
 class AccessPoHostPolicyTypeEnum(str, Enum):
     """
     # Summary
@@ -44,6 +56,55 @@ class TrunkPoHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_PO_HOST = "trunkPoHost"
+
+
+class XeAccessPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_access` (issue #536): the `iosXeAccessPoHost` member of the ND create-side
+    `createInterfacePortChannelAccessXeType` mapping (`ios_xe_int_port_channel_access_host` template). `iosXeAccessPoMember` is the
+    member type ND provisions on the port-channel's ethernet members and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_ACCESS_PO_HOST = "iosXeAccessPoHost"
+
+
+class XeTrunkPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_trunk_host` (issue #537): the `iosXeTrunkPoHost` member of the ND create-side
+    `createInterfacePortChannelTrunkXeType` mapping (`ios_xe_int_port_channel_trunk_host` template). `iosXeTrunkPoMember` is the member
+    type ND provisions on the port-channel's ethernet members and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_TRUNK_PO_HOST = "iosXeTrunkPoHost"
+
+
+class PortChannelRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    NX-OS policy type managed by `nd_interface_port_channel_routed` (issue #549): `l3Po` (`int_l3_port_channel` template). The
+    template's other discriminator values are not managed: `l3PoInternal` and `mplsUplinkPo` are system-provisioned, `l3PoMember` is
+    the member type ND provisions on the port-channel's ethernet members, and `freeform` / `userDefined` are intentionally excluded so
+    `overridden` can never touch fabric underlay intent.
+    """
+
+    L3_PO = "l3Po"
+
+
+class XePortChannelRoutedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_port_channel_routed` (issue #549): `iosXeL3PortChannel`
+    (`ios_xe_int_l3_port_channel` template). `iosXeL3PoMember` is the member type ND provisions on the port-channel's ethernet members
+    and `userDefined` is intentionally excluded, so neither is listed.
+    """
+
+    IOS_XE_L3_PORT_CHANNEL = "iosXeL3PortChannel"
 
 
 class AccessVpcHostPolicyTypeEnum(str, Enum):
@@ -163,6 +224,21 @@ class PortChannelModeEnum(str, Enum):
     PASSIVE = "passive"
 
 
+class XePortChannelModeEnum(str, Enum):
+    """
+    # Summary
+
+    Port-channel mode on IOS-XE (`iosXeIntPortChannel{Access,Trunk}HostTemplate.portChannelMode`): LACP `on` / `active` / `passive`
+    plus PAgP `auto` / `desirable`, which the NX-OS `PortChannelModeEnum` does not offer.
+    """
+
+    ON = "on"
+    ACTIVE = "active"
+    PASSIVE = "passive"
+    AUTO = "auto"
+    DESIRABLE = "desirable"
+
+
 class SpeedEnum(str, Enum):
     """
     # Summary
@@ -208,24 +284,66 @@ class TrunkHostPolicyTypeEnum(str, Enum):
     TRUNK_HOST = "trunkHost"
 
 
+class XeTrunkHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy type managed by `nd_interface_ethernet_trunk_host` (issue #535): the `iosXeTrunkHost` member of the ND
+    create-side `createInterfaceEthernetTrunkXeType` mapping (`ios_xe_int_trunk_host` template). `iosXeTrunkPoMember` is a
+    port-channel member type provisioned through the port-channel modules and `userDefined` is intentionally excluded.
+    """
+
+    IOS_XE_TRUNK_HOST = "iosXeTrunkHost"
+
+
 class SviPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for SVI (switched virtual interface) interfaces.
+    NX-OS policy type managed by `nd_interface_svi`: the `svi` member of the ND create-side `createInterfaceSviManagedNexus` mapping
+    (`int_vlan` template). `vpcBackupSvi` / `underlaySvi` are fabric-provisioned and `userDefined` is intentionally excluded.
     """
 
     SVI = "svi"
+
+
+class XeSviPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_svi` (issue #540): the `iosXeSvi` (`ios_xe_int_vlan` template) and `iosXeSviShutNoShut`
+    (`ios_xe_int_vlan_admin_state` template, admin state only) members of the ND create-side `createInterfaceSviManagedXe` mapping.
+    `userDefined` is intentionally excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SVI = "iosXeSvi"
+    IOS_XE_SVI_SHUT_NO_SHUT = "iosXeSviShutNoShut"
 
 
 class SubinterfaceManagedPolicyTypeEnum(str, Enum):
     """
     # Summary
 
-    Policy type for managed L3 subinterfaces.
+    NX-OS policy type managed by `nd_interface_subinterface_managed`: the `subinterface` member of the ND create-side
+    `createInterfaceSubInterfaceManagedNexusType` mapping (`int_subif` template). `ipfmSubinterface` (IPFM fabrics) and `userDefined` are
+    intentionally excluded.
     """
 
     SUBINTERFACE = "subinterface"
+
+
+class XeSubinterfacePolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    IOS-XE policy types managed by `nd_interface_subinterface_managed` (issue #541): the `iosXeSubinterface` (`ios_xe_int_subintf` template)
+    and `iosXeSubinterfaceShutNoshut` (`ios_xe_int_subif_admin_state` template, admin state only) members of the ND create-side
+    `createInterfaceSubInterfaceManagedXeType` mapping. The ND-internal `iosXeInternalSubinterface` and `userDefined` are intentionally
+    excluded. The enum is identical on ND 4.2.1 and 4.3.1.
+    """
+
+    IOS_XE_SUBINTERFACE = "iosXeSubinterface"
+    IOS_XE_SUBINTERFACE_SHUT_NOSHUT = "iosXeSubinterfaceShutNoshut"
 
 
 class SubinterfaceUnmanagedPolicyTypeEnum(str, Enum):
