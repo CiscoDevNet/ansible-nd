@@ -144,8 +144,9 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     validator rejects 0 / null: `bandwidth`, `debounce_linkup_timer` and
     `inherit_bandwidth`. A delete with these fields also selects PUT-as-replace.
 
-    `vlan_mapping_entries` is deferred until lab-verified on a hardware testbed (N9Kv rejects the parent
-    `vlan_mapping` config with HTTP 400, so the wire shape cannot be probed here).
+    `vlan_mapping_entries` needs no sentinel: normalize with `vlanMapping: false` drops the entry list (lab-verified on
+    ND 4.3.1.175, N9Kv, issue #598; the read then carries no `vlanMappingEntries` key). ND 4.2.1 rejects the parent
+    `vlan_mapping` write on N9Kv, so there is no entry list to reset there.
 
     ## Raises
 
