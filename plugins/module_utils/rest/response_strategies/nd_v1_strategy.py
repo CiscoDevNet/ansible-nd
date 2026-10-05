@@ -187,6 +187,34 @@ def _multistatus_items_with_status(response: dict, statuses: frozenset[str]) -> 
     return matched
 
 
+def _has_multistatus_items(response: Mapping[str, Any]) -> bool:
+    """
+    # Summary
+
+    Return whether the response contains recognized Multi-Status items.
+
+    ## Description
+
+    Scan the known ND Multi-Status envelope arrays and return True when at
+    least one item is a dictionary. Empty, missing, or malformed envelope
+    values do not count as itemized results.
+
+    ## Parameters
+
+    - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
+
+    ## Returns
+
+    - True when a recognized envelope contains at least one item dict, False otherwise.
+
+    ## Raises
+
+    None
+    """
+    data = _get_typed_value(response, "DATA", dict, {})
+    return any(isinstance(item, dict) for key in _MULTISTATUS_ITEM_KEYS for item in _get_typed_value(data, key, list, []))
+
+
 def _failed_multistatus_items(response: dict) -> list[dict[str, Any]]:
     """
     # Summary
@@ -557,8 +585,11 @@ class NdV1Strategy:
         `"false"`. When present, this header is the authoritative signal for whether
         the operation mutated any state on the controller.
 
-        When the header is absent the method defaults to `True`, preserving the
-        historical behaviour for verbs (DELETE, POST, PUT) where ND does not send it.
+        When the header is absent and an HTTP 207 response contains recognized
+        per-item results, the method returns True only if at least one item has
+        an exact normalized `success` status. An accepted no-op item does not
+        represent a mutation. Other responses retain the historical True
+        fallback for verbs (DELETE, POST, PUT) where ND does not send the header.
 
         ## Parameters
 
@@ -567,17 +598,20 @@ class NdV1Strategy:
 
         ## Returns
 
-        - False if the `modified` header is present and equals `"false"` (case-insensitive)
-        - True otherwise
+        - The `modified` header value when present (`"false"` means False)
+        - For itemized HTTP 207 responses without that header, True only when at least one item reports exact `success`
+        - True for all other successful mutations
 
         ## Raises
 
         None
         """
         modified = response.get("modified")
-        if modified is None:
-            return True
-        return str(modified).lower() != "false"
+        if modified is not None:
+            return str(modified).lower() != "false"
+        if response.get("RETURN_CODE") == 207 and _has_multistatus_items(response):
+            return len(_multistatus_items_with_status(response, _MULTISTATUS_SUCCESS_STATUSES)) > 0
+        return True
 
     def is_changed_on_failure(self, response: dict) -> bool:
         """

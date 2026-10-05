@@ -3201,7 +3201,7 @@ def test_response_handler_nd_01740():
     - The request path is a full URL with a trailing slash and query string
     - ``DATA.switchIds[]`` contains normalized variants of ``notExecuted`` and
       ``No Commands to execute``
-    - success is True and the historical changed fallback remains True
+    - success is True and the accepted no-op reports changed=False
 
     ## Classes and Methods
 
@@ -3229,7 +3229,7 @@ def test_response_handler_nd_01740():
         instance.commit()
 
     assert instance.result["success"] is True
-    assert instance.result["changed"] is True
+    assert instance.result["changed"] is False
 
 
 def test_response_handler_nd_01750():
@@ -3371,6 +3371,7 @@ def test_response_handler_nd_01780():
         instance.commit()
 
     assert instance.result["success"] is True
+    assert instance.result["changed"] is True
 
 
 def test_response_handler_nd_01790():

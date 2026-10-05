@@ -441,6 +441,64 @@ class TestConfigDeploySwitch:
         # Payload contained the out-of-sync switch serial numbers
         assert rest_send.committed_payload == {"switchIds": ["FOC111AAA", "FOC333CCC"]}
 
+    def test_deploy_switch_all_noop_207_is_successful_unchanged(self):
+        """
+        # Summary
+
+        Verify an itemized HTTP 207 containing only the recognized no-command
+        switch-deploy outcome succeeds without reporting a mutation.
+
+        ## Test
+
+        - The switches query identifies one out-of-sync switch
+        - ``switchActions/deploy`` returns the accepted ``notExecuted`` no-op
+        - The UPDATE task is successful with ``changed=False``
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.config_deploy()
+        - ConfigActionsMixin._deploy_switches()
+        - NdV1Strategy.is_changed()
+        """
+        switches_response = {
+            "switches": [
+                {
+                    "serialNumber": "FOC111AAA",
+                    "additionalData": {"configSyncStatus": "outOfSync"},
+                }
+            ]
+        }
+        deploy_response = {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/test-fabric/switchActions/deploy",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "switchIds": [
+                    {
+                        "switchId": "FOC111AAA",
+                        "status": "notExecuted",
+                        "message": "No Commands to execute",
+                    }
+                ]
+            },
+        }
+        rest_send = _make_rest_send(
+            [
+                _success_response(data=switches_response, method="GET"),
+                deploy_response,
+            ]
+        )
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        result = orch.config_deploy("test-fabric", deploy_type="switch")
+
+        assert result == deploy_response["DATA"]
+        assert len(results._tasks) == 2
+        assert results._tasks[1].failed is False
+        assert results._tasks[1].changed is False
+
     def test_deploy_switch_skips_when_all_in_sync(self):
         """
         # Summary
