@@ -316,6 +316,55 @@ def test_expand_config_00101_across_item_duplicate_raises():
         expand_config(config)
 
 
+@pytest.mark.parametrize(
+    "invalid_item,expected_match",
+    [
+        (
+            {"interface_names": ["Ethernet1/1"]},
+            r"switch_ip is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "", "interface_names": ["Ethernet1/1"]},
+            r"switch_ip is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "   ", "interface_names": ["Ethernet1/1"]},
+            r"switch_ip is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "1.1.1.1"},
+            r"interface_names is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "1.1.1.1", "interface_names": None},
+            r"interface_names is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "1.1.1.1", "interface_names": []},
+            r"interface_names is required.*config item 0",
+        ),
+    ],
+    ids=[
+        "missing_switch_ip",
+        "empty_switch_ip",
+        "whitespace_switch_ip",
+        "missing_interface_names",
+        "null_interface_names",
+        "empty_interface_names",
+    ],
+)
+def test_expand_config_00103_rejects_missing_or_empty_write_identifiers(
+    invalid_item,
+    expected_match,
+):
+    """
+    Verify every supplied write-state config item identifies a non-empty switch and at least one
+    interface. This prevents malformed items from expanding to an empty proposed configuration.
+    """
+    with pytest.raises(ValueError, match=expected_match):
+        expand_config([invalid_item])
+
+
 def test_expand_config_00200_empty_input_returns_empty_list():
     """
     # Summary
@@ -387,12 +436,40 @@ def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interfa
         validate_interface_names(config)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        [{"switch_ip": "1.1.1.1"}],
+        [
+            {
+                "config_data": {
+                    "network_os": {
+                        "policy": {
+                            "admin_state": True,
+                        }
+                    }
+                }
+            }
+        ],
+    ],
+    ids=["switch_only", "policy_only"],
+)
+def test_expand_gathered_filters_00000_allows_partial_filters(config):
+    """
+    Verify write-state identifier validation does not leak into gathered-filter expansion.
+    Gathered filters may omit interface_names or both resource identifiers.
+    """
+    assert expand_gathered_filters(config) == config
+
+
 def test_validate_interface_names_00101_null_list_is_treated_as_empty():
     """
     # Summary
 
-    Verify a whole-list `interface_names: ~` (yielding `None`) is treated as empty and does not raise,
-    consistent with the duplicate validators and `expand_config`.
+    Verify the shared interface-entry validator treats a whole-list `interface_names: ~` as empty.
+
+    Write-state expansion rejects the null list before reaching this validator, while gathered filters
+    may omit interface_names and therefore continue to use the shared validator's optional-list behavior.
 
     ## Test
 

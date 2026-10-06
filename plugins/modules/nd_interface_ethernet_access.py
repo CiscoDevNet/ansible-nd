@@ -860,26 +860,38 @@ def expand_config(config_list: list[dict]) -> list[dict]:
     (with singular `interface_name`). Each group produces one flat item per interface name, all
     sharing the same `config_data` and `switch_ip`.
 
+    An empty top-level `config` list remains valid. However, every item present in the list must
+    identify a switch and at least one interface.
+
     ## Raises
 
     ### ValueError
 
-    - If any `interface_names` entry is `None` or an empty string
+    - If a config item has no non-empty `switch_ip`
+    - If a config item has a missing, null, or empty `interface_names` list
+    - If any `interface_names` entry is `None`, empty, whitespace-only, or not a string
     - If an interface name appears more than once within a single config item's `interface_names` list
     - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        if not isinstance(switch_ip, str) or not switch_ip.strip():
+            raise ValueError(f"switch_ip is required and must be a non-empty string for config item {item_index}.")
+        interface_names = group.get("interface_names")
+        if not isinstance(interface_names, list) or not interface_names:
+            raise ValueError(f"interface_names is required and must contain at least one interface for switch '{switch_ip}' (config item {item_index}).")
+
     validate_interface_names(config_list)
     validate_within_item_duplicates(config_list)
     validate_across_item_duplicates(config_list)
 
     expanded = []
     for group in config_list:
-        # `or []` (not a `.get` default) so an explicit `interface_names: ~` in YAML,
-        # which yields None, is treated as empty -- consistent with the validators above.
-        interface_names = group.get("interface_names") or []
+        # The write-state validation above guarantees a present, non-empty list.
+        interface_names = group["interface_names"]
         for name in interface_names:
             item = copy.deepcopy(group)
-            item.pop("interface_names", None)
+            item.pop("interface_names")
             item["interface_name"] = name
             expanded.append(item)
     return expanded
