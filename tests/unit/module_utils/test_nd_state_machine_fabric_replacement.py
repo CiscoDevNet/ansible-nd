@@ -15,6 +15,9 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import (
+    FabricGroupVxlanModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import (
     ManageAiEbgpVxlanFabricOrchestrator,
 )
@@ -29,6 +32,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabr
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import (
     ManageIbgpFabricOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_vxlan import (
+    ManageFabricGroupVxlanOrchestrator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
@@ -265,4 +271,68 @@ def test_nd_state_machine_fabric_replacement_00030() -> None:
     assert intended.license_tier == "premier"
     assert intended.management.bgp_asn_range == "3001-4000"
     assert intended.to_payload()["management"]["borderCount"] == 0
+    assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_fabric_group_overridden_00040() -> None:
+    """
+    # Summary
+
+    Verify Fabric Group overridden semantics in a unit test without invoking
+    cluster-wide deletion against a live controller.
+
+    ## Test
+
+    - The controller inventory contains a keep group and an unlisted group.
+    - The overridden proposal contains only the keep group.
+    - The state machine leaves the keep group unchanged and deletes only the
+      unlisted group through the in-memory spy.
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state()
+    - NDStateMachine._manage_override_deletions()
+    - ManageFabricGroupVxlanOrchestrator.delete()
+    """
+
+    keep = FabricGroupVxlanModel.from_config({"fabric_name": "group_keep"})
+    prune = FabricGroupVxlanModel.from_config({"fabric_name": "group_prune"})
+
+    class FabricGroupOverrideSpy(ManageFabricGroupVxlanOrchestrator):
+        def model_post_init(self, __context) -> None:
+            super().model_post_init(__context)
+            self._updated: list = []
+            self._deleted: list = []
+
+        def query_all(self, model_instance=None, **kwargs) -> ResponseType:
+            del model_instance, kwargs
+            return [deepcopy(keep.to_payload()), deepcopy(prune.to_payload())]
+
+        def update(self, model_instance, **kwargs) -> ResponseType:
+            del kwargs
+            self._updated.append(model_instance)
+            return {}
+
+        def delete(self, model_instance, **kwargs) -> ResponseType:
+            del kwargs
+            self._deleted.append(model_instance)
+            return {}
+
+    module = MockAnsibleModule()
+    module.check_mode = False
+    module.no_log_values = set()
+    module.params = {
+        "state": "overridden",
+        "config": [{"fabric_name": "group_keep"}],
+        "output_level": "normal",
+        "ignore_errors": False,
+    }
+    spy = FabricGroupOverrideSpy(rest_send=_rest_send())
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    instance.manage_state()
+
+    assert spy._updated == []
+    assert [item.fabric_name for item in spy._deleted] == ["group_prune"]
+    assert [item.fabric_name for item in instance.existing] == ["group_keep"]
     assert instance.output.format()["changed"] is True

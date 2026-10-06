@@ -1,6 +1,7 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -10,19 +11,19 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_external
+module: nd_manage_fabric_campus_ibgp_vxlan
 version_added: "2.0.0"
-short_description: Manage External Connectivity fabrics on Cisco Nexus Dashboard
+short_description: Manage Campus iBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
-- Manage External Connectivity fabrics on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, and deleting External Connectivity fabrics.
+- Manage Campus iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
+- This module manages the C(vxlanCampus) Manage API fabric type.
+- It supports creating, updating, replacing, and deleting Campus iBGP VXLAN fabrics.
 author:
-- Mike Wiebe (@mwiebe)
 - Matt Tarkington (@mtarking)
 options:
   config:
     description:
-    - The list of External Connectivity fabrics to configure.
+    - The list of VXLAN Campus fabrics to configure.
     type: list
     elements: dict
     suboptions:
@@ -98,7 +99,7 @@ options:
         default: all
       management:
         description:
-        - The External Connectivity management configuration for the fabric.
+        - The Campus iBGP VXLAN management configuration for the fabric.
         type: dict
         suboptions:
           bgp_asn:
@@ -107,30 +108,391 @@ options:
             - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
             - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-          aaa:
+          target_subnet_mask:
             description:
-            - Include AAA configs from Advanced tab during device bootup.
+            - Mask for underlay subnet IP range.
+            type: int
+            default: 30
+          anycast_gateway_mac:
+            description:
+            - Shared anycast gateway MAC address.
+            type: str
+            default: "2020.0000.00aa"
+          performance_monitoring:
+            description:
+            - Enable switch metrics via periodic SNMP polling.
             type: bool
             default: false
-          advanced_ssh_option:
+          replication_mode:
             description:
-            - Enable only, when IP Authorization is enabled in the AAA Server.
+            - Replication Mode for BUM Traffic.
+            - Multicast pool and rendezvous-point settings below apply when C(multicast) is selected.
+            - Although the OpenAPI schema also declares C(ingress), ND 4.2.1 rejects that value for Campus fabrics.
+            type: str
+            default: multicast
+            choices: [ multicast, ingress ]
+          multicast_group_subnet:
+            description:
+            - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
+            - Applies when O(config.management.replication_mode=multicast).
+            type: str
+            default: "239.1.1.0/25"
+          auto_generate_multicast_group_address:
+            description:
+            - Generate multicast group address from pool (round-robin).
+            - Applies when O(config.management.replication_mode=multicast); addresses come from O(config.management.multicast_group_subnet).
             type: bool
             default: false
-          allow_same_loopback_ip_on_switches:
+          underlay_multicast_group_address_limit:
             description:
-            - Allow the same loopback IP address to be configured on multiple switches (e.g. RP loopback IP).
+            - Max supported multicast group address value.
+            - Applies when O(config.management.replication_mode=multicast).
+            type: int
+            default: 128
+            choices: [ 128, 512 ]
+          tenant_routed_multicast:
+            description:
+            - Overlay IPv4 multicast support in VXLAN fabrics.
             type: bool
             default: false
-          allow_smart_switch_onboarding:
+          rendezvous_point_count:
             description:
-            - Enable onboarding of smart switches to Hypershield for firewall service.
-            - The Hypershield connectivity options below apply to onboarded smart switches.
+            - Number of spines acting as Rendezvous-Points.
+            - Applies when O(config.management.replication_mode=multicast).
+            type: int
+            default: 2
+            choices: [ 2, 4 ]
+          rendezvous_point_loopback_id:
+            description:
+            - Rendezvous point loopback Id (0-1023).
+            - Applies when O(config.management.replication_mode=multicast).
+            type: int
+            default: 254
+          vpc_peer_link_vlan:
+            description:
+            - VLAN range (2-4094) for vPC Peer Link SVI.
+            type: str
+            default: "3600"
+          vpc_peer_link_enable_native_vlan:
+            description:
+            - Enable vPC Peer Link for Native VLAN.
             type: bool
             default: false
+          vpc_peer_keep_alive_option:
+            description:
+            - vPC Peer Keep Alive with Loopback or Management.
+            type: str
+            default: management
+            choices: [ loopback, management ]
+          vpc_auto_recovery_timer:
+            description:
+            - vPC auto recovery timer in seconds (240-3600).
+            type: int
+            default: 360
+          vpc_delay_restore_timer:
+            description:
+            - vPC delay restore timer in seconds (1-3600).
+            type: int
+            default: 150
+          vpc_peer_link_port_channel_id:
+            description:
+            - vPC Peer Link Port Channel ID (1-4096).
+            type: str
+            default: "500"
+          vpc_ipv6_neighbor_discovery_sync:
+            description:
+            - Enable IPv6 ND sync between vPC peers.
+            type: bool
+            default: true
+          advertise_physical_ip:
+            description:
+            - Primary VTEP IP advertisement as next-hop of prefix routes.
+            type: bool
+            default: false
+          vpc_domain_id_range:
+            description:
+            - vPC Domain Id range (1-1000).
+            type: str
+            default: "1-1000"
+          bgp_loopback_id:
+            description:
+            - Underlay Routing Loopback Id (0-1023).
+            type: int
+            default: 0
+          nve_loopback_id:
+            description:
+            - Underlay VTEP loopback Id (NVE interface) (0-1023).
+            type: int
+            default: 1
+          vrf_template:
+            description:
+            - Default overlay VRF template for leafs.
+            type: str
+            default: Default_VRF_Universal
+          network_template:
+            description:
+            - Default overlay network template for leafs.
+            type: str
+            default: Default_Network_Universal
+          vrf_extension_template:
+            description:
+            - Default overlay VRF template for borders.
+            type: str
+            default: Default_VRF_Extension_Universal
+          network_extension_template:
+            description:
+            - Default overlay network template for borders.
+            type: str
+            default: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option:
+            description:
+            - L3 VNI config without VLAN; propagated on VRF creation.
+            type: bool
+            default: false
+          site_id:
+            description:
+            - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
+            - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
+            - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
+            - On creation and with O(state=replaced) or O(state=overridden), an omitted value defaults to O(config.management.bgp_asn).
+            - On an existing fabric with O(state=merged), omission preserves its site ID even when O(config.management.bgp_asn) is supplied.
+            type: str
+          fabric_mtu:
+            description:
+            - Intra Fabric Interface MTU (must be even, 576-9216).
+            type: int
+            default: 9216
+          l2_host_interface_mtu:
+            description:
+            - Layer 2 host interface MTU (must be even, 1500-9216).
+            type: int
+            default: 9216
+          tenant_dhcp:
+            description:
+            - Enable Tenant DHCP.
+            type: bool
+            default: true
+          nxapi:
+            description:
+            - Enable NX-API over HTTPS.
+            type: bool
+            default: false
+          nxapi_https_port:
+            description:
+            - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi=true).
+            type: int
+            default: 443
+          nxapi_http:
+            description:
+            - Enable NX-API over HTTP.
+            type: bool
+            default: false
+          nxapi_http_port:
+            description:
+            - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http=true).
+            type: int
+            default: 80
+          snmp_trap:
+            description:
+            - Configure Nexus Dashboard as a receiver for SNMP traps.
+            type: bool
+            default: true
+          anycast_border_gateway_advertise_physical_ip:
+            description:
+            - Advertise Anycast Border Gateway PIP as VTEP.
+            type: bool
+            default: false
+          greenfield_debug_flag:
+            description:
+            - Allow switch config to be cleared without reload.
+            type: str
+            default: disable
+            choices: [ enable, disable ]
+          tcam_allocation:
+            description:
+            - TCAM commands auto-generated for VxLAN and vPC Fabric Peering.
+            type: bool
+            default: true
+          real_time_interface_statistics_collection:
+            description:
+            - Enable real-time interface statistics (NX-OS only).
+            type: bool
+            default: false
+          interface_statistics_load_interval:
+            description:
+            - Interface Statistics Load Interval in seconds (5-300).
+            - Applies when O(config.management.real_time_interface_statistics_collection=true).
+            type: int
+            default: 10
+          bgp_loopback_ip_range:
+            description:
+            - Typically Loopback0 IP Address Range.
+            type: str
+            default: "10.2.0.0/22"
+          nve_loopback_ip_range:
+            description:
+            - Typically Loopback1 IP Address Range.
+            type: str
+            default: "10.3.0.0/22"
+          anycast_rendezvous_point_ip_range:
+            description:
+            - Anycast or Phantom RP IP Address Range.
+            - Applies when O(config.management.replication_mode=multicast).
+            type: str
+            default: "10.254.254.0/24"
+          intra_fabric_subnet_range:
+            description:
+            - Address range for numbered and peer link SVI IPs.
+            type: str
+            default: "10.4.0.0/16"
+          l2_vni_range:
+            description:
+            - Overlay network identifier range (1-16777214).
+            type: str
+            default: "30000-49000"
+          l3_vni_range:
+            description:
+            - Overlay VRF identifier range (1-16777214).
+            type: str
+            default: "50000-59000"
+          network_vlan_range:
+            description:
+            - Per Switch Overlay Network VLAN Range (2-4094).
+            type: str
+            default: "2300-2999"
+          vrf_vlan_range:
+            description:
+            - Per Switch Overlay VRF VLAN Range (2-4094).
+            type: str
+            default: "2000-2299"
+          sub_interface_dot1q_range:
+            description:
+            - Per aggregation dot1q range for VRF-Lite (2-4093).
+            type: str
+            default: "2-511"
+          vrf_lite_auto_config:
+            description:
+            - VRF Lite Inter-Fabric Connection Deployment Options.
+            - C(back2BackAndToExternal) uses O(config.management.vrf_lite_subnet_range)
+              and O(config.management.vrf_lite_subnet_target_mask) for automatically created links.
+            type: str
+            default: manual
+            choices: [ manual, back2BackAndToExternal ]
+          vrf_lite_subnet_range:
+            description:
+            - IPv4 address range in CIDR notation used to assign point-to-point inter-fabric connections.
+            - Used for automatically created links when O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
+            type: str
+            default: "10.33.0.0/16"
+          vrf_lite_subnet_target_mask:
+            description:
+            - VRF Lite Subnet Mask (8-31).
+            - Applies to addresses allocated from O(config.management.vrf_lite_subnet_range).
+            type: int
+            default: 30
+          auto_unique_vrf_lite_ip_prefix:
+            description:
+            - Unique IP prefix per VRF extension over VRF LITE IFC.
+            - Applies when VRF-Lite inter-fabric connections are created using O(config.management.vrf_lite_subnet_range).
+            type: bool
+            default: false
+          per_vrf_loopback_auto_provision:
+            description:
+            - Auto provision IPv4 loopback on VTEP on VRF attachment.
+            - Allocates addresses from O(config.management.per_vrf_loopback_ip_range) when enabled.
+            type: bool
+            default: false
+          per_vrf_loopback_ip_range:
+            description:
+            - Prefix pool for IPv4 loopback addresses on VTEPs per VRF.
+            - Applies when O(config.management.per_vrf_loopback_auto_provision=true).
+            type: str
+            default: "10.5.0.0/22"
+          per_vrf_loopback_auto_provision_ipv6:
+            description:
+            - Auto provision IPv6 loopback on VTEP on VRF attachment.
+            - Allocates addresses from O(config.management.per_vrf_loopback_ipv6_range) when enabled.
+            type: bool
+            default: false
+          per_vrf_loopback_ipv6_range:
+            description:
+            - Prefix pool for IPv6 loopback addresses on VTEPs per VRF.
+            - Applies when O(config.management.per_vrf_loopback_auto_provision_ipv6=true).
+            type: str
+            default: "fd00::a05:0/112"
+          banner:
+            description:
+            - MOTD banner (delimiter char + message + delimiter).
+            type: str
+            default: ""
+          day0_bootstrap:
+            description:
+            - Automatic IP Assignment For POAP.
+            - Enables the POAP context for O(config.management.local_dhcp_server) and O(config.management.bootstrap_subnet_collection).
+            type: bool
+            default: false
+          local_dhcp_server:
+            description:
+            - Automatic IP Assignment For POAP from Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true); O(config.management.dhcp_protocol_version) selects the address family.
+            type: bool
+            default: false
+          dhcp_protocol_version:
+            description:
+            - IP protocol version for Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true) and O(config.management.local_dhcp_server=true).
+            type: str
+            default: dhcpv4
+            choices: [ dhcpv4, dhcpv6 ]
+          dhcp_start_address:
+            description:
+            - DHCP Scope Start Address.
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true).
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
+            type: str
+          dhcp_end_address:
+            description:
+            - DHCP Scope End Address.
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true).
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
+            type: str
+          management_gateway:
+            description:
+            - Default Gateway For Management VRF.
+            - Applies to management addressing when O(config.management.day0_bootstrap=true).
+            - Use an IPv4 address without a prefix length on ND 4.2 or later.
+            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
+            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
+            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
+            type: str
+          management_ipv4_prefix:
+            description:
+            - Switch management IPv4 subnet prefix length from C(8) through C(30).
+            - Prefix length C(31) is intentionally unsupported because the live Nexus Dashboard 4.3.1 Campus endpoint rejects it.
+            type: int
+            default: 24
+          management_ipv6_prefix:
+            description:
+            - Switch Mgmt IP Subnet Prefix (IPv6, 64-126).
+            type: int
+            default: 64
           bootstrap_subnet_collection:
             description:
-            - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - List of IPv4/IPv6 subnets for bootstrap.
             - Used for switch bootstrap when O(config.management.day0_bootstrap=true).
             - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
@@ -162,178 +524,164 @@ options:
                 - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
-          cdp:
+          real_time_backup:
             description:
-            - Enable CDP on management interface.
+            - Backup hourly only if config deployed since last backup.
+            type: bool
+          scheduled_backup:
+            description:
+            - Enable daily backup at scheduled time.
+            type: bool
+          scheduled_backup_time:
+            description:
+            - Backup time (UTC) in 24-hour C(HH:MM) format (C(00:00) to C(23:59)).
+            - Applies when O(config.management.scheduled_backup=true).
+            type: str
+          link_state_routing_protocol:
+            description:
+            - "Link-State Routing Protocol. Supported: OSPF."
+            type: str
+            default: ospf
+          route_reflector_count:
+            description:
+            - Number of spines acting as Route-Reflectors.
+            type: int
+            default: 2
+            choices: [ 2, 4 ]
+          bgp_ipv4_unicast_peering:
+            description:
+            - Enable BGP IPv4 unicast session between RR and RR client.
             type: bool
             default: false
-          copp_policy:
+          auto_bgp_neighbor_description:
             description:
-            - Fabric wide CoPP policy.
-            - Customized CoPP policy should be provided when C(manual) is selected.
-            type: str
-            default: manual
-            choices: [ dense, lenient, moderate, strict, manual ]
-          create_bgp_config:
-            description:
-            - Generate BGP configuration for core and edge routers.
-            - Uses O(config.management.bgp_asn) when enabled.
+            - Generate BGP EVPN Neighbor Description.
             type: bool
             default: true
-          day0_bootstrap:
+          bgp_fast_convergence:
             description:
-            - Support day 0 touchless switch bringup.
-            - Enables the POAP context for O(config.management.local_dhcp_server) and O(config.management.bootstrap_subnet_collection).
+            - Enable fast convergence for BGP sessions and next-hop updates.
+            - This option requires Nexus Dashboard 4.3.1 or later.
+            type: bool
+          ospf_process_id:
+            description:
+            - OSPF Process Id (for Nexus - OSPF Process Tag, 1-65535).
+            - Applies when O(config.management.link_state_routing_protocol=ospf).
+            type: int
+            default: 1
+          ospf_area_id:
+            description:
+            - OSPF area ID as a valid IPv4 address.
+            - Applies when O(config.management.link_state_routing_protocol=ospf).
+            type: str
+            default: "0.0.0.0"
+          system_mtu:
+            description:
+            - IOS XE System MTU (1500-9198).
+            type: int
+            default: 1500
+          vlan_trunking_protocol_mode:
+            description:
+            - VLAN Trunking Protocol Mode.
+            type: str
+            default: "off"
+            choices: [ "off", transparent ]
+          overlay_conversion:
+            description:
+            - One-time conversion of existing VRFs/networks from IOS_XE templates to Universal templates.
             type: bool
             default: false
-          day0_plug_and_play:
+          ssh_bulk_mode:
             description:
-            - Enable Plug n Play for Catalyst 9000 switches.
-            - Applies to the day 0 bootstrap workflow controlled by O(config.management.day0_bootstrap).
+            - Enable optimizations for bulk data transfer (IOS XE only).
             type: bool
             default: false
-          dhcp_end_address:
+          ssh_window_size:
             description:
-            - DHCP Scope End Address For Switch POAP.
-            - Applies when O(config.management.day0_bootstrap=true),
-              O(config.management.local_dhcp_server=true).
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
-            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
+            - SSH window size (IOS XE only).
+            type: int
+            default: 131072
+          ios_xe_banner:
+            description:
+            - MOTD banner for IOS XE (delimiter + message + delimiter).
             type: str
-          dhcp_protocol_version:
+            default: ""
+          ios_xe_leaf_freeform:
             description:
-            - IP protocol version for Local DHCP Server.
-            - Applies when O(config.management.day0_bootstrap=true) and O(config.management.local_dhcp_server=true).
+            - Additional CLIs for all leafs (from show run).
             type: str
-            default: dhcpv4
-            choices: [ dhcpv4, dhcpv6 ]
-          dhcp_start_address:
+          extra_config_xe_spine:
             description:
-            - DHCP Scope Start Address For Switch POAP.
-            - Applies when O(config.management.day0_bootstrap=true),
-              O(config.management.local_dhcp_server=true).
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
-            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
+            - Additional CLIs for all spines (from show run).
             type: str
-          dns_collection:
+            default: ""
+          extra_config_xe_intra_fabric_links:
             description:
-            - List of IPv4 and IPv6 DNS addresses.
-            type: list
-            elements: str
-            default: []
-          dns_vrf_collection:
+            - Additional CLIs for all intra-fabric links.
+            type: str
+            default: ""
+          auto_symmetric_vrf_lite:
             description:
-            - DNS Server VRFs.
-            - One VRF for all DNS servers or a list of VRFs, one per DNS server.
-            - Entries correspond to the addresses in O(config.management.dns_collection).
-            type: list
-            elements: str
-            default: []
+            - Auto-generate VRF LITE sub-interface and BGP peering on managed neighbor devices.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
+            type: bool
+            default: false
+          auto_vrf_lite_default_vrf:
+            description:
+            - Auto-generate Default VRF interface and BGP peering on VRF LITE IFC auto deployment.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
+            type: bool
+            default: false
+          auto_symmetric_default_vrf:
+            description:
+            - Auto-generate Default VRF interface and BGP peering on managed neighbor devices.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
+            type: bool
+            default: false
+          default_vrf_redistribution_bgp_route_map:
+            description:
+            - Route Map for redistributing BGP routes to IGP in default VRF.
+            - Applies to default-VRF peering generated by O(config.management.auto_vrf_lite_default_vrf) or O(config.management.auto_symmetric_default_vrf).
+            type: str
+            default: "extcon-rmap-filter"
           domain_name:
             description:
             - Domain name for DHCP server PnP block.
-            - Applies to the day 0 Plug and Play DHCP block when O(config.management.day0_plug_and_play=true).
             type: str
             default: ""
-          enable_dpu_pinning:
-            description:
-            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: bool
-            default: false
-          extra_config_aaa:
-            description:
-            - Additional CLIs for AAA Configuration.
-            type: str
-            default: ""
-          extra_config_fabric:
-            description:
-            - Additional CLIs for all switches.
-            type: str
-            default: ""
-          extra_config_nxos_bootstrap:
-            description:
-            - Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS).
-            type: str
-            default: ""
-          extra_config_xe_bootstrap:
-            description:
-            - Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE).
-            type: str
-            default: ""
-          inband_day0_bootstrap:
-            description:
-            - Support day 0 touchless switch bringup via inband management.
-            - Applies to O(config.management.day0_bootstrap=true) using O(config.management.inband_management=true).
-            type: bool
-            default: false
           inband_management:
             description:
-            - Import switches with reachability over the switch front-panel ports.
+            - Manage switches with only Inband connectivity.
             type: bool
             default: false
-          interface_statistics_load_interval:
+          seed_switch_core_interfaces:
             description:
-            - Interface Statistics Load Interval Time in seconds.
-            - Applies when O(config.management.real_time_interface_statistics_collection=true).
-            type: int
-            default: 10
-          local_dhcp_server:
+            - Core-facing interface list on seed switch (N9K border gateway spine).
+            - Each entry must be an Ethernet or port-channel interface name, optionally with a numeric range suffix
+              (for example C(Ethernet1/1), C(Eth1/1-4), C(Port-Channel10), or C(Po10-12)).
+            type: list
+            elements: str
+            default: []
+          extra_config_xe_bootstrap:
             description:
-            - Automatic IP Assignment For POAP from Local DHCP Server.
-            - Applies when O(config.management.day0_bootstrap=true); O(config.management.dhcp_protocol_version) selects the address family.
-            type: bool
-            default: false
-          management_gateway:
-            description:
-            - Default Gateway For Management VRF On The Switch.
-            - Applies to management addressing when O(config.management.day0_bootstrap=true).
-            - Use an IPv4 address without a prefix length on ND 4.2 or later.
-            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
-            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
-            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
-            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
+            - Additional CLIs during device bootup/login (IOS-XE, e.g. AAA/Radius).
             type: str
-          management_ipv4_prefix:
+            default: ""
+          extra_config_bootstrap_nxos_border_gateway:
             description:
-            - Switch Mgmt IP Subnet Prefix if ipv4.
-            type: int
-            default: 24
-          management_ipv6_prefix:
-            description:
-            - Switch Management IP Subnet Prefix if ipv6.
-            type: int
-            default: 64
-          monitored_mode:
-            description:
-            - If enabled, fabric is only monitored.
-            - No configuration will be deployed.
-            type: bool
-            default: false
-          mpls_handoff:
-            description:
-            - Enable MPLS Handoff.
-            type: bool
-            default: false
-          mpls_loopback_identifier:
-            description:
-            - Underlay MPLS Loopback Identifier.
-            - Applies when O(config.management.mpls_handoff=true).
-            type: int
-            default: 101
-          mpls_loopback_ip_range:
-            description:
-            - MPLS Loopback IP Address Range.
-            - Applies when O(config.management.mpls_handoff=true).
+            - Additional CLIs during device bootup/login for NX-OS border gateways.
             type: str
-            default: "10.102.0.0/25"
+            default: ""
+          extra_config_nxos_border_gateway:
+            description:
+            - Additional CLIs for all Border Gateways (from show run).
+            type: str
+            default: ""
+          extra_config_nxos_intra_fabric_links:
+            description:
+            - Additional CLIs for all NX-OS intra-fabric links.
+            type: str
+            default: ""
           netflow_settings:
             description:
             - Settings associated with netflow.
@@ -429,106 +777,6 @@ options:
                     - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
-          nxapi:
-            description:
-            - Enable NX-API over HTTPS.
-            type: bool
-            default: false
-          nxapi_http:
-            description:
-            - Enable NX-API over HTTP.
-            type: bool
-            default: false
-          nxapi_http_port:
-            description:
-            - HTTP port for NX-API (1-65535).
-            - Applies when O(config.management.nxapi_http=true).
-            type: int
-            default: 80
-          nxapi_https_port:
-            description:
-            - HTTPS port for NX-API (1-65535).
-            - Applies when O(config.management.nxapi=true).
-            type: int
-            default: 443
-          performance_monitoring:
-            description:
-            - If enabled, switch metrics are collected through periodic SNMP polling.
-            - Alternative to real-time telemetry.
-            type: bool
-            default: false
-          power_redundancy_mode:
-            description:
-            - Default Power Supply Mode for NX-OS Switches.
-            type: str
-            default: redundant
-            choices: [ redundant, combined, inputSrcRedundant ]
-          ptp:
-            description:
-            - Enable Precision Time Protocol (PTP).
-            type: bool
-            default: false
-          ptp_domain_id:
-            description:
-            - Multiple Independent PTP Clocking Subdomains on a Single Network.
-            - Applies when O(config.management.ptp=true).
-            type: int
-            default: 0
-          ptp_loopback_id:
-            description:
-            - Precision Time Protocol Source Loopback Id.
-            - Applies when O(config.management.ptp=true).
-            type: int
-            default: 0
-          real_time_backup:
-            description:
-            - Hourly Fabric Backup only if there is any config deployment since last backup.
-            type: bool
-          real_time_interface_statistics_collection:
-            description:
-            - Enable Real Time Interface Statistics Collection.
-            - Valid for NX-OS only.
-            type: bool
-            default: false
-          scheduled_backup:
-            description:
-            - Enable backup at the specified time daily.
-            type: bool
-          scheduled_backup_time:
-            description:
-            - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
-            - Applies when O(config.management.scheduled_backup=true).
-            type: str
-          snmp_trap:
-            description:
-            - Configure Nexus Dashboard as a receiver for SNMP traps.
-            type: bool
-            default: true
-          sub_interface_dot1q_range:
-            description:
-            - Per aggregation dot1q range for VRF-Lite connectivity (minimum 2, maximum 4093).
-            type: str
-            default: "2-511"
-          connectivity_domain_name:
-            description:
-            - Domain name to connect to Hypershield.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: str
-          hypershield_connectivity_proxy_server:
-            description:
-            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: str
-          hypershield_connectivity_proxy_server_port:
-            description:
-            - Proxy port number for communication with Hypershield.
-            - Applies when O(config.management.hypershield_connectivity_proxy_server) is set.
-            type: int
-          hypershield_connectivity_source_intf:
-            description:
-            - Loopback interface on smart switch for communication with Hypershield.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: str
       telemetry_settings:
         description:
         - Telemetry configuration for the fabric.
@@ -681,7 +929,7 @@ options:
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, deleted, overridden ]
   config_actions:
     description:
     - Controls save and deploy behavior after fabric configuration is updated.
@@ -716,19 +964,20 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
-- Only External Connectivity fabric type (C(externalConnectivity)) is supported by this module.
+- Only Campus iBGP VXLAN fabric type (C(vxlanCampus)) is supported by this module.
 - With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
   dynamic or controller-owned values, which are preserved from an existing fabric.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
+- O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
 """
 
 EXAMPLES = r"""
 # Omitting config_actions stages changes without saving or deploying them.
-- name: Create an External Connectivity fabric using state merged
-  cisco.nd.nd_manage_fabric_external:
+- name: Create a VXLAN Campus fabric using state merged
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_ext_fabric
+      - fabric_name: my_campus_fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -738,9 +987,16 @@ EXAMPLES = r"""
         telemetry_collection: false
         management:
           bgp_asn: "65001"
-          copp_policy: manual
-          create_bgp_config: true
-          cdp: false
+          replication_mode: multicast
+          anycast_gateway_mac: "2020.0000.00aa"
+          link_state_routing_protocol: ospf
+          ospf_process_id: 1
+          ospf_area_id: "0.0.0.0"
+          system_mtu: 1500
+          vlan_trunking_protocol_mode: "off"
+          route_reflector_count: 2
+          bgp_ipv4_unicast_peering: false
+          auto_bgp_neighbor_description: true
           snmp_trap: true
           nxapi: false
           nxapi_http: false
@@ -757,21 +1013,23 @@ EXAMPLES = r"""
   register: result
 
 - name: Update specific fields on an existing fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_external:
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_ext_fabric
+      - fabric_name: my_campus_fabric
         management:
           bgp_asn: "65002"
           performance_monitoring: true
           snmp_trap: false
+          ospf_process_id: 2
+          system_mtu: 9198
   register: result
 
-- name: Create or fully replace an External Connectivity fabric using state replaced
-  cisco.nd.nd_manage_fabric_external:
+- name: Create or fully replace a VXLAN Campus fabric using state replaced
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: replaced
     config:
-      - fabric_name: my_ext_fabric
+      - fabric_name: my_campus_fabric
         location:
           latitude: 37.7749
           longitude: -122.4194
@@ -781,9 +1039,14 @@ EXAMPLES = r"""
         telemetry_collection: false
         management:
           bgp_asn: "65004"
-          copp_policy: strict
-          create_bgp_config: true
-          cdp: true
+          replication_mode: multicast
+          link_state_routing_protocol: ospf
+          ospf_process_id: 3
+          ospf_area_id: "0.0.0.1"
+          system_mtu: 9198
+          vlan_trunking_protocol_mode: transparent
+          route_reflector_count: 4
+          bgp_ipv4_unicast_peering: true
           snmp_trap: false
           nxapi: true
           nxapi_http: true
@@ -793,7 +1056,6 @@ EXAMPLES = r"""
           real_time_interface_statistics_collection: true
           interface_statistics_load_interval: 30
           sub_interface_dot1q_range: "2-511"
-          power_redundancy_mode: combined
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
@@ -802,22 +1064,22 @@ EXAMPLES = r"""
   register: result
 
 - name: Replace fabric with only required fields
-  cisco.nd.nd_manage_fabric_external:
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: replaced
     config:
-      - fabric_name: my_ext_fabric
+      - fabric_name: my_campus_fabric
         management:
           bgp_asn: "65004"
   register: result
 
-- name: Save and deploy External Connectivity fabric configuration after changes
-  cisco.nd.nd_manage_fabric_external:
+- name: Save and deploy Campus iBGP VXLAN fabric configuration after changes
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: merged
     config:
-      - fabric_name: my_ext_fabric
+      - fabric_name: my_campus_fabric
         management:
           bgp_asn: "65004"
-          interface_statistics_load_interval: 30
+          system_mtu: 9198
     config_actions:
       save: true
       deploy: true
@@ -825,18 +1087,18 @@ EXAMPLES = r"""
   register: result
 
 - name: Delete a specific fabric using state deleted
-  cisco.nd.nd_manage_fabric_external:
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: deleted
     config:
-      - fabric_name: my_ext_fabric
+      - fabric_name: my_campus_fabric
   register: result
 
 - name: Delete multiple fabrics in a single task
-  cisco.nd.nd_manage_fabric_external:
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
     state: deleted
     config:
-      - fabric_name: ext_fabric_east
-      - fabric_name: ext_fabric_west
+      - fabric_name: campus_fabric_east
+      - fabric_name: campus_fabric_west
   register: result
 """
 
@@ -853,28 +1115,28 @@ changed:
     sample: true
 before:
     description:
-    - Normalized, supported External fabric configuration before changes.
-    - Unsupported controller-only properties are omitted.
+    - Campus iBGP VXLAN fabric configuration before changes.
+    - Queried from the controller and may contain read-only properties.
     type: list
     returned: always
-    sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65501"}}]
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65001"}}]
 after:
     description:
-    - Normalized, supported External fabric configuration after changes.
-    - Unsupported controller-only properties are omitted.
+    - Campus iBGP VXLAN fabric configuration after changes.
+    - Refreshed from the controller after write operations.
     type: list
     returned: always
-    sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65502"}}]
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65002"}}]
 diff:
     description: Configuration differences between before and after states.
     type: list
     returned: always
-    sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65502"}}]
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65002"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
     returned: info or debug output_level
-    sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65502"}}]
+    sample: [{"fabric_name": "campus_east", "management": {"bgp_asn": "65002"}}]
 output_level:
     description: The output level set for the module.
     type: str
@@ -889,7 +1151,7 @@ api_paths:
     description: API endpoint paths used during operations.
     type: list
     returned: verbosity >= 2 (-vv)
-    sample: ["/api/v1/manage/fabrics/ext_fabric_east"]
+    sample: ["/api/v1/manage/fabrics/campus_east"]
 api_verbs:
     description: HTTP methods used during operations.
     type: list
@@ -922,10 +1184,10 @@ api_payload:
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import ManageExternalFabricOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_campus_ibgp_vxlan import ManageCampusIbgpVxlanFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
@@ -933,7 +1195,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args i
 
 def main():
     argument_spec = nd_argument_spec()
-    argument_spec.update(FabricExternalConnectivityModel.get_argument_spec())
+    argument_spec.update(FabricCampusIbgpVxlanModel.get_argument_spec())
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -961,7 +1223,7 @@ def main():
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
             module=module,
-            model_orchestrator=ManageExternalFabricOrchestrator,
+            model_orchestrator=ManageCampusIbgpVxlanFabricOrchestrator,
         )
 
         # Manage state

@@ -172,6 +172,7 @@
     status_code:
       - 200
   register: nd_auth_response
+  no_log: true
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
@@ -188,6 +189,7 @@
       - 200
       - 404
   register: merged_fabric_query
+  no_log: true
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
@@ -487,6 +489,7 @@
     status_code:
       - 200
   register: nd_auth_response_2
+  no_log: true
   tags: [test_replaced, test_replaced_validation]
   delegate_to: localhost
 
@@ -503,6 +506,7 @@
       - 200
       - 404
   register: replaced_fabric_query
+  no_log: true
   tags: [test_replaced, test_replaced_validation]
   delegate_to: localhost
 
