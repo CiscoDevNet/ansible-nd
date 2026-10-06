@@ -76,6 +76,19 @@ def validate_ethernet_across_item_duplicates(config_list: list[dict[str, Any]]) 
 
 def expand_ethernet_config(config_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Expand standalone-style ``interface_names`` groups into model items."""
+    for item_index, group in enumerate(config_list):
+        if not isinstance(group, dict):
+            raise ValueError(f"Ethernet config item {item_index} must be a mapping.")
+        switch_ip = group.get("switch_ip")
+        if not isinstance(switch_ip, str) or not switch_ip.strip():
+            raise ValueError(f"switch_ip is required and must be a non-empty string for config item {item_index}.")
+        interface_names = group.get("interface_names")
+        if not isinstance(interface_names, list) or not interface_names:
+            raise ValueError(
+                f"interface_names is required and must contain at least one interface for switch "
+                f"'{switch_ip}' (config item {item_index})."
+            )
+
     validate_ethernet_interface_names(config_list)
     validate_ethernet_within_item_duplicates(config_list)
     validate_ethernet_across_item_duplicates(config_list)
