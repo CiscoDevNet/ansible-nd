@@ -776,7 +776,7 @@ def test_nd_state_machine_00170() -> None:
     ## Test
 
     - `state: deleted`, `check_mode: True`, one proposed interface; the inventory is empty
-    - `preflight_delete` is recorded exactly once, with the (empty) existing-items-to-delete list
+    - `preflight_delete` is recorded exactly once, with the exact absent requested item
     - The exact absent request is passed to deploy-recovery reconciliation in check mode
     - No delete mutation is recorded
 
@@ -796,7 +796,7 @@ def test_nd_state_machine_00170() -> None:
         "preflight_delete",
         "reconcile_absent_deletes",
     ]
-    assert calls[0][1] == []
+    assert [item.get_identifier_value() for item in calls[0][1]] == [("192.168.12.151", "loopback10")]
     assert [item.get_identifier_value() for item in calls[1][1]] == [("192.168.12.151", "loopback10")]
 
 

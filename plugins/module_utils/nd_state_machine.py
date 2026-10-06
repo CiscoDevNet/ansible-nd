@@ -389,11 +389,12 @@ class NDStateMachine:
             if getattr(existing_item, "is_unsupported_policy", False):
                 raise NDStateMachineError(existing_item.describe_unsupported_policy() + "; this module cannot delete it.")
             items_to_delete.append(existing_item)
-        # Delete preflight (switch resolution, port-channel membership) runs here -- before _delete_items, whose
-        # mutation is skipped in check mode -- so a dry run rejects what a normal run would (PR #550 review).
+        # Delete preflight also covers absent targets before deploy-recovery preview: a type-filtered
+        # inventory must not let a named member or fabric-owned interface bypass the delete guards.
+        # This runs before _delete_items, whose mutation is skipped in check mode.
         # Same error normalization as the create/update preflights in manage_state.
         try:
-            self.model_orchestrator.preflight_delete(items_to_delete)
+            self.model_orchestrator.preflight_delete([*items_to_delete, *absent_items])
         except NDStateMachineError:
             raise
         except Exception as e:

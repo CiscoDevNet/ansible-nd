@@ -494,6 +494,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     expanded.append(pair)
         return expanded
 
+    def _pending_deploy_pairs(self, pairs: list[tuple[str, str]], pending_pairs: set[tuple[str, str]]) -> list[tuple[str, str]]:
+        """A pending preview on either vPC peer requires the submitted parent deploy."""
+
+        return [pair for pair in pairs if any(self._normalized_interface_pair(*peer) in pending_pairs for peer in self._preview_verification_pairs([pair]))]
+
     def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
         """Require exact preview-derived child identities for a vPC deploy."""
 

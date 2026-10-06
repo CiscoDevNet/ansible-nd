@@ -1000,6 +1000,31 @@ def test_reconcile_no_diff_skips_redeploy_when_preview_is_converged(
     assert instance._pending_deploys == []
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_reconcile_no_diff_queues_only_pending_preview_identity(monkeypatch, check_mode: bool) -> None:
+    """A converged bystander in a mixed preview must not enter the deploy request."""
+
+    def responses():
+        yield _preview_multistatus(
+            [
+                _preview_row("Ethernet1/11", "FDO12345ABC", pending_lines=1),
+                _preview_row("Ethernet1/12", "FDO12345ABC"),
+            ]
+        )
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    targets = [
+        SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/11"),
+        SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/12"),
+    ]
+
+    assert instance.reconcile_no_diff(targets) is True
+    assert instance._pending_deploys == ([] if check_mode else [("Ethernet1/11", "FDO12345ABC")])
+
+
 def test_reconcile_no_diff_check_mode_reports_pending_without_queue(monkeypatch) -> None:
     """Dry-run preview reports a required deploy but sends no mutation."""
 

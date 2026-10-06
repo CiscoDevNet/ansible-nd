@@ -26,6 +26,8 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
@@ -96,6 +98,84 @@ def _build_access_model(policy_kwargs: dict, interface_name: str = "Ethernet1/1"
             ),
         ),
     )
+
+
+@pytest.mark.parametrize("policy_overrides", [{"description": "foreign trunk"}, {"adminState": False}, {"ptp": "true"}, {"unrecognizedField": 1}])
+def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch, policy_overrides: dict) -> None:
+    """The access module cannot deploy pending intent owned by a configured trunk policy."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
+    orchestrator.deploy = True
+    monkeypatch.setattr(EthernetAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(
+        EthernetAccessInterfaceOrchestrator,
+        "_existing_interface",
+        lambda self, interface_name, switch_id: {
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "trunk",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {"policyType": "trunkHost", "allowedVlans": "none", **policy_overrides},
+                },
+            },
+        },
+    )
+
+    absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
+    assert orchestrator.reconcile_absent_deletes([absent_access]) is False
+    assert orchestrator._pending_deploys == []
+    assert orchestrator.rest_send.response_count == 0
+
+
+def test_absent_access_delete_can_replay_exact_reset_target(monkeypatch) -> None:
+    """A defaults-only trunk echo remains eligible to finish a staged access deletion."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/preview",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "configurationDiffs": [
+                    {
+                        "interfaceName": "Ethernet1/13",
+                        "switchId": "FDO12345ABC",
+                        "status": "success",
+                        "combinedConfigs": [{"configType": "pending", "lines": 1}],
+                    }
+                ]
+            },
+        }
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    orchestrator.deploy = True
+    monkeypatch.setattr(EthernetAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(
+        EthernetAccessInterfaceOrchestrator,
+        "_existing_interface",
+        lambda self, interface_name, switch_id: {
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "trunk",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "trunkHost",
+                        "allowedVlans": "none",
+                        "adminState": True,
+                        "accessVlan": "1",
+                        "ptp": "false",
+                    },
+                },
+            },
+        },
+    )
+
+    absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
+    assert orchestrator.reconcile_absent_deletes([absent_access]) is True
+    assert orchestrator._pending_deploys == [("Ethernet1/13", "FDO12345ABC")]
 
 
 # =============================================================================

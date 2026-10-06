@@ -63,7 +63,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import normalize_ethernet_interface_name
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import XeEthernetTrunkHostPolicyModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
+    InterfaceDefaultConfig,
+    InterfaceDefaultPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -383,7 +386,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         self._fabric_link_endpoints_cache = endpoints
         return endpoints
 
-    def _check_xe_fabric_link(self, model_instance: ModelType) -> None:
+    def _check_xe_fabric_link(self, model_instance: ModelType, existing_data: dict | None = None) -> None:
         """
         # Summary
 
@@ -401,7 +404,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If the IOS-XE interface is an endpoint of a fabric link that carries an ND link policy.
         - Via `_fabric_link_endpoints` if the links query fails.
         """
-        if not self._model_is_ios_xe(model_instance):
+        if not self._model_is_ios_xe(model_instance) and not (existing_data is not None and self._is_ios_xe(existing_data)):
             return
         switch_ip = str(getattr(model_instance, "switch_ip", "") or "")
         interface_name = str(getattr(model_instance, "interface_name", "") or "")
@@ -1065,7 +1068,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"the dedicated member ownership and safe-field checks have not passed."
             )
         if existing_type is None or existing_type in self.CONVERTIBLE_POLICY_TYPES:
-            self._check_xe_fabric_link(model_instance)
+            self._check_xe_fabric_link(model_instance, existing_data)
             return
         raise RuntimeError(
             f"Interface {model_instance.interface_name} on switch {model_instance.switch_ip} is owned by the fabric "
@@ -1073,6 +1076,52 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             f"Only interfaces carrying a user-managed host policy can be converted; fabric links must be changed through the fabric "
             f"link workflow, not an interface module."
         )
+
+    @classmethod
+    def _is_absent_delete_reset_target(cls, existing_data: dict) -> bool:
+        """Trust replay only for the exact defaults-only policy left by an ethernet reset.
+
+        A different host policy can have pending CLI too, but an absent delete from
+        this module has no authority to deploy it. Unknown or non-default fields
+        fail closed rather than being mistaken for a completed reset.
+        """
+
+        config_data = existing_data.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        if existing_data.get("interfaceType") != "ethernet" or not isinstance(policy, dict):
+            return False
+        network_os_type = network_os.get("networkOSType")
+        policy_type = policy.get("policyType")
+        if network_os_type == "nx-os" and policy_type == "trunkHost" and config_data.get("mode") == "trunk":
+            defaults = InterfaceDefaultPolicyModel().model_dump(by_alias=True)
+        elif network_os_type == "ios-xe" and policy_type == cls.XE_RESET_POLICY_TYPE and config_data.get("mode") == cls.XE_RESET_MODE:
+            defaults = XeEthernetTrunkHostPolicyModel.reverse_diff_defaults
+        else:
+            return False
+        # ND 4.3.1 echoes these two NX-OS reset defaults with string values
+        # (live-verified on a normalized access port on 2026-10-06). Permit
+        # only the exact default values; non-default or unknown fields still
+        # prevent an absent task from deploying another policy's pending CLI.
+        return all(
+            key == "policyType"
+            or (key == "description" and value in (None, ""))
+            or (network_os_type == "nx-os" and key == "accessVlan" and value in (1, "1"))
+            or (network_os_type == "nx-os" and key == "ptp" and value in (False, "false"))
+            or (key in defaults and value == defaults[key])
+            for key, value in policy.items()
+        )
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Replay only pending ethernet resets, never another policy's staged CLI."""
+
+        reset_targets = []
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
+            if existing_data is not None and self._is_absent_delete_reset_target(existing_data):
+                reset_targets.append(model_instance)
+        return super().reconcile_absent_deletes(reset_targets)
 
     @staticmethod
     def _desired_policy_type(model_instance: ModelType) -> str | None:
@@ -1152,7 +1201,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
             self._check_port_channel_delete_restriction(model_instance, existing_data, switch_id=switch_id)
-            self._check_xe_fabric_link(model_instance)
+            self._check_xe_fabric_link(model_instance, existing_data)
 
     @staticmethod
     def _existing_port_channel_id(existing_data: dict | None) -> int | None:

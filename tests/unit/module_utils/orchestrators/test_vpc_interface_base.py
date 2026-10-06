@@ -472,6 +472,16 @@ def test_vpc_preview_verification_expands_to_both_cached_peers() -> None:
     ]
 
 
+def test_vpc_pending_peer_preview_maps_to_submitted_parent() -> None:
+    """A pending peer row still queues the one authoritative vPC deploy identity."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance._peer_serial_cache["FDO11111AAA"] = "FDO22222BBB"
+
+    assert instance._pending_deploy_pairs([("vpc501", "FDO11111AAA")], {("vpc501", "FDO22222BBB")}) == [("vpc501", "FDO11111AAA")]
+    assert instance._pending_deploy_pairs([("vpc501", "FDO11111AAA")], {("vpc999", "FDO22222BBB")}) == []
+
+
 def test_vpc_exact_deploy_result_does_not_resolve_peer_or_preview() -> None:
     """Exact deploy evidence is matched to the one submitted vPC identity."""
 

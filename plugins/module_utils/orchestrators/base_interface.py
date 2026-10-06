@@ -1104,14 +1104,22 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             return False
         self._register_pending_preview_derived_identities(preview, pairs)
         verification_pairs = self._preview_verification_pairs(pairs)
-        preview_state, preview_error = self._classify_preview(preview, verification_pairs)
+        pending_pairs, preview_error = self._pending_preview_pairs(preview, verification_pairs)
         if preview_error is not None:
             raise RuntimeError(f"Interface preview cannot safely determine deployment state for {verification_pairs}: {preview_error}")
-        deployment_required = preview_state == "pending"
+        deployment_required = bool(pending_pairs)
         if deployment_required and not self.rest_send.check_mode:
-            for interface_name, switch_id in pairs:
+            deploy_pairs = self._pending_deploy_pairs(pairs, pending_pairs)
+            if not deploy_pairs:
+                raise RuntimeError(f"Pending preview identities cannot be mapped to deploy identities for {verification_pairs}")
+            for interface_name, switch_id in deploy_pairs:
                 self._queue_deploy(interface_name, switch_id)
         return deployment_required
+
+    def _pending_deploy_pairs(self, pairs: list[tuple[str, str]], pending_pairs: set[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Map pending switch-scoped preview rows to the submitted deploy identities."""
+
+        return [pair for pair in pairs if self._normalized_interface_pair(*pair) in pending_pairs]
 
     def reconcile_no_diff(self, model_instances: Sequence[ModelType]) -> bool:
         """Queue unchanged interfaces when preview cannot prove deployment convergence.
@@ -1424,49 +1432,56 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         evidence and must never be converted into a mutating deploy request.
         """
 
+        pending_pairs, error = cls._pending_preview_pairs(result, pairs)
+        if error is not None:
+            return "contradictory", error
+        return ("pending" if pending_pairs else "converged"), None
+
+    @classmethod
+    def _pending_preview_pairs(cls, result: ResponseType, pairs: list[tuple[str, str]]) -> tuple[set[tuple[str, str]], str | None]:
+        """Validate exact preview evidence and return only identities with pending lines."""
+
         if not isinstance(result, Mapping):
-            return "contradictory", "preview response is not a mapping"
+            return set(), "preview response is not a mapping"
         rows = result.get("configurationDiffs")
         if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
-            return "contradictory", "preview response lacks a configurationDiffs list"
+            return set(), "preview response lacks a configurationDiffs list"
 
         expected = {cls._normalized_interface_pair(name, switch_id) for name, switch_id in pairs}
         if None in expected or len(expected) != len(pairs):
-            return "contradictory", "submitted interface identities are invalid or duplicated"
+            return set(), "submitted interface identities are invalid or duplicated"
         observed: set[tuple[str, str]] = set()
-        deployment_required = False
+        pending_pairs: set[tuple[str, str]] = set()
         for row in rows:
             if not isinstance(row, Mapping):
-                return "contradictory", "preview contains a non-mapping row"
+                return set(), "preview contains a non-mapping row"
             pair = cls._normalized_interface_pair(row.get("interfaceName"), row.get("switchId"))
             if pair is None:
-                return "contradictory", "preview contains a row without a valid interfaceName and switchId"
+                return set(), "preview contains a row without a valid interfaceName and switchId"
             if pair in observed:
-                return "contradictory", f"preview contains duplicate identity {pair!r}"
+                return set(), f"preview contains duplicate identity {pair!r}"
             observed.add(pair)
             if str(row.get("status") or "").strip().lower() != "success":
-                return "contradictory", f"preview status for {pair!r} is not success"
+                return set(), f"preview status for {pair!r} is not success"
             combined_configs = row.get("combinedConfigs")
             if not isinstance(combined_configs, Sequence) or isinstance(combined_configs, (str, bytes)):
-                return "contradictory", f"preview for {pair!r} lacks combinedConfigs"
+                return set(), f"preview for {pair!r} lacks combinedConfigs"
             if any(not isinstance(item, Mapping) for item in combined_configs):
-                return "contradictory", f"preview for {pair!r} contains a non-mapping combinedConfigs entry"
+                return set(), f"preview for {pair!r} contains a non-mapping combinedConfigs entry"
             if any(not isinstance(item.get("configType"), str) or not item.get("configType").strip() for item in combined_configs):
-                return "contradictory", f"preview for {pair!r} contains a combinedConfigs entry without a valid configType"
+                return set(), f"preview for {pair!r} contains a combinedConfigs entry without a valid configType"
             pending = [item for item in combined_configs if item.get("configType", "").strip().lower() == "pending"]
             pending_lines = pending[0].get("lines") if len(pending) == 1 else None
             if len(pending) != 1 or not isinstance(pending_lines, int) or isinstance(pending_lines, bool) or pending_lines < 0:
-                return "contradictory", f"preview for {pair!r} does not prove zero pending configuration"
+                return set(), f"preview for {pair!r} does not prove zero pending configuration"
             if pending_lines > 0:
-                deployment_required = True
+                pending_pairs.add(pair)
 
         if observed != expected:
             missing = sorted(expected - observed)
             unexpected = sorted(observed - expected)
-            return "contradictory", f"preview identities differ from the submitted pairs: missing={missing!r}, unexpected={unexpected!r}"
-        if deployment_required:
-            return "pending", None
-        return "converged", None
+            return set(), f"preview identities differ from the submitted pairs: missing={missing!r}, unexpected={unexpected!r}"
+        return pending_pairs, None
 
     def _accepted_multistatus_pairs(self) -> set[tuple[str, str]]:
         """
