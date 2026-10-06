@@ -139,21 +139,15 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             returned_switch_id = result.get("switchId") if isinstance(result, dict) else None
             if returned_switch_id not in (None, "", source_switch_id):
-                raise RuntimeError(
-                    f"Cannot validate member ownership on switch {source_switch_id!r}: "
-                    f"vpcPair returned switchId {returned_switch_id!r}"
-                )
+                raise RuntimeError(f"Cannot validate member ownership on switch {source_switch_id!r}: " f"vpcPair returned switchId {returned_switch_id!r}")
             peer_switch_id = result.get("peerSwitchId") if isinstance(result, dict) else None
             if not isinstance(peer_switch_id, str) or not peer_switch_id.strip():
                 raise RuntimeError(
-                    f"Cannot validate member ownership on switch {source_switch_id!r}: "
-                    "authoritative vpcPair record is absent or missing peerSwitchId"
+                    f"Cannot validate member ownership on switch {source_switch_id!r}: " "authoritative vpcPair record is absent or missing peerSwitchId"
                 )
             peer_switch_id = peer_switch_id.strip()
             if peer_switch_id == source_switch_id:
-                raise RuntimeError(
-                    f"Cannot validate member ownership on switch {source_switch_id!r}: authoritative vpcPair identifies itself as its peer"
-                )
+                raise RuntimeError(f"Cannot validate member ownership on switch {source_switch_id!r}: authoritative vpcPair identifies itself as its peer")
             self._membership_peer_cache[source_switch_id] = peer_switch_id
             return peer_switch_id
 
