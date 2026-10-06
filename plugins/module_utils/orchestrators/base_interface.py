@@ -1281,6 +1281,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
         deploy_return_code = self.rest_send.return_code
         if deploy_return_code == 207:
+            # TODO(4.3.1) deploy-207-incomplete-success-results
             deploy_confirmed, deploy_error = self._classify_deploy_results(result, pairs)
             if deploy_error is not None:
                 raise RuntimeError(f"Deploy multi-status response is contradictory for {pairs}: {deploy_error}")

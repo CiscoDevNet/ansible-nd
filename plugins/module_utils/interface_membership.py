@@ -938,6 +938,7 @@ class EthernetMembershipIndex:
         }
         slot_fingerprints = tuple(slot.fingerprint for slot in slots)
         peer_slot_fingerprints = tuple(slot.fingerprint for slot in peer_slots)
+        # TODO(4.3.1) vpc-interface-orientation-tracks-url-switch
         switch_local_peer1 = peer_slot_fingerprints == tuple(reversed(slot_fingerprints)) and peer_slot_fingerprints != slot_fingerprints
         if switch_local_peer1:
             # ND 4.3.1 orients each switch-scoped copy with that switch's local
@@ -1180,6 +1181,7 @@ class EthernetMembershipIndex:
         are not non-empty strings remain malformed and fail closed.
         """
 
+        # TODO(4.3.1) vpc-empty-peer-member-list-omitted
         if value is None:
             return frozenset()
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):

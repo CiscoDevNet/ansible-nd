@@ -488,6 +488,7 @@ PROTECTED_MEMBER_POLICY_TYPES = frozenset(
 )
 
 
+# TODO(4.3.1) interface-get-undocumented-ptp-field
 def _is_boolean_response_echo(value: object) -> bool:
     """Return whether ND encoded a controller-owned Boolean echo safely.
 

@@ -147,6 +147,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         exact post-deploy preview; it is never accepted from the 207 alone.
         """
 
+        # TODO(4.3.1) vpc-preview-omits-peer-pending-child-cli
         processed = super()._register_pending_preview_derived_identities(result, pairs)
         originals = {
             normalized: (name, switch_id) for name, switch_id in pairs if (normalized := self._normalized_interface_pair(name, switch_id)) is not None

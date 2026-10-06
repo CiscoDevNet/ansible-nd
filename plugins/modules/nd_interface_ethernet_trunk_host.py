@@ -446,14 +446,9 @@ notes:
   the parent's configured policy, mode, and network OS must be compatible, and any present positive operational
   identifier must also agree. Orphaned, multiply claimed, incompatible, or conflicting evidence fails closed before
   mutation.
-- ND can return reciprocal vPC parent copies in one pair-wide C(peer1*)/C(peer2*) order or orient each switch's copy
-  with its local side in C(peer1*). Empty member lists may be absent, null, or explicit. Before updating C(vpcMember),
-  the module canonicalizes those representations and validates the parent policy, mode, network OS, member policies,
-  member lists, port-channel identifiers, C(primaryInterface), peer identities, and unambiguous ownership on both
-  switches using cached inventories. Missing or inconsistent evidence fails closed before any interface mutation.
-- Pair-aware validation creates one cached pair proof shared by all requested members of the same vPC. Resolving
-  that proof can add one C(/vpcPair) GET when peer identity is not already known and one cached interface-inventory
-  GET when the peer inventory has not already been read. It never adds a GET per member.
+- Before updating C(vpcMember), the module validates the vPC parent and member ownership on both switches. Missing
+  or inconsistent peer identity, parent configuration, membership, or ownership evidence fails before any interface
+  mutation.
 - Peer-link members, uplink members, internal routed members, and other fabric-owned or system member policies remain
   protected and are rejected before mutation.
 - With O(config_actions.deploy=false), a successful member update remains staged on the controller. With
