@@ -815,6 +815,7 @@ gathered:
   elements: dict
 """
 
+import copy
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
