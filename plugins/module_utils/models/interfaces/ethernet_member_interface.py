@@ -225,6 +225,7 @@ class IosXeTrunkPoMemberPolicyModel(IosXePortChannelMemberPolicyBase):
     """IOS-XE standalone trunk port-channel member (``iosXeTrunkPoMember``)."""
 
     policy_type: Literal["iosXeTrunkPoMember"] = Field(alias="policyType")
+    allowed_vlans: AllowedVlans = Field(default=None, alias="allowedVlans", description="Preserve the owning trunk port-channel's allowed VLANs")
 
 
 class IosXeL3PoMemberPolicyModel(IosXePortChannelMemberPolicyBase):

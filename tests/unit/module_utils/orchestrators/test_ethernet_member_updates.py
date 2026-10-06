@@ -163,7 +163,7 @@ MEMBER_CASES = (
         parent_mode="trunk",
         network_os_type="ios-xe",
         interface_name="GigabitEthernet1/0/25",
-        preserved_policy={},
+        preserved_policy={"allowedVlans": "100-200"},
         unsafe_policy={"allowed_vlans": "200-300"},
     ),
 )

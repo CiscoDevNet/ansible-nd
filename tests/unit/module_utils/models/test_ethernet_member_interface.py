@@ -392,6 +392,30 @@ def test_safe_overlay_preserves_declared_fields_and_strips_response_only_data():
     assert "ptp" not in policy
 
 
+@pytest.mark.parametrize("allowed_vlans", ["100-200", "none", "all", 250])
+def test_ios_xe_trunk_member_preserves_returned_allowed_vlans(allowed_vlans):
+    """A safe update round-trips an authentic IOS-XE trunk member VLAN echo."""
+    response = member_record("iosXeTrunkPoMember", mode="trunk", network_os="ios-xe")
+    response["configData"]["networkOS"]["policy"]["allowedVlans"] = allowed_vlans
+
+    payload = build_member_update_payload(response, {"description": "safe update"})
+
+    policy = payload["configData"]["networkOS"]["policy"]
+    assert policy["allowedVlans"] == str(allowed_vlans)
+    assert policy["portChannelId"] == "port-channel20"
+    assert policy["description"] == "safe update"
+
+
+@pytest.mark.parametrize("allowed_vlans", ["100-", "5000", "200-100", [], {}, True])
+def test_ios_xe_trunk_member_rejects_malformed_returned_allowed_vlans(allowed_vlans):
+    """Unknown or invalid controller VLAN intent must fail before any PUT."""
+    response = member_record("iosXeTrunkPoMember", mode="trunk", network_os="ios-xe")
+    response["configData"]["networkOS"]["policy"]["allowedVlans"] = allowed_vlans
+
+    with pytest.raises(ValidationError):
+        build_member_update_payload(response, {"description": "must fail closed"})
+
+
 @pytest.mark.parametrize(
     "policy_type,mode,network_os",
     [
