@@ -29,6 +29,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabr
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_campus_validation import (
     ManageCampusFabricValidationMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_dhcp_validation import (
+    ManageFabricDhcpValidationMixin,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import (
     ConfigActionsMixin,
 )
@@ -36,6 +39,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_acti
 
 class ManageCampusIbgpVxlanFabricOrchestrator(
     ManageCampusFabricValidationMixin,
+    ManageFabricDhcpValidationMixin,
     ManageFabricCollectionQueryMixin,
     ConfigActionsMixin,
     NDBaseOrchestrator,

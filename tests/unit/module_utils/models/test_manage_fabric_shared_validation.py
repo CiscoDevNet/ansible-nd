@@ -57,6 +57,12 @@ DHCP_IPV4_FIELDS = (
     ("management_gateway", "managementGateway", "192.0.2.1"),
 )
 
+DHCP_IPV6_FIELDS = (
+    ("dhcp_start_address", "dhcpStartAddress", "2001:db8::10"),
+    ("dhcp_end_address", "dhcpEndAddress", "2001:db8::20"),
+    ("management_gateway", "managementGateway", "2001:db8::1"),
+)
+
 UNNUMBERED_DHCP_IPV4_FIELDS = (
     ("unnumbered_dhcp_start_address", "unNumberedDhcpStartAddress", "198.51.100.10"),
     ("unnumbered_dhcp_end_address", "unNumberedDhcpEndAddress", "198.51.100.20"),
@@ -155,10 +161,68 @@ def test_dhcp_address_fields_accept_ipv4_for_every_family(model_class, field: st
 
 
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
-@pytest.mark.parametrize("field", (field for field, _wire_field, _value in DHCP_IPV4_FIELDS))
-def test_dhcp_address_fields_reject_ipv6_for_every_family(model_class, field: str) -> None:
-    with pytest.raises(ValidationError, match="valid IPv4 address"):
-        model_class.from_config(_config(**{field: "2001:db8::10"}))
+@pytest.mark.parametrize(("field", "wire_field", "value"), DHCP_IPV6_FIELDS)
+def test_dhcp_address_fields_accept_bare_ipv6_for_every_family(model_class, field: str, wire_field: str, value: str) -> None:
+    model = model_class.from_config(_config(dhcp_protocol_version="dhcpv6", **{field: value}))
+
+    assert getattr(model.management, field) == value
+    assert model.to_payload()["management"][wire_field] == value
+
+
+@pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
+@pytest.mark.parametrize(("field", "wire_field", "value"), DHCP_IPV6_FIELDS)
+def test_dhcp_address_fields_allow_ipv6_assignment_and_merge(model_class, field: str, wire_field: str, value: str) -> None:
+    existing = model_class.from_config(_config(**{field: "192.0.2.10"}))
+    setattr(existing.management, field, value)
+    assert existing.to_payload()["management"][wire_field] == value
+
+    existing = model_class.from_config(_config(**{field: "192.0.2.10"}))
+    proposed = model_class.from_config(
+        _config(dhcp_protocol_version="dhcpv6", **{field: value}),
+        context={"state": "merged"},
+    )
+    existing.merge(proposed)
+    assert existing.to_payload()["management"][wire_field] == value
+
+
+@pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
+@pytest.mark.parametrize(
+    ("field", "wire_field", "value"),
+    DHCP_IPV6_FIELDS,
+)
+def test_dhcp_address_fields_accept_ipv6_in_controller_responses(model_class, field: str, wire_field: str, value: str) -> None:
+    model = model_class.from_response(
+        {
+            "name": "fabric1",
+            "category": "fabric",
+            "management": {
+                "type": model_class._fabric_type.value,
+                "bgpAsn": "65001",
+                wire_field: value,
+            },
+        }
+    )
+
+    assert getattr(model.management, field) == value
+    assert model.to_payload()["management"][wire_field] == value
+
+
+@pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
+@pytest.mark.parametrize(("_field", "wire_field", "_ipv4"), DHCP_IPV4_FIELDS)
+@pytest.mark.parametrize("invalid", ("not-an-ip", "192.0.2.1/24", "2001:db8::1/64"))
+def test_dhcp_address_fields_reject_invalid_controller_responses(model_class, _field: str, wire_field: str, _ipv4: str, invalid: str) -> None:
+    response = {
+        "name": "fabric1",
+        "category": "fabric",
+        "management": {
+            "type": model_class._fabric_type.value,
+            "bgpAsn": "65001",
+            wire_field: invalid,
+        },
+    }
+
+    with pytest.raises(ValidationError, match="valid IPv4 or IPv6 address"):
+        model_class.from_response(response)
 
 
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
@@ -168,6 +232,9 @@ def test_dhcp_address_fields_reject_ipv6_for_every_family(model_class, field: st
         ("dhcp_start_address", "not-an-ip"),
         ("dhcp_end_address", "192.0.2.999"),
         ("management_gateway", "192.0.2.1/24"),
+        ("dhcp_start_address", "2001:db8::zz"),
+        ("dhcp_end_address", "2001:db8::20/64"),
+        ("management_gateway", "2001:db8::1/64"),
         ("scheduled_backup_time", "99:99"),
         ("scheduled_backup_time", "9:00"),
     ),
@@ -287,3 +354,34 @@ def test_shared_vxlan_cidr_constraints_apply_to_every_family(model_class, field:
 def test_shared_ibgp_ospf_and_interface_constraints_apply_to_every_family(model_class, field: str, value) -> None:
     with pytest.raises(ValidationError):
         model_class.from_config(_config(**{field: value}))
+
+
+@pytest.mark.parametrize("model_class", VXLAN_FAMILIES)
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+@pytest.mark.parametrize("site_id_input", (None, ""))
+def test_omitted_site_id_is_derived_for_payload_but_not_marked_explicit(model_class, state: str, site_id_input: str | None) -> None:
+    management = {"bgp_asn": "65001"}
+    if site_id_input is not None:
+        management["site_id"] = site_id_input
+
+    model = model_class.from_config(
+        {"fabric_name": "fabric1", "management": management},
+        context={"state": state},
+    )
+
+    assert model.management.site_id == "65001"
+    assert "site_id" not in model.management.model_fields_set
+    assert model.to_payload()["management"]["siteId"] == "65001"
+    assert "siteId" not in model.model_dump(by_alias=True, exclude_unset=True)["management"]
+
+
+@pytest.mark.parametrize("model_class", VXLAN_FAMILIES)
+def test_explicit_site_id_remains_explicit_for_merged(model_class) -> None:
+    model = model_class.from_config(
+        _config(site_id="12345"),
+        context={"state": "merged"},
+    )
+
+    assert model.management.site_id == "12345"
+    assert "site_id" in model.management.model_fields_set
+    assert model.model_dump(by_alias=True, exclude_unset=True)["management"]["siteId"] == "12345"

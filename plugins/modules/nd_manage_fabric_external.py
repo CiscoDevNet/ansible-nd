@@ -196,9 +196,11 @@ options:
             description:
             - DHCP Scope End Address For Switch POAP.
             - Applies when O(config.management.day0_bootstrap=true),
-              O(config.management.local_dhcp_server=true), and
-              O(config.management.dhcp_protocol_version=dhcpv4).
-            - Must be a valid IPv4 address without a prefix length.
+              O(config.management.local_dhcp_server=true).
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_protocol_version:
@@ -212,9 +214,11 @@ options:
             description:
             - DHCP Scope Start Address For Switch POAP.
             - Applies when O(config.management.day0_bootstrap=true),
-              O(config.management.local_dhcp_server=true), and
-              O(config.management.dhcp_protocol_version=dhcpv4).
-            - Must be a valid IPv4 address without a prefix length.
+              O(config.management.local_dhcp_server=true).
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dns_collection:
@@ -289,8 +293,12 @@ options:
           management_gateway:
             description:
             - Default Gateway For Management VRF On The Switch.
-            - Applies to IPv4 management addressing when O(config.management.day0_bootstrap=true).
-            - Must be a valid IPv4 address without a prefix length.
+            - Applies to management addressing when O(config.management.day0_bootstrap=true).
+            - Use an IPv4 address without a prefix length on ND 4.2 or later.
+            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
+            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
+            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:

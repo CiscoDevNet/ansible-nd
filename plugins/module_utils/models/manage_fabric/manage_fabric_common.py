@@ -99,6 +99,17 @@ def validate_fabric_ipv4_address(value: str | None) -> str | None:
     return value
 
 
+def validate_fabric_dhcp_gateway_address(value: str | None) -> str | None:
+    """Validate a DHCP scope or management gateway address for replay.
+
+    Release and controller-installation support is checked by the fabric
+    orchestrator before sending a user-supplied IPv6 value.  This validator
+    must be context-independent because merged updates validate assignment on
+    an existing response model without the original ``from_config`` context.
+    """
+    return validate_fabric_ip_address(value)
+
+
 def validate_fabric_ipv4_cidr(value: str | None) -> str | None:
     """Validate IPv4 CIDR notation while preserving its spelling."""
     if value is None:
@@ -128,6 +139,7 @@ def validate_multicast_group_subnet(value: str | None) -> str | None:
 FabricIPAddress = Annotated[Optional[str], BeforeValidator(validate_fabric_ip_address)]
 RequiredFabricIPAddress = Annotated[str, BeforeValidator(validate_fabric_ip_address)]
 FabricIPv4Address = Annotated[Optional[str], BeforeValidator(validate_fabric_ipv4_address)]
+FabricDhcpGatewayAddress = Annotated[Optional[str], BeforeValidator(validate_fabric_dhcp_gateway_address)]
 RequiredFabricIPv4Address = Annotated[str, BeforeValidator(validate_fabric_ipv4_address)]
 FabricIPv4CIDR = Annotated[Optional[str], BeforeValidator(validate_fabric_ipv4_cidr)]
 MulticastGroupSubnet = Annotated[Optional[str], BeforeValidator(validate_multicast_group_subnet)]
@@ -166,6 +178,17 @@ def bgp_asn_to_site_id(value: str) -> str:
         return value
     high, low = value.split(".")
     return str(int(high) * 65536 + int(low))
+
+
+def default_site_id_from_bgp_asn(management: Any) -> None:
+    """Default site ID without treating an omitted value as a merge update."""
+    if management is None or management.site_id not in (None, "") or management.bgp_asn is None:
+        return
+
+    site_id_was_supplied = "site_id" in management.model_fields_set
+    management.site_id = bgp_asn_to_site_id(management.bgp_asn)
+    if not site_id_was_supplied:
+        management.model_fields_set.discard("site_id")
 
 
 class BootstrapSubnetModel(NDNestedModel):

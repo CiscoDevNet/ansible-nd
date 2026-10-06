@@ -50,6 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
+    FabricDhcpGatewayAddress,
     FabricIPv4Address,
     FabricIPv4CIDR,
     FabricInterfaceName,
@@ -57,7 +58,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     NetflowSettingsModel,
     RequiredFabricIPv4Address,
     ScheduledBackupTime,
-    bgp_asn_to_site_id,
+    default_site_id_from_bgp_asn,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
@@ -187,7 +188,11 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Core iBGP Configuration
     bgp_asn: str | None = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]", default=None)
-    site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN", default=None)
+    site_id: str | None = Field(
+        alias="siteId",
+        description="EVPN Multi-Site ID. Defaults from BGP ASN for creation/exact state; omitted merged update preserves existing ID.",
+        default=None,
+    )
 
     # Name under management section is optional — propagated from FabricIbgpModel.fabric_name during validation
     name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
@@ -402,9 +407,11 @@ class VxlanIbgpManagementModel(NDNestedModel):
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: FabricIPv4Address = Field(alias="dhcpStartAddress", description="IPv4 DHCP Scope Start Address For Switch POAP", default=None)
-    dhcp_end_address: FabricIPv4Address = Field(alias="dhcpEndAddress", description="IPv4 DHCP Scope End Address For Switch POAP", default=None)
-    management_gateway: FabricIPv4Address = Field(alias="managementGateway", description="IPv4 Default Gateway For Management VRF On The Switch", default=None)
+    dhcp_start_address: FabricDhcpGatewayAddress = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_end_address: FabricDhcpGatewayAddress = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
+    management_gateway: FabricDhcpGatewayAddress = Field(
+        alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
+    )
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
     extra_config_nxos_bootstrap: str = Field(
@@ -1236,5 +1243,4 @@ class FabricIbgpModel(FabricBaseModel):
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id in (None, "") and self.management.bgp_asn is not None:
-            self.management.site_id = bgp_asn_to_site_id(self.management.bgp_asn)
+        default_site_id_from_bgp_asn(self.management)

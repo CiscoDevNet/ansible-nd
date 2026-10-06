@@ -219,3 +219,65 @@ def test_nd_state_machine_campus_fabric_00070() -> None:
             [{"fabric_name": "campus1", "management": {"performance_monitoring": True}}],
             [],
         )
+
+
+@pytest.mark.parametrize("bgp_asn", ("65001", "65002"))
+def test_nd_state_machine_campus_fabric_00080(bgp_asn: str) -> None:
+    """Merged ASN input must not reset an existing custom site ID."""
+    existing = _fabric_response()
+    existing["management"]["siteId"] = "12345"
+
+    instance = _run(
+        "merged",
+        [{"fabric_name": "campus1", "management": {"bgp_asn": bgp_asn}}],
+        [existing],
+    )
+
+    calls = instance.model_orchestrator._calls
+    assert [name for name, _model in calls] == ([] if bgp_asn == "65001" else ["update"])
+    assert instance.existing.get("campus1").management.site_id == "12345"
+    assert instance.existing.get("campus1").management.bgp_asn == bgp_asn
+    if calls:
+        assert calls[0][1].to_payload()["management"]["siteId"] == "12345"
+
+
+@pytest.mark.parametrize("state", ("replaced", "overridden"))
+def test_nd_state_machine_campus_fabric_00090(state: str) -> None:
+    """Exact-state omission still applies the ASN-derived site ID."""
+    existing = _fabric_response()
+    existing["management"]["siteId"] = "12345"
+
+    instance = _run(state, [_minimal_config()], [existing])
+
+    calls = instance.model_orchestrator._calls
+    assert [name for name, _model in calls] == ["update"]
+    assert calls[0][1].management.site_id == "65001"
+    assert calls[0][1].to_payload()["management"]["siteId"] == "65001"
+
+
+def test_nd_state_machine_campus_fabric_00100() -> None:
+    """An unrelated IPv6 Campus fabric does not block a merged update."""
+    target = _fabric_response("campus1")
+    target["management"]["siteId"] = "12345"
+    unrelated = _fabric_response("campus2")
+    unrelated["management"].update(
+        {
+            "dhcpStartAddress": "2001:db8::10",
+            "dhcpEndAddress": "2001:db8::20",
+            "managementGateway": "2001:db8::1",
+        }
+    )
+
+    instance = _run(
+        "merged",
+        [{"fabric_name": "campus1", "management": {"bgp_asn": "65001", "performance_monitoring": True}}],
+        [target, unrelated],
+    )
+
+    calls = instance.model_orchestrator._calls
+    assert [name for name, _model in calls] == ["update"]
+    assert calls[0][1].get_identifier_value() == "campus1"
+    assert calls[0][1].management.site_id == "12345"
+    assert instance.existing.get("campus2").management.dhcp_start_address == "2001:db8::10"
+    assert instance.existing.get("campus2").management.dhcp_end_address == "2001:db8::20"
+    assert instance.existing.get("campus2").management.management_gateway == "2001:db8::1"

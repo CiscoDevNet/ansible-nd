@@ -771,7 +771,8 @@ options:
             - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
             - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
             - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
-            - Defaults to the value of O(config.management.bgp_asn) if not provided.
+            - On creation and with O(state=replaced) or O(state=overridden), an omitted value defaults to O(config.management.bgp_asn).
+            - On an existing fabric with O(state=merged), omission preserves its site ID even when O(config.management.bgp_asn) is supplied.
             type: str
           overlay_mode:
             description:
@@ -1510,25 +1511,35 @@ options:
             choices: [ dhcpv4, dhcpv6 ]
           dhcp_start_address:
             description:
-            - Applies to local DHCP scopes when O(config.management.dhcp_protocol_version=dhcpv4),
-              O(config.management.local_dhcp_server=true), and O(config.management.day0_bootstrap=true).
+            - Applies to local DHCP scopes when O(config.management.local_dhcp_server=true) and
+              O(config.management.day0_bootstrap=true).
             - The DHCP start address for bootstrap.
-            - Must be a valid IPv4 address without a prefix length.
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
             description:
-            - Applies to local DHCP scopes when O(config.management.dhcp_protocol_version=dhcpv4),
-              O(config.management.local_dhcp_server=true), and O(config.management.day0_bootstrap=true).
+            - Applies to local DHCP scopes when O(config.management.local_dhcp_server=true) and
+              O(config.management.day0_bootstrap=true).
             - The DHCP end address for bootstrap.
-            - Must be a valid IPv4 address without a prefix length.
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
-            - Applies to IPv4 bootstrap addressing when O(config.management.day0_bootstrap=true), including external DHCP.
+            - Applies to bootstrap addressing when O(config.management.day0_bootstrap=true), including external DHCP.
             - The management gateway for bootstrap.
-            - Must be a valid IPv4 address without a prefix length.
+            - Use an IPv4 address without a prefix length on ND 4.2 or later.
+            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
+            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
+            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:

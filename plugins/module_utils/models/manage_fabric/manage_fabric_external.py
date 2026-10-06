@@ -22,7 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
-    FabricIPv4Address,
+    FabricDhcpGatewayAddress,
     NetflowSettingsModel,
     ScheduledBackupTime,
     validate_bgp_asn_value,
@@ -163,11 +163,11 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     day0_plug_and_play: bool = Field(alias="day0PlugAndPlay", description="Enable Plug n Play for Catalyst 9000 switches", default=False)
 
     # DHCP
-    dhcp_end_address: FabricIPv4Address = Field(alias="dhcpEndAddress", description="IPv4 DHCP Scope End Address For Switch POAP", default=None)
+    dhcp_end_address: FabricDhcpGatewayAddress = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: FabricIPv4Address = Field(alias="dhcpStartAddress", description="IPv4 DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_start_address: FabricDhcpGatewayAddress = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
 
     # DNS
     dns_collection: list[str] = Field(alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses", default_factory=list)
@@ -208,7 +208,9 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     local_dhcp_server: bool = Field(alias="localDhcpServer", description="Automatic IP Assignment For POAP from Local DHCP Server", default=False)
 
     # Management
-    management_gateway: FabricIPv4Address = Field(alias="managementGateway", description="IPv4 Default Gateway For Management VRF On The Switch", default=None)
+    management_gateway: FabricDhcpGatewayAddress = Field(
+        alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
+    )
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 

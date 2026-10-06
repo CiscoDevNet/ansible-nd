@@ -307,3 +307,35 @@ def test_fabric_gathered_config_is_a_complete_replayable_round_trip(model_class)
         assert "evpn" not in gathered["management"]
     if model_class in (FabricAiIbgpVxlanModel, FabricAiEbgpVxlanModel):
         assert "aiml_qos" not in gathered["management"]
+
+
+@pytest.mark.parametrize("model_class", REGULAR_FABRIC_MODELS)
+def test_response_origin_ipv6_dhcp_addresses_round_trip_through_gathered_config(model_class):
+    """A controller-returned DHCPv6 trio remains valid after Ansible config validation."""
+    addresses = {
+        "dhcp_start_address": ("dhcpStartAddress", "2001:db8::10"),
+        "dhcp_end_address": ("dhcpEndAddress", "2001:db8::20"),
+        "management_gateway": ("managementGateway", "2001:db8::1"),
+    }
+    response = {
+        "name": "fabric1",
+        "category": "fabric",
+        "management": {
+            "type": model_class._fabric_type.value,
+            "bgpAsn": "65001",
+            "dhcpProtocolVersion": "dhcpv6",
+            **{wire_key: value for wire_key, value in addresses.values()},
+        },
+    }
+
+    gathered = model_class.from_response(response).to_gathered_config()
+    replayed_config = _validate(model_class.get_argument_spec(), gathered)
+    replayed_payload = model_class.from_config(replayed_config).to_payload()
+
+    assert gathered["management"]["dhcp_protocol_version"] == "dhcpv6"
+    assert replayed_config["management"]["dhcp_protocol_version"] == "dhcpv6"
+    assert replayed_payload["management"]["dhcpProtocolVersion"] == "dhcpv6"
+    for public_key, (wire_key, value) in addresses.items():
+        assert gathered["management"][public_key] == value
+        assert replayed_config["management"][public_key] == value
+        assert replayed_payload["management"][wire_key] == value

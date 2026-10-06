@@ -30,13 +30,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
+    FabricDhcpGatewayAddress,
     FabricIPv4Address,
     FabricIPv4CIDR,
     FabricInterfaceName,
     MulticastGroupSubnet,
     NetflowSettingsModel,
     ScheduledBackupTime,
-    bgp_asn_to_site_id,
+    default_site_id_from_bgp_asn,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
@@ -273,7 +274,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     # Site / MTU
     site_id: str | None = Field(
         alias="siteId",
-        description="EVPN Multi-Site Support. Defaults to Fabric ASN",
+        description="EVPN Multi-Site ID. Defaults from BGP ASN for creation/exact state; omitted merged update preserves existing ID.",
         default=None,
     )
     fabric_mtu: int = Field(
@@ -465,19 +466,19 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="IP protocol version for Local DHCP Server",
         default=DhcpProtocolVersionEnum.DHCPV4,
     )
-    dhcp_start_address: FabricIPv4Address = Field(
+    dhcp_start_address: FabricDhcpGatewayAddress = Field(
         alias="dhcpStartAddress",
-        description="IPv4 DHCP Scope Start Address",
+        description="DHCP Scope Start Address",
         default=None,
     )
-    dhcp_end_address: FabricIPv4Address = Field(
+    dhcp_end_address: FabricDhcpGatewayAddress = Field(
         alias="dhcpEndAddress",
-        description="IPv4 DHCP Scope End Address",
+        description="DHCP Scope End Address",
         default=None,
     )
-    management_gateway: FabricIPv4Address = Field(
+    management_gateway: FabricDhcpGatewayAddress = Field(
         alias="managementGateway",
-        description="IPv4 Default Gateway For Management VRF",
+        description="Default Gateway For Management VRF",
         default=None,
     )
     management_ipv4_prefix: int = Field(
@@ -736,5 +737,4 @@ class FabricCampusIbgpVxlanModel(FabricBaseModel):
     def _post_validate_consistency(self) -> None:
         """Default the Campus site ID to the fabric BGP ASN."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id in (None, "") and self.management.bgp_asn is not None:
-            self.management.site_id = bgp_asn_to_site_id(self.management.bgp_asn)
+        default_site_id_from_bgp_asn(self.management)
