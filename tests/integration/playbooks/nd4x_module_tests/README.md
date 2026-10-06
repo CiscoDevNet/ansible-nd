@@ -398,10 +398,30 @@ Each query supports:
 | `name` | No | Query path | Human-readable query name |
 | `path` | Yes | None | ND REST API path |
 | `expected_status` | No | `200` | Required HTTP response status, or a non-empty list of acceptable statuses |
+| `pagination` | No | None | Optional pagination configuration with required `page_size` and `collection_key`, plus optional `max_pages` (default `10000`) |
 | `unordered_paths` | No | `[]` | JSON pointers relative to `current`; only lists at these paths are treated as unordered. `*` matches one path component, including a list index; `""` names the response itself when it is a list. |
 | `ignore_keys` | No | `[]` | Dictionary keys removed recursively before comparison |
 
 Check-mode snapshot queries always use GET. A method cannot be supplied.
+
+For a paginated query, configure the list under `current` that should be
+combined:
+
+```yaml
+pagination:
+  page_size: 100
+  collection_key: routeMaps
+  max_pages: 10000
+```
+
+The plugin adds or replaces the `max` and `offset` query parameters on `path`
+for each GET request. Contributors should not add those parameters themselves.
+Only the rows under `current.<collection_key>` are combined and compared;
+other top-level response keys are not included in the snapshot comparison.
+The query fails if `current.<collection_key>` is missing or is not a list.
+`max_pages` defaults to `10000`. If that limit is reached without a page
+shorter than `page_size`, the query fails instead of returning a truncated
+snapshot.
 
 The harness performs:
 

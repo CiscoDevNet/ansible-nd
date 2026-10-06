@@ -68,7 +68,19 @@ options:
       - The normalized before and after states must be equivalent before a real
         apply is allowed.
       - Query entries support C(name), C(path), C(expected_status),
-        C(unordered_paths), and C(ignore_keys). The HTTP method is always C(GET).
+        C(unordered_paths), C(ignore_keys), and optional C(pagination). The HTTP
+        method is always C(GET).
+      - C(pagination) requires C(page_size) and C(collection_key), and accepts
+        optional C(max_pages), which defaults to 10000. For each page, the
+        plugin sets C(max) and C(offset) on C(path) itself; callers do not add
+        those query parameters.
+      - With C(pagination), only the rows under
+        C(current.<collection_key>) are combined and compared. Other top-level
+        keys in the response are not included in the snapshot comparison.
+      - The query fails when C(current.<collection_key>) is missing or is not a
+        list. It also fails if C(max_pages) is reached without receiving a
+        final page shorter than C(page_size); the snapshot is never silently
+        truncated.
       - C(unordered_paths) contains JSON pointers relative to the response in
         C(current). Only lists at the named paths are treated as unordered;
         C(*) matches one path component, including a list index. An empty
