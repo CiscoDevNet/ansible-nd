@@ -1,0 +1,116 @@
+---
+- name: Associate an existing deployed network with every populated group type
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config: >-
+      {{
+        [
+          {
+            'interface_group_name': interface_group_names.any,
+            'networks': [test_network_1]
+          }
+        ]
+        + (
+          [
+            {
+              'interface_group_name':
+                interface_group_names.ethernet_custom,
+              'networks': [test_network_1]
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          {
+            'interface_group_name':
+              interface_group_names.ethernet_with_policy,
+            'networks': [test_network_1]
+          },
+          {
+            'interface_group_name':
+              interface_group_names.ethernet_without_policy,
+            'networks': [test_network_1]
+          }
+        ]
+        + (
+          [
+            {
+              'interface_group_name': interface_group_names.vpc,
+              'networks': [test_network_1]
+            }
+          ]
+          if test_vpc_flow_enabled
+          else []
+        )
+      }}
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch all Interface Groups after network associations
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_all_type_networks
+
+- name: Validate network association on every populated group type
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ interface_group_all_type_networks.nd_query_results[0].result }}
+    test_data: >-
+      {{
+        [
+          interface_group_any_members
+          | combine({'networks': [test_network_1]})
+        ]
+        + (
+          [
+            interface_group_ethernet_custom_member
+            | combine(
+                {
+                  'networks': [test_network_1],
+                  'template_config': interface_group_custom_effective_config
+                },
+                recursive=true
+              )
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+        + [
+          interface_group_ethernet_with_policy_member
+          | combine({'networks': [test_network_1]}),
+          interface_group_ethernet_without_policy_member
+          | combine({'networks': [test_network_1]})
+        ]
+        + (
+          [
+            interface_group_vpc_member
+            | combine({'networks': [test_network_1]})
+          ]
+          if test_vpc_flow_enabled
+          else []
+        )
+      }}
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    vpc_peer_switch_ids: "{{ interface_group_vpc_peer_switch_ids }}"
+    invariants:
+      unique_group_names: true
+      unique_members: true
+      consistent_counts: true
+  when: not ansible_check_mode

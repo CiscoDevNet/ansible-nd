@@ -1,0 +1,313 @@
+---
+- name: Gather every Interface Group with the ND 4.x test runner
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_all
+
+- name: Validate gathered-all type coverage and normalized output
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_gathered_all }}"
+    test_data: "{{ interface_group_all_types_after_deployment }}"
+    mode: subset
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      total_count: "{{ interface_group_all_types_after_deployment | length }}"
+      required_types: >-
+        {{
+          interface_group_all_types_after_deployment
+          | map(attribute='type')
+          | list
+        }}
+      unique_group_names: true
+      unique_members: true
+      consistent_counts: false
+  when: not ansible_check_mode
+
+- name: >-
+    Gather one custom group with combined scalar, list, and dictionary filters
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+        type: ethernetCustom
+        networks:
+          - "{{ test_network_1 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_ethernet_custom }}"
+        template_name: "{{ test_custom_template }}"
+        template_config: "{{ interface_group_custom_effective_config }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_custom
+  when: test_ethernet_custom_flow_enabled | bool
+
+- name: Validate the combined custom-group filter
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_gathered_custom }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+        type: ethernetCustom
+        networks:
+          - "{{ test_network_1 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_ethernet_custom }}"
+        template_name: "{{ test_custom_template }}"
+        template_config: "{{ interface_group_custom_effective_config }}"
+    mode: exact
+    invariants:
+      total_count: 1
+      unique_group_names: true
+      unique_members: true
+  when:
+    - test_ethernet_custom_flow_enabled | bool
+    - not ansible_check_mode
+
+- name: Gather the shared-policy group by normalized policy attributes
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - type: ethernetWithPolicy
+        ethernet_attributes:
+          admin_state: true
+          cdp: true
+          mtu: jumbo
+          allowed_vlans: none
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_policy
+
+- name: Validate the shared-policy attribute filter
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_gathered_policy }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+        type: ethernetWithPolicy
+        ethernet_attributes:
+          admin_state: true
+          cdp: true
+          mtu: jumbo
+          allowed_vlans: none
+    mode: subset
+    scope_prefix: "{{ interface_group_test_prefix }}"
+  when: not ansible_check_mode
+
+- name: Gather groups with no network or member associations
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - networks: []
+        switch_interfaces: []
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_empty
+
+- name: Validate explicit-empty association filtering
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_gathered_empty }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        type: portChannel
+        networks: []
+        switch_interfaces: []
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      total_count: 1
+  when: not ansible_check_mode
+
+- name: Gather overlapping OR filters
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config: >-
+      {{
+        [
+          {'interface_group_name': interface_group_names.any},
+          {'type': 'any', 'networks': [test_network_1]}
+        ]
+        + (
+          [
+            {
+              'interface_group_name':
+                interface_group_names.ethernet_custom
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+      }}
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_or
+
+- name: Validate OR semantics and de-duplication
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_gathered_or }}"
+    test_data: >-
+      {{
+        [
+          {
+            'interface_group_name': interface_group_names.any,
+            'type': 'any'
+          }
+        ]
+        + (
+          [
+            {
+              'interface_group_name':
+                interface_group_names.ethernet_custom,
+              'type': 'ethernetCustom'
+            }
+          ]
+          if test_ethernet_custom_flow_enabled
+          else []
+        )
+      }}
+    mode: subset
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      total_count: >-
+        {{ 1 + (test_ethernet_custom_flow_enabled | int) }}
+      unique_group_names: true
+  when: not ansible_check_mode
+
+- name: Gather a switch-only association filter
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_interfaces:
+          - switch_id: "{{ test_switch_id_secondary }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_switch
+
+- name: Validate switch-only filtering includes the known secondary-leaf groups
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_gathered_switch }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.any }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id_secondary }}"
+            interface_names:
+              - "{{ test_any_ethernet_secondary }}"
+              - "{{ test_any_port_channel }}"
+      - interface_group_name: >-
+          {{ interface_group_names.ethernet_without_policy }}
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id_secondary }}"
+            interface_names:
+              - "{{ test_ethernet_without_policy }}"
+    mode: subset
+    scope_prefix: "{{ interface_group_test_prefix }}"
+  when: not ansible_check_mode
+
+- name: Gather a filter that matches no Interface Group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: gathered
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - interface_group_name: "ANSIBLE-IG-NOT-PRESENT"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+  register: interface_group_gathered_none
+
+- name: Validate a no-match gather returns an empty list
+  ansible.builtin.assert:
+    that:
+      - interface_group_gathered_none.first_run_result.gathered == []
+  when: not ansible_check_mode
+
+- name: Validate gathered output excludes controller-only fields
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_gathered_all.first_run_result.gathered
+        | selectattr(
+            'interface_group_name',
+            'match',
+            '^' ~ interface_group_test_prefix
+          )
+        | selectattr('policy_id', 'defined')
+        | list
+        | length == 0
+      - >-
+        interface_group_gathered_all.first_run_result.gathered
+        | selectattr(
+            'interface_group_name',
+            'match',
+            '^' ~ interface_group_test_prefix
+          )
+        | selectattr('interface_count', 'defined')
+        | list
+        | length == 0
+      - >-
+        interface_group_gathered_all.first_run_result.gathered
+        | selectattr(
+            'interface_group_name',
+            'match',
+            '^' ~ interface_group_test_prefix
+          )
+        | selectattr('network_count', 'defined')
+        | list
+        | length == 0
+  when: not ansible_check_mode
