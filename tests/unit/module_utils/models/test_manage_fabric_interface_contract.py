@@ -324,7 +324,7 @@ def test_response_origin_ipv6_dhcp_addresses_round_trip_through_gathered_config(
             "type": model_class._fabric_type.value,
             "bgpAsn": "65001",
             "dhcpProtocolVersion": "dhcpv6",
-            **{wire_key: value for wire_key, value in addresses.values()},
+            **dict(addresses.values()),
         },
     }
 
