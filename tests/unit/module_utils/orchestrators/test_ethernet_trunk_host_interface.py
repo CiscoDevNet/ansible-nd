@@ -1143,3 +1143,37 @@ def test_ethernet_trunk_host_orchestrator_00480() -> None:
         result = orchestrator.query_all()
 
     assert result == []
+
+
+def test_ethernet_trunk_host_orchestrator_00930(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `unaccepted_removals` on an ethernet orchestrator honors every delete-side queue its `_unsent_delete_pairs` unions
+    (remove, normalize, reset, IOS-XE reset), not only the base remove queue (issue #597 delete side).
+
+    ## Test
+
+    - One pair queued in each of `_pending_removes`, `_pending_normalizes`, `_pending_resets`, `_pending_xe_resets`; a fifth interface
+      is in no queue
+    - Submitted: all five identifier-only models on 192.168.2.1
+    - Returned: the four queued interfaces, in submission order
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._unsent_delete_pairs()
+    - NDBaseInterfaceOrchestrator.unaccepted_removals()
+    """
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    monkeypatch.setattr(EthernetTrunkHostInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    instance._pending_removes.append(("Ethernet1/1", "FDO12345ABC"))
+    instance._pending_normalizes.append(("Ethernet1/2", "FDO12345ABC"))
+    instance._pending_resets.append(("Ethernet1/3", "FDO12345ABC"))
+    instance._pending_xe_resets.append(("GigabitEthernet1/0/4", "FDO12345ABC"))
+    names = ["Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "GigabitEthernet1/0/4", "Ethernet1/5"]
+    removed = [EthernetTrunkHostInterfaceModel.from_config({"switch_ip": "192.168.2.1", "interface_name": name}) for name in names]
+
+    with does_not_raise():
+        unaccepted = instance.unaccepted_removals(removed)
+
+    assert [item.interface_name for item in unaccepted] == names[:4]

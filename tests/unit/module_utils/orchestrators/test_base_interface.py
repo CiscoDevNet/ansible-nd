@@ -45,6 +45,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
     BulkCreateGroupKey,
     BulkCreateItem,
@@ -133,6 +134,26 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     rest_send.unit_test = True
     rest_send.timeout = 1
     return rest_send
+
+
+_SWITCH_IDS = {"192.168.12.151": "FDO12345ABC", "192.168.12.152": "FDO67890DEF"}
+
+
+def _patch_switch_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the two lab IPs in `_SWITCH_IDS` without a FabricContext request; any other IP raises like FabricContext does."""
+
+    def _resolve(self, switch_ip: str) -> str:  # pylint: disable=unused-argument
+        try:
+            return _SWITCH_IDS[switch_ip]
+        except KeyError as error:
+            raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric 'fabric_1'.") from error
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", _resolve)
+
+
+def _loopback_item(interface_name: str, switch_ip: str = "192.168.12.151") -> LoopbackInterfaceModel:
+    """Identifier-only loopback model, the shape the state machine hands to the acceptance hooks."""
+    return LoopbackInterfaceModel.from_config({"switch_ip": switch_ip, "interface_name": interface_name})
 
 
 # =============================================================================
@@ -3684,3 +3705,96 @@ def test_base_interface_01140() -> None:
 
     assert "port-channel120" not in str(exc_info.value)
     assert len(instance.rest_send.responses) == 2
+
+
+# =============================================================================
+# Issue #597: acceptance hooks read the deploy queue and the delete-side queues
+# =============================================================================
+
+
+def test_base_interface_01200(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `accepted_mutations` keeps exactly the submitted items whose `(interface_name, switch_id)` pair is deploy-queued, matching
+    names case-insensitively and distinguishing switches with the same interface name (issue #597).
+
+    ## Test
+
+    - Deploy queue holds `("Loopback10", FDO12345ABC)` and `("loopback11", FDO67890DEF)`
+    - Submitted: loopback10 on .151, loopback11 on .151, loopback11 on .152, loopback12 on .151
+    - Returned: loopback10/.151 and loopback11/.152, in submission order
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.accepted_mutations()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance._queue_deploy("Loopback10", "FDO12345ABC")
+    instance._queue_deploy("loopback11", "FDO67890DEF")
+    submitted = [_loopback_item("loopback10"), _loopback_item("loopback11"), _loopback_item("loopback11", "192.168.12.152"), _loopback_item("loopback12")]
+
+    with does_not_raise():
+        accepted = instance.accepted_mutations(submitted)
+
+    assert [(item.interface_name, item.switch_ip) for item in accepted] == [("loopback10", "192.168.12.151"), ("loopback11", "192.168.12.152")]
+
+
+def test_base_interface_01210(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `accepted_mutations` treats an item whose `switch_ip` cannot be resolved as not accepted and never raises on the
+    failure path (issue #597).
+
+    ## Test
+
+    - Deploy queue holds `("loopback10", FDO12345ABC)`
+    - Submitted: loopback10 on .151 and loopback10 on an unknown IP
+    - Returned: loopback10/.151 only; no exception
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.accepted_mutations()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+    submitted = [_loopback_item("loopback10"), _loopback_item("loopback10", "10.0.0.9")]
+
+    with does_not_raise():
+        accepted = instance.accepted_mutations(submitted)
+
+    assert [(item.interface_name, item.switch_ip) for item in accepted] == [("loopback10", "192.168.12.151")]
+
+
+def test_base_interface_01220(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `unaccepted_removals` keeps exactly the items whose pair is still in a delete-side queue (`_unsent_delete_pairs`), so a
+    removal the controller accepted (dequeued) is not restored to `after` (issue #597 delete side).
+
+    ## Test
+
+    - Remove queue holds `("loopback11", FDO12345ABC)` only (loopback10's removal was accepted and dequeued)
+    - Submitted (the state machine's `removed`): loopback10 and loopback11 on .151
+    - Returned: loopback11 only; an empty queue returns []
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.unaccepted_removals()
+    - NDBaseInterfaceOrchestrator._unsent_delete_pairs()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance._queue_remove("loopback11", "FDO12345ABC")
+    removed = [_loopback_item("loopback10"), _loopback_item("loopback11")]
+
+    with does_not_raise():
+        unaccepted = instance.unaccepted_removals(removed)
+    assert [item.interface_name for item in unaccepted] == ["loopback11"]
+
+    instance._pending_removes = []
+    assert instance.unaccepted_removals(removed) == []
