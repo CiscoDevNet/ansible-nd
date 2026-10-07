@@ -58,6 +58,55 @@ the standard supplemental negative test for a missing `interface_name` and
 requires both the validation reason and field name; it does not replace an
 original scenario.
 
+### Supplemental IOS-XE coverage in the legacy workflow
+
+The IOS-XE workflow in `tasks/xe.yaml` is supplemental coverage for issue
+#537 in the original target's legacy execution block. It is optional there:
+`tasks/main.yaml` includes `xe.yaml` only when `nd_test_xe_switch_ip` is
+defined and non-empty. When that variable is absent, the legacy target skips
+the IOS-XE workflow and still runs its normal non-IOS-XE scenarios.
+
+This IOS-XE workflow is not implemented in the ND4X harness. It is not part
+of the original-suite parity mapping above, is not selected by any
+`nd4x_demo_*` tag, and is not included in the ND4X execution evidence below.
+
+The optional workflow covers:
+
+- Cleanup of port-channels 103-105 and discovery of the Catalyst switch ID.
+- Negative validation when an `iosXeAccess` member is used in an
+  `iosXeTrunkPoHost` port-channel, including check mode, normal mode, and
+  cleanup back to `iosXeTrunkHost`.
+- Merged creation of port-channels 103 and 104, including check mode, normal
+  mode, returned discriminator assertions, and idempotency.
+- Merged update of port-channel103, including allowed VLANs, BPDU guard,
+  description, and idempotency.
+- Replaced state for port-channel103 with check-mode, normal-mode, and
+  returned-state assertions.
+- Overridden state retaining port-channel103 and removing port-channel104,
+  including idempotency.
+- Deleted state for port-channel103, including check mode, normal mode,
+  absence verification, and idempotency.
+- Final member cleanup back to the IOS-XE fabric default. Cleanup retries are
+  included because the controller can temporarily lag while reporting a
+  detached member.
+
+The required IOS-XE variables are:
+
+```ini
+nd_test_xe_switch_ip=<Catalyst leaf management IP>
+nd_test_xe_fabric_name=<Catalyst fabric; defaults to nd_test_fabric_name>
+nd_test_xe_pc_member_a=GigabitEthernet1/0/2
+nd_test_xe_pc_member_b=GigabitEthernet1/0/3
+nd_test_xe_pc_member_c=GigabitEthernet1/0/4
+nd_test_xe_pc_member_d=GigabitEthernet1/0/5
+nd_test_xe_pc_member_access=GigabitEthernet1/0/6
+```
+
+The Catalyst member ports must exist, must not be fabric-link endpoints, and
+must be available for the test. The workflow uses port-channels 103-105 as
+reserved test resources and does not set per-port-channel MTU because the
+Catalyst 9000v rejects that configuration.
+
 The original normal CRUD tasks omit `config_actions.deploy`, and this module's
 default is `deploy: false`. The harness preserves that behavior and validates
 the staged ND controller configuration. It does not claim switch-operational
@@ -120,6 +169,13 @@ selective dot1q-tunnel configuration. A hardware-backed run must explicitly
 set `supports_vlan_mapping=true`; a skipped capability is not treated as a
 missing scenario mapping.
 
+Each state-specific harness tag also selects `nd4x_demo_preflight`, so the
+controller-version and reserved-resource checks run before the state workflow.
+This applies to `nd4x_demo_merged`, `nd4x_demo_replaced`,
+`nd4x_demo_deleted`, `nd4x_demo_negative`, `nd4x_demo_vlan_mapping`,
+`nd4x_demo_overridden`, and `nd4x_demo_destructive`. A separate preflight tag
+is therefore not required when running one of these workflows.
+
 ## Run commands
 
 Safe harness scenarios:
@@ -130,6 +186,26 @@ ansible-test network-integration nd_interface_port_channel_trunk_host \
   --tags nd4x_demo -vv
 ```
 
+Individual safe workflows can also be selected directly:
+
+```text
+ansible-test network-integration nd_interface_port_channel_trunk_host \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_merged -vv
+
+ansible-test network-integration nd_interface_port_channel_trunk_host \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_replaced -vv
+
+ansible-test network-integration nd_interface_port_channel_trunk_host \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_deleted -vv
+
+ansible-test network-integration nd_interface_port_channel_trunk_host \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_negative -vv
+```
+
 Destructive overridden scenarios:
 
 ```text
@@ -138,6 +214,18 @@ ansible-test network-integration nd_interface_port_channel_trunk_host \
   --tags nd4x_demo_overridden,nd4x_demo_destructive \
   --allow-destructive -vv
 ```
+
+Supplemental IOS-XE coverage is selected through the legacy target execution
+and the `nd_test_xe_switch_ip` variable; it does not use an ND4X harness tag:
+
+```text
+ansible-test network-integration nd_interface_port_channel_trunk_host \
+  --inventory /absolute/path/to/inventory.LOCAL.networking \
+  -e nd_test_xe_switch_ip=<Catalyst leaf management IP> -vv
+```
+
+If `nd_test_xe_switch_ip` is not supplied, the IOS-XE workflow is skipped and
+the run does not provide IOS-XE execution evidence.
 
 Required inventory confirmation for the harness is:
 

@@ -57,7 +57,7 @@
           'name': 'Snapshot port-channel scope on ' ~ item.fabricManagementIp,
           'path': '/api/v1/manage/fabrics/' ~ test_fabric_name ~ '/switches/' ~ item.switchId ~ '/interfaces',
           'expected_status': 200,
-          'unordered': true,
+          'unordered_paths': ['/interfaces'],
           'ignore_keys': ['operData']
         }
       ] }}
