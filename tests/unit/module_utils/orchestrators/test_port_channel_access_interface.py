@@ -157,6 +157,28 @@ def _build_xe_pc_model(
     )
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_absent_access_delete_does_not_deploy_staged_trunk_port_channel(monkeypatch, check_mode: bool) -> None:
+    """A port-channel hidden by the access policy filter remains owned by trunk."""
+
+    rest_send = _build_rest_send(ResponseGenerator(iter(())), state="deleted", check_mode=check_mode)
+    orchestrator = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
+    orchestrator.deploy = True
+    monkeypatch.setattr(PortChannelAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO11111AAA")
+    orchestrator._switch_interfaces_cache["FDO11111AAA"] = {
+        "port-channel997": {
+            "interfaceName": "port-channel997",
+            "interfaceType": "portChannel",
+            "configData": {"networkOS": {"policy": {"policyType": "trunkPoHost", "description": "staged trunk change"}}},
+        }
+    }
+
+    access_delete = _build_pc_model(interface_name="port-channel997", include_config=False)
+    assert orchestrator.reconcile_absent_deletes([access_delete]) is False
+    assert orchestrator._pending_deploys == []
+    assert rest_send.response_count == 0
+
+
 def test_port_channel_deploy_results_allow_derived_members_only_via_preview() -> None:
     """Port-channel deploys allow only members proven by the submitted parent."""
 

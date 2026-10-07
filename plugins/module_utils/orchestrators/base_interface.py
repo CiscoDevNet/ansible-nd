@@ -1134,18 +1134,38 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         return self._reconcile_deploy_models(model_instances, empty_preview_is_converged=False)
 
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """An absent delete may replay only if no raw interface record remains.
+
+        ``query_all`` filters by policy type, so an absent model can still name
+        an interface owned by another module. Previewing that identity would
+        deploy the other policy's staged configuration.
+        """
+
+        return existing_data is None
+
     def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
         """Recover an accepted deletion whose switch-side deploy remains pending.
 
         Explicit ``state: deleted`` retains the exact requested identities even
         after controller intent disappears.  Preview those identities and queue
-        a deploy only when pending configuration remains.  A controller that
-        returns an empty preview for a genuinely absent interface is already
-        converged and remains idempotent.  Check mode performs only the read-only
-        preview and reports whether a normal run would deploy.
+        a deploy only when pending configuration remains. Check the unfiltered
+        switch inventory first: a policy-filtered ``query_all`` cannot establish
+        that the name is truly absent. Subclasses may recognize an exact reset
+        echo as a safe replay target. A controller that returns an empty preview
+        for an eligible target is already converged. Check mode performs only
+        the read-only preview and reports whether a normal run would deploy.
         """
 
-        return self._reconcile_deploy_models(model_instances, empty_preview_is_converged=True)
+        if not self.deploy or not model_instances:
+            return False
+        replay_targets = []
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower())
+            if self._can_replay_absent_delete(existing_data):
+                replay_targets.append(model_instance)
+        return self._reconcile_deploy_models(replay_targets, empty_preview_is_converged=True)
 
     def deploy_pending(self) -> ResponseType | None:
         """

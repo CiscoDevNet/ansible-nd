@@ -1099,6 +1099,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             defaults = XeEthernetTrunkHostPolicyModel.reverse_diff_defaults
         else:
             return False
+        # TODO(4.3.1) interface-get-field-normalization
         # ND 4.3.1 echoes these two NX-OS reset defaults with string values
         # (live-verified on a normalized access port on 2026-10-06). Permit
         # only the exact default values; non-default or unknown fields still
@@ -1112,16 +1113,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             for key, value in policy.items()
         )
 
-    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
-        """Replay only pending ethernet resets, never another policy's staged CLI."""
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """Replay only exact ethernet reset echoes, never another policy's staged CLI."""
 
-        reset_targets = []
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            existing_data = self._existing_interface(model_instance.interface_name, switch_id)
-            if existing_data is not None and self._is_absent_delete_reset_target(existing_data):
-                reset_targets.append(model_instance)
-        return super().reconcile_absent_deletes(reset_targets)
+        return existing_data is not None and self._is_absent_delete_reset_target(existing_data)
 
     @staticmethod
     def _desired_policy_type(model_instance: ModelType) -> str | None:
@@ -1180,12 +1175,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         IOS-XE interface is named. The fabric-wide `overridden` delete set is not routed through this hook: `delete_bulk` skips
         port-channel members and IOS-XE interfaces silently there.
 
-        NX-OS needs no delete-side ownership guard: the state machine builds the delete set from `before[]`, and `query_all` already
-        keeps the system policy types out of it. An IOS-XE fabric-link endpoint reads as a plain `iosXeRoutedHost` and passes that
-        filter in the routed module, so it must be refused here (`_check_xe_fabric_link`). In practice this fires only when the
-        endpoint's record carries a non-default policy field (e.g. a description set in the GUI): a defaults-only endpoint — the
-        shape ND's fabric provisioning leaves (lab-verified 2026-09-08: WAN1 GigabitEthernet3, ISN->SITE2 `ebgpVrfLite`) — is
-        already at the XE reset target and `query_all` scopes it out under `deleted`, so the run is a no-op before reaching this hook.
+        For an existing NX-OS interface, the state machine builds the delete set from `before[]`, and `query_all` already keeps the
+        system policy types out of it. An absent target is checked against the raw inventory before any deploy replay. An IOS-XE
+        fabric-link endpoint reads as a plain `iosXeRoutedHost` and passes that
+        filter in the routed module, so it must be refused here (`_check_xe_fabric_link`). Even when a defaults-only endpoint is
+        scoped out of `query_all`, an explicitly named `state: deleted` target reaches this hook through the state machine's absent
+        target path. The guard therefore checks those names too, including the defaults-only fabric-link endpoints left by ND
+        fabric provisioning (lab-verified 2026-09-08: WAN1 GigabitEthernet3, ISN->SITE2 `ebgpVrfLite`).
 
         ## Raises
 

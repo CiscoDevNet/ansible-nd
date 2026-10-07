@@ -1125,6 +1125,7 @@ def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
+    instance._switch_interfaces_cache["FDO12345ABC"] = {}
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is True
@@ -1148,6 +1149,7 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
+    instance._switch_interfaces_cache["FDO12345ABC"] = {}
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is False
@@ -1155,6 +1157,28 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     assert instance.rest_send.return_code == 207
     assert instance.rest_send.check_mode is check_mode
     assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_reconcile_absent_delete_skips_foreign_policy_and_previews_only_absent_target(monkeypatch, check_mode: bool) -> None:
+    """A filtered-out foreign policy cannot hitchhike on a valid pending delete."""
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback11", "FDO12345ABC", pending_lines=1)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    instance._switch_interfaces_cache["FDO12345ABC"] = {
+        "loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}
+    }
+    foreign = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+    truly_absent = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback11")
+
+    assert instance.reconcile_absent_deletes([foreign, truly_absent]) is True
+    assert instance._pending_deploys == ([] if check_mode else [("loopback11", "FDO12345ABC")])
+    assert instance.rest_send.response_count == 1
 
 
 @pytest.mark.parametrize(

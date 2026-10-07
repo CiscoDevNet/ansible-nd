@@ -107,10 +107,8 @@ def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch
     orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
     orchestrator.deploy = True
     monkeypatch.setattr(EthernetAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
-    monkeypatch.setattr(
-        EthernetAccessInterfaceOrchestrator,
-        "_existing_interface",
-        lambda self, interface_name, switch_id: {
+    orchestrator._switch_interfaces_cache["FDO12345ABC"] = {
+        "ethernet1/13": {
             "interfaceType": "ethernet",
             "configData": {
                 "mode": "trunk",
@@ -119,8 +117,8 @@ def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch
                     "policy": {"policyType": "trunkHost", "allowedVlans": "none", **policy_overrides},
                 },
             },
-        },
-    )
+        }
+    }
 
     absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
     assert orchestrator.reconcile_absent_deletes([absent_access]) is False
@@ -152,10 +150,8 @@ def test_absent_access_delete_can_replay_exact_reset_target(monkeypatch) -> None
     orchestrator = _build_orchestrator(ResponseGenerator(responses()))
     orchestrator.deploy = True
     monkeypatch.setattr(EthernetAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
-    monkeypatch.setattr(
-        EthernetAccessInterfaceOrchestrator,
-        "_existing_interface",
-        lambda self, interface_name, switch_id: {
+    orchestrator._switch_interfaces_cache["FDO12345ABC"] = {
+        "ethernet1/13": {
             "interfaceType": "ethernet",
             "configData": {
                 "mode": "trunk",
@@ -170,8 +166,8 @@ def test_absent_access_delete_can_replay_exact_reset_target(monkeypatch) -> None
                     },
                 },
             },
-        },
-    )
+        }
+    }
 
     absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
     assert orchestrator.reconcile_absent_deletes([absent_access]) is True
