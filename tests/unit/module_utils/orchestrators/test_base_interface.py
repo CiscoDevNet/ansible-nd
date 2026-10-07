@@ -3796,5 +3796,5 @@ def test_base_interface_01220(monkeypatch: pytest.MonkeyPatch) -> None:
         unaccepted = instance.unaccepted_removals(removed)
     assert [item.interface_name for item in unaccepted] == ["loopback11"]
 
-    instance._pending_removes = []
+    instance._pending_removes.clear()
     assert instance.unaccepted_removals(removed) == []
