@@ -27,7 +27,7 @@ the seam the per-method capability tests in `test_base_interface.py` cannot: the
 `NDStateMachine._execute_operation`, not in the orchestrator.
 """
 
-# pylint: disable=disallowed-name,protected-access,redefined-outer-name,unused-argument
+# pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines,unused-argument
 
 from __future__ import absolute_import, annotations, division, print_function
 
