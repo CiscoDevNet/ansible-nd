@@ -1261,8 +1261,8 @@ def test_nd_state_machine_00375() -> None:
 
     ## Test
 
-    - `state: deleted` with the two-item inventory and the plain spy (base-class `unaccepted_removals`): after `manage_state`,
-      `reconcile_after_failure` leaves `existing` empty and `removed` with both items
+    - `state: deleted` with the two-item inventory and the plain spy (the interface `unaccepted_removals` override with empty delete-side
+      queues): after `manage_state`, `reconcile_after_failure` leaves `existing` empty and `removed` with both items
     - `state: merged` with an empty inventory: `reconcile_after_failure` before any mutation does not raise
 
     ## Classes and Methods
