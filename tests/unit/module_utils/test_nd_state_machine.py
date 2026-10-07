@@ -633,6 +633,7 @@ class _UnacceptedRemovalSpy(_TwoExistingSpy):
     """Spy whose `unaccepted_removals` names loopback11 as a removal the controller has not accepted."""
 
     def unaccepted_removals(self, model_instances):
+        """Return the items named loopback11: the removal the controller has not accepted."""
         return [item for item in model_instances if item.interface_name == "loopback11"]
 
 
@@ -645,13 +646,14 @@ class _FailingBulkCreateSpy(_SpyLoopbackOrchestrator):
 
     def model_post_init(self, __context) -> None:
         super().model_post_init(__context)
-        self._accepted_identifiers: set = set()
+        self._accepted_identifiers: set = set()  # pylint: disable=attribute-defined-outside-init
 
     def create_bulk(self, model_instances, **kwargs) -> ResponseType:
         self._calls.append(("create_bulk", list(model_instances)))
         raise RuntimeError("Bulk create failed: Request failed (400): Bad Request")
 
     def accepted_mutations(self, model_instances):
+        """Return the items whose identifier is in `_accepted_identifiers`."""
         return [item for item in model_instances if item.get_identifier_value() in self._accepted_identifiers]
 
 
@@ -1256,8 +1258,8 @@ def test_nd_state_machine_00375() -> None:
     """
     # Summary
 
-    Verify `reconcile_after_failure` is a no-op when the orchestrator reports every removal accepted (the base default) and when
-    nothing was removed.
+    Verify `reconcile_after_failure` is a no-op when the orchestrator reports every removal accepted (the interface override with empty
+    delete-side queues) and when nothing was removed.
 
     ## Test
 
@@ -1268,7 +1270,7 @@ def test_nd_state_machine_00375() -> None:
     ## Classes and Methods
 
     - NDStateMachine.reconcile_after_failure()
-    - NDBaseOrchestrator.unaccepted_removals()
+    - NDBaseInterfaceOrchestrator.unaccepted_removals()
     """
     spy = _TwoExistingSpy(rest_send=_build_rest_send())
     config = [{"switch_ip": "192.168.12.151", "interface_name": "loopback10"}, {"switch_ip": "192.168.12.151", "interface_name": "loopback11"}]
@@ -1361,3 +1363,78 @@ def test_nd_state_machine_00385() -> None:
 
     assert [item.interface_name for item in instance.removed] == ["loopback10"]
     assert [item.interface_name for item in instance.existing] == ["loopback11"]
+
+
+class _ExplodingHookBulkCreateSpy(_FailingBulkCreateSpy):
+    """Spy whose `create_bulk` raises and whose `accepted_mutations` hook raises as well."""
+
+    def accepted_mutations(self, model_instances):
+        """Raise, simulating a defective orchestrator hook on the failure path."""
+        raise ValueError("hook exploded")
+
+
+def test_nd_state_machine_00390() -> None:
+    """
+    # Summary
+
+    Verify a failing `accepted_mutations` hook never replaces the original bulk-create error: the state machine logs the hook failure,
+    treats nothing as accepted, and re-raises the create error.
+
+    ## Test
+
+    - `state: merged`, inventory empty, one proposed loopback; `create_bulk` raises; `accepted_mutations` raises `ValueError`
+    - `manage_state` raises `NDStateMachineError` matching `Failed to create in bulk` (not `ValueError`)
+    - `existing` stays empty
+
+    ## Classes and Methods
+
+    - NDStateMachine._create_bulk_deferred()
+    - NDStateMachine._hook_result()
+    """
+    spy = _ExplodingHookBulkCreateSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=[_loopback_config("loopback10", "new 10")])
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to create in bulk"):
+        instance.manage_state()
+
+    assert len(instance.existing) == 0
+
+
+class _AllUnacceptedRemovalSpy(_TwoExistingSpy):
+    """Spy whose `unaccepted_removals` names every removal as not accepted by the controller."""
+
+    def unaccepted_removals(self, model_instances):
+        """Return every submitted item: no removal was accepted."""
+        return list(model_instances)
+
+
+def test_nd_state_machine_00395() -> None:
+    """
+    # Summary
+
+    Verify `reconcile_after_failure` restores every removal when none was accepted: `after` matches `before`, nothing is reported
+    removed, and `changed` is false (issue #597 delete side).
+
+    ## Test
+
+    - `state: deleted`, inventory loopback10/loopback11, both proposed; `unaccepted_removals` returns all its input
+    - After `manage_state` and `reconcile_after_failure`, `existing` identifiers equal `before` identifiers
+    - `removed` is empty; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine.reconcile_after_failure()
+    """
+    spy = _AllUnacceptedRemovalSpy(rest_send=_build_rest_send())
+    module = _build_module(state="deleted", check_mode=False, config=_two_loopback_delete_config())
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+        instance.reconcile_after_failure()
+
+    assert sorted(item.get_identifier_value() for item in instance.existing) == sorted(item.get_identifier_value() for item in instance.before)
+    assert len(instance.existing) == 2
+    assert len(instance.removed) == 0
+    assert instance.output.format()["changed"] is False

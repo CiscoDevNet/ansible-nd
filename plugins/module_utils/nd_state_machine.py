@@ -5,6 +5,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+import logging
 from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any, Callable
@@ -20,6 +21,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd 
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
+
+log = logging.getLogger(__name__)
 
 
 class NDStateMachine:
@@ -393,9 +396,9 @@ class NDStateMachine:
         try:
             succeeded = self._execute_operation(self.model_orchestrator.create_bulk, items, error_msg_prefix="Failed to create in bulk")
         except NDStateMachineError:
-            self._apply_accepted(list(self.model_orchestrator.accepted_mutations(items)))
+            self._apply_accepted(self._hook_result("accepted_mutations", items))
             raise
-        accepted = list(items) if succeeded else list(self.model_orchestrator.accepted_mutations(items))
+        accepted = list(items) if succeeded else self._hook_result("accepted_mutations", items)
         self._apply_accepted(accepted)
         return accepted
 
@@ -502,6 +505,24 @@ class NDStateMachine:
         self.existing.delete_many([item.get_identifier_value() for item in accepted])
         self.output.assign(after=self.existing)
 
+    def _hook_result(self, name: str, items: Sequence[NDBaseModel]) -> list[NDBaseModel]:
+        """
+        # Summary
+
+        Call the orchestrator failure-path hook `name` (`accepted_mutations` or `unaccepted_removals`) with `items` and return its result
+        as a list. A hook that raises is logged and treated as naming nothing, so a defective hook never replaces the original error and
+        never raises from `reconcile_after_failure` (issue #597, final review).
+
+        ## Raises
+
+        None
+        """
+        try:
+            return list(getattr(self.model_orchestrator, name)(list(items)))
+        except Exception:  # pylint: disable=broad-exception-caught
+            log.exception("%s.%s hook failed; treating it as naming no items", type(self.model_orchestrator).__name__, name)
+            return []
+
     def reconcile_after_failure(self) -> None:
         """
         # Summary
@@ -518,7 +539,7 @@ class NDStateMachine:
         """
         if len(self.removed) == 0:
             return
-        unaccepted = self.model_orchestrator.unaccepted_removals(list(self.removed))
+        unaccepted = self._hook_result("unaccepted_removals", list(self.removed))
         if not unaccepted:
             return
         unaccepted_keys = {item.get_identifier_value() for item in unaccepted}
