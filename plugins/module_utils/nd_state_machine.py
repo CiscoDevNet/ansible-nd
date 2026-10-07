@@ -5,6 +5,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+from collections.abc import Sequence
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
@@ -226,17 +227,29 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> ResponseType | None:
-        """Execute an API operation with standardized error handling."""
+    ) -> bool:
+        """
+        # Summary
+
+        Execute an API operation with standardized error handling. Returns `True` when the operation returned, or was skipped because
+        the module runs in check mode (a dry run reports intended state), and `False` when it raised and `ignore_errors` swallowed the
+        failure. Callers apply an `existing` mutation only on `True`, so a failed request never appears in `after` (issue #597).
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If the operation raises and `ignore_errors` is false.
+        """
         try:
             if not self.check_mode:
-                return operation(*args, **kwargs)
-            return None
+                operation(*args, **kwargs)
+            return True
         except Exception as e:
             error_msg = f"{error_msg_prefix}: {e}"
             if not self.ignore_errors:
                 raise NDStateMachineError(error_msg) from e
-        return None
+        return False
 
     def _build_plan(self, state: str | None = None) -> NDStatePlan:
         """Calculate all operations without invoking an orchestrator mutation method."""
@@ -254,7 +267,21 @@ class NDStateMachine:
             raise NDStateMachineError(str(e)) from e
 
     def _manage_create_update_state(self, plan: NDStatePlan | None = None) -> None:
-        """Execute the create/update portion of a precomputed state plan."""
+        """
+        # Summary
+
+        Execute the create/update portion of a precomputed state plan (merged/replaced/overridden). Classification reads `existing` but
+        never mutates it; each item is applied to `existing` (which `NDOutput` reports as `after`) only after its request is accepted,
+        or in check mode, so a failed run reports `after` and `changed` that describe controller state (issue #597). Qualified updates
+        are sent in ND 4.3.1 bulk modify batches; a partial 207 applies only the accepted subset.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If classifying a proposed item fails and `ignore_errors` is false.
+        - If an update or create request fails and `ignore_errors` is false.
+        """
         plan = plan or self._build_plan()
         execution_baseline = self.existing.copy()
         items_to_create: list[NDBaseModel] = []
@@ -298,16 +325,14 @@ class NDStateMachine:
                     items_with_no_diff.append(existing_match or final_candidate)
                     continue
 
-                # Prepare final config based on state
-                if self.state == "merged":
-                    # Merge with existing
-                    final_item = self.existing.merge(proposed_item)
+                # Build the item to send WITHOUT touching self.existing (issue #597). `NDBaseModel.merge`
+                # mutates self in place, so merged state merges into a deep copy of the existing match;
+                # the copy is applied to `existing` only once the controller accepts it.
+                if self.state == "merged" and existing_match is not None:
+                    final_item = existing_match.model_copy(deep=True).merge(proposed_item)
+                elif self.state == "merged":
+                    final_item = proposed_item
                 else:
-                    # Replace or creates
-                    if diff_status == "changed":
-                        self.existing.replace(final_candidate)
-                    else:
-                        self.existing.add(final_candidate)
                     final_item = final_candidate
 
                 # Categorize by operation type
@@ -325,7 +350,7 @@ class NDStateMachine:
                     raise NDStateMachineError(error_msg) from e
 
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
-        # preflight and before this method mutates self.existing (PR #362 review).
+        # preflight and before this method applies anything to self.existing (PR #362 review).
 
         # ``deploy: true`` is an execution-state request, not merely an intent
         # mutation request.  A previous run can have accepted the PUT/POST and
@@ -338,145 +363,167 @@ class NDStateMachine:
                 if self.model_orchestrator.reconcile_no_diff(items_with_no_diff):
                     self.output.mark_changed()
             except Exception as e:
-                # Planning above mutates ``self.existing`` before any I/O so
-                # check mode can expose the intended result. Reconciliation is
-                # the first runtime action; if its read-only preview is
-                # contradictory or otherwise fails, no proposed mutation has
-                # been accepted and failure output must retain the execution
-                # baseline rather than advertise every planned create/update.
-                self.existing = execution_baseline.copy()
+                # Reconciliation is the first runtime action. Planning never applies anything to ``self.existing``
+                # (issue #597), so on failure ``after`` already describes the execution baseline; only the
+                # error needs normalizing.
                 self.output.assign(after=self.existing)
                 raise NDStateMachineError(f"Failed to reconcile unchanged resources: {e}") from e
 
-        # Execute guarded description-only updates and family-qualified full
-        # policy updates in batches on ND 4.3.1. Planning above mutates
-        # ``self.existing`` before I/O so check mode can expose the intended
-        # result. If a real update fails, rebuild ``after`` from the execution
-        # baseline plus only the preceding updates the controller accepted;
-        # otherwise a rejected and every not-yet-attempted update appear as
-        # successful in changed/after output.
-        accepted_updates: list[NDBaseModel] = []
-        try:
-            pending_bulk: list[tuple[NDBaseModel, NDBaseModel | None, dict[str, Any], str]] = []
+        # Execute updates: guarded description-only updates and family-qualified full policy updates go out in ND 4.3.1
+        # bulk modify batches, everything else singular. Each item is applied to ``self.existing`` only once accepted
+        # (issue #597): a failed singular update may still have been accepted by the controller before a later step failed
+        # (the orchestrator reports it as ``_accepted_post_write_model``), and a failed bulk request answered with a 207 names
+        # the accepted subset. Nothing is applied before acceptance, so no rollback is needed. ``previous_model`` is read
+        # from the baseline so the orchestrator always sees the pre-run controller model, independent of apply order.
+        pending_bulk: list[tuple[NDBaseModel, NDBaseModel | None, dict[str, Any], str]] = []
 
-            def run_singular_update(item: NDBaseModel, previous: NDBaseModel | None) -> None:
-                try:
-                    self._execute_operation(
-                        self.model_orchestrator.update,
-                        item,
-                        previous_model=previous,
-                        error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
-                    )
-                except Exception:
-                    accepted = getattr(self.model_orchestrator, "_accepted_post_write_model", None)
-                    if (
-                        accepted is not None
-                        and getattr(accepted, "switch_ip", None) == getattr(item, "switch_ip", None)
-                        and str(getattr(accepted, "interface_name", "")).casefold() == str(getattr(item, "interface_name", "")).casefold()
-                    ):
-                        accepted_updates.append(accepted)
-                    raise
-                accepted_updates.append(item)
+        def run_singular_update(item: NDBaseModel, previous: NDBaseModel | None) -> None:
+            try:
+                accepted = self._execute_operation(
+                    self.model_orchestrator.update,
+                    item,
+                    previous_model=previous,
+                    error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+                )
+            except Exception:
+                post_write = getattr(self.model_orchestrator, "_accepted_post_write_model", None)
+                if (
+                    post_write is not None
+                    and getattr(post_write, "switch_ip", None) == getattr(item, "switch_ip", None)
+                    and str(getattr(post_write, "interface_name", "")).casefold() == str(getattr(item, "interface_name", "")).casefold()
+                ):
+                    self._apply_accepted([post_write])
+                raise
+            if accepted:
+                self._apply_accepted([item])
 
-            def flush_bulk() -> None:
-                if not pending_bulk:
-                    return
-                batch = list(pending_bulk)
-                pending_bulk.clear()
-                if len(batch) == 1:
-                    item, previous, _payload, _mode = batch[0]
-                    run_singular_update(item, previous)
-                    return
-                orchestrator = self.model_orchestrator
-                for item, previous, _payload, _mode in batch:
-                    orchestrator.prepare_bulk_modify_context(item, previous)
-                recorded = orchestrator.rest_send.response_count
-                try:
-                    self._execute_operation(
-                        orchestrator.modify_bulk_prepared,
-                        [payload for _item, _previous, payload, _mode in batch],
-                        payload_orchestrators=[orchestrator for _item, _previous, _payload, _mode in batch],
-                        payload_models=[item for item, _previous, _payload, _mode in batch],
-                        payload_modes=[mode for _item, _previous, _payload, mode in batch],
-                        error_msg_prefix=f"Failed to update {len(batch)} interfaces in bulk",
-                    )
-                except Exception:
-                    if orchestrator.rest_send.response_count > recorded and orchestrator.rest_send.return_code == 207:
-                        names = {
-                            (payload["switchId"].casefold(), item.interface_name.casefold()): (payload["switchId"], item.interface_name)
-                            for item, _previous, payload, _mode in batch
-                        }
-                        peer_switch_ids = {
-                            (payload["switchId"].casefold(), item.interface_name.casefold()): payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
-                            for item, _previous, payload, _mode in batch
-                            if str(payload.get("interfaceType") or "").casefold() == "vpc"
-                        }
-                        accepted, _exact = orchestrator._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
-                        accepted_updates.extend(
-                            item for item, _previous, payload, _mode in batch if (payload["switchId"].casefold(), item.interface_name.casefold()) in accepted
-                        )
-                    raise
-                accepted_updates.extend(item for item, _previous, _payload, _mode in batch)
-
-            for item in items_to_update:
-                previous = execution_baseline.get(item.get_identifier_value())
-                payload = None
-                mode = "description"
-                prepare = getattr(self.model_orchestrator, "prepare_bulk_description_update", None)
-                if not self.check_mode and not self.ignore_errors and callable(prepare):
-                    payload = prepare(item, previous)
-                if payload is None and not self.check_mode and not self.ignore_errors:
-                    prepare_full = getattr(self.model_orchestrator, "prepare_bulk_full_update", None)
-                    if callable(prepare_full):
-                        payload = prepare_full(item, previous)
-                        mode = "full"
-                if payload is not None:
-                    if pending_bulk and (
-                        len(pending_bulk) >= 10000
-                        or any(
-                            previous_payload["switchId"] == payload["switchId"] and previous_item.interface_name.casefold() == item.interface_name.casefold()
-                            for previous_item, _old, previous_payload, _mode in pending_bulk
-                        )
-                    ):
-                        flush_bulk()
-                    pending_bulk.append((item, previous, payload, mode))
-                    continue
-                flush_bulk()
+        def flush_bulk() -> None:
+            if not pending_bulk:
+                return
+            batch = list(pending_bulk)
+            pending_bulk.clear()
+            if len(batch) == 1:
+                item, previous, _payload, _mode = batch[0]
                 run_singular_update(item, previous)
-            flush_bulk()
-        except Exception:
-            self.existing = execution_baseline.copy()
-            for item in accepted_updates:
-                if not self.existing.replace(item):
-                    self.existing.add(item)
-            if accepted_updates:
-                self.sent.add_many(accepted_updates)
-            self.output.assign(after=self.existing)
-            raise
+                return
+            orchestrator = self.model_orchestrator
+            for item, previous, _payload, _mode in batch:
+                orchestrator.prepare_bulk_modify_context(item, previous)
+            recorded = orchestrator.rest_send.response_count
+            try:
+                accepted = self._execute_operation(
+                    orchestrator.modify_bulk_prepared,
+                    [payload for _item, _previous, payload, _mode in batch],
+                    payload_orchestrators=[orchestrator for _item, _previous, _payload, _mode in batch],
+                    payload_models=[item for item, _previous, _payload, _mode in batch],
+                    payload_modes=[mode for _item, _previous, _payload, mode in batch],
+                    error_msg_prefix=f"Failed to update {len(batch)} interfaces in bulk",
+                )
+            except Exception:
+                if orchestrator.rest_send.response_count > recorded and orchestrator.rest_send.return_code == 207:
+                    names = {
+                        (payload["switchId"].casefold(), item.interface_name.casefold()): (payload["switchId"], item.interface_name)
+                        for item, _previous, payload, _mode in batch
+                    }
+                    peer_switch_ids = {
+                        (payload["switchId"].casefold(), item.interface_name.casefold()): payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                        for item, _previous, payload, _mode in batch
+                        if str(payload.get("interfaceType") or "").casefold() == "vpc"
+                    }
+                    accepted_pairs, _exact = orchestrator._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
+                    self._apply_accepted(
+                        [
+                            item
+                            for item, _previous, payload, _mode in batch
+                            if (payload["switchId"].casefold(), item.interface_name.casefold()) in accepted_pairs
+                        ]
+                    )
+                raise
+            if accepted:
+                self._apply_accepted([item for item, _previous, _payload, _mode in batch])
 
-        # Execute creates (bulk or individual)
+        for item in items_to_update:
+            previous = execution_baseline.get(item.get_identifier_value())
+            payload = None
+            mode = "description"
+            prepare = getattr(self.model_orchestrator, "prepare_bulk_description_update", None)
+            if not self.check_mode and not self.ignore_errors and callable(prepare):
+                payload = prepare(item, previous)
+            if payload is None and not self.check_mode and not self.ignore_errors:
+                prepare_full = getattr(self.model_orchestrator, "prepare_bulk_full_update", None)
+                if callable(prepare_full):
+                    payload = prepare_full(item, previous)
+                    mode = "full"
+            if payload is not None:
+                if pending_bulk and (
+                    len(pending_bulk) >= 10000
+                    or any(
+                        previous_payload["switchId"] == payload["switchId"] and previous_item.interface_name.casefold() == item.interface_name.casefold()
+                        for previous_item, _old, previous_payload, _mode in pending_bulk
+                    )
+                ):
+                    flush_bulk()
+                pending_bulk.append((item, previous, payload, mode))
+                continue
+            flush_bulk()
+            run_singular_update(item, previous)
+        flush_bulk()
+
+        # Execute creates (bulk or individual); apply each only once accepted.
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(
-                    self.model_orchestrator.create_bulk,
-                    items_to_create,
-                    error_msg_prefix="Failed to create in bulk",
-                )
+                self._create_bulk_deferred(items_to_create)
             else:
                 for item in items_to_create:
-                    self._execute_operation(
-                        self.model_orchestrator.create,
-                        item,
-                        error_msg_prefix=f"Failed to create {item.get_identifier_value()}",
-                    )
-
-        # Mark as sent only after successful API operations
-        successfully_sent = items_to_update + items_to_create
-        if successfully_sent:
-            self.sent.add_many(successfully_sent)
+                    if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
+                        self._apply_accepted([item])
 
         # Log operation
         self.output.assign(after=self.existing)
+
+    def _apply_accepted(self, items: Sequence[NDBaseModel]) -> None:
+        """
+        # Summary
+
+        Record controller-accepted create/update items: apply each to `existing` (replace when the identifier is already present,
+        else add) and add it to `sent`. Called only after an item's request succeeded, in check mode (a dry run reports intended
+        state), or for the accepted subset of a failed bulk create (issue #597).
+
+        ## Raises
+
+        None
+        """
+        for item in items:
+            if self.existing.get(item.get_identifier_value()) is not None:
+                self.existing.replace(item)
+            else:
+                self.existing.add(item)
+        if items:
+            self.sent.add_many(list(items))
+
+    def _create_bulk_deferred(self, items: list[NDBaseModel]) -> list[NDBaseModel]:
+        """
+        # Summary
+
+        Send one bulk create and apply to `existing` only the items the controller accepted (issue #597). On success that is every
+        item. On a failed request, whether it propagates or `ignore_errors` swallows it, the orchestrator's `accepted_mutations` hook
+        names the accepted subset (interface orchestrators read their deploy queue; the base default is none), which is applied before
+        the error propagates so `after` and `changed` describe controller state. Returns the applied items.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If the bulk create fails and `ignore_errors` is false; re-raised after the accepted subset is applied.
+        """
+        try:
+            succeeded = self._execute_operation(self.model_orchestrator.create_bulk, items, error_msg_prefix="Failed to create in bulk")
+        except NDStateMachineError:
+            self._apply_accepted(list(self.model_orchestrator.accepted_mutations(items)))
+            raise
+        accepted = list(items) if succeeded else list(self.model_orchestrator.accepted_mutations(items))
+        self._apply_accepted(accepted)
+        return accepted
 
     def _warn_unsupported(self, collection) -> None:
         """Warn once per object whose type this module preserves read-only."""
