@@ -454,25 +454,52 @@ class NDStateMachine:
         self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
-        """Delete a list of items individually or in bulk."""
+        """
+        # Summary
+
+        Delete `items` in bulk or one at a time, applying to `removed` and `existing` (reported as `after`) only the removals the
+        controller accepted (issue #597, final review). A bulk delete is all-or-nothing from the state machine's view: every item on
+        success, none when `ignore_errors` swallows the failure. Per-item deletes are applied per accepted item: a swallowed failure is
+        not recorded as removed, and when a failure propagates the items deleted before it are applied first, so `after` and `changed`
+        describe controller state.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a delete request fails and `ignore_errors` is false; re-raised after the removals accepted before it are applied.
+        """
         if not items:
             return
 
-        # Execute deletes (bulk or individual)
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
-        else:
+            succeeded = self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            self._apply_removed(items if succeeded else [])
+            return
+
+        accepted: list[NDBaseModel] = []
+        try:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
+                    accepted.append(item)
+        except NDStateMachineError:
+            self._apply_removed(accepted)
+            raise
+        self._apply_removed(accepted)
 
-        # Mark as removed only after successful API operations, mirroring ``sent``.
-        self.removed.add_many(items)
+    def _apply_removed(self, accepted: Sequence[NDBaseModel]) -> None:
+        """
+        # Summary
 
-        # Batch remove from collection (single index rebuild)
-        keys_to_delete = [item.get_identifier_value() for item in items]
-        self.existing.delete_many(keys_to_delete)
+        Record controller-accepted removals: add them to `removed` and drop them from `existing` (one index rebuild), then refresh
+        `after`. Marks items as removed only after their API operation succeeded, mirroring `sent` (issue #597, final review).
 
-        # Log deletion
+        ## Raises
+
+        None
+        """
+        self.removed.add_many(list(accepted))
+        self.existing.delete_many([item.get_identifier_value() for item in accepted])
         self.output.assign(after=self.existing)
 
     def reconcile_after_failure(self) -> None:

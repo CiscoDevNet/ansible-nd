@@ -1285,3 +1285,79 @@ def test_nd_state_machine_00375() -> None:
     with does_not_raise():
         fresh.reconcile_after_failure()
     assert len(fresh.existing) == 0
+
+
+class _SecondDeleteFailsSpy(_TwoExistingSpy):
+    """Spy without bulk-delete support whose synchronous per-item `delete` succeeds for loopback10 and raises for loopback11."""
+
+    supports_bulk_delete: ClassVar[bool] = False
+
+    def delete(self, model_instance, **kwargs) -> None:
+        self._calls.append(("delete", model_instance))
+        if model_instance.interface_name == "loopback11":
+            raise RuntimeError("Delete failed: Request failed (500): Internal Server Error")
+
+
+def _two_loopback_delete_config() -> list[dict]:
+    """Identifier-only `deleted` config for loopback10 then loopback11 on switch 192.168.12.151."""
+    return [{"switch_ip": "192.168.12.151", "interface_name": "loopback10"}, {"switch_ip": "192.168.12.151", "interface_name": "loopback11"}]
+
+
+def test_nd_state_machine_00380() -> None:
+    """
+    # Summary
+
+    Verify a per-item delete failure applies the removals accepted before it (issue #597, final review): loopback10 was deleted on
+    the controller, so it leaves `after` and joins `removed`; loopback11 failed, so it stays in `after` and is not reported removed.
+
+    ## Test
+
+    - `state: deleted`, inventory loopback10/loopback11, both proposed; no bulk delete; `delete` raises for loopback11
+    - `manage_state` raises `NDStateMachineError` naming loopback11
+    - `removed` holds loopback10 only; `existing` holds loopback11 only; `changed` is True
+
+    ## Classes and Methods
+
+    - NDStateMachine._delete_items()
+    - NDStateMachine._apply_removed()
+    """
+    spy = _SecondDeleteFailsSpy(rest_send=_build_rest_send())
+    module = _build_module(state="deleted", check_mode=False, config=_two_loopback_delete_config())
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to delete \('192.168.12.151', 'loopback11'\)"):
+        instance.manage_state()
+
+    assert [item.interface_name for item in instance.removed] == ["loopback10"]
+    assert [item.interface_name for item in instance.existing] == ["loopback11"]
+    assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_00385() -> None:
+    """
+    # Summary
+
+    Verify a per-item delete failure swallowed by `ignore_errors` is not recorded as removed (issue #597, final review): only the
+    accepted loopback10 removal is applied.
+
+    ## Test
+
+    - Same spy and config as 00380, with `ignore_errors` true
+    - `manage_state` does not raise
+    - `removed` holds loopback10 only; `existing` holds loopback11 only
+
+    ## Classes and Methods
+
+    - NDStateMachine._delete_items()
+    - NDStateMachine._apply_removed()
+    """
+    spy = _SecondDeleteFailsSpy(rest_send=_build_rest_send())
+    module = _build_module(state="deleted", check_mode=False, config=_two_loopback_delete_config())
+    module.params["ignore_errors"] = True
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    assert [item.interface_name for item in instance.removed] == ["loopback10"]
+    assert [item.interface_name for item in instance.existing] == ["loopback11"]
