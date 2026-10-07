@@ -629,6 +629,13 @@ class _TwoExistingSpy(_SpyLoopbackOrchestrator):
         return [_loopback_wire("loopback10", "stale 10"), _loopback_wire("loopback11", "stale 11")]
 
 
+class _UnacceptedRemovalSpy(_TwoExistingSpy):
+    """Spy whose `unaccepted_removals` names loopback11 as a removal the controller has not accepted."""
+
+    def unaccepted_removals(self, model_instances):
+        return [item for item in model_instances if item.interface_name == "loopback11"]
+
+
 class _FailingBulkCreateSpy(_SpyLoopbackOrchestrator):
     """Spy whose `create_bulk` raises; `accepted_mutations` names the items in `_accepted_identifiers` as controller-accepted.
 
@@ -1197,3 +1204,84 @@ def test_nd_state_machine_00350() -> None:
     assert _description(instance, "loopback11") == "new 11"
     assert sorted(item.interface_name for item in instance.sent) == ["loopback10", "loopback11"]
     assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_00370() -> None:
+    """
+    # Summary
+
+    Verify `reconcile_after_failure` restores an unaccepted removal to `after` from `before` and drops it from `removed`, and is
+    idempotent (issue #597 delete side).
+
+    ## Test
+
+    - `state: deleted`, inventory loopback10/loopback11, both proposed; `delete_bulk` records (interface delete only queues)
+    - After `manage_state`, `existing` is empty and `removed` holds both
+    - `unaccepted_removals` names loopback11; `reconcile_after_failure` restores it with its `before` values; `removed` keeps loopback10
+    - `changed` is True (loopback10 is gone); a second call changes nothing
+
+    ## Classes and Methods
+
+    - NDStateMachine.reconcile_after_failure()
+    - NDStateMachine._delete_items()
+    """
+    spy = _UnacceptedRemovalSpy(rest_send=_build_rest_send())
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "loopback10"}, {"switch_ip": "192.168.12.151", "interface_name": "loopback11"}]
+    module = _build_module(state="deleted", check_mode=False, config=config)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+    assert len(instance.existing) == 0
+    assert sorted(item.interface_name for item in instance.removed) == ["loopback10", "loopback11"]
+
+    with does_not_raise():
+        instance.reconcile_after_failure()
+
+    assert [item.interface_name for item in instance.existing] == ["loopback11"]
+    assert _description(instance, "loopback11") == "stale 11"
+    assert instance.existing.get(("192.168.12.151", "loopback11")) is not instance.before.get(("192.168.12.151", "loopback11"))
+    assert [item.interface_name for item in instance.removed] == ["loopback10"]
+    output = instance.output.format()
+    assert output["changed"] is True
+    assert [item["interface_name"] for item in output["after"]] == ["loopback11"]
+
+    with does_not_raise():
+        instance.reconcile_after_failure()
+    assert [item.interface_name for item in instance.existing] == ["loopback11"]
+    assert [item.interface_name for item in instance.removed] == ["loopback10"]
+
+
+def test_nd_state_machine_00375() -> None:
+    """
+    # Summary
+
+    Verify `reconcile_after_failure` is a no-op when the orchestrator reports every removal accepted (the base default) and when
+    nothing was removed.
+
+    ## Test
+
+    - `state: deleted` with the two-item inventory and the plain spy (base-class `unaccepted_removals`): after `manage_state`,
+      `reconcile_after_failure` leaves `existing` empty and `removed` with both items
+    - `state: merged` with an empty inventory: `reconcile_after_failure` before any mutation does not raise
+
+    ## Classes and Methods
+
+    - NDStateMachine.reconcile_after_failure()
+    - NDBaseOrchestrator.unaccepted_removals()
+    """
+    spy = _TwoExistingSpy(rest_send=_build_rest_send())
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "loopback10"}, {"switch_ip": "192.168.12.151", "interface_name": "loopback11"}]
+    module = _build_module(state="deleted", check_mode=False, config=config)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+    instance.manage_state()
+
+    with does_not_raise():
+        instance.reconcile_after_failure()
+    assert len(instance.existing) == 0
+    assert len(instance.removed) == 2
+
+    fresh = _build_state_machine(state="merged", check_mode=False, config=_CONFIG)
+    with does_not_raise():
+        fresh.reconcile_after_failure()
+    assert len(fresh.existing) == 0

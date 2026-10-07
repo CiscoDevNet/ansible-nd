@@ -6,6 +6,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from collections.abc import Sequence
+from copy import deepcopy
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
@@ -472,4 +473,33 @@ class NDStateMachine:
         self.existing.delete_many(keys_to_delete)
 
         # Log deletion
+        self.output.assign(after=self.existing)
+
+    def reconcile_after_failure(self) -> None:
+        """
+        # Summary
+
+        Restore to `existing` (reported as `after`) the removed items whose delete-side request the controller has not accepted, so a
+        failure after `manage_state` (an interface orchestrator's `remove_pending`, whose `delete_bulk` only queues) does not report
+        interfaces the controller still holds as gone (issue #597). The orchestrator's `unaccepted_removals` hook names them (interface
+        orchestrators read their delete-side queues; the base default is none). Each is re-added from `before` and dropped from
+        `removed`. Idempotent and safe to call when nothing failed or nothing was removed. Called by `fail_from_exception`.
+
+        ## Raises
+
+        None
+        """
+        if len(self.removed) == 0:
+            return
+        unaccepted = self.model_orchestrator.unaccepted_removals(list(self.removed))
+        if not unaccepted:
+            return
+        unaccepted_keys = {item.get_identifier_value() for item in unaccepted}
+        for key in unaccepted_keys:
+            before_item = self.before.get(key)
+            if before_item is not None and self.existing.get(key) is None:
+                self.existing.add(deepcopy(before_item))
+        still_removed = [item for item in self.removed if item.get_identifier_value() not in unaccepted_keys]
+        self.removed = NDConfigCollection(model_class=self.model_class)
+        self.removed.add_many(still_removed)
         self.output.assign(after=self.existing)
