@@ -708,3 +708,21 @@ class TestModelClassIsClassVar:
         keeps the collision guard for genuinely dangerous names like `model_dump_mode`.
         """
         assert NDBaseOrchestrator.model_config.get("protected_namespaces") == ("model_validate", "model_dump")
+
+
+class TestAcceptanceHooks:
+    """Issue #597: the base orchestrator's acceptance hooks are conservative no-ops."""
+
+    def test_accepted_mutations_default_is_empty(self):
+        """`accepted_mutations` reports nothing accepted from a failed bulk create by default."""
+        orch = _make_orchestrator(_make_rest_send([]))
+        items = [StubModel(name="a"), StubModel(name="b")]
+
+        assert not orch.accepted_mutations(items)
+
+    def test_unaccepted_removals_default_is_empty(self):
+        """`unaccepted_removals` reports every recorded removal as accepted by default (today's delete-path behavior)."""
+        orch = _make_orchestrator(_make_rest_send([]))
+        items = [StubModel(name="a"), StubModel(name="b")]
+
+        assert not orch.unaccepted_removals(items)

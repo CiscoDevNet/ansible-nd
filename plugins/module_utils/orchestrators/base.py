@@ -217,6 +217,37 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
 
         return False
 
+    def accepted_mutations(self, model_instances: Sequence[ModelType]) -> list[ModelType]:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Failure-path hook consulted by `NDStateMachine` after a bulk create raised (or was swallowed by `ignore_errors`): return the
+        subset of `model_instances` the controller nevertheless accepted, so only those appear in the module's `after` and `sent`
+        (issue #597). The base implementation reports nothing accepted, the conservative answer for endpoints whose partial-commit
+        behavior is uncharacterized. Interface orchestrators answer from their deploy queue.
+
+        ## Raises
+
+        None
+        """
+        return []
+
+    def unaccepted_removals(self, model_instances: Sequence[ModelType]) -> list[ModelType]:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Failure-path hook consulted by `NDStateMachine.reconcile_after_failure`: return the subset of `model_instances` (the items the
+        state machine recorded as removed) whose delete-side request the controller has not accepted, so they are restored to the
+        module's `after` (issue #597). The base implementation reports none: its `delete` / `delete_bulk` send the request
+        synchronously, so a removal the state machine recorded is one the controller accepted. Interface orchestrators, whose
+        `delete_bulk` only queues the removal for `remove_pending`, answer from their delete-side queues.
+
+        ## Raises
+
+        None
+        """
+        return []
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
