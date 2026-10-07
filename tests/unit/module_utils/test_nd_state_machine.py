@@ -33,6 +33,8 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
+from typing import ClassVar
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
@@ -588,6 +590,92 @@ _REMOVAL_CONFIG = [
 ]
 
 
+def _loopback_wire(interface_name: str, description: str) -> dict:
+    """Wire-shape loopback record for a spy `query_all` inventory, on switch 192.168.12.151."""
+    return {
+        "switchIp": "192.168.12.151",
+        "interfaceName": interface_name,
+        "interfaceType": "loopback",
+        "configData": {
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {"policyType": "loopback", "adminState": True, "description": description},
+            }
+        },
+    }
+
+
+def _loopback_config(interface_name: str, description: str) -> dict:
+    """Module `config` item for a loopback with a policy carrying `description`, on switch 192.168.12.151."""
+    return {
+        "switch_ip": "192.168.12.151",
+        "interface_name": interface_name,
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "loopback", "admin_state": True, "description": description}}},
+    }
+
+
+def _description(instance: NDStateMachine, interface_name: str) -> str | None:
+    """Return the policy description of `interface_name` in the state machine's `existing` collection, or None if absent."""
+    item = instance.existing.get(("192.168.12.151", interface_name))
+    if item is None:
+        return None
+    return item.config_data.network_os.policy.description
+
+
+class _TwoExistingSpy(_SpyLoopbackOrchestrator):
+    """Spy whose inventory holds loopback10 and loopback11, each with a stale description (issue #597 tests)."""
+
+    def query_all(self, model_instance=None, **kwargs) -> ResponseType:
+        return [_loopback_wire("loopback10", "stale 10"), _loopback_wire("loopback11", "stale 11")]
+
+
+class _FailingBulkCreateSpy(_SpyLoopbackOrchestrator):
+    """Spy whose `create_bulk` raises; `accepted_mutations` names the items in `_accepted_identifiers` as controller-accepted.
+
+    The hook is overridden here so these tests never reach the interface implementation (which resolves switch IDs via
+    `FabricContext`); the interface implementation is covered in test_base_interface.py.
+    """
+
+    def model_post_init(self, __context) -> None:
+        super().model_post_init(__context)
+        self._accepted_identifiers: set = set()
+
+    def create_bulk(self, model_instances, **kwargs) -> ResponseType:
+        self._calls.append(("create_bulk", list(model_instances)))
+        raise RuntimeError("Bulk create failed: Request failed (400): Bad Request")
+
+    def accepted_mutations(self, model_instances):
+        return [item for item in model_instances if item.get_identifier_value() in self._accepted_identifiers]
+
+
+class _NoBulkFailingCreateSpy(_SpyLoopbackOrchestrator):
+    """Spy without bulk-create support whose individual `create` raises."""
+
+    supports_bulk_create: ClassVar[bool] = False
+
+    def create(self, model_instance, **kwargs) -> ResponseType:
+        self._calls.append(("create", model_instance))
+        raise RuntimeError("Create failed: Request failed (400): Bad Request")
+
+
+class _SecondUpdateFailsSpy(_TwoExistingSpy):
+    """Spy whose `update` succeeds for loopback10 and raises for loopback11."""
+
+    def update(self, model_instance, **kwargs) -> ResponseType:
+        self._calls.append(("update", model_instance))
+        if model_instance.interface_name == "loopback11":
+            raise RuntimeError("Update failed: Request failed (400): Bad Request")
+        return {}
+
+
+class _UpdateFailsSpy(_ExistingConfiguredLoopbackSpy):
+    """Spy whose `update` always raises; inventory is loopback10 with 'stale description'."""
+
+    def update(self, model_instance, **kwargs) -> ResponseType:
+        self._calls.append(("update", model_instance))
+        raise RuntimeError("Update failed: Request failed (400): Bad Request")
+
+
 def test_replaced_update_forwards_previous_model() -> None:
     """
     # Summary
@@ -880,3 +968,232 @@ def test_nd_state_machine_00190() -> None:
 
     names = [name for name, _ in spy._calls]
     assert names == ["preflight_delete"]
+
+
+# =============================================================================
+# Issue #597: a failed create/update must not appear in `after`, `sent`, or `changed`
+# =============================================================================
+
+
+def test_nd_state_machine_00300() -> None:
+    """
+    # Summary
+
+    Verify a failed bulk create leaves `after` equal to `before`, `changed` false and `sent` empty (issue #597): the classification
+    loop no longer mutates `existing`, and nothing is applied when the orchestrator reports no accepted items.
+
+    ## Test
+
+    - `state: merged`, inventory empty, one proposed loopback; `create_bulk` raises; `accepted_mutations` returns `[]`
+    - `manage_state` raises `NDStateMachineError` mentioning `Failed to create in bulk`
+    - `existing` is empty, `sent` is empty, `output.format()["changed"]` is False and `["after"] == []`
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_create_update_state()
+    - NDStateMachine._create_bulk_deferred()
+    """
+    spy = _FailingBulkCreateSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=[_loopback_config("loopback10", "new")])
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to create in bulk"):
+        instance.manage_state()
+
+    assert len(instance.existing) == 0
+    assert len(instance.sent) == 0
+    output = instance.output.format()
+    assert output["changed"] is False
+    assert output["after"] == []
+    assert output["before"] == []
+
+
+def test_nd_state_machine_00310() -> None:
+    """
+    # Summary
+
+    Verify a failed bulk create applies only the subset the orchestrator reports as accepted (issue #597, mixed 207): the accepted
+    item is in `after` and `sent`, the rejected one is not, and `changed` is true.
+
+    ## Test
+
+    - `state: merged`, inventory empty, two proposed loopbacks; `create_bulk` raises; `accepted_mutations` names loopback10 only
+    - `manage_state` raises `NDStateMachineError`
+    - `existing` holds loopback10 only; `sent` holds loopback10 only; `changed` is True
+
+    ## Classes and Methods
+
+    - NDStateMachine._create_bulk_deferred()
+    - NDStateMachine._apply_accepted()
+    """
+    spy = _FailingBulkCreateSpy(rest_send=_build_rest_send())
+    spy._accepted_identifiers = {("192.168.12.151", "loopback10")}  # pylint: disable=attribute-defined-outside-init
+    config = [_loopback_config("loopback10", "new 10"), _loopback_config("loopback11", "new 11")]
+    module = _build_module(state="merged", check_mode=False, config=config)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to create in bulk"):
+        instance.manage_state()
+
+    assert _description(instance, "loopback10") == "new 10"
+    assert _description(instance, "loopback11") is None
+    assert [item.interface_name for item in instance.sent] == ["loopback10"]
+    assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_00320() -> None:
+    """
+    # Summary
+
+    Verify individual updates apply one at a time (issue #597): when the second of two updates fails, the first is in `after` and
+    `sent` and the second keeps its existing values.
+
+    ## Test
+
+    - `state: replaced`, inventory loopback10/loopback11 with stale descriptions; both proposed with new descriptions
+    - `update` succeeds for loopback10 and raises for loopback11
+    - `manage_state` raises `NDStateMachineError` naming loopback11
+    - loopback10 shows the new description, loopback11 the stale one; `sent` holds loopback10 only; `changed` is True
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_create_update_state()
+    - NDStateMachine._execute_operation()
+    """
+    spy = _SecondUpdateFailsSpy(rest_send=_build_rest_send())
+    config = [_loopback_config("loopback10", "new 10"), _loopback_config("loopback11", "new 11")]
+    module = _build_module(state="replaced", check_mode=False, config=config)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to update \('192.168.12.151', 'loopback11'\)"):
+        instance.manage_state()
+
+    assert _description(instance, "loopback10") == "new 10"
+    assert _description(instance, "loopback11") == "stale 11"
+    assert [item.interface_name for item in instance.sent] == ["loopback10"]
+    assert instance.output.format()["changed"] is True
+
+
+def test_nd_state_machine_00325() -> None:
+    """
+    # Summary
+
+    Verify a failed individual create (orchestrator without bulk support) is not applied to `after` (issue #597).
+
+    ## Test
+
+    - `state: merged`, inventory empty, one proposed loopback; `supports_bulk_create` is False and `create` raises
+    - `manage_state` raises `NDStateMachineError` mentioning `Failed to create`
+    - `existing` and `sent` are empty; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_create_update_state()
+    """
+    spy = _NoBulkFailingCreateSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=[_loopback_config("loopback10", "new")])
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to create \('192.168.12.151', 'loopback10'\)"):
+        instance.manage_state()
+
+    assert len(instance.existing) == 0
+    assert len(instance.sent) == 0
+    assert instance.output.format()["changed"] is False
+
+
+def test_nd_state_machine_00330() -> None:
+    """
+    # Summary
+
+    Verify `ignore_errors: true` follows the same contract as a failed run (issue #597): a swallowed bulk-create failure raises
+    nothing, and the items are absent from `after` and `sent`.
+
+    ## Test
+
+    - `state: merged`, `ignore_errors: True`, inventory empty, one proposed loopback; `create_bulk` raises
+    - `manage_state` does not raise
+    - `existing` and `sent` are empty; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine._execute_operation()
+    - NDStateMachine._create_bulk_deferred()
+    """
+    spy = _FailingBulkCreateSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=[_loopback_config("loopback10", "new")])
+    module.params["ignore_errors"] = True
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    assert len(instance.existing) == 0
+    assert len(instance.sent) == 0
+    assert instance.output.format()["changed"] is False
+
+
+def test_nd_state_machine_00340() -> None:
+    """
+    # Summary
+
+    Verify a merged-state update merges into a deep copy (issue #597): when the PUT fails, the existing object still carries its
+    original values, while the item handed to `update` carries the merged values.
+
+    ## Test
+
+    - `state: merged`, inventory loopback10 with 'stale description'; proposed loopback10 with description 'fresh'
+    - `update` raises
+    - The `update` call received description 'fresh'; `existing` still shows 'stale description'; `changed` is False
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_create_update_state()
+    - NDBaseModel.merge()
+    """
+    spy = _UpdateFailsSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=[_loopback_config("loopback10", "fresh")])
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"Failed to update"):
+        instance.manage_state()
+
+    updated = [args for name, args in spy._calls if name == "update"][0]
+    assert updated.config_data.network_os.policy.description == "fresh"
+    assert _description(instance, "loopback10") == "stale description"
+    assert instance.output.format()["changed"] is False
+
+
+def test_nd_state_machine_00350() -> None:
+    """
+    # Summary
+
+    Verify check mode still reports every proposed mutation in `after` with `changed: true` after the deferral (issue #597
+    regression guard): a dry run sends nothing, so every operation counts as accepted intent.
+
+    ## Test
+
+    - `state: merged`, `check_mode: True`, inventory loopback10 'stale description'; proposed loopback10 'fresh' and new loopback11
+    - `manage_state` does not raise and records no `update`/`create_bulk` call
+    - `existing` shows loopback10 'fresh' and loopback11 present; `sent` holds both; `changed` is True
+
+    ## Classes and Methods
+
+    - NDStateMachine._execute_operation()
+    - NDStateMachine._apply_accepted()
+    """
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    config = [_loopback_config("loopback10", "fresh"), _loopback_config("loopback11", "new 11")]
+    module = _build_module(state="merged", check_mode=True, config=config)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    names = [name for name, _ in spy._calls]
+    assert "update" not in names
+    assert "create_bulk" not in names
+    assert _description(instance, "loopback10") == "fresh"
+    assert _description(instance, "loopback11") == "new 11"
+    assert sorted(item.interface_name for item in instance.sent) == ["loopback10", "loopback11"]
+    assert instance.output.format()["changed"] is True
