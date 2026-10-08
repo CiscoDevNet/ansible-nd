@@ -35,16 +35,182 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     TrunkInterfaceModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_data_models import (
+    AimlRoutedNetworkModel,
+    AimlVxlanEbgpNetworkModel,
+    AimlVxlanIbgpNetworkModel,
+    ClassicLanEnhancedNetworkModel,
+    ClassicOrRoutedL2DataModel,
+    ClassicOrRoutedL3DataModel,
+    CustomNetworkModel,
     DefaultL2DataModel,
+    DefaultL2FabricDataModel,
     DefaultL3DataModel,
+    NetworkBaseModel,
     NetworkCreateRequestModel,
     NetworkListResponseModel,
     NetworkPreInformationResponseModel,
+    RoutedNetworkModel,
+    VxlanCampusNetworkModel,
+    VxlanEbgpNetworkModel,
+    VxlanIbgpNetworkModel,
+    VxlanL3FabricDataModel,
     VxlanNetworkModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
 )
+
+
+@pytest.mark.parametrize(
+    "model_cls,l2_cls,l3_cls",
+    [
+        (VxlanNetworkModel, DefaultL2DataModel, DefaultL3DataModel),
+        (VxlanIbgpNetworkModel, DefaultL2DataModel, DefaultL3DataModel),
+        (VxlanEbgpNetworkModel, DefaultL2DataModel, DefaultL3DataModel),
+        (VxlanCampusNetworkModel, DefaultL2DataModel, DefaultL3DataModel),
+        (AimlVxlanIbgpNetworkModel, DefaultL2DataModel, DefaultL3DataModel),
+        (AimlVxlanEbgpNetworkModel, DefaultL2DataModel, DefaultL3DataModel),
+        (RoutedNetworkModel, ClassicOrRoutedL2DataModel, ClassicOrRoutedL3DataModel),
+        (AimlRoutedNetworkModel, ClassicOrRoutedL2DataModel, ClassicOrRoutedL3DataModel),
+        (ClassicLanEnhancedNetworkModel, ClassicOrRoutedL2DataModel, ClassicOrRoutedL3DataModel),
+    ],
+)
+def test_network_factories_select_matching_typed_models(model_cls, l2_cls, l3_cls):
+    """Verify configuration and controller rows select the same concrete nested schemas."""
+    network_type = model_cls.model_fields["network_type"].default.value
+    proposed = NetworkBaseModel.from_config({"network_name": "USERS", "network_type": network_type, "l2_data": {}, "l3_data": {}}, context={"state": "merged"})
+    existing = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": network_type, "l2Data": {}, "l3Data": {}})
+    for model in (proposed, existing):
+        assert type(model) is model_cls
+        assert isinstance(model.l2_data, l2_cls)
+        assert isinstance(model.l3_data, l3_cls)
+        assert not model.l2_data.model_fields_set
+        assert not model.l3_data.model_fields_set
+    assert existing.get_diff(proposed, exclude_unset=True)
+
+
+def test_vxlan_nested_models_apply_defaults_without_manufacturing_explicit_fields():
+    """Verify natural nested conversion preserves model defaults separately from supplied values."""
+    model = VxlanIbgpNetworkModel(networkName="USERS", l2Data={"fabricData": {}}, l3Data={"fabricData": {}})
+    assert isinstance(model.l2_data.fabric_data, DefaultL2FabricDataModel)
+    assert isinstance(model.l3_data.fabric_data, VxlanL3FabricDataModel)
+    assert model.l3_data.mtu == 9216
+    assert model.l3_data.arp_suppression is False
+    assert model.l3_data.fabric_data.netflow is False
+    assert model.to_payload(exclude_unset=True) == {"networkName": "USERS", "l2Data": {"fabricData": {}}, "l3Data": {"fabricData": {}}}
+
+
+def test_vxlan_factory_nested_merge_preserves_omissions_and_explicit_clears():
+    """Verify typed nested merging retains omitted data and sends explicit false and empty lists."""
+    existing = NetworkBaseModel.from_response(
+        {
+            "networkName": "USERS",
+            "networkType": "vxlanIbgp",
+            "l3Data": {"mtu": 9000, "arpSuppression": True, "fabricData": {"netflow": True, "dhcpServers": [{"serverAddress": "192.0.2.10"}]}},
+        }
+    )
+    proposed = NetworkBaseModel.from_config(
+        {"network_name": "USERS", "network_type": "vxlanIbgp", "l3_data": {"arp_suppression": False, "fabric_data": {"dhcp_servers": []}}}
+    )
+    payload = existing.merge(proposed).to_payload()
+    assert payload["l3Data"]["mtu"] == 9000
+    assert payload["l3Data"]["arpSuppression"] is False
+    assert payload["l3Data"]["fabricData"]["netflow"] is True
+    assert payload["l3Data"]["fabricData"]["dhcpServers"] == []
+
+
+@pytest.mark.parametrize("factory", [NetworkBaseModel.from_config, NetworkBaseModel.from_response])
+def test_known_network_schema_cannot_fall_back_to_unvalidated_nested_dictionary(factory):
+    """Verify invalid known-type nested configuration is rejected instead of accepted as a raw dictionary."""
+    with pytest.raises(ValidationError):
+        factory({"networkType": "vxlanIbgp", "l3Data": {"mtu": 99999}})
+
+
+def test_custom_network_factories_preserve_raw_nested_configuration():
+    """Verify custom template data remains untyped and is not populated with VXLAN defaults."""
+    data = {"networkName": "CUSTOM", "networkType": "userDefined", "l2Data": {}, "l3Data": {"customSetting": {"enabled": False}}}
+    for factory in (NetworkBaseModel.from_config, NetworkBaseModel.from_response):
+        model = factory(data)
+        assert isinstance(model, CustomNetworkModel)
+        assert model.to_payload()["l2Data"] == {}
+        assert model.to_payload()["l3Data"] == data["l3Data"]
+
+
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+@pytest.mark.parametrize("collection", ["dhcp", "ipv4", "ipv6"])
+@pytest.mark.parametrize("readback", ["missing", "null", "empty"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_vxlan_empty_collection_matches_absent_null_or_empty_readback(layer, collection, readback, exclude_unset):
+    """Verify cleared collection equivalence without changing public output or write payloads."""
+    l3_data = {"mtu": 9216, "arpSuppression": False, "fabricData": {"netflow": False}}
+    field = {"dhcp": "dhcpServers", "ipv4": "secondaryGatewayIpv4Collection", "ipv6": "secondaryGatewayIpv6Collection"}[collection]
+    if readback != "missing":
+        target = l3_data["fabricData"] if collection == "dhcp" else l3_data
+        target[field] = None if readback == "null" else []
+    existing = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": "vxlanIbgp", "networkMode": layer, "l3Data": l3_data})
+    desired_l3 = {"fabricData": {field: []}} if collection == "dhcp" else {field: [], "fabricData": {}}
+    proposed = NetworkBaseModel.from_config({"networkName": "USERS", "networkType": "vxlanIbgp", "layer": layer, "l3Data": desired_l3})
+    payload_before = existing.to_payload()
+    config_before = existing.to_config()
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset)
+    assert existing.to_payload() == payload_before
+    assert existing.to_config() == config_before
+    desired_payload = proposed.to_payload(exclude_unset=True)["l3Data"]
+    assert (desired_payload["fabricData"] if collection == "dhcp" else desired_payload)[field] == []
+
+
+@pytest.mark.parametrize("collection", ["dhcp", "ipv4", "ipv6"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_vxlan_nonempty_collection_still_requires_explicit_clear(collection, exclude_unset):
+    """Verify equivalence never hides a real nonempty-to-empty change."""
+    field, values = {
+        "dhcp": ("dhcpServers", [{"serverAddress": "192.0.2.10"}]),
+        "ipv4": ("secondaryGatewayIpv4Collection", ["192.0.2.1/24"]),
+        "ipv6": ("secondaryGatewayIpv6Collection", ["2001:db8::1/64"]),
+    }[collection]
+    current_l3 = {"fabricData": {field: values}} if collection == "dhcp" else {field: values}
+    desired_l3 = {"fabricData": {field: []}} if collection == "dhcp" else {field: []}
+    existing = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": "vxlanIbgp", "l3Data": current_l3})
+    proposed = NetworkBaseModel.from_config({"networkName": "USERS", "networkType": "vxlanIbgp", "l3Data": desired_l3})
+    assert not existing.get_diff(proposed, exclude_unset=exclude_unset)
+    merged_l3 = existing.merge(proposed).to_payload()["l3Data"]
+    assert (merged_l3["fabricData"] if collection == "dhcp" else merged_l3)[field] == []
+
+
+@pytest.mark.parametrize("collection", ["dhcp", "ipv4", "ipv6"])
+@pytest.mark.parametrize("explicit_null", [False, True])
+def test_vxlan_omitted_or_null_merged_collection_preserves_existing_entries(collection, explicit_null):
+    """Verify comparison normalization does not introduce clearing intent for sparse omitted or None input."""
+    field, alias, values = {
+        "dhcp": ("dhcp_servers", "dhcpServers", [{"serverAddress": "192.0.2.10"}]),
+        "ipv4": ("secondary_gateway_ipv4_collection", "secondaryGatewayIpv4Collection", ["192.0.2.1/24"]),
+        "ipv6": ("secondary_gateway_ipv6_collection", "secondaryGatewayIpv6Collection", ["2001:db8::1/64"]),
+    }[collection]
+    current_l3 = {"fabricData": {alias: values}} if collection == "dhcp" else {alias: values}
+    input_value = {field: None} if explicit_null else {}
+    desired_l3 = {"fabric_data": input_value} if collection == "dhcp" else input_value
+    existing = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": "vxlanIbgp", "l3Data": current_l3})
+    proposed = NetworkBaseModel.from_config({"network_name": "USERS", "network_type": "vxlanIbgp", "l3_data": desired_l3})
+    proposed_l3 = proposed.to_diff_dict(exclude_unset=True)["l3Data"]
+    assert alias not in (proposed_l3["fabricData"] if collection == "dhcp" else proposed_l3)
+    assert existing.get_diff(proposed, exclude_unset=True)
+    merged_l3 = existing.merge(proposed).to_payload()["l3Data"]
+    assert (merged_l3["fabricData"] if collection == "dhcp" else merged_l3)[alias] == values
+
+
+def test_vxlan_collection_equivalence_handles_absent_nested_blocks_only_in_comparison():
+    """Verify a missing L3 or fabric block represents no entries without manufacturing payload fields."""
+    existing = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": "vxlanIbgp"})
+    proposed = NetworkBaseModel.from_config({"networkName": "USERS", "networkType": "vxlanIbgp", "l3Data": {"fabricData": {"dhcpServers": []}}})
+    assert existing.get_diff(proposed, exclude_unset=True)
+    assert "l3Data" not in existing.to_payload()
+
+
+def test_custom_network_comparison_does_not_apply_vxlan_collection_equivalence():
+    """Verify raw custom schemas retain their own absent-versus-empty semantics."""
+    existing = NetworkBaseModel.from_response({"networkName": "CUSTOM", "networkType": "userDefined", "l3Data": {}})
+    proposed = NetworkBaseModel.from_config({"networkName": "CUSTOM", "networkType": "userDefined", "l3Data": {"dhcpServers": []}})
+    assert not existing.get_diff(proposed, exclude_unset=True)
 
 
 def test_manage_network_validators_00010() -> None:
@@ -337,7 +503,7 @@ def test_manage_network_attachment_config_models_00316() -> None:
 
 def test_manage_network_config_models_00318() -> None:
     """Verify omitted layer is validated using the same effective layer as payload construction."""
-    with pytest.raises(ValidationError, match="vrf_name is required for layer3 networks"):
+    with pytest.raises(ValidationError, match="vrf_name is required for layer3 and layer2WithVrf networks"):
         NetworkConfigModel.from_config(
             {
                 "network_name": "net_no_vrf",
@@ -373,6 +539,7 @@ def test_manage_network_config_models_00318() -> None:
             "network_name": "pvlan_community",
             "vlan_network_type": "community",
             "primary_network_id": 30000,
+            "network_id": 30004,
         }
     )
 

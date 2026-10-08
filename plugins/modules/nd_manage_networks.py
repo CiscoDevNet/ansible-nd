@@ -82,6 +82,7 @@ options:
           - Network layer.
           - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
           - New Networks and authoritative states require enough context to derive the layer. Layer 3 Networks require C(vrf_name).
+          - Layer 2 Networks do not accept L3-only properties such as gateways, MTU, and ARP suppression.
         type: str
         choices: [ layer2, layer2WithVrf, layer3 ]
       x_connect:
@@ -239,6 +240,8 @@ options:
         description:
           - VLAN network type.
           - C(primary) is mapped to the ND private primary Network type.
+          - C(primary) supports Layer 2 and Layer 3. When its layer is derived, VRF or L3-specific properties select Layer 3
+            and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
           - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
@@ -270,13 +273,15 @@ options:
         description: VLAN interface description.
         type: str
       mtu:
-        description: Network interface MTU.
+        description:
+          - Network interface MTU.
+          - Defaults to C(9216) for Layer 3 definition creation and replacement. Omission in V(merged) preserves the current value.
         type: int
-        default: 9216
       arp_suppression:
-        description: Enable ARP suppression.
+        description:
+          - Enable ARP suppression.
+          - Defaults to C(false) for definition creation and replacement. Omission in V(merged) preserves the current value.
         type: bool
-        default: false
       routing_tag:
         description: Routing tag.
         type: int
@@ -314,9 +319,10 @@ options:
         description: Downstream VNI.
         type: int
       netflow_enable:
-        description: Enable netflow.
+        description:
+          - Enable netflow.
+          - Defaults to C(false) for definition creation and replacement. Omission in V(merged) preserves the current value.
         type: bool
-        default: false
       vlan_netflow_monitor:
         description:
           - VLAN netflow monitor name.
@@ -641,7 +647,7 @@ gathered:
       vlan_id: 2001
 workflow_trace:
   description: Internal workflow trace entries collected by the Network coordinator.
-  returned: always
+  returned: when O(output_level) is V(debug) or verbosity is 3 or higher
   type: list
   elements: dict
   sample:

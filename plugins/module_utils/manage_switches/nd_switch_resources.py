@@ -3055,7 +3055,7 @@ class NDSwitchResourceModule:
         - None.
         """
         self.results.build_final_result()
-        final = self.results.final_result
+        final = {key: self.results.final_result[key] for key in ("changed", "failed")}
 
         if self.state == "gathered":
             # gathered: expose the already-queried inventory in config shape.
@@ -3112,6 +3112,11 @@ class NDSwitchResourceModule:
 
         if self.msg:
             final["msg"] = self.msg
+        verbosity = getattr(self.nd.module, "_verbosity", 0)
+        if self.module.params.get("output_level", "normal") == "debug":
+            verbosity = max(verbosity, 3)
+        final = self.output.format_with_verbosity(verbosity, results=self.results, **final)
+        final["changed"] = final["changed"] or True in self.results.changed
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
         self.nd.module.exit_json(**final)

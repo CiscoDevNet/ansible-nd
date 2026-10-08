@@ -576,6 +576,100 @@ class VrfDataModel(NDBaseModel):
             raise ValueError(f"vrfType must be one of {VrfType.choices()}, got: {v}")
         return v
 
+    @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for gathered-output pruning."""
+        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
+            vrf_parent_argument_spec,
+        )
+
+        return dict(config=dict(type="list", elements="dict", options=vrf_parent_argument_spec()))
+
+    def to_gathered_config(self, **kwargs) -> dict[str, Any]:
+        """Return a replay-safe public config shape for gathered output."""
+        data = self.to_config(**kwargs)
+        core_data = data.pop("core_data", None)
+        fabric_data = data.pop("fabric_data", None)
+        for key in ("fabric_name", "vrf_status", "tenant_name", "service_data", "vrf_type"):
+            data.pop(key, None)
+
+        self._flatten_core_data(data, core_data)
+        self._flatten_fabric_data(data, fabric_data)
+        return data
+
+    @classmethod
+    def _flatten_core_data(cls, data: dict[str, Any], core_data: Any) -> None:
+        core = cls._nested_config(core_data)
+        if not core:
+            return
+        for target, *source in (
+            ("vrf_vlan_name", "vrf_vlan_name", "vrfVlanName"),
+            ("vrf_intf_desc", "vrf_interface_description", "vrfInterfaceDescription"),
+            ("vrf_description", "vrf_description", "vrfDescription"),
+            ("vrf_int_mtu", "mtu"),
+            ("loopback_route_tag", "routing_tag", "routingTag"),
+            ("redist_direct_rmap", "vrf_route_map", "vrfRouteMap"),
+            ("v6_redist_direct_rmap", "v6_vrf_route_map", "v6VrfRouteMap"),
+            ("max_bgp_paths", "max_bgp_paths", "maxBgpPaths"),
+            ("max_ibgp_paths", "max_ibgp_paths", "maxIbgpPaths"),
+            ("ipv6_linklocal_enable", "ipv6_link_local", "ipv6LinkLocal"),
+            ("disable_rt_auto", "disable_rt_auto", "disableRtAuto"),
+            ("import_vpn_rt", "route_target_import", "routeTargetImport"),
+            ("export_vpn_rt", "route_target_export", "routeTargetExport"),
+            ("import_evpn_rt", "evpn_route_target_import", "evpnRouteTargetImport"),
+            ("export_evpn_rt", "evpn_route_target_export", "evpnRouteTargetExport"),
+        ):
+            cls._copy_if_present(data, core, target, *source)
+
+    @classmethod
+    def _flatten_fabric_data(cls, data: dict[str, Any], fabric_data: Any) -> None:
+        fabric = cls._nested_config(fabric_data)
+        if not fabric:
+            return
+        for target, *source in (
+            ("l3vni_wo_vlan", "l3_vni_without_vlan", "l3VniWithoutVlan"),
+            ("adv_host_routes", "advertise_host_route", "advertiseHostRoute"),
+            ("adv_default_routes", "advertise_default_route", "advertiseDefaultRoute"),
+            ("static_default_route", "configure_static_default_route", "configureStaticDefaultRoute"),
+            ("bgp_password", "bgp_password", "bgpPassword"),
+            ("bgp_passwd_encrypt", "bgp_password_key_type", "bgpPasswordKeyType"),
+            ("netflow_enable", "netflow"),
+            ("nf_monitor", "netflow_monitor", "netflowMonitor"),
+        ):
+            cls._copy_if_present(data, fabric, target, *source)
+
+        trm_data = cls._nested_config(fabric.get("trm_data") or fabric.get("trmData"))
+        for target, *source in (
+            ("no_rp", "v4_rp_absent", "v4RpAbsent"),
+            ("rp_external", "v4_rp_external", "v4RpExternal"),
+            ("rp_address", "v4_rp_address", "v4RpAddress"),
+            ("rp_loopback_id", "loopback_number", "loopbackNumber"),
+            ("underlay_mcast_ip", "l3_vni_multicast_group", "l3VniMulticastGroup"),
+            ("overlay_mcast_group", "v4_multicast_group", "v4MulticastGroup"),
+            ("trm_bgw_msite", "trm_on_bgw", "trmOnBgw"),
+            ("import_mvpn_rt", "mvpn_route_target_import", "mvpnRouteTargetImport"),
+            ("export_mvpn_rt", "mvpn_route_target_export", "mvpnRouteTargetExport"),
+            ("trm_enable", "ipv4_trm", "ipv4Trm"),
+        ):
+            cls._copy_if_present(data, trm_data, target, *source)
+
+    @staticmethod
+    def _nested_config(value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if hasattr(value, "to_config"):
+            return value.to_config()
+        if isinstance(value, dict):
+            return dict(value)
+        return {}
+
+    @staticmethod
+    def _copy_if_present(target: dict[str, Any], source: dict[str, Any], target_key: str, *source_keys: str) -> None:
+        for source_key in source_keys:
+            if source_key in source and source[source_key] is not None:
+                target[target_key] = source[source_key]
+                return
+
     @field_validator("vrf_template_config", mode="before")
     @classmethod
     def validate_vrf_template_config(cls, v: dict[str, str] | None) -> dict[str, str] | None:

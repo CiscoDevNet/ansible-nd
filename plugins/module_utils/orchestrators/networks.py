@@ -18,9 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     VlanNetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
-    DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS,
     NETWORK_DEFINITION_INTENT_FIELDS,
-    has_l3_definition_intent_for_layer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
     NetworkRemoveRequestModel,
@@ -157,12 +155,15 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 }
             )
             model = DefaultL2DataModel(**{k: v for k, v in kwargs.items() if v is not None})
-        payload = model.to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
+        payload = model.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged" or bool(self.strategy and self.strategy.is_child))
         if fabric_data_payload and isinstance(payload, dict):
             payload["fabricData"] = fabric_data_payload
-        return payload or None
+        return payload or ({} if self._network_layer(config) is not None else None)
 
     def _l3_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
+        # Merged definitions retain supplied fields; creation defaults remain on the payload models.
+        sparse = self.rest_send.params.get("state", "merged") == "merged"
+        exclude_unset = sparse or bool(self.strategy and self.strategy.is_child)
         common = {
             "gateway_ipv4_address": self._value(config, "gateway_ipv4_address", "gatewayIpv4Address"),
             "gateway_ipv6_address": self._value(config, "gateway_ipv6_address", "gatewayIpv6Address"),
@@ -176,10 +177,10 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             NetworkType.CLASSIC_LAN_ENHANCED.value,
         ):
             model = ClassicOrRoutedL3DataModel(**{k: v for k, v in common.items() if v is not None})
-            payload = model.to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
+            payload = model.to_payload(exclude_unset=exclude_unset)
             return payload or None
 
-        fabric_data = VxlanL3FabricDataModel(
+        fabric_values = dict(
             dhcp_servers=self._value(config, "dhcp_servers", "dhcpServers"),
             loopback_id=self._value(config, "loopback_id", "loopbackId"),
             igmp_version=self._value(config, "igmp_version", "igmpVersion"),
@@ -188,7 +189,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "netflow_enable",
                 "netflowEnable",
                 "netflow",
-                default=None if self.strategy and self.strategy.is_child else False,
             ),
             vlan_netflow_monitor=self._value(config, "vlan_netflow_monitor", "l2NetflowMonitor"),
             interface_netflow_monitor=self._value(config, "interface_netflow_monitor", "l3NetflowMonitor"),
@@ -196,23 +196,21 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 config,
                 "gateway_on_border",
                 "gatewayOnBorder",
-                default=None if self.strategy and self.strategy.is_child else False,
             ),
             ipv4_trm=self._value(
                 config,
                 "trm_enable",
                 "trmEnable",
                 "ipv4Trm",
-                default=None if self.strategy and self.strategy.is_child else False,
             ),
             ipv6_trm=self._value(
                 config,
                 "ipv6_trm",
                 "ipv6Trm",
-                default=None if self.strategy and self.strategy.is_child else False,
             ),
         )
-        model = DefaultL3DataModel(
+        fabric_data = VxlanL3FabricDataModel(**{key: value for key, value in fabric_values.items() if value is not None})
+        l3_values = dict(
             **{k: v for k, v in common.items() if v is not None},
             secondary_gateway_ipv4_collection=self._value(
                 config,
@@ -224,10 +222,13 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "secondary_gateway_ipv6_collection",
                 "secondaryGatewayIpv6Collection",
             ),
-            arp_suppression=self._value(config, "arp_suppression", "arpSuppression", default=False),
+            arp_suppression=self._value(config, "arp_suppression", "arpSuppression"),
             fabric_data=fabric_data,
         )
-        payload = model.to_payload(exclude_unset=bool(self.strategy and self.strategy.is_child))
+        model = DefaultL3DataModel(**{key: value for key, value in l3_values.items() if value is not None})
+        payload = model.to_payload(exclude_unset=exclude_unset)
+        if self._network_layer(config) is None and not payload.get("fabricData"):
+            payload.pop("fabricData", None)
         return payload or None
 
     def _transform_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
@@ -288,25 +289,25 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         l2_data = self._l2_data(config, network_type)
         if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and isinstance(l2_data, dict):
             l2_data.setdefault("fabricData", {})
-        if l2_data:
+        if l2_data is not None:
             transformed["l2_data"] = l2_data
-        if self._network_mode_allows_l3_data(layer):
+        if layer is None or self._network_mode_allows_l3_data(layer):
             l3_data = self._l3_data(config, network_type)
             if l3_data:
                 transformed["l3_data"] = l3_data
         if self._is_mcfg_parent():
-            self._remove_mcfg_parent_non_echoed_fields(transformed)
+            self._remove_mcfg_parent_non_echoed_fields(transformed, config)
         return transformed
 
     @staticmethod
-    def _remove_mcfg_parent_non_echoed_fields(transformed: dict[str, Any]) -> None:
+    def _remove_mcfg_parent_non_echoed_fields(transformed: dict[str, Any], config: dict[str, Any]) -> None:
         """
         Remove parent-scope fields that oneManage does not echo for MCFG Networks.
 
         The MCFG parent endpoint owns Network identity and parent L3 gateway
-        fields.  VLAN values and default child-fabric flags are not echoed by
-        oneManage parent GETs, so retaining them in the proposed parent model
-        causes repeated PUTs on idempotent replaced/overridden runs.
+        fields. VLAN values and omitted default child-fabric flags are not
+        echoed by oneManage parent GETs, so retaining those defaults causes
+        repeated PUTs. Explicit flag values remain requested changes.
         """
         transformed.pop("vlan_id", None)
 
@@ -314,7 +315,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if isinstance(l2_data, dict):
             l2_data = dict(l2_data)
             l2_data.pop("vlanName", None)
-            if l2_data.get("xConnect") is False:
+            if l2_data.get("xConnect") is False and config.get("x_connect") is None:
                 l2_data.pop("xConnect")
             if l2_data.get("fabricData") in ({}, None):
                 l2_data.pop("fabricData", None)
@@ -329,8 +330,13 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             fabric_data = l3_data.get("fabricData")
             if isinstance(fabric_data, dict):
                 fabric_data = dict(fabric_data)
-                for key in ("gatewayOnBorder", "ipv4Trm", "ipv6Trm", "netflow"):
-                    if fabric_data.get(key) is False:
+                for key, option in (
+                    ("gatewayOnBorder", "gateway_on_border"),
+                    ("ipv4Trm", "trm_enable"),
+                    ("ipv6Trm", "ipv6_trm"),
+                    ("netflow", "netflow_enable"),
+                ):
+                    if fabric_data.get(key) is False and config.get(option) is None:
                         fabric_data.pop(key)
                 if fabric_data:
                     l3_data["fabricData"] = fabric_data
@@ -417,9 +423,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
     @classmethod
     def has_network_definition_intent(cls, config: dict[str, Any]) -> bool:
-        if any(key in config and config[key] is not None for key in cls.definition_intent_fields):
-            return True
-        return any(config.get(key) not in (None, default) for key, default in DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS.items() if key in config)
+        return any(config.get(key) is not None for key in cls.definition_intent_fields)
 
     @classmethod
     def should_defer_omitted_layer(cls, config: Any, state: str) -> bool:
@@ -434,14 +438,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return False
         if not cls.has_network_definition_intent(config):
             return False
-        if config.get("vrf_name") is not None or config.get("vrfName") is not None:
-            return False
-        if has_l3_definition_intent_for_layer(config):
-            return True
         vlan_network_type = config.get("vlan_network_type") or config.get("vlanNetworkType")
         if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
             vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
-        return vlan_network_type not in _PVLAN_NETWORK_TYPES
+        if vlan_network_type in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
+            return False
+        return True
 
     def preflight_create(self, model_instances: Sequence[NDNetworkModel]) -> None:
         """Require enough layer context before creating new Network definitions."""
@@ -1069,6 +1071,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if self._is_mcfg_parent():
             return self._mcfg_parent_network_payload(model_instance)
         payload = model_instance.to_payload()
+        if model_instance.layer == NetworkLayer.LAYER2.value:
+            payload.pop("l3Data", None)
         if payload.get("vlanNetworkType") in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             payload.pop("vlanId", None)
             payload.pop("l2Data", None)

@@ -1638,6 +1638,50 @@ def test_exit_json_gathered_allows_read_side_platform_values():
     assert final["gathered"][0]["password"] == "<password>"
 
 
+@pytest.mark.parametrize("output_level,verbosity", [("normal", 0), ("debug", 0), ("normal", 2), ("normal", 3)])
+def test_exit_json_filters_api_details_and_preserves_switch_output(output_level, verbosity):
+    resource = _resource(state="merged", check_mode=True, existing=[_sw("192.0.2.10", "SERIAL1")], output_level=output_level)
+    resource.module._verbosity = verbosity
+    cfg = _cfg("192.0.2.11")
+    resource.proposed_cfgs = [cfg]
+    resource._plan = _empty_plan(to_add=[cfg])
+    for level in (2, 3, 4):
+        resource.results.action = "query"
+        resource.results.operation_type = OperationType.QUERY
+        resource.results.path_current = f"/api/v1/test/{level}"
+        resource.results.verb_current = HttpVerbEnum.GET
+        resource.results.verbosity_level_current = level
+        resource.results.payload_current = {"level": level}
+        resource.results.response_current = {"level": level}
+        resource.results.result_current = {"success": True, "changed": False}
+        resource.results.diff_current = {"level": level}
+        resource.results.register_api_call()
+
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is True
+    assert final["before"][0]["seed_ip"] == "192.0.2.10"
+    assert final["after"][1]["seed_ip"] == "192.0.2.11"
+    assert final["diff"][0]["_action"] == "added"
+    for key in ("path", "verb", "payload", "response", "result", "metadata", "verbosity_level"):
+        assert key not in final
+    effective_verbosity = max(verbosity, 3) if output_level == "debug" else verbosity
+    if effective_verbosity < 2:
+        assert not any(key.startswith("api_") for key in final)
+    else:
+        levels = [level for level in (2, 3, 4) if level <= effective_verbosity]
+        assert final["api_paths"] == [f"/api/v1/test/{level}" for level in levels]
+        assert len(final["api_verbs"]) == len(levels)
+        if effective_verbosity == 2:
+            assert "api_payload" not in final
+        else:
+            assert final["api_payload"] == [{"level": level} for level in levels]
+            assert [response["level"] for response in final["api_response"]] == levels
+            assert [diff["level"] for diff in final["api_diff"]] == levels
+            assert len(final["api_result"]) == len(final["api_metadata"]) == len(levels)
+
+
 def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     """exit_json check-mode branch delegates to the synthetic check-mode output builder."""
     existing = [_sw("192.0.2.10", "SERIAL1")]

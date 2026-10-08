@@ -58,8 +58,7 @@ def _attachment_spec():
     )
 
 
-def _shared_network_fields(defaults=True):
-    bool_default = False if defaults else None
+def _shared_network_fields():
     return dict(
         network_id=dict(type="int"),
         vlan_id=dict(type="int"),
@@ -71,8 +70,8 @@ def _shared_network_fields(defaults=True):
         secondary_gateway_ipv4_collection=dict(type="list", elements="str"),
         secondary_gateway_ipv6_collection=dict(type="list", elements="str"),
         vlan_intf_desc=dict(type="str"),
-        mtu=dict(type="int", default=9216) if defaults else dict(type="int"),
-        arp_suppression=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
+        mtu=dict(type="int"),
+        arp_suppression=dict(type="bool"),
         routing_tag=dict(type="int"),
         dhcp_servers=dict(type="list", elements="dict", options=_dhcp_server_spec()),
         loopback_id=dict(type="int"),
@@ -81,7 +80,7 @@ def _shared_network_fields(defaults=True):
         ipv6_trm=dict(type="bool"),
         multicast_group_address=dict(type="str"),
         ds_vni=dict(type="int"),
-        netflow_enable=dict(type="bool", default=bool_default) if defaults else dict(type="bool"),
+        netflow_enable=dict(type="bool"),
         vlan_netflow_monitor=dict(type="str"),
         interface_netflow_monitor=dict(type="str"),
         gateway_on_border=dict(type="bool"),
@@ -120,7 +119,7 @@ def network_base_argument_spec():
         deploy_type=dict(type="str", default="switch", choices=["switch", "network"]),
         attach=dict(type="list", elements="dict", options=_attachment_spec()),
     )
-    spec.update(_shared_network_fields(defaults=True))
+    spec.update(_shared_network_fields())
     return spec
 
 

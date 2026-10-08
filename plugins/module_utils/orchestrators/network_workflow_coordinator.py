@@ -249,8 +249,9 @@ class NetworkWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        ``state`` is passed for context in error messages only; all states
-        are validated the same way since the models enforce required fields.
+        State context defers sparse merged layer validation until current
+        inventory is available and exempts read/delete selectors from
+        definition-only layer requirements.
 
         Validation errors are reported immediately via ``module.fail_json``.
         """
@@ -547,6 +548,7 @@ class NetworkWorkflowCoordinator:
         original_config = self.module.params.get("config")
         original_state = self.module.params.get("state")
         sm = None
+        initialization_complete = False
         try:
             self.module.params["config"] = module_args.get("config") or []
             self.module.params["state"] = state
@@ -574,6 +576,8 @@ class NetworkWorkflowCoordinator:
                 prepared_config_count=len(self.module.params["config"] or []),
             )
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
+            if state == "merged" and not active_strategy.is_child:
+                self._resolve_merged_layers(sm, module_args.get("config") or [], active_strategy)
             self._trace(
                 "state_machine_init_end",
                 fabric_name=active_strategy.fabric_name,
@@ -582,10 +586,38 @@ class NetworkWorkflowCoordinator:
                 existing_count=len(sm.existing),
                 proposed_count=len(sm.proposed),
             )
+            initialization_complete = True
             return sm, original_config, original_state
         finally:
-            if sm is None:
+            if not initialization_complete:
                 self._restore_state_machine_params(original_config, original_state)
+
+    def _resolve_merged_layers(self, sm: NDStateMachine, config: list[dict], strategy: BaseNetworkStrategy) -> None:
+        """
+        # Summary
+
+        Validate deferred merged definitions against the cached inventory and resolve their proposed layer before CRUD.
+
+        Existing definitions retain their layer and VRF when omitted. New definitions use normal model inference.
+        Only proposed models are updated; the inventory snapshot and sparse property intent remain unchanged.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If requested fields conflict with the effective layer or a new L3 definition has no VRF.
+        """
+        for entry in config:
+            if not NDNetworkOrchestrator.should_defer_omitted_layer(entry, "merged"):
+                continue
+            current = sm.existing.get(entry["network_name"])
+            context = {"state": "merged"}
+            if current is not None:
+                context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
+            validated = strategy.config_model_cls.from_config(entry, context=context)
+            proposed = sm.proposed.get(entry["network_name"])
+            if validated.layer is not None:
+                proposed.layer = validated.layer
 
     def _restore_state_machine_params(self, original_config: Any, original_state: Any) -> None:
         """Restore module params saved by ``_new_state_machine``."""

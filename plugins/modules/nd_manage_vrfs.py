@@ -705,7 +705,7 @@ gathered:
       vlan_id: 2001
 workflow_trace:
   description: Internal workflow trace entries collected by the VRF coordinator.
-  returned: always
+  returned: when O(output_level) is V(debug) or verbosity is 3 or higher
   type: list
   elements: dict
   sample:

@@ -16,6 +16,9 @@ import pytest
 from unittest.mock import patch
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import vrf_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
@@ -899,6 +902,69 @@ def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_vrf_status(sta
         )
 
     assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
+
+
+def test_vrf_gathered_output_uses_public_config_shape():
+    model = VrfDataModel.from_response(
+        {
+            "fabricName": "fab1",
+            "vrfName": "BLUE_VRF",
+            "vrfStatus": "deployed",
+            "vrfId": 50001,
+            "vlanId": 2001,
+            "vrfType": "vxlan",
+            "coreData": {
+                "vrfVlanName": "BLUE_VLAN",
+                "vrfInterfaceDescription": "blue vrf svi",
+                "vrfDescription": "blue tenant vrf",
+                "mtu": 9000,
+                "routingTag": 12345,
+                "vrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                "v6VrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                "maxBgpPaths": 2,
+                "maxIbgpPaths": 3,
+                "ipv6LinkLocal": True,
+                "disableRtAuto": True,
+                "routeTargetImport": ["65000:1"],
+                "routeTargetExport": ["65000:2"],
+                "evpnRouteTargetImport": ["65000:3"],
+                "evpnRouteTargetExport": ["65000:4"],
+            },
+            "fabricData": {
+                "l3VniWithoutVlan": False,
+                "advertiseHostRoute": True,
+                "advertiseDefaultRoute": False,
+                "configureStaticDefaultRoute": False,
+                "netflow": True,
+                "netflowMonitor": "VRF_MON",
+                "trmData": {
+                    "ipv4Trm": True,
+                    "v4RpAbsent": True,
+                    "l3VniMulticastGroup": "239.1.1.21",
+                    "trmOnBgw": True,
+                    "mvpnRouteTargetImport": ["65000:5"],
+                    "mvpnRouteTargetExport": ["65000:6"],
+                },
+            },
+        }
+    )
+    output = NDOutput(output_level="normal", state="gathered")
+    output.assign(
+        after=NDConfigCollection(VrfDataModel, [model]),
+        gathered_spec=VrfDataModel.get_argument_spec()["config"]["options"],
+    )
+
+    gathered = output.format()["gathered"][0]
+
+    for internal_key in ("fabric_name", "vrf_status", "vrf_type", "core_data", "fabric_data"):
+        assert internal_key not in gathered
+    assert gathered["vrf_name"] == "BLUE_VRF"
+    assert gathered["vrf_vlan_name"] == "BLUE_VLAN"
+    assert gathered["vrf_intf_desc"] == "blue vrf svi"
+    assert gathered["vrf_int_mtu"] == 9000
+    assert gathered["nf_monitor"] == "VRF_MON"
+    assert gathered["underlay_mcast_ip"] == "239.1.1.21"
+    VrfConfigModel.from_config(gathered)
 
 
 def test_vrf_attachment_query_missing_fallback_uses_unscoped_read():

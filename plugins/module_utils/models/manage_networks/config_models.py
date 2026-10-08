@@ -97,6 +97,11 @@ NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
         "vlan_id",
         "vlanId",
         "layer",
+        "mtu",
+        "arp_suppression",
+        "arpSuppression",
+        "netflow_enable",
+        "netflowEnable",
         "vlan_name",
         "vlanName",
         "x_connect",
@@ -137,15 +142,11 @@ NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
         "childFabricConfig",
     }
 )
-DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS = {
-    "netflow_enable": False,
-    "netflowEnable": False,
-    "arp_suppression": False,
-    "arpSuppression": False,
-    "mtu": 9216,
-}
 _L3_LAYER_INTENT_FIELDS = frozenset(
     {
+        "mtu",
+        "arp_suppression",
+        "arpSuppression",
         "vrf_name",
         "vrfName",
         "gateway_ipv4_address",
@@ -421,6 +422,7 @@ class NetworkConfigModel(NDBaseModel):
         normalized["layer"] = cls._normalize_effective_layer(
             normalized,
             defer_omitted_layer=bool(context.get("defer_omitted_layer")),
+            existing_layer=context.get("existing_layer"),
         )
 
         has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS)
@@ -430,11 +432,13 @@ class NetworkConfigModel(NDBaseModel):
         return normalized
 
     @staticmethod
-    def _normalize_effective_layer(data: dict[str, Any], defer_omitted_layer: bool = False) -> str | None:
+    def _normalize_effective_layer(data: dict[str, Any], defer_omitted_layer: bool = False, existing_layer: str | None = None) -> str | None:
         """Return the explicit or derived network layer used by runtime payload construction."""
         layer = data.get("layer")
         if layer:
             return layer
+        if existing_layer is not None:
+            return existing_layer
         if any(data.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS):
             return None
         if not NetworkConfigModel._has_definition_intent_for_layer(data):
@@ -442,10 +446,12 @@ class NetworkConfigModel(NDBaseModel):
         vlan_network_type = data.get("vlan_network_type") or data.get("vlanNetworkType")
         if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
             vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
-        if vlan_network_type in (VlanNetworkType.PRIVATE_PRIMARY.value, *_PRIVATE_SECONDARY_VLAN_NETWORK_TYPES):
+        if vlan_network_type in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
             return NetworkLayer.LAYER2.value
         if defer_omitted_layer:
             return None
+        if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and not has_l3_definition_intent_for_layer(data):
+            return NetworkLayer.LAYER2.value
         return NetworkLayer.LAYER3.value
 
     @staticmethod
@@ -456,15 +462,18 @@ class NetworkConfigModel(NDBaseModel):
     @staticmethod
     def _has_definition_intent_for_layer(data: dict[str, Any]) -> bool:
         """Return true when sparse input is intended to create or update a network definition."""
-        if any(data.get(field) is not None for field in NETWORK_DEFINITION_INTENT_FIELDS):
-            return True
-        return any(data.get(field) not in (None, default) for field, default in DEFAULT_SENSITIVE_NETWORK_DEFINITION_FIELDS.items() if field in data)
+        return any(data.get(field) is not None for field in NETWORK_DEFINITION_INTENT_FIELDS)
 
     @staticmethod
     def _normalize_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Normalize DHCP server keys into API serverAddress/serverVrf shape."""
+        servers = data.get("dhcp_servers")
+        if servers is None:
+            servers = data.get("dhcpServers")
+        if servers is None:
+            return None
         normalized_servers: list[dict[str, Any]] = []
-        for server in data.get("dhcp_servers") or data.get("dhcpServers") or []:
+        for server in servers:
             if not isinstance(server, dict):
                 continue
             address = server.get("server_address") or server.get("serverAddress")
@@ -474,7 +483,7 @@ class NetworkConfigModel(NDBaseModel):
                 if vrf:
                     item["server_vrf"] = vrf
                 normalized_servers.append(item)
-        return normalized_servers or None
+        return normalized_servers
 
     @field_validator("network_name", mode="before")
     @classmethod
@@ -557,7 +566,7 @@ class NetworkConfigModel(NDBaseModel):
         return v
 
     @model_validator(mode="after")
-    def _check_cross_field_rules(self):
+    def _check_cross_field_rules(self, info: ValidationInfo):
         network_type = self.network_type
         custom_fields = {field: getattr(self, field) for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS}
         set_custom_fields = [field for field, value in custom_fields.items() if value is not None]
@@ -565,16 +574,26 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
-        if (
+        context = info.context or {}
+        read_only_or_delete = context.get("state") in ("deleted", "gathered")
+        if not read_only_or_delete and (
             self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value)
             and network_type != NetworkType.USER_DEFINED.value
-            and not self.vrf_name
+            and not (self.vrf_name or context.get("existing_vrf_name"))
         ):
             raise ValueError("vrf_name is required for layer3 and layer2WithVrf networks")
         self._check_trm_rules()
         self._check_netflow_rules()
         self._check_vlan_network_type_rules()
         self._check_attachment_interface_modes()
+        if not read_only_or_delete and self.layer == NetworkLayer.LAYER2.value:
+            rejected_fields = [
+                field
+                for field in _L3_LAYER_INTENT_FIELDS & self.model_fields_set
+                if getattr(self, field, None) is not None and not (field == "vrf_name" and self.vrf_name == "NA")
+            ]
+            if rejected_fields:
+                raise ValueError("layer2 networks do not support L3 properties: " + ", ".join(sorted(rejected_fields)))
         return self
 
     def _check_trm_rules(self) -> None:
@@ -601,9 +620,6 @@ class NetworkConfigModel(NDBaseModel):
         if vlan_network_type == "privatePrimary":
             if self.primary_network_id is not None:
                 raise ValueError("privatePrimary networks do not use primary_network_id")
-            rejected_l3_fields = [field for field in _L3_LAYER_INTENT_FIELDS if field in self.model_fields_set and getattr(self, field, None) is not None]
-            if rejected_l3_fields:
-                raise ValueError("privatePrimary networks do not support layer3 intent: " + ", ".join(sorted(rejected_l3_fields)))
             return
         if vlan_network_type not in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
             return
