@@ -8,14 +8,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair import query
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcActionEnum,
     VpcFieldNames,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import VpcPairResourceError
 
 SER_A = "SER-A"
 SER_B = "SER-B"
@@ -65,16 +62,36 @@ def test_manage_vpc_pair_query_00020_build_delete_keeps_present_requested_and_ex
     assert result == [present_ab]
 
 
-def test_manage_vpc_pair_query_00025_build_delete_rejects_member_conflict():
-    """A requested delete must not reconstruct a pair over a different live peer."""
-    with pytest.raises(VpcPairResourceError) as exc:
-        query._build_delete_existing_pairs(
-            [_present_pair(SER_A, SER_C)],
-            [_config_item(SER_A, SER_B)],
-        )
+def test_manage_vpc_pair_query_00025_build_delete_skips_member_conflict_with_warning():
+    """A requested delete already absent (its switch now paired elsewhere) is skipped with a warning, not raised."""
+    module = MagicMock()
 
-    assert "cannot delete requested vpc pair ser-a/ser-b" in exc.value.msg.lower()
-    assert exc.value.details["active_pair"] == "SER-A/SER-C"
+    result = query._build_delete_existing_pairs(
+        [_present_pair(SER_A, SER_C)],
+        [_config_item(SER_A, SER_B)],
+        module=module,
+    )
+
+    assert result == []
+    module.warn.assert_called_once()
+    warning_msg = module.warn.call_args[0][0].lower()
+    assert "ser-a/ser-b" in warning_msg
+    assert "ser-a/ser-c" in warning_msg
+
+
+def test_manage_vpc_pair_query_00026_build_delete_conflict_does_not_block_other_requested_pairs():
+    """A member conflict on one requested pair must not prevent other requested pairs from being reconstructed."""
+    module = MagicMock()
+
+    result = query._build_delete_existing_pairs(
+        [_present_pair(SER_A, SER_C)],
+        [_config_item(SER_A, SER_B), _config_item(SER_E, SER_F)],
+        module=module,
+    )
+
+    keys = {query._vpc_pair_identity_key(pair) for pair in result}
+    assert keys == {_key(SER_E, SER_F)}
+    module.warn.assert_called_once()
 
 
 def test_manage_vpc_pair_query_00030_build_delete_empty_config_returns_all_pairs():

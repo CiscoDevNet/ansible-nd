@@ -638,6 +638,7 @@ def _reconstruct_requested_delete_pairs(
 def _build_delete_existing_pairs(
     pairs: list[dict[str, Any]],
     config: list[dict[str, Any]],
+    module: Any = None,
 ) -> list[dict[str, Any]]:
     """
     Build the existing-pair set for delete reconciliation from requested config.
@@ -648,6 +649,10 @@ def _build_delete_existing_pairs(
     - Requested pairs still present in /vpcPairs are kept with their real details.
     - Requested pairs already absent are reconstructed so the pending-member
       recovery path can run and push the removal.
+    - Requested pairs whose switch is now live with a different peer are already
+      absent as requested; they are skipped (with a warning) instead of
+      reconstructed, since reconstructing them could send an unpair to that
+      switch's new, unrelated peer.
     - Unrelated pairs (not in config) are excluded from delete reconciliation.
 
     When config has no complete pairs the queried pairs are returned unchanged,
@@ -656,11 +661,13 @@ def _build_delete_existing_pairs(
     Args:
         pairs: Discovered pair dicts from the /vpcPairs list query.
         config: User-requested delete pairs from the playbook.
+        module: Ansible module used to warn on skipped conflicts (optional).
 
     Returns:
         List of pair dicts to seed the delete state machine's existing set.
     """
     requested_keys = {key for key in (_vpc_pair_identity_key(item) for item in config) if key}
+    conflicting_keys: set[tuple[str, str]] = set()
     for active_pair in pairs:
         active_key = _vpc_pair_identity_key(active_pair)
         conflict = next(
@@ -668,14 +675,18 @@ def _build_delete_existing_pairs(
             None,
         )
         if conflict:
-            raise VpcPairResourceError(
-                msg=(f"Cannot delete requested vPC pair {'/'.join(conflict)}; " f"controller reports active pair {'/'.join(active_key)}."),
-                requested_pair="/".join(conflict),
-                active_pair="/".join(active_key),
-            )
+            conflicting_keys.add(conflict)
+            if module is not None:
+                module.warn(
+                    f"Requested delete vPC pair {'/'.join(conflict)} is already absent; "
+                    f"controller reports active pair {'/'.join(active_key)} sharing a switch with it. "
+                    f"Treating {'/'.join(conflict)} as already deleted."
+                )
 
     present_pairs = _filter_vpc_pairs_by_requested_config(pairs, config)
     reconstructed_pairs = _reconstruct_requested_delete_pairs(config)
+    if conflicting_keys:
+        reconstructed_pairs = [pair for pair in reconstructed_pairs if _vpc_pair_identity_key(pair) not in conflicting_keys]
     if not reconstructed_pairs:
         return present_pairs
 
@@ -976,7 +987,7 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                         return _set_lightweight_context(lightweight_have=have)
                     nrm.module.warn("vPC list query returned no active pairs for gathered workflow. Falling back to switch-level discovery.")
                 elif have:
-                    return _set_lightweight_context(_build_delete_existing_pairs(have, config))
+                    return _set_lightweight_context(_build_delete_existing_pairs(have, config, module=nrm.module))
                 elif config and list_query_succeeded:
                     nrm.module.warn("vPC list query returned no pairs for delete workflow. Falling back to switch-level discovery.")
 
