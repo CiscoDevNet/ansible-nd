@@ -372,6 +372,49 @@ class TestDeploySwitchIds:
         assert "switchActions/deploy" in rest_send.path
         assert rest_send.committed_payload == {"switchIds": ["FOC111AAA", "FOC333CCC"]}
 
+    def test_deploy_switch_ids_all_noop_207_is_successful_unchanged(self):
+        """
+        # Summary
+
+        Verify an itemized HTTP 207 containing only the recognized no-command
+        switch-deploy outcome succeeds without reporting a mutation.
+
+        ## Test
+
+        - ``switchActions/deploy`` returns the accepted ``notExecuted`` no-op
+        - The UPDATE task is successful with ``changed=False``
+
+        ## Classes and Methods
+
+        - ConfigActionsMixin.deploy_switch_ids()
+        - NdV1Strategy.is_changed()
+        """
+        deploy_response = {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/test-fabric/switchActions/deploy",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "switchIds": [
+                    {
+                        "switchId": "FOC111AAA",
+                        "status": "notExecuted",
+                        "message": "No Commands to execute",
+                    }
+                ]
+            },
+        }
+        rest_send = _make_rest_send([deploy_response])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        result = orch.deploy_switch_ids("test-fabric", ["FOC111AAA"])
+
+        assert result == deploy_response["DATA"]
+        assert len(results._tasks) == 1
+        assert results._tasks[0].failed is False
+        assert results._tasks[0].changed is False
+
     def test_deploy_switch_ids_empty_is_noop(self):
         """Verify _deploy_switch_ids returns None and makes no API call when empty."""
         rest_send = _make_rest_send([])
