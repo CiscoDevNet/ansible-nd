@@ -1,0 +1,47 @@
+# Test code for the cisco.nd.nd_manage_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Gather links without config for policy {{ gathered_policy_type }}
+  cisco.nd.nd_manage_links:
+    state: gathered
+  register: gathered_policy_result
+
+- name: Select the gathered test link for policy {{ gathered_policy_type }}
+  ansible.builtin.set_fact:
+    gathered_policy_matches: >-
+      {{
+        gathered_policy_result.gathered
+        | selectattr('src_fabric_name', 'eq', gathered_src_fabric)
+        | selectattr('dst_fabric_name', 'eq', gathered_dst_fabric)
+        | selectattr('src_interface_name', 'eq', gathered_interface_name)
+        | selectattr('dst_interface_name', 'eq', gathered_interface_name)
+        | selectattr('config_data.policy_type', 'eq', gathered_policy_type)
+        | list
+      }}
+
+- name: Assert gathered result shape for policy {{ gathered_policy_type }}
+  ansible.builtin.assert:
+    that:
+      - gathered_policy_result is not changed
+      - gathered_policy_result.before == []
+      - gathered_policy_result.after == []
+      - (gathered_policy_result.gathered | selectattr('link_id', 'defined') | list) | length == 0
+      - gathered_policy_matches | length == 1
+
+- name: Assert gathered configuration shape for policy {{ gathered_policy_type }}
+  ansible.builtin.assert:
+    that:
+      - gathered_policy_matches.0.config_data.template_inputs is mapping
+
+- name: Re-apply gathered link in check mode for policy {{ gathered_policy_type }}
+  cisco.nd.nd_manage_links:
+    config: '{{ gathered_policy_matches }}'
+    state: merged
+  check_mode: true
+  register: gathered_policy_roundtrip
+
+- name: Assert gathered link round-trips without changes for policy {{ gathered_policy_type }}
+  ansible.builtin.assert:
+    that:
+      - gathered_policy_roundtrip is not changed

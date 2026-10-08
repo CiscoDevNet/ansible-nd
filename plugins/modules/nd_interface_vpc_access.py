@@ -66,11 +66,14 @@ options:
               policy:
                 description:
                 - The policy configuration for the accessVpcHost vPC interface.
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   admin_state:
                     description:
                     - The administrative state of the vPC interface.
+                    - The ND default is V(true).
                     type: bool
                   bandwidth:
                     description:
@@ -80,24 +83,29 @@ options:
                   bpdu_filter:
                     description:
                     - BPDU filter setting for the vPC interface.
+                    - The ND default is V(default).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the vPC interface.
+                    - The ND default is V(enable).
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the vPC interface.
+                    - The ND default is V(true).
                     type: bool
                   copy_description:
                     description:
                     - Whether to propagate the per-peer port-channel description to all member interfaces.
+                    - The ND default is V(false).
                     type: bool
                   duplex_mode:
                     description:
                     - The duplex mode of the vPC interface.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, full, half ]
                   inherit_bandwidth:
@@ -108,44 +116,53 @@ options:
                   lacp_port_priority:
                     description:
                     - LACP port priority.
-                    - Valid range is 1-65535. Default 32768.
+                    - Valid range is 1-65535.
+                    - The ND default is V(32768).
                     type: int
                   lacp_rate:
                     description:
                     - LACP rate (PDU transmit interval).
                     - V(normal) = 30 seconds, V(fast) = 1 second.
+                    - The ND default is V(normal).
                     type: str
                     choices: [ normal, fast ]
                   lacp_suspend:
                     description:
                     - If disabled, LACP puts the port in individual state instead of suspending when LACP BPDUs are
                       not received.
+                    - The ND default is V(false).
                     type: bool
                   lacp_vpc_convergence:
                     description:
                     - Enable LACP convergence for vPC port-channels.
+                    - The ND default is V(false).
                     type: bool
                   link_type:
                     description:
                     - Spanning-tree link type.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   mirror_config:
                     description:
                     - Copy Peer-1 configuration to Peer-2.
+                    - The ND default is V(false).
                     type: bool
                   mtu:
                     description:
                     - Interface MTU.
+                    - The ND default is V(jumbo).
                     type: str
                     choices: [ default, jumbo ]
                   negotiate_auto:
                     description:
                     - Enable link auto-negotiation.
+                    - The ND default is V(true).
                     type: bool
                   netflow:
                     description:
                     - Enable Netflow on the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   netflow_monitor:
                     description:
@@ -204,19 +221,23 @@ options:
                   pfc:
                     description:
                     - Enable priority flow control.
+                    - The ND default is V(false).
                     type: bool
                   port_channel_mode:
                     description:
                     - Port-channel mode.
+                    - The ND default is V(active).
                     type: str
                     choices: [ 'on', active, passive ]
                   port_type_edge_trunk:
                     description:
                     - Enable spanning-tree edge port (PortFast) behavior.
+                    - The ND default is V(true).
                     type: bool
                   qos:
                     description:
                     - Enable QoS configuration for the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   qos_policy:
                     description:
@@ -229,15 +250,18 @@ options:
                   speed:
                     description:
                     - Interface speed.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Enable traffic storm control on the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - The ND default is V(default).
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
@@ -281,6 +305,9 @@ options:
         - When V(true), all queued vPC interface changes are deployed in a single bulk API call at the end of module
           execution via the C(interfaceActions/deploy) API. Only the vPC interfaces modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
+          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
+          changes staged but undeployed.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -532,16 +559,15 @@ msg:
 
 # pylint: disable=wrong-import-position
 import logging
-import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_access_interface import (
     AccessVpcHostInterfaceModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import (
@@ -562,14 +588,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(AccessVpcHostInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        config_actions={
-            "type": "dict",
-            "options": {
-                "deploy": {"type": "bool", "default": False},
-            },
-        },
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -588,9 +607,7 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", False)
-        nd_state_machine.model_orchestrator.deploy = deploy
+        deploy = nd_state_machine.model_orchestrator.apply_config_actions(module.params)
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
@@ -607,21 +624,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except NDStateMachineError as e:
-        module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module execution failed: {str(e)}"
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
-
     except Exception as e:  # pylint: disable=broad-except
-        module_log.exception("Unhandled exception during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module failed: {str(e)}"
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":

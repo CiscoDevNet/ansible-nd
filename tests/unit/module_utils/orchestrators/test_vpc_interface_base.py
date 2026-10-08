@@ -1518,21 +1518,25 @@ def test_vpc_interface_base_01120() -> None:
     """
     # Summary
 
-    Verify `preflight` issues ZERO requests when every proposed `interface_name` is unique (the overwhelmingly common case): pair
-    resolution only runs for duplicated names, so idempotent runs pay no extra API cost (CLAUDE.md performance rule, issue #356).
+    Verify `preflight` issues NO pair-resolution request when every proposed `interface_name` is unique (the overwhelmingly common
+    case): pair resolution only runs for duplicated names, so idempotent runs pay no extra API cost (CLAUDE.md performance rule,
+    issue #356). The only request consumed is the switches-list fetch behind the shared switch resolution in
+    `NDBaseInterfaceOrchestrator.preflight` (PR #550 review) — served from the `FabricContext` cache `query_all` already filled in a
+    real run, so it adds no request there either.
 
     ## Test
 
     - Two proposed items with distinct names
-    - The response generator yields nothing — any API request would raise StopIteration and fail the test
+    - The response generator yields only the switches list — a `vpcPair` GET would raise StopIteration and fail the test
 
     ## Classes and Methods
 
     - VpcInterfaceBaseOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.preflight()
     """
 
     def responses():
-        yield from ()
+        yield responses_vpc_base("test_vpc_interface_base_01120a")
 
     gen_responses = ResponseGenerator(responses())
     instance = _build_orchestrator(gen_responses)

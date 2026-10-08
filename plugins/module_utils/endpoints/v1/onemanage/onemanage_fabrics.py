@@ -64,3 +64,111 @@ class EpOneManageFabricsMembersGet(_EpOneManageFabricsFabricNameBase):
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.GET
+
+
+class EpOneManageFabricsMembersAddPost(_EpOneManageFabricsFabricNameBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/actions/addMembers."""
+
+    class_name: Literal["EpOneManageFabricsMembersAddPost"] = Field(
+        default="EpOneManageFabricsMembersAddPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return f"{self._base_path}/actions/addMembers"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsMembersRemovePost(_EpOneManageFabricsFabricNameBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/actions/removeMembers."""
+
+    class_name: Literal["EpOneManageFabricsMembersRemovePost"] = Field(
+        default="EpOneManageFabricsMembersRemovePost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return f"{self._base_path}/actions/removeMembers"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsConfigSavePost(_EpOneManageFabricsFabricNameBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/actions/configSave."""
+
+    class_name: Literal["EpOneManageFabricsConfigSavePost"] = Field(
+        default="EpOneManageFabricsConfigSavePost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return f"{self._base_path}/actions/configSave"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsDeployPost(_EpOneManageFabricsFabricNameBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/actions/deploy."""
+
+    class_name: Literal["EpOneManageFabricsDeployPost"] = Field(
+        default="EpOneManageFabricsDeployPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return f"{self._base_path}/actions/deploy"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
+
+
+class EpOneManageFabricsSwitchesGet(_EpOneManageFabricsFabricNameBase):
+    """GET /api/v1/oneManage/manage/fabrics/{fabricName}/switches."""
+
+    class_name: Literal["EpOneManageFabricsSwitchesGet"] = Field(
+        default="EpOneManageFabricsSwitchesGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return f"{self._base_path}/switches"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.GET
+
+
+class EpOneManageFabricsSwitchActionsDeployPost(_EpOneManageFabricsFabricNameBase):
+    """POST /api/v1/oneManage/manage/fabrics/{fabricName}/switchActions/deploy."""
+
+    class_name: Literal["EpOneManageFabricsSwitchActionsDeployPost"] = Field(
+        default="EpOneManageFabricsSwitchActionsDeployPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        return f"{self._base_path}/switchActions/deploy"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST

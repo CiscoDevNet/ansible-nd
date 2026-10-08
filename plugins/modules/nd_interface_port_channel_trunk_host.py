@@ -12,14 +12,21 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_port_channel_trunk_host
 version_added: "2.0.0"
-short_description: Manage port-channel (trunkPoHost) interfaces on Cisco Nexus Dashboard
+short_description: Manage port-channel (trunkPoHost, iosXeTrunkPoHost) interfaces on Cisco Nexus Dashboard
 description:
-- Manage port-channel (trunkPoHost) interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, and deleting (trunkPoHost) port-channel configurations on switches within a fabric.
+- Manage port-channel (trunkPoHost, iosXeTrunkPoHost) interfaces on Cisco Nexus Dashboard.
+- It supports creating, updating, and deleting (trunkPoHost, iosXeTrunkPoHost) port-channel configurations on switches within a fabric.
 - Each config item represents one port-channel interface. Member ethernet interfaces are listed in
   O(config[].config_data.network_os.policy.ports) and inherit trunk-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
   extra_config can be modified on members via the C(nd_interface_ethernet_trunk_host) module.
+- A port-channel that lists a member ethernet already belonging to a different port-channel is rejected before any
+  change is made (also in check mode); remove the member from its current port-channel first.
+- Supports NX-OS (C(trunkPoHost)) and IOS-XE (C(iosXeTrunkPoHost)) port-channels; select the platform with
+  O(config[].config_data.network_os.network_os_type).
+- On IOS-XE the members named in O(config[].config_data.network_os.policy.ports) must already be trunk-host interfaces
+  (C(iosXeTrunkHost), the fabric default); convert them with M(cisco.nd.nd_interface_ethernet_trunk_host) first. The
+  module fails before any change when they are not.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -47,6 +54,8 @@ options:
       interface_name:
         description:
         - The port-channel interface name (e.g. C(port-channel501)).
+        - A bare port-channel ID is also accepted and expanded, so V(501) means C(port-channel501).
+        - The port-channel ID must be in the range 1-4096.
         type: str
         required: true
       config_data:
@@ -59,205 +68,295 @@ options:
             - Network OS specific configuration.
             type: dict
             suboptions:
+              network_os_type:
+                description:
+                - The network OS (platform) type of the target switch. This is a discriminator that determines which
+                  policy templates are applicable.
+                - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                type: str
+                default: nx-os
+                choices: [ nx-os, ios-xe ]
               policy:
                 description:
-                - The policy configuration for the (trunkPoHost) port-channel.
+                - The policy configuration for the port-channel.
+                - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
+                  policy_type:
+                    description:
+                    - The port-channel policy template to apply. This is a discriminator that determines which of the
+                      remaining C(policy) suboptions are applicable.
+                    - Optional. When omitted it is derived from O(config[].config_data.network_os.network_os_type),
+                      V(trunkPoHost) for C(nx-os) and V(iosXeTrunkPoHost) for C(ios-xe).
+                    type: str
+                    choices: [ trunkPoHost, iosXeTrunkPoHost ]
                   admin_state:
                     description:
                     - The administrative state of the port-channel.
+                    - The ND default is V(true).
+                    - Applies to all policy_type values.
                     type: bool
                   allowed_vlans:
                     description:
                     - Trunk allowed VLANs.
                     - Accepts V(none), V(all), or a comma-separated list of VLAN ids/ranges (e.g. V(100-200,300)).
                     - VLAN ids must be in the range 1-4094.
+                    - The ND default is V(none).
+                    - Applies to all policy_type values.
                     type: str
                   bandwidth:
                     description:
                     - Interface bandwidth in kilobits per second.
                     - Valid range is 1-100000000.
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   bpdu_filter:
                     description:
                     - BPDU filter setting for the port-channel.
+                    - The ND default is V(default).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the port-channel.
+                    - The ND default is V(enable).
+                    - Applies to all policy_type values.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the port-channel.
+                    - The ND default is V(true).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   copy_description:
                     description:
                     - Whether to propagate the port-channel description to all member interfaces.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   description:
                     description:
                     - The description of the port-channel.
-                    - Maximum 254 characters.
+                    - Maximum length is 254 characters for C(trunkPoHost), 200 for C(iosXeTrunkPoHost).
+                    - Applies to all policy_type values.
                     type: str
                   duplex_mode:
                     description:
                     - The duplex mode of the port-channel.
+                    - The ND default is V(auto).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                     choices: [ auto, full, half ]
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the port-channel.
+                    - Applies to all policy_type values.
                     type: str
                   inherit_bandwidth:
                     description:
                     - Inherited interface bandwidth in kilobits per second.
                     - Valid range is 1-100000000.
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   lacp_port_priority:
                     description:
                     - LACP port priority.
-                    - Valid range is 1-65535. Default 32768.
+                    - Valid range is 1-65535.
+                    - The ND default is V(32768).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   lacp_rate:
                     description:
                     - LACP rate (PDU transmit interval).
                     - V(normal) = 30 seconds, V(fast) = 1 second.
+                    - The ND default is V(normal).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                     choices: [ normal, fast ]
                   lacp_suspend:
                     description:
                     - Whether to suspend the port if LACP PDUs are not received.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   link_type:
                     description:
                     - Spanning-tree link type for the port-channel.
+                    - The ND default is V(auto).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether the port-channel is configured as a SPAN/ERSPAN monitor source.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   mtu:
                     description:
                     - The MTU setting for the port-channel.
+                    - For C(trunkPoHost), one of C(default) or C(jumbo).
+                    - For C(iosXeTrunkPoHost), an integer in the range 1500-9198 (for example C(8000)).
+                    - A value outside the selected policy_type's form is rejected by the module.
+                    - The ND default is V(jumbo) for C(trunkPoHost); C(iosXeTrunkPoHost) has none.
+                    - Applies to all policy_type values.
                     type: str
-                    choices: [ default, jumbo ]
                   native_vlan:
                     description:
                     - Trunk native VLAN id.
                     - Valid range is 1-4094.
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   negotiate_auto:
                     description:
                     - Whether link auto-negotiation is enabled.
+                    - The ND default is V(true).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the port-channel.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   netflow_monitor:
                     description:
                     - The netflow Layer-2 monitor name for the port-channel.
                     - Required when O(config[].config_data.network_os.policy.netflow=true).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                   netflow_sampler:
                     description:
                     - The netflow Layer-2 sampler name for the port-channel.
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                   orphan_port:
                     description:
                     - Configure the port-channel as a vPC orphan port.
                     - When V(true), the port is suspended by the secondary peer on vPC failure.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   pfc:
                     description:
                     - Whether Priority Flow Control is enabled on the port-channel.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   port_channel_mode:
                     description:
-                    - The port-channel mode.
+                    - The port-channel (channel-group) mode.
+                    - For C(trunkPoHost), one of C(on), C(active) or C(passive).
+                    - For C(iosXeTrunkPoHost), additionally C(auto) or C(desirable) (PAgP).
+                    - A value outside the selected policy_type's subset is rejected by the module.
+                    - The ND default is V(active).
+                    - Applies to all policy_type values.
                     type: str
-                    choices: [ 'on', active, passive ]
+                    choices: [ 'on', active, passive, auto, desirable ]
                   port_type_edge_trunk:
                     description:
                     - Configure the port-channel as an edge trunk port (PortFast on trunk).
+                    - The ND default is V(true).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   ports:
                     description:
                     - The list of member ethernet interface names for this port-channel.
                     - Each name should be in the format C(Ethernet1/1), C(Ethernet1/2), etc.
+                    - On IOS-XE, member names such as C(GigabitEthernet1/0/4); abbreviations such as C(gi1/0/4) are expanded.
                     - The port-channel policy is the single source of truth for member configuration; member
                       interfaces inherit trunk-mode settings from this policy.
+                    - Applies to all policy_type values.
                     type: list
                     elements: str
                   qos:
                     description:
                     - Whether a QoS policy is applied to the port-channel.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   qos_policy:
                     description:
                     - Custom QoS policy name associated with the port-channel.
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                   queuing_policy:
                     description:
                     - Custom queuing policy name associated with the port-channel.
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                   speed:
                     description:
                     - The speed setting for the port-channel.
+                    - The ND default is V(auto).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the port-channel.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - The ND default is V(default).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
                     description:
                     - Broadcast storm control level in percentage (0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level_pps).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: float
                   storm_control_broadcast_level_pps:
                     description:
                     - Broadcast storm control level in packets per second (0-200000000).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   storm_control_multicast_level:
                     description:
                     - Multicast storm control level in percentage (0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level_pps).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: float
                   storm_control_multicast_level_pps:
                     description:
                     - Multicast storm control level in packets per second (0-200000000).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   storm_control_unicast_level:
                     description:
                     - Unicast storm control level in percentage (0.00-100.00).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level_pps).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: float
                   storm_control_unicast_level_pps:
                     description:
                     - Unicast storm control level in packets per second (0-200000000).
                     - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: int
                   vlan_mapping:
                     description:
                     - Whether VLAN mapping is enabled on the trunk.
                     - Use with O(config[].config_data.network_os.policy.vlan_mapping_entries) to translate customer VLAN ids to provider VLAN ids.
                     - Note that virtual switches (e.g. N9K-C9300v) may reject VLAN mapping with selective dot1q-tunnel.
+                    - The ND default is V(false).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: bool
                   vlan_mapping_entries:
                     description:
                     - VLAN mapping entries. Used when O(config[].config_data.network_os.policy.vlan_mapping=true).
+                    - Applies when policy_type is C(trunkPoHost).
                     type: list
                     elements: dict
                     suboptions:
@@ -292,6 +391,9 @@ options:
         - When V(true), all queued port-channel changes are deployed in a single bulk API call at the end of module
           execution via the C(interfaceActions/deploy) API. Only the port-channels modified by this task are deployed.
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
+          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
+          changes staged but undeployed.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -315,9 +417,16 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS port-channel trunkPoHost interfaces only (interface_type C(portChannel), mode C(trunk),
-  network_os_type C(nx-os), policy_type C(trunkPoHost)). These values are hardcoded by the module and are not user-configurable.
+- This module supports both NX-OS and IOS-XE trunk-mode port-channel interfaces (interface_type C(portChannel), mode
+  C(trunk)), selected via O(config[].config_data.network_os.network_os_type).
+- This module manages the C(trunkPoHost) (NX-OS) and C(iosXeTrunkPoHost) (IOS-XE) policy templates. Port-channels
+  carrying any other policy type are never read or modified by this module.
 - The port-channel policy is the source of truth for member interface configuration.
+- Removing a port-channel (O(state=deleted), or O(state=overridden) for a port-channel absent from O(config)) also releases its
+  member interfaces, which the controller returns to its own default policy for the platform. This module does not set a policy on
+  released members; configure them with the C(nd_interface_ethernet_*) modules afterwards.
+- The ND 4.3.1 C(deviceTrackingPolicy) and C(flowMonitors) properties of the C(iosXeTrunkPoHost) policy are intentionally not exposed.
+  The module writes one policy shape that both ND 4.2.1 and ND 4.3.1 accept, so these properties cannot be configured through it.
 """
 
 EXAMPLES = r"""
@@ -343,6 +452,27 @@ EXAMPLES = r"""
       deploy: true
     state: merged
   register: result
+
+- name: Create an IOS-XE trunk port-channel on a Catalyst leaf (members must already be iosXeTrunkHost)
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    fabric_name: CAMPUS1
+    config:
+      - switch_ip: 192.168.12.181
+        interface_name: port-channel103
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              admin_state: true
+              allowed_vlans: "10,20-30"
+              port_channel_mode: active
+              ports:
+                - GigabitEthernet1/0/4
+                - GigabitEthernet1/0/5
+              description: "Catalyst trunk EtherChannel"
+    config_actions:
+      deploy: true
+    state: merged
 
 - name: Add a third member and update allowed VLANs
   cisco.nd.nd_interface_port_channel_trunk_host:
@@ -489,7 +619,9 @@ after:
     interface_name: port-channel501
     config_data:
       network_os:
+        network_os_type: nx-os
         policy:
+          policy_type: trunkPoHost
           admin_state: true
           allowed_vlans: "100-300"
           native_vlan: 99
@@ -537,16 +669,15 @@ msg:
 
 # pylint: disable=wrong-import-position
 import logging
-import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import (
     PortChannelTrunkHostInterfaceModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_trunk_host_interface import (
@@ -567,14 +698,7 @@ def main():
     """
     argument_spec = nd_argument_spec()
     argument_spec.update(PortChannelTrunkHostInterfaceModel.get_argument_spec())
-    argument_spec.update(
-        config_actions={
-            "type": "dict",
-            "options": {
-                "deploy": {"type": "bool", "default": False},
-            },
-        },
-    )
+    argument_spec.update(config_actions_spec(include=("deploy",)))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -593,9 +717,7 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        config_actions = module.params.get("config_actions") or {}
-        deploy = config_actions.get("deploy", False)
-        nd_state_machine.model_orchestrator.deploy = deploy
+        deploy = nd_state_machine.model_orchestrator.apply_config_actions(module.params)
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
@@ -612,21 +734,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except NDStateMachineError as e:
-        module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module execution failed: {str(e)}"
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
-
     except Exception as e:  # pylint: disable=broad-except
-        module_log.exception("Unhandled exception during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module failed: {str(e)}"
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":
