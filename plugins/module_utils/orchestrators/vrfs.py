@@ -982,8 +982,20 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
-            return self._mcfg_parent_vrf_payload(model_instance)
-        return model_instance.to_payload()
+            payload = self._mcfg_parent_vrf_payload(model_instance)
+        else:
+            payload = model_instance.to_payload()
+
+        # The Python model retains legacy numeric values for compatibility,
+        # but ND's REST API accepts the string enum on the wire.
+        fabric_data = payload.get("fabricData")
+        if isinstance(fabric_data, dict):
+            if not fabric_data.get("bgpPassword"):
+                fabric_data.pop("bgpPasswordKeyType", None)
+            else:
+                key_type = fabric_data.get("bgpPasswordKeyType")
+                fabric_data["bgpPasswordKeyType"] = {3: "3des", 7: "type7", "3": "3des", "7": "type7"}.get(key_type, key_type)
+        return payload
 
     # ── Create ────────────────────────────────────────────────────
 

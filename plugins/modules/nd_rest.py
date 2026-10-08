@@ -272,11 +272,12 @@ def main():
         nd.result["jsondata"] = content
     else:
         nd.result["jsondata"] = nd.request(path, method=method, data=content, file=file_path)
-        nd.existing = sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE)
+        if nd.result["jsondata"] is not None:
+            nd.existing = sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE)
 
     # Report changes for idempotency depending on methods
     nd.result["status"] = nd.status
-    if sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE) != nd.previous and method != "GET":
+    if nd.result["jsondata"] is not None and sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE) != nd.previous and method != "GET":
         nd.result["changed"] = True
 
     # Report success
