@@ -19,6 +19,7 @@ auto-assign tests monkeypatch the orchestrator's `query_all` / `propose` so no c
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.modules import nd_fabric_update_group as mod
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -210,3 +211,52 @@ def test_nd_fabric_update_group_00230() -> None:
         mod._validate_report_analysis_exclusion(module)
 
     assert not module.fail_json_calls
+
+
+# =============================================================================
+# Test: main() routes NDStateMachine construction failures through fail_from_exception
+# =============================================================================
+
+
+class _MainModule(_FakeModule):
+    """`_FakeModule` for driving `main()`: adds `exit_json`, which must not be reached when construction fails."""
+
+    def exit_json(self, **kwargs) -> None:
+        """Signal an unexpected success exit."""
+        raise AssertionError(f"exit_json reached unexpectedly: {kwargs}")
+
+
+def test_nd_fabric_update_group_00300(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a failure raised while `NDStateMachine` is constructed (its initial `query_all`, orchestrator construction, or
+    proposed-config validation) is reported through `fail_from_exception` with the standard message, instead of escaping `main()`
+    as a raw exception (PR #557 review, mikewiebe).
+
+    ## Test
+
+    - `NDStateMachine` is replaced by a stand-in whose constructor raises `NDStateMachineError`
+    - `main()` is driven with a fake `AnsibleModule` carrying a `state: merged` config
+    - `fail_json` is called exactly once with the `Module execution failed: ...` message and no output keys
+
+    ## Classes and Methods
+
+    - nd_fabric_update_group.main()
+    - fail_from_exception()
+    """
+
+    def _raising_state_machine(**kwargs):
+        raise NDStateMachineError("Initialization failed: controller unavailable")
+
+    module = _MainModule(params={"state": "merged", "config": [{"update_group_name": "g1"}], "output_level": "normal"})
+    monkeypatch.setattr(mod, "AnsibleModule", lambda **kwargs: module)
+    monkeypatch.setattr(mod, "NDStateMachine", _raising_state_machine)
+    monkeypatch.setattr(mod, "require_pydantic", lambda module: None)
+    monkeypatch.setattr(mod, "setup_logging", lambda module: None)
+
+    with pytest.raises(_FailJson, match=r"Module execution failed: Initialization failed: controller unavailable"):
+        mod.main()
+
+    assert len(module.fail_json_calls) == 1
+    assert module.fail_json_calls[0] == {"msg": "Module execution failed: Initialization failed: controller unavailable"}

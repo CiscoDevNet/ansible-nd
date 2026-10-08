@@ -1,0 +1,194 @@
+---
+# Merged state tests for nd_interface_port_channel_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- MERGED CREATE: two port-channels in one task (one bulk POST, both l3Po on the same switch) ---
+
+- name: "MERGED CREATE: Create port-channel520 and port-channel521 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &merge_pc520_521
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520 }}"
+      - "{{ test_pc_521 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create
+
+- name: "MERGED CREATE: Create port-channel520 and port-channel521 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *merge_pc520_521
+  register: nm_merged_create
+
+- name: "MERGED CREATE: Verify both port-channels and the echoed discriminators"
+  vars:
+    pc520: "{{ nm_merged_create.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+    pc521: "{{ nm_merged_create.after | selectattr('interface_name', 'equalto', 'port-channel521') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create is changed
+      - nm_merged_create is changed
+      - pc520.config_data.network_os.network_os_type == "nx-os"
+      - pc520.config_data.network_os.policy.policy_type == "l3Po"
+      - pc520.config_data.network_os.policy.ip == "10.49.20.1"
+      - pc520.config_data.network_os.policy.prefix == 30
+      - pc520.config_data.network_os.policy.ports | length == 2
+      - test_pc_member_a in pc520.config_data.network_os.policy.ports
+      - test_pc_member_b in pc520.config_data.network_os.policy.ports
+      - pc521.config_data.network_os.policy.ipv6 == "2001:db8:49:21::1"
+      - pc521.config_data.network_os.policy.ipv6_prefix == 64
+      - pc521.config_data.network_os.policy.pim_sparse == true
+      - pc521.config_data.network_os.policy.routing_tag == "12345"
+      - pc521.config_data.network_os.policy.port_channel_mode == "passive"
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: *merge_pc520_521
+  check_mode: true
+  register: cm_merged_idem
+
+- name: "MERGED IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *merge_pc520_521
+  register: nm_merged_idem
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem is not changed
+      - nm_merged_idem is not changed
+
+# --- MERGED DEFAULTS-ONLY: a port-channel that names only its member is idempotent against ND's default echoes ---
+
+- name: "MERGED DEFAULTS-ONLY: Create port-channel522 with only a member"
+  cisco.nd.nd_interface_port_channel_routed: &merge_pc522
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_522_defaults_only }}"
+    state: merged
+  register: nm_merged_defaults
+
+- name: "MERGED DEFAULTS-ONLY: Re-apply"
+  cisco.nd.nd_interface_port_channel_routed: *merge_pc522
+  register: nm_merged_defaults_idem
+
+- name: "MERGED DEFAULTS-ONLY: Verify create then no change"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_defaults is changed
+      - nm_merged_defaults_idem is not changed
+
+# --- MERGED UPDATE: change ip, mtu and description ---
+
+- name: "MERGED UPDATE: Change port-channel520 ip, mtu and description (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &merge_pc520_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update
+
+- name: "MERGED UPDATE: Change port-channel520 ip, mtu and description (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *merge_pc520_updated
+  register: nm_merged_update
+
+- name: "MERGED UPDATE: Verify port-channel520 was updated and port-channel521 untouched"
+  vars:
+    pc520: "{{ nm_merged_update.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update is changed
+      - nm_merged_update is changed
+      - pc520.config_data.network_os.policy.ip == "10.49.20.5"
+      - pc520.config_data.network_os.policy.mtu == 1500
+      - pc520.config_data.network_os.policy.description == "Ansible integration test routed PC 520 updated"
+      - nm_merged_update.after | selectattr('interface_name', 'equalto', 'port-channel521') | list | length == 1
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_port_channel_routed: *merge_pc520_updated
+  register: nm_merged_update_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_idem is not changed
+
+# --- MERGED MEMBERSHIP: remove a member ---
+
+- name: "MERGED MEMBER REMOVE: Shrink port-channel520 to one member"
+  cisco.nd.nd_interface_port_channel_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520_removed_member }}"
+    state: merged
+  register: nm_merged_remove_member
+
+- name: "MERGED MEMBER REMOVE: Verify the member list shrank"
+  vars:
+    pc520: "{{ nm_merged_remove_member.after | selectattr('interface_name', 'equalto', 'port-channel520') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_remove_member is changed
+      - pc520.config_data.network_os.policy.ports == [test_pc_member_a]
+
+# --- MERGED NEGATIVE: a member owned by another port-channel is refused before any write ---
+
+- name: "MERGED NEGATIVE: port-channel522 claims port-channel521's member (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &merge_member_conflict
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel522
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports:
+                - "{{ test_pc_member_c }}"
+    state: merged
+  check_mode: true
+  register: cm_member_conflict
+  ignore_errors: true
+
+- name: "MERGED NEGATIVE: port-channel522 claims port-channel521's member (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *merge_member_conflict
+  register: nm_member_conflict
+  ignore_errors: true
+
+- name: "MERGED NEGATIVE: Verify the refusal names the current owner"
+  ansible.builtin.assert:
+    that:
+      - cm_member_conflict is failed
+      - nm_member_conflict is failed
+      - "'current owner=port-channel521' in nm_member_conflict.msg"
+
+# --- MERGED NEGATIVE: the wrong network_os_type for the switch is refused before any write ---
+
+- name: "MERGED NEGATIVE: ios-xe against an NX-OS switch"
+  cisco.nd.nd_interface_port_channel_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              ip: 10.49.20.1
+              prefix: 30
+    state: merged
+  register: nm_wrong_os
+  ignore_errors: true
+
+- name: "MERGED NEGATIVE: Verify the platform mismatch is refused"
+  ansible.builtin.assert:
+    that:
+      - nm_wrong_os is failed
+      - "'ios-xe' in nm_wrong_os.msg"

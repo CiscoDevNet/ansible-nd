@@ -41,8 +41,17 @@ options:
       - V(deleted) removes specified VRFs (or all if config is empty).
       - V(gathered) returns current VRF state (the only state allowed on child
         fabrics when targeted directly).
+      - V(staged) uses V(replaced) definition semantics for listed VRFs, so
+        omitted definition properties can be reset to their defaults.
+      - V(staged) uses fabric-wide V(overridden) attachment scope. Attachments
+        not present in the desired config are detached, but VRF definitions are
+        retained.
+      - V(staged) always skips deployment. Item-level C(deploy=true) is ignored;
+        deploy staged changes later with a deployment workflow.
+      - V(staged) with C(config=[]) stages detachment of every current VRF
+        attachment while retaining all VRF definitions.
     type: str
-    choices: [ merged, replaced, overridden, deleted, gathered ]
+    choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
   config:
     description:
@@ -627,6 +636,26 @@ EXAMPLES = r"""
         vrf_description: "Updated Blue VRF"
         max_bgp_paths: 4
         max_ibgp_paths: 4
+
+# ── Stage complete desired VRF attachments without deployment ───────────────
+- name: Stage complete desired VRF attachments without deployment
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: staged
+    config:
+      - vrf_name: VRF_BLUE
+        vrf_id: 50010
+        vlan_id: 2001
+        vrf_description: "Blue VRF"
+        deploy: true
+        attach:
+          - ip_address: 192.0.2.10
+      - vrf_name: VRF_GREEN
+        vrf_id: 50011
+        vlan_id: 2002
+        vrf_description: "Green VRF"
+        attach:
+          - ip_address: 192.0.2.11
 """
 
 RETURN = r"""
@@ -736,7 +765,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered"],
+            choices=["merged", "replaced", "overridden", "deleted", "gathered", "staged"],
         ),
         config=dict(
             type="list",

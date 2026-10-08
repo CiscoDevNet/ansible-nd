@@ -1,7 +1,0 @@
----
-minor_changes:
-  - Relocate ``nd_argument_spec()`` to ``plugins/module_utils/nd_argument_specs.py`` as the single source of truth;
-    ``nd.py`` and ``nd_v2.py`` continue to re-export it, so existing imports keep working unchanged.
-  - Add shared ``config_actions_spec()`` argument-spec fragment (``save``/``deploy``/``type``, where ``type`` accepts
-    ``resource``, ``switch``, or ``global``) with an include-allowlist, so modules can compose the subset of config actions
-    they support instead of hand-writing the block.

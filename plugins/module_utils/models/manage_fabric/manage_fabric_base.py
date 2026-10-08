@@ -25,8 +25,11 @@ from __future__ import annotations
 import enum
 import types
 import typing
+from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, get_args, get_origin
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -34,6 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -94,6 +98,37 @@ def _is_pydantic_model(annotation) -> bool:
     return isinstance(annotation, type) and issubclass(annotation, BaseModel)
 
 
+def _is_mapping_type(annotation) -> bool:
+    """Return whether an annotation represents a generic mapping."""
+    origin = get_origin(annotation)
+    candidate = origin or annotation
+    return isinstance(candidate, type) and issubclass(candidate, Mapping)
+
+
+def _is_secret_field(field_info, inner_type) -> bool:
+    """True when a field is declared secret via metadata (authoritative) or typed as SecretStr (backstop)."""
+    extra = getattr(field_info, "json_schema_extra", None)
+    if isinstance(extra, dict) and extra.get("secret") is True:
+        return True
+    return inner_type is SecretStr
+
+
+def serialize_secret_value(value, info):
+    """Serialize a secret field: real value only for the API payload, masked everywhere else.
+
+    Accepts a ``SecretStr`` or a plain string (empty-string defaults are stored as-is).
+    """
+    if value is None:
+        return None
+    raw = value.get_secret_value() if hasattr(value, "get_secret_value") else value
+    if raw == "":
+        return ""
+    mode = (info.context or {}).get("mode")
+    if mode == "payload":
+        return raw
+    return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+
+
 def _python_type_to_ansible(annotation) -> str:
     """Map a Python type annotation to an Ansible argument spec type string."""
     if annotation is bool:
@@ -104,9 +139,40 @@ def _python_type_to_ansible(annotation) -> str:
         return "float"
     if annotation is str:
         return "str"
+    if _is_mapping_type(annotation):
+        return "dict"
     if _is_pydantic_model(annotation):
         return "dict"
     return "str"
+
+
+def _project_value_to_argument_spec(value: Any, spec: dict[str, Any]) -> Any:
+    """Project config output through one generated Ansible option specification.
+
+    A dict with nested ``options`` is a closed public model surface, so response-
+    only fields and retained pydantic extras must be removed recursively. A dict
+    without ``options`` is an intentionally opaque mapping and must retain its
+    complete structure. The same rules apply to lists whose elements are dicts.
+    """
+    option_type = spec.get("type")
+    nested_options = spec.get("options")
+
+    if option_type == "dict" and isinstance(value, Mapping):
+        if not isinstance(nested_options, dict):
+            return dict(value)
+        return {key: _project_value_to_argument_spec(value[key], nested_options[key]) for key in nested_options if key in value}
+
+    if option_type == "list" and isinstance(value, list):
+        if spec.get("elements") != "dict" or not isinstance(nested_options, dict):
+            return value
+        return [(_project_value_to_argument_spec(item, {"type": "dict", "options": nested_options}) if isinstance(item, Mapping) else item) for item in value]
+
+    return value
+
+
+def _project_config_to_argument_spec(config: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    """Return only replayable fields declared by the public config options."""
+    return {key: _project_value_to_argument_spec(config[key], options[key]) for key in options if key in config}
 
 
 def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None) -> dict[str, Any]:
@@ -156,6 +222,8 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
                     nested_options = _build_options_from_model(element_type)
                     if nested_options:
                         spec["options"] = nested_options
+                elif _is_mapping_type(element_type):
+                    spec["elements"] = "dict"
                 elif element_type is int:
                     spec["elements"] = "int"
                 elif element_type is float:
@@ -196,6 +264,11 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
             if not is_optional:
                 spec["required"] = True
 
+        # Secrets: metadata {"secret": True} is authoritative; SecretStr is a backstop.
+        # no_log lets Ansible scrub the real value from task args, results, and error text.
+        if _is_secret_field(field_info, inner_type):
+            spec["no_log"] = True
+
         options[field_name] = spec
 
     return options
@@ -231,6 +304,9 @@ class FabricBaseModel(NDBaseModel):
     # ── ClassVars (shared across all fabric models) ──
     identifiers: ClassVar[list[str] | None] = ["fabric_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "location": {"latitude": 37.33939, "longitude": -121.89496},
+    }
 
     # Subclass must set this to the appropriate FabricTypeEnum member
     _fabric_type: ClassVar[FabricTypeEnum]
@@ -312,6 +388,26 @@ class FabricBaseModel(NDBaseModel):
         """
         pass
 
+    def prepare_for_replacement(self, existing: NDBaseModel) -> NDBaseModel:
+        """Materialize telemetry only when opaque writable state needs preserving.
+
+        ``telemetry_settings`` is optional in public configuration.  If an
+        exact-state proposal omits it, normal recursive preservation cannot
+        reach writable-but-unexposed roots nested below ``flow_collection``.
+        Create the default public telemetry shape only when the existing
+        response actually contains one of those declared opaque roots.  The
+        base implementation then copies only the allowlisted descendants;
+        public telemetry values retain normal exact-state reset semantics.
+        """
+        candidate = self
+        if isinstance(existing, type(self)) and self.telemetry_settings is None and existing.telemetry_settings is not None:
+            existing_flow = existing.telemetry_settings.flow_collection
+            existing_extras = existing_flow.model_extra or {}
+            if existing_flow.replacement_preserve_fields.intersection(existing_extras):
+                candidate = self.model_copy(deep=True)
+                candidate.telemetry_settings = TelemetrySettingsModel()
+        return NDBaseModel.prepare_for_replacement(candidate, existing)
+
     @classmethod
     def get_argument_spec(cls) -> dict:
         """Auto-generate Ansible argument spec from pydantic model fields.
@@ -334,13 +430,11 @@ class FabricBaseModel(NDBaseModel):
                 "elements": "dict",
                 "options": config_options,
             },
-            config_actions={
-                "type": "dict",
-                "required": False,
-                "options": {
-                    "save": {"type": "bool", "default": False},
-                    "deploy": {"type": "bool", "default": False},
-                    "type": {"type": "str", "default": "switch", "choices": ["switch", "global"]},
-                },
-            },
+            **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )
+
+    def to_gathered_config(self, **kwargs) -> dict[str, Any]:
+        """Return configuration limited recursively to public Ansible options."""
+        config = self.to_config(**kwargs)
+        options = type(self).get_argument_spec()["config"]["options"]
+        return _project_config_to_argument_spec(config, options)

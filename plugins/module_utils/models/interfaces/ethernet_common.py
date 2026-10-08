@@ -1,0 +1,178 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Helpers shared by the ethernet interface models (`nd_interface_ethernet_*`) that carry both an NX-OS and an IOS-XE branch.
+
+Promoted from `ethernet_routed_interface.py` (issue #447) when the access and trunk-host models grew their IOS-XE branches
+(issues #534 / #535) so the discriminator injection and the cross-OS interface-name normalization have one implementation.
+
+TODO: issue #353 consolidates per-model interface-name normalization into shared helpers; `normalize_ethernet_interface_name`
+is the cross-OS seed for that helper.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import re
+from typing import Any
+
+# Leading alphabetic prefix + the remainder (digits, /, ., -) of an interface name.
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
+# Wire-canonical interface-name prefixes the ethernet modules manage (lab-verified 2026-07-27: ND echoes
+# `Ethernet1/7` on NX-OS and `GigabitEthernet3` on IOS-XE). A user-supplied prefix that is a
+# case-insensitive prefix of exactly ONE canonical name is expanded to it (e.g. `e1/7`, `eth1/7`,
+# `gi3`); anything else passes through verbatim so correctly-typed names of other XE interface
+# families (e.g. `TenGigabitEthernet1/1`, `TwentyFiveGigE1/0/1`) are never corrupted.
+_CANONICAL_INTERFACE_PREFIXES = ("Ethernet", "GigabitEthernet")
+
+
+def normalize_ethernet_interface_name(value):
+    """
+    # Summary
+
+    Normalize the leading alphabetic prefix of an interface name to its wire-canonical form. A prefix matching
+    (case-insensitively) exactly one of `_CANONICAL_INTERFACE_PREFIXES` is expanded to it; an ambiguous or unrecognized
+    prefix passes through verbatim - never re-cased. Digits and separators are preserved. Examples:
+
+    - `ethernet1/7`, `ETHERNET1/7`, `eth1/7`, `e1/7` -> `Ethernet1/7`
+    - `gigabitethernet3`, `gi3` -> `GigabitEthernet3`
+    - `Ethernet1/1.10` -> `Ethernet1/1.10` (idempotent)
+    - `TenGigabitEthernet1/1`, `t1/1` -> unchanged
+
+    Shared between the models' `interface_name` field validators and the orchestrators' config-name matching so both sides
+    canonicalize identically.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    match = _INTERFACE_NAME_PREFIX_RE.match(value)
+    if not match:
+        return value
+    prefix, rest = match.groups()
+    expansions = [canonical for canonical in _CANONICAL_INTERFACE_PREFIXES if canonical.lower().startswith(prefix.lower())]
+    if len(expansions) == 1:
+        return expansions[0] + rest
+    return value
+
+
+def normalize_member_interface_names(value):
+    """
+    # Summary
+
+    Normalize every member interface name in a port-channel `ports` list through `normalize_ethernet_interface_name` (see it for the
+    expansion rules). A non-list value is returned unchanged so the field's own type validation reports it.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(value, list):
+        return value
+    return [normalize_ethernet_interface_name(name) for name in value]
+
+
+def default_policy_type(data: Any, policy_type: str) -> Any:
+    """
+    # Summary
+
+    Inject the `policyType` discriminator into a policy input dict when the caller did not supply it (key absent, or present with
+    `None`, which is how the Ansible argspec passes an omitted suboption). Each ethernet module manages exactly one host-facing
+    policy type per network OS today, so `policy_type` is fully determined by `network_os_type` and the user need not repeat it
+    (PR #550 review). An explicit value is left untouched, which keeps the input forward-compatible with feature-gated follow-on
+    branches: when a branch becomes a `policy_type` discriminated union, this same injection supplies the discriminator Pydantic
+    needs for an omitted value. Injecting on the input (rather than a field default) makes the field explicitly SET, so `merge()`
+    / `get_diff(exclude_unset=True)` treat it exactly like a typed value.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get("policyType") is not None or data.get("policy_type") is not None:
+        return data
+    return {**{key: value for key, value in data.items() if key not in ("policyType", "policy_type")}, "policyType": policy_type}
+
+
+def default_network_os_type(data: Any, network_os_type: str = "nx-os") -> Any:
+    """
+    # Summary
+
+    Inject the `networkOSType` discriminator into a network-OS input dict when the caller did not supply it (key absent, or present
+    with `None`). Pydantic resolves a discriminated union from the INPUT, not from a field default, so a module whose pre-IOS-XE
+    argspec never exposed `network_os_type` needs this to keep existing playbooks selecting the NX-OS branch unchanged. An explicit
+    value is left untouched.
+
+    ## Raises
+
+    None
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get("networkOSType") is not None or data.get("network_os_type") is not None:
+        return data
+    return {**{key: value for key, value in data.items() if key not in ("networkOSType", "network_os_type")}, "networkOSType": network_os_type}
+
+
+def reconcile_cidr_prefix(data: Any, address_key: str, prefix_keys: tuple[str, ...], family: int) -> Any:
+    """
+    # Summary
+
+    Reconcile CIDR input with a sibling prefix field, for a `mode="before"` model validator. When `data[address_key]` is written in
+    CIDR notation (`10.1.1.1/24`), the address is rewritten to its bare host form and the mask is never lost: it fills the prefix
+    field when that field is absent or `None`, and must agree with it when it is set. `prefix_keys` are the names the prefix may
+    arrive under (field name first, then the wire alias); `family` is 4 or 6. Input that is not a dict, an address without a `/`,
+    and an address that does not parse (left for the field validator to report) are returned unchanged.
+
+    ## Raises
+
+    ### ValueError
+
+    - If the CIDR mask and the explicit prefix disagree.
+    """
+    if not isinstance(data, dict):
+        return data
+    address = data.get(address_key)
+    if not isinstance(address, str) or "/" not in address:
+        return data
+    try:
+        parsed = ipaddress.IPv4Interface(address.strip()) if family == 4 else ipaddress.IPv6Interface(address.strip())
+    except ValueError:
+        return data
+    derived = parsed.network.prefixlen
+    explicit_key = next((key for key in prefix_keys if data.get(key) is not None), None)
+    if explicit_key is not None:
+        try:
+            explicit = int(data[explicit_key])
+        except (TypeError, ValueError):
+            return data
+        if explicit != derived:
+            raise ValueError(f"{address_key} '{address}' carries the mask /{derived} but {prefix_keys[0]} is {explicit}; remove one or make them agree.")
+    reconciled = {key: value for key, value in data.items() if key not in prefix_keys or value is not None}
+    reconciled[address_key] = str(parsed.ip)
+    if explicit_key is None:
+        reconciled[prefix_keys[0]] = derived
+    return reconciled
+
+
+def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, prefix_name: str) -> None:
+    """
+    # Summary
+
+    Reject half of an address / prefix pair, for a `mode="after"` model validator: an address without its prefix length, or a prefix
+    length without its address, is never serialized into a payload the controller would reject or apply ambiguously.
+
+    ## Raises
+
+    ### ValueError
+
+    - If exactly one of `address` / `prefix` is set.
+    """
+    if (address is None) != (prefix is None):
+        raise ValueError(f"{address_name} and {prefix_name} are required together; set both or neither.")

@@ -3,10 +3,10 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-Port-channel trunk host (trunkPoHost) interface Pydantic models for Nexus Dashboard.
+Port-channel trunk-host interface Pydantic models for Nexus Dashboard (NX-OS `trunkPoHost`, IOS-XE `iosXeTrunkPoHost`; issue #537).
 
 This module defines nested Pydantic models that mirror the ND Manage Interfaces API payload
-structure for port-channel trunkPoHost interfaces. The playbook config uses the same nesting
+structure for port-channel trunk-host interfaces. The playbook config uses the same nesting
 so that `to_payload()` and `from_response()` work via standard Pydantic serialization with no
 custom wrapping or flattening.
 
@@ -15,18 +15,23 @@ interfaces inherit trunk-mode settings from the port-channel; users do not pre-c
 
 ## Model Hierarchy
 
-- `PortChannelTrunkHostInterfaceModel` (top-level, `NDBaseModel`)
+- `PortChannelTrunkHostInterfaceModel` (top-level, `PortChannelInterfaceBaseModel`)
     - `switch_ip` (composite identifier)
     - `interface_name` (composite identifier; e.g. `port-channel501`)
-    - `interface_type` (default: "portChannel")
+    - `interface_type` (hardcoded: "portChannel")
     - `config_data` -> `PortChannelTrunkHostConfigDataModel`
-        - `mode` (default: "trunk")
-        - `network_os` -> `PortChannelTrunkHostNetworkOSModel`
-            - `network_os_type` (default: "nx-os")
-            - `policy` -> `PortChannelTrunkHostPolicyModel`
-                - `admin_state`, `allowed_vlans`, `native_vlan`, `ports`, `port_channel_mode`,
-                  `lacp_rate`, `bpdu_guard`, `description`, `policy_type`, `vlan_mapping`,
-                  `vlan_mapping_entries`, etc.
+        - `mode` (hardcoded: "trunk")
+        - `network_os` -> `PortChannelTrunkHostNetworkOSModel | XePortChannelTrunkHostNetworkOSModel` (discriminated union on
+          `network_os_type`; injected as `nx-os` when omitted so pre-#537 playbooks are unchanged)
+            - `PortChannelTrunkHostNetworkOSModel` (`network_os_type: "nx-os"`)
+                - `policy` -> `PortChannelTrunkHostPolicyModel` (`policy_type: "trunkPoHost"`, injected when omitted)
+                    - `admin_state`, `allowed_vlans`, `native_vlan`, `ports`, `port_channel_mode`, `lacp_rate`,
+                      `bpdu_guard`, `description`, `vlan_mapping`, `vlan_mapping_entries`, etc.
+            - `XePortChannelTrunkHostNetworkOSModel` (`network_os_type: "ios-xe"`)
+                - `policy` -> `XePortChannelTrunkHostPolicyModel` (`policy_type: "iosXeTrunkPoHost"`, injected when omitted)
+
+`policy_type` is optional on input: each network OS has exactly one managed trunk-host port-channel policy type today, so it is
+derived from `network_os_type` (`ethernet_common.default_policy_type`). An explicit value is still accepted and validated.
 """
 
 from __future__ import annotations
@@ -37,12 +42,9 @@ from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional neede
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     Field,
-    SerializationInfo,
     field_validator,
-    model_serializer,
     model_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     BpduFilterEnum,
     BpduGuardEnum,
@@ -54,7 +56,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     StormControlActionEnum,
     TrunkPoHostPolicyTypeEnum,
+    XePortChannelModeEnum,
+    XeTrunkPoHostPolicyTypeEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    default_network_os_type,
+    default_policy_type,
+    normalize_member_interface_names,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import PortChannelInterfaceBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
@@ -63,14 +74,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
-
-# Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
-_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
-
-# Member interfaces of a port-channel are always physical ethernet ports, so the canonical wire prefix
-# is always "Ethernet". Any case-insensitive NX-OS abbreviation (e.g. "e", "eth", "ether") expands to the
-# full form so user input matches the wire key and idempotency holds.
-_CANONICAL_MEMBER_TYPE = "Ethernet"
 
 
 def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
@@ -213,8 +216,8 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     """
     # Summary
 
-    Policy fields for a port-channel trunkPoHost interface. Maps directly to the `configData.networkOS.policy`
-    object in the ND API.
+    Policy fields for the NX-OS `trunkPoHost` template (`int_port_channel_trunk_host`). Maps directly to the
+    `configData.networkOS.policy` object in the ND API where `policyType == "trunkPoHost"`.
 
     The `ports` field carries the list of member interface names (e.g. `Ethernet1/1`). Member interfaces inherit
     trunk-mode configuration from this policy; modifying a member's standalone configuration while it is a
@@ -225,10 +228,7 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
     ### ValueError
 
     - If `allowed_vlans` is set and does not match `none`, `all`, or comma-separated VLAN ranges.
-
-    ### AssertionError
-
-    - If the wrapped model serializer receives a non-`dict` from the handler (see `_strip_policy_type_in_config`).
+    - If `netflow` is true and `netflow_monitor` is missing or empty.
     """
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
@@ -305,9 +305,25 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
         default=None, alias="orphanPort", description="Configure as a vPC orphan port (suspended by secondary peer on vPC failure)"
     )
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable Priority Flow Control")
-    policy_type: TrunkPoHostPolicyTypeEnum = Field(
-        default=TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
+    policy_type: Literal["trunkPoHost"] = Field(
+        alias="policyType",
+        description="Trunk-host port-channel policy template discriminator; injected as `trunkPoHost` when omitted (see `default_policy_type`)",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: trunkPoHost` when the input omits the discriminator (`ethernet_common.default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return default_policy_type(data, TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST.value)
+
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
     ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
@@ -394,99 +410,141 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
         """
         # Summary
 
-        Normalize each member interface name to ND's canonical `Ethernet` form so that any user-supplied casing or
-        NX-OS abbreviation round-trips against the wire form. Members are always physical ethernet ports. Examples:
-
-        - `ethernet1/1` -> `Ethernet1/1`
-        - `ETHERNET1/1` -> `Ethernet1/1`
-        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
-        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
-        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
-
-        Because the wire key is matched exactly, an abbreviated prefix that is not expanded would never match ND's
-        `Ethernet...` form, silently breaking idempotency (the port-channel re-deploys on every run). Any
-        case-insensitive prefix of `Ethernet` (`e`, `et`, `eth`, ...) is therefore expanded to the full canonical
-        name; an unrecognized prefix falls back to Title case so it still round-trips. Only the leading alphabetic
-        run is rewritten; digits and separators are preserved verbatim.
+        Normalize each member name to its wire-canonical prefix through the shared cross-OS helper
+        (`ethernet_common.normalize_member_interface_names`): `e1/1` / `eth1/1` -> `Ethernet1/1`, `gi1/0/4` -> `GigabitEthernet1/0/4`,
+        any other family verbatim. Members are always physical ethernet ports; matching the wire key exactly keeps idempotency.
 
         ## Raises
 
         None
         """
-        if not isinstance(value, list):
-            return value
-        return [cls._normalize_member_name(name) for name in value]
-
-    @staticmethod
-    def _normalize_member_name(name):
-        """
-        # Summary
-
-        Normalize a single member interface name to ND's canonical `Ethernet` form (see `normalize_ports`).
-        Non-string or empty values are returned unchanged.
-
-        ## Raises
-
-        None
-        """
-        if not isinstance(name, str) or not name:
-            return name
-        match = _INTERFACE_NAME_PREFIX_RE.match(name)
-        if not match:
-            return name
-        prefix, rest = match.groups()
-        if _CANONICAL_MEMBER_TYPE.lower().startswith(prefix.lower()):
-            return _CANONICAL_MEMBER_TYPE + rest
-        return prefix[0].upper() + prefix[1:].lower() + rest
-
-    @model_serializer(mode="wrap")
-    def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
-        """
-        # Summary
-
-        Omit `policy_type` from `to_config()` output while leaving payload and diff modes untouched.
-
-        The field is hardcoded by the model (frozen at `TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST`), is excluded
-        from the Ansible argspec, and is therefore not something the user supplies or needs surfaced back.
-        The wire form `"trunkPoHost"` would otherwise appear under the `policy_type` key in
-        `before`/`after`/`gathered` output and confuse playbooks that compare against the Ansible
-        snake_case convention. Payload and diff serialization still emit the wire value so the POST/PUT
-        body and the round-trip diff comparison line up with what ND returns.
-
-        Implemented as a wrap-mode model serializer because `exclude_none=True` on `to_config()` evaluates
-        the field value before serialization runs — returning None from a field_serializer is too late to
-        drop the key.
-
-        ## Raises
-
-        ### AssertionError
-
-        - If the wrapped handler returns a non-`dict`. A model-level serializer always serializes to a `dict`,
-          so this is an invariant check that fails loudly rather than silently leaving `policy_type` in the
-          config output.
-        """
-        result = handler(self)
-        if not isinstance(result, dict):
-            raise AssertionError(f"Expected dict from model serialization, got {type(result).__name__}")
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            result.pop("policy_type", None)
-            result.pop("policyType", None)
-        return result
+        return normalize_member_interface_names(value)
 
 
-class PortChannelTrunkHostNetworkOSModel(NDNestedModel):
+class XePortChannelTrunkHostPolicyModel(InterfacePolicyStrictBase):
     """
     # Summary
 
-    Network OS container for a port-channel trunkPoHost interface. Maps to `configData.networkOS` in the ND API.
+    Policy fields for the IOS-XE `iosXeTrunkPoHost` template (`ios_xe_int_port_channel_trunk_host`). Maps to `configData.networkOS.policy`
+    where `policyType == "iosXeTrunkPoHost"`. A strict subset of the NX-OS branch: no `native_vlan` / `vlan_mapping` / LACP / storm-control /
+    QoS block, `description` max length 200, `mtu` an integer 1500-9198, `port_channel_mode` adds the PAgP `auto` / `desirable` values. The
+    4.3.1-only `deviceTrackingPolicy` / `flowMonitors` fields are deliberately not modeled while both 4.2.1 and 4.3.1 are supported. ND
+    injects a read-only `portChannelId` on the echo, dropped by the read-mode stripping in `InterfacePolicyStrictBase`.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `allowed_vlans` is not `none`, `all`, or a comma-separated list of VLAN ids / ranges (shared `AllowedVlans` parser)
+    """
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND `ios_xe_int_port_channel_trunk_host` template defaults as ECHOED (lab 2026-09-15, 4.2.1.10 and 4.3.1.175); no mtu is injected.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        **InterfacePolicyStrictBase.reverse_diff_defaults,
+        "allowedVlans": "none",
+        "bpduGuard": "enable",
+        "portChannelMode": "active",
+    }
+    # ND 4.3.1 rejects an iosXeTrunkPoHost create that omits allowedVlans ("Validation failed for following fields: [allowedVlans]",
+    # lab 2026-09-15); 4.2.1 stores "none" either way. Payload-only: see `NDBaseModel.payload_defaults` (issue #564 class).
+    payload_defaults: ClassVar[dict[str, Any]] = {"allowedVlans": "none"}
+
+    policy_type: Literal["iosXeTrunkPoHost"] = Field(
+        alias="policyType", description="IOS-XE trunk port-channel policy template discriminator; injected as `iosXeTrunkPoHost` when omitted"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_policy_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `policyType: iosXeTrunkPoHost` when the input omits the discriminator (`ethernet_common.default_policy_type`).
+
+        ## Raises
+
+        None
+        """
+        return default_policy_type(data, XeTrunkPoHostPolicyTypeEnum.IOS_XE_TRUNK_PO_HOST.value)
+
+    allowed_vlans: AllowedVlans = Field(
+        default=None,
+        alias="allowedVlans",
+        description="Trunk allowed VLANs ('none', 'all', or comma-separated VLAN ids/ranges in 1..4094)",
+    )
+    bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    mtu: int | None = Field(default=None, alias="mtu", ge=1500, le=9198, description="Port-channel MTU (1500-9198)")
+    port_channel_mode: XePortChannelModeEnum | None = Field(
+        default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive/auto/desirable)"
+    )
+    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/4'])")
+
+    @field_validator("mtu", mode="before")
+    @classmethod
+    def coerce_mtu(cls, value):
+        """
+        # Summary
+
+        Coerce a numeric-string `mtu` to `int`: the shared argspec `mtu` option is `str`-typed so the NX-OS branch can take its
+        `default` / `jumbo` enum. Non-numeric strings are left for the `int` field to reject.
+
+        ## Raises
+
+        None
+        """
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        return value
+
+    @field_validator("ports", mode="before")
+    @classmethod
+    def normalize_ports(cls, value):
+        """
+        # Summary
+
+        Normalize each member name through `ethernet_common.normalize_member_interface_names` (see the NX-OS branch).
+
+        ## Raises
+
+        None
+        """
+        return normalize_member_interface_names(value)
+
+
+class XePortChannelTrunkHostNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    IOS-XE branch of the network-OS container for a trunk-host port-channel. Selected from the outer union when
+    `networkOSType == "ios-xe"`.
 
     ## Raises
 
     None
     """
 
-    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field. The Literal constrains the value.
+    network_os_type: Literal["ios-xe"] = Field(default="ios-xe", alias="networkOSType", description="Network OS (platform) type discriminator")
+    policy: XePortChannelTrunkHostPolicyModel | None = Field(default=None, alias="policy")
+
+
+class PortChannelTrunkHostNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    NX-OS branch of the network-OS container for a trunk-host port-channel. Maps to `configData.networkOS` in the ND API.
+    Selected from the outer union when `networkOSType == "nx-os"` (the injected default when the input omits it).
+
+    ## Raises
+
+    None
+    """
+
+    # Not frozen: NDBaseModel.merge() assigns every explicitly-set field. The Literal constrains the value.
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", description="Network OS (platform) type discriminator")
     policy: PortChannelTrunkHostPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -494,7 +552,7 @@ class PortChannelTrunkHostConfigDataModel(NDNestedModel):
     """
     # Summary
 
-    Config data container for a port-channel trunkPoHost interface. Maps to `configData` in the ND API.
+    Config data container for a trunk-host port-channel interface. Maps to `configData` in the ND API.
 
     ## Raises
 
@@ -502,14 +560,37 @@ class PortChannelTrunkHostConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["trunk"] = Field(default="trunk", alias="mode", frozen=True)
-    network_os: PortChannelTrunkHostNetworkOSModel = Field(default_factory=PortChannelTrunkHostNetworkOSModel, alias="networkOS")
+    network_os: PortChannelTrunkHostNetworkOSModel | XePortChannelTrunkHostNetworkOSModel = Field(
+        default_factory=PortChannelTrunkHostNetworkOSModel, alias="networkOS", discriminator="network_os_type"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_network_os_type(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Supply `networkOSType: nx-os` on the `network_os` input when it omits the discriminator (key absent, or `None` as the argspec
+        passes an omitted option), so playbooks written before the IOS-XE branch existed keep selecting the NX-OS branch
+        (`ethernet_common.default_network_os_type`).
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return data
+        for key in ("network_os", "networkOS"):
+            if isinstance(data.get(key), dict):
+                return {**data, key: default_network_os_type(data[key])}
+        return data
 
 
-class PortChannelTrunkHostInterfaceModel(NDBaseModel):
+class PortChannelTrunkHostInterfaceModel(PortChannelInterfaceBaseModel):
     """
     # Summary
 
-    Port-channel trunkPoHost interface configuration for Nexus Dashboard.
+    Trunk-host port-channel interface configuration for Nexus Dashboard (NX-OS `trunkPoHost` or IOS-XE `iosXeTrunkPoHost`).
 
     Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage
     Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
@@ -522,38 +603,7 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
     None
     """
 
-    # --- Identifier Configuration ---
-
-    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
-
-    # --- Serialization Configuration ---
-
-    payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
-
-    # --- Fields ---
-
-    switch_ip: str = Field(alias="switchIp")
-    interface_name: str = Field(alias="interfaceName")
-    interface_type: Literal["portChannel"] = Field(default="portChannel", alias="interfaceType", frozen=True)
     config_data: PortChannelTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
-
-    @field_validator("interface_name", mode="before")
-    @classmethod
-    def normalize_interface_name(cls, value):
-        """
-        # Summary
-
-        Normalize the port-channel interface name to lowercase to match ND API convention (e.g. `Port-Channel501` ->
-        `port-channel501`).
-
-        ## Raises
-
-        None
-        """
-        if isinstance(value, str):
-            return value.lower()
-        return value
 
     # --- Argument Spec ---
 
@@ -583,9 +633,17 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
                             network_os=dict(
                                 type="dict",
                                 options=dict(
+                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
+                                            policy_type=dict(
+                                                type="str",
+                                                choices=[
+                                                    TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST.value,
+                                                    XeTrunkPoHostPolicyTypeEnum.IOS_XE_TRUNK_PO_HOST.value,
+                                                ],
+                                            ),
                                             admin_state=dict(type="bool"),
                                             allowed_vlans=dict(type="str"),
                                             bandwidth=dict(type="int"),
@@ -602,7 +660,9 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
                                             lacp_suspend=dict(type="bool"),
                                             link_type=dict(type="str", choices=[e.value for e in LinkTypeEnum]),
                                             monitor=dict(type="bool"),
-                                            mtu=dict(type="str", choices=[e.value for e in MtuEnum]),
+                                            # str with no choices: the NX-OS branch takes the default/jumbo enum,
+                                            # the IOS-XE branch an int (the branch models validate the form).
+                                            mtu=dict(type="str"),
                                             native_vlan=dict(type="int"),
                                             negotiate_auto=dict(type="bool"),
                                             netflow=dict(type="bool"),
@@ -610,7 +670,8 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
                                             netflow_sampler=dict(type="str"),
                                             orphan_port=dict(type="bool"),
                                             pfc=dict(type="bool"),
-                                            port_channel_mode=dict(type="str", choices=[e.value for e in PortChannelModeEnum]),
+                                            # Superset of both branches' modes; the NX-OS branch model rejects the PAgP auto/desirable values.
+                                            port_channel_mode=dict(type="str", choices=[e.value for e in XePortChannelModeEnum]),
                                             port_type_edge_trunk=dict(type="bool"),
                                             ports=dict(type="list", elements="str"),
                                             qos=dict(type="bool"),

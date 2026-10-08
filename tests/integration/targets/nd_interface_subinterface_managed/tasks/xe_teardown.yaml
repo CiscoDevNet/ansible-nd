@@ -1,0 +1,126 @@
+---
+# IOS-XE teardown for nd_interface_subinterface_managed (issue #541)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Run by tasks/main.yaml from the `always` section around xe.yaml, so it runs after a passing scenario and after a failed one; Ansible
+# reports the scenario's own failure once these tasks finish. It removes the test subinterfaces and resets the parent port to the
+# fabric-default trunk host. Every step is idempotent and the file depends on nothing xe.yaml registers, so it restores the testbed
+# from wherever the scenario stopped.
+
+- name: "XE TEARDOWN: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: xe_teardown_switches
+
+- name: "XE TEARDOWN: Resolve the Catalyst switch id from its management IP"
+  vars:
+    matches: >-
+      {{ xe_teardown_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip)
+      | map(attribute='switchId') | list }}
+  ansible.builtin.set_fact:
+    xe_teardown_switch_id: "{{ matches | first | default('') }}"
+
+# A switch that is not in the fabric fails the scenario before it changes anything, so there is nothing to restore.
+- name: "XE TEARDOWN: Restore the Catalyst"
+  when: xe_teardown_switch_id | length > 0
+  block:
+    # TODO(4.3.1) xe-interface-removal-requires-discovery
+    # The module refuses to remove a deployed IOS-XE subinterface ND has not discovered yet, and a scenario that failed right after a
+    # create leaves exactly that. Wait for up to ten minutes, as the scenario does. A subinterface that was staged and never deployed
+    # is never discovered and its removal is allowed, so an exhausted wait does not stop the teardown.
+    - name: "XE TEARDOWN: Wait until ND has discovered every test subinterface still on the Catalyst"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_teardown_switch_id }}/interfaces"
+        method: get
+      register: xe_teardown_discovery
+      vars:
+        present: >-
+          {{ xe_teardown_discovery.jsondata.interfaces | default([])
+          | selectattr('interfaceName', 'in', xe_cleanup_config | map(attribute='interface_name') | list) | list }}
+        discovered: >-
+          {{ present | selectattr('operData.operationalStatus', 'defined')
+          | rejectattr('operData.operationalStatus', 'equalto', 'unknown') | list }}
+      until: present | length == discovered | length
+      retries: 60
+      delay: 10
+      ignore_errors: true
+
+    - name: "XE TEARDOWN: Remove the test subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config: "{{ xe_cleanup_config }}"
+        config_actions:
+          deploy: true
+        state: deleted
+      register: xe_teardown_cleanup
+
+    - name: "XE TEARDOWN: Wait until no test subinterface remains in the Catalyst running config"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_teardown_switch_id }}/diff"
+        method: get
+      register: xe_teardown_diff
+      vars:
+        running: "{{ xe_teardown_diff.jsondata.diffConfigs | default([]) | map(attribute='runningConfig') | select('defined') | join('\n') }}"
+      until: >-
+        ('interface ' ~ xe_parent ~ '.100') not in running
+        and ('interface ' ~ xe_parent ~ '.101') not in running
+        and ('interface ' ~ xe_parent ~ '.102') not in running
+        and ('interface ' ~ xe_parent ~ '.103') not in running
+      retries: 12
+      delay: 10
+
+    # The trunk-host module manages only interfaces that already carry a trunk-host policy, so the routed parent is first converged
+    # back into an IOS-XE trunk host (replaced) and then reset to the defaults-only fabric default (deleted), both deployed.
+
+    - name: "XE TEARDOWN: Convert the parent port back to an IOS-XE trunk host and deploy it"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_names:
+              - "{{ xe_parent }}"
+            config_data:
+              network_os:
+                network_os_type: ios-xe
+                policy:
+                  admin_state: true
+        config_actions:
+          deploy: true
+        state: replaced
+      register: xe_parent_teardown
+
+    - name: "XE TEARDOWN: Reset the parent port to the fabric-default IOS-XE trunk host and deploy it"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_names:
+              - "{{ xe_parent }}"
+        config_actions:
+          deploy: true
+        state: deleted
+      register: xe_parent_reset
+
+    # TODO(4.3.1) xe-interface-removal-requires-discovery
+    # ND's discovered mode of the parent lags the trunk-host reset deploy; on 2026-09-21 it read `routed` for more than three minutes
+    # after the deploy on an otherwise idle controller, on both releases. Wait for up to ten minutes so the next target starts from a
+    # discovered trunk parent.
+    - name: "XE TEARDOWN: Wait until ND has discovered the parent as a trunk again"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_teardown_switch_id }}/interfaces"
+        method: get
+      register: xe_parent_rediscovery
+      until: >-
+        xe_parent_rediscovery.jsondata.interfaces | default([])
+        | selectattr('interfaceName', 'equalto', xe_parent)
+        | selectattr('operData.mode', 'defined')
+        | selectattr('operData.mode', 'equalto', 'trunk')
+        | list | length == 1
+      retries: 60
+      delay: 10
