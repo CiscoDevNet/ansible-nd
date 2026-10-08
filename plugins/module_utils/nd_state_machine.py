@@ -12,6 +12,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlanner
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation import (
+    MutationEffect,
+    MutationJournal,
+    MutationOperation,
+    MutationOutcome,
+    MutationResult,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -140,6 +148,10 @@ class NDStateMachine:
                 gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
+            if self.model_orchestrator.supports_mutation_outcomes:
+                self.confirmed = self.before.copy()
+                self.journal = MutationJournal()
+                self._update_output_from_journal()
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
@@ -149,6 +161,9 @@ class NDStateMachine:
         """
         Manage state according to desired configuration.
         """
+        if self.model_orchestrator.supports_mutation_outcomes:
+            self._manage_outcome_state()
+            return
         if self.state in ["merged", "replaced", "overridden"]:
             proposed_items = list(self.proposed)
 
@@ -196,6 +211,144 @@ class NDStateMachine:
 
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
+
+    def _manage_outcome_state(self) -> None:
+        """Plan without mutating confirmed state; preflight every write first."""
+        try:
+            self.plan = NDStatePlanner.plan(state=self.state, before=self.before, proposed=self.proposed)
+            self.planned = self.plan.after
+            if self.state in ("merged", "replaced", "overridden"):
+                self.model_orchestrator.preflight_create(list(self.plan.creates))
+                self.model_orchestrator.preflight(list(self.proposed))
+            self.model_orchestrator.preflight_delete(list(self.plan.deletes))
+        except Exception as error:
+            self._update_output_from_journal()
+            self.output.assign(failed=True)
+            raise NDStateMachineError(f"Planning/preflight failed: {error}") from error
+
+        self._update_output_from_journal()
+        if self.check_mode:
+            self.output.set_changed(self.plan.changed)
+            self.output.set_after_state(self.planned, status="planned")
+            self._assign_snapshot_diff(self.planned)
+            return
+
+        # TODO: Merge this opt-in bridge into PR #525's unified executor.
+        for item in self.plan.updates:
+            self._execute_outcome_request(MutationOperation.UPDATE, (item,), self.model_orchestrator.update, item)
+        if self.plan.creates:
+            if self.supports_bulk_create:
+                self._execute_outcome_request(MutationOperation.CREATE, self.plan.creates, self.model_orchestrator.create_bulk, list(self.plan.creates))
+            else:
+                for item in self.plan.creates:
+                    self._execute_outcome_request(MutationOperation.CREATE, (item,), self.model_orchestrator.create, item)
+        if self.plan.deletes:
+            if self.supports_bulk_delete:
+                self._execute_outcome_request(MutationOperation.DELETE, self.plan.deletes, self.model_orchestrator.delete_bulk, list(self.plan.deletes))
+            else:
+                for item in self.plan.deletes:
+                    self._execute_outcome_request(MutationOperation.DELETE, (item,), self.model_orchestrator.delete, item)
+        self._update_output_from_journal()
+
+    def _execute_outcome_request(self, operation: MutationOperation, items, method, *args) -> None:
+        """Reconcile resource evidence before propagating task failure."""
+        effects = tuple(
+            MutationEffect(
+                operation,
+                item.get_identifier_value(),
+                self.confirmed.get(item.get_identifier_value()),
+                None if operation is MutationOperation.DELETE else item,
+            )
+            for item in items
+        )
+        checkpoint = self.journal.open(phase=operation.value, effects=effects)
+        request_transport = self.model_orchestrator.rest_send
+        previous_max_attempts = request_transport.max_attempts
+        request_transport.max_attempts = 1
+        try:
+            response = method(*args)
+            if not isinstance(response, MutationResult):
+                raise TypeError("Outcome-aware mutation must return MutationResult")
+            checkpoint.resolve_resources(response)
+        except Exception as error:
+            if checkpoint.outcome is MutationOutcome.NOT_ATTEMPTED:
+                checkpoint.resolve(MutationOutcome.UNKNOWN, may_have_changed=True, error=str(error))
+        finally:
+            request_transport.max_attempts = previous_max_attempts
+
+        self._apply_confirmed_effects(checkpoint)
+        self._update_output_from_journal()
+        if checkpoint.outcome is not MutationOutcome.SUCCEEDED:
+            raise NDStateMachineError(f"{operation.value} failed: {checkpoint.error or checkpoint.outcome.value}")
+
+    def _apply_confirmed_effects(self, checkpoint) -> None:
+        """Apply a successful subset even when its enclosing request failed."""
+        for effect in checkpoint.confirmed_effects:
+            if effect.operation is MutationOperation.DELETE:
+                self.confirmed.delete(effect.identifier)
+                self.removed.add(effect.before)
+            else:
+                item = effect.after
+                if self.confirmed.get(effect.identifier) is None:
+                    self.confirmed.add(item)
+                else:
+                    self.confirmed.replace(item)
+                self.sent.add(item)
+        self.existing = self.confirmed
+
+    def _assign_snapshot_diff(self, after) -> None:
+        diff = {"before": self.before.to_ansible_config(), "after": after.to_ansible_config()} if self.before.get_diff_collection(after) else []
+        self.output.assign(diff=diff)
+
+    def _update_output_from_journal(self) -> None:
+        """Publish proven change and preserve per-resource failure evidence."""
+        action_results = []
+        for checkpoint in self.journal.checkpoints:
+            outcomes = {item.identifier: item for item in checkpoint.resource_outcomes}
+            for effect in checkpoint.effects:
+                outcome = outcomes.get(effect.identifier)
+                record = {
+                    "identifier": effect.identifier,
+                    "operation": effect.operation.value,
+                    "outcome": outcome.outcome.value if outcome else checkpoint.outcome.value,
+                    "effect_confirmed": effect in checkpoint.confirmed_effects,
+                    "statuses": list(outcome.statuses) if outcome else [],
+                    "messages": list(outcome.messages) if outcome else [checkpoint.error] if checkpoint.error else [],
+                    "correlation": list(outcome.evidence) if outcome else [],
+                }
+                action_results.append(record)
+        self.output.set_changed(self.journal.changed)
+        self.output.assign(
+            failed=self.journal.has_failed,
+            action_results=action_results,
+            may_have_changed=self.journal.may_have_changed,
+            reconciliation_complete=not self.journal.has_unknown,
+            unknown_identifiers=list(self.journal.unknown_identifiers),
+            mutation_errors=[checkpoint.error for checkpoint in self.journal.checkpoints if checkpoint.error],
+        )
+        plan = getattr(self, "plan", None)
+        if plan is not None:
+            attempted = {(item["operation"], item["identifier"]): item["outcome"] for item in action_results}
+            self.output.assign(
+                planned_operations=[
+                    {
+                        "identifier": item.get_identifier_value(),
+                        "operation": operation.value,
+                        "outcome": attempted.get((operation.value, item.get_identifier_value()), MutationOutcome.NOT_ATTEMPTED.value),
+                    }
+                    for operation, items in (
+                        (MutationOperation.UPDATE, plan.updates),
+                        (MutationOperation.CREATE, plan.creates),
+                        (MutationOperation.DELETE, plan.deletes),
+                    )
+                    for item in items
+                ]
+            )
+        if self.journal.has_unknown:
+            self.output.mark_after_unknown()
+        else:
+            self.output.set_after_state(self.confirmed)
+            self._assign_snapshot_diff(self.confirmed)
 
     def _execute_operation(
         self,
