@@ -111,6 +111,7 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetRoutedInterfaceModel
+    MEMBER_FAMILY: ClassVar[str] = "routed"
 
     # TODO(4.2.1) capable-switches-empty-for-ethernet-on-vxlan
     # Deliberate opt-OUT of the capability preflight (both ClassVars ""): the unpublished capableSwitches
@@ -189,6 +190,21 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
                 return False
         return True
 
+    @classmethod
+    def _is_absent_delete_reset_target(cls, existing_data: dict) -> bool:
+        """The IOS-XE routed reset lands on a defaults-only routed policy."""
+
+        config_data = existing_data.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        if network_os.get("networkOSType") == "ios-xe" and policy.get("policyType") == cls.XE_RESET_POLICY_TYPE:
+            return (
+                existing_data.get("interfaceType") == "ethernet"
+                and config_data.get("mode") == cls.XE_RESET_MODE
+                and cls._is_unconfigured_default(existing_data)
+            )
+        return super()._is_absent_delete_reset_target(existing_data)
+
     def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
         """
         # Summary
@@ -225,4 +241,5 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
                 return False
             return not (state == "deleted" and self._is_ios_xe(iface))
 
-        return [iface for iface in result if in_scope(iface)]
+        filtered = [iface for iface in result if in_scope(iface)]
+        return self._append_named_member_projections(filtered)

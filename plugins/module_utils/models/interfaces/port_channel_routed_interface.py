@@ -89,6 +89,7 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         "pimDrPriority": 1,
         "pimSparse": False,
         "portChannelMode": "active",
+        "ports": [],
         "qos": False,
         "speed": "auto",
     }
@@ -171,7 +172,7 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
     pim_dr_priority: int | None = Field(default=None, alias="pimDrPriority", ge=1, le=4294967295, description="PIM DR election priority")
     pim_sparse: bool | None = Field(default=None, alias="pimSparse", description="Enable PIM sparse mode")
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
-    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/10', 'Ethernet1/11'])")
+    ports: list[str] = Field(default_factory=list, alias="ports", description="Member interface names (e.g. ['Ethernet1/10', 'Ethernet1/11'])")
     prefix: int | None = Field(default=None, alias="prefix", ge=1, le=31, description="Netmask length for the IP address (1-31)")
     qos: bool | None = Field(default=None, alias="qos", description="Enable a QoS policy on the interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name (must be defined previously)")
@@ -237,6 +238,7 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         **InterfacePolicyStrictBase.reverse_diff_defaults,
         "portChannelMode": "active",
+        "ports": [],
     }
 
     policy_type: Literal["iosXeL3PortChannel"] = Field(
@@ -298,7 +300,7 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
     port_channel_mode: XePortChannelModeEnum | None = Field(
         default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive/auto/desirable)"
     )
-    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/2'])")
+    ports: list[str] = Field(default_factory=list, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/2'])")
     prefix: int | None = Field(default=None, alias="prefix", ge=8, le=31, description="Netmask length for the IP address (8-31)")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
 

@@ -1,0 +1,280 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# IFACE-004 regression coverage. The parent module creates an authentic
+# poMember record; the ethernet module must update that record in place rather
+# than treating it as a new trunkHost interface. All changes remain staged.
+
+- name: "PORT-CHANNEL MEMBER: Exercise a real poMember safely"
+  block:
+    - name: "PORT-CHANNEL MEMBER SETUP: Remove a stale test parent"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: "{{ test_member_port_channel_name }}"
+        config_actions:
+          deploy: false
+        state: deleted
+
+    - name: "PORT-CHANNEL MEMBER SETUP: Create a trunk parent with one member"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: "{{ test_member_port_channel_name }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  allowed_vlans: "100-200"
+                  ports:
+                    - "{{ test_member_interface_name }}"
+                  port_channel_mode: active
+                  copy_description: false
+                  description: "IFACE-004 trunk parent"
+        config_actions:
+          deploy: false
+        state: merged
+      register: member_parent_create
+
+    - name: "PORT-CHANNEL MEMBER SETUP: Resolve the test switch id"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+        method: get
+      register: member_switches
+
+    - name: "PORT-CHANNEL MEMBER SETUP: Save the test switch id"
+      ansible.builtin.set_fact:
+        member_switch_id: >-
+          {{ (member_switches.current.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+             | first).switchId }}
+
+    - name: "PORT-CHANNEL MEMBER SETUP: Read the member before its update"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ member_switch_id }}/interfaces/{{ test_member_interface_name | replace('/', '%2F') }}
+        method: get
+      register: member_before_wire
+
+    - name: "PORT-CHANNEL MEMBER SETUP: Verify authentic poMember ownership"
+      ansible.builtin.assert:
+        that:
+          - member_parent_create is changed
+          - member_before_wire.current.configData.networkOS.policy.policyType == "poMember"
+          - >-
+            (member_before_wire.current.configData.networkOS.policy.portChannelId | string | lower)
+            in [test_member_port_channel_name | lower, test_member_port_channel_name | lower | replace('port-channel', '')]
+
+    - name: "PORT-CHANNEL MEMBER MERGED: Preview all safe fields"
+      cisco.nd.nd_interface_ethernet_trunk_host: &merge_trunk_member
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - "{{ test_member_interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: false
+                  description: "IFACE-004 trunk member updated"
+                  extra_config: "logging event link-status"
+        config_actions:
+          deploy: false
+        state: merged
+      check_mode: true
+      register: member_check_mode
+
+    - name: "PORT-CHANNEL MEMBER MERGED: Apply all safe fields"
+      cisco.nd.nd_interface_ethernet_trunk_host: *merge_trunk_member
+      register: member_update
+
+    - name: "PORT-CHANNEL MEMBER MERGED: Verify the planned and applied update"
+      vars:
+        member_after: >-
+          {{ member_update.after | selectattr('interface_name', 'equalto', test_member_interface_name) | first }}
+      ansible.builtin.assert:
+        that:
+          - member_check_mode is changed
+          - member_update is changed
+          - member_after.config_data.network_os.policy.admin_state == false
+          - member_after.config_data.network_os.policy.description == "IFACE-004 trunk member updated"
+          - member_after.config_data.network_os.policy.extra_config == "logging event link-status"
+
+    - name: "PORT-CHANNEL MEMBER MERGED: Read the updated member from the wire"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ member_switch_id }}/interfaces/{{ test_member_interface_name | replace('/', '%2F') }}
+        method: get
+      register: member_after_wire
+
+    - name: "PORT-CHANNEL MEMBER MERGED: Read the parent from the wire"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ member_switch_id }}/interfaces/{{ test_member_port_channel_name }}
+        method: get
+      register: member_parent_wire
+
+    - name: "PORT-CHANNEL MEMBER MERGED: Verify every modeled preservation field"
+      vars:
+        before_policy: "{{ member_before_wire.current.configData.networkOS.policy }}"
+        wire_policy: "{{ member_after_wire.current.configData.networkOS.policy }}"
+        parent_policy: "{{ member_parent_wire.current.configData.networkOS.policy }}"
+        member_preservation_fields:
+          - policyType
+          - portChannelId
+          - portChannelMode
+          - cdp
+          - lacpPortPriority
+          - lacpRate
+          - debounceTimer
+          - debounceLinkupTimer
+          - fec
+          - allowedVlans
+        before_preserved_policy: >-
+          {{ before_policy | dict2items
+             | selectattr('key', 'in', member_preservation_fields)
+             | list | items2dict }}
+        after_preserved_policy: >-
+          {{ wire_policy | dict2items
+             | selectattr('key', 'in', member_preservation_fields)
+             | list | items2dict }}
+      ansible.builtin.assert:
+        that:
+          - before_preserved_policy == after_preserved_policy
+          - member_after_wire.current.interfaceName == member_before_wire.current.interfaceName
+          - member_after_wire.current.interfaceType == member_before_wire.current.interfaceType
+          - member_after_wire.current.configData.mode == member_before_wire.current.configData.mode
+          - >-
+            member_after_wire.current.configData.networkOS.networkOSType
+            == member_before_wire.current.configData.networkOS.networkOSType
+          - wire_policy.adminState == false
+          - wire_policy.description == "IFACE-004 trunk member updated"
+          - wire_policy.extraConfig == "logging event link-status"
+          - test_member_interface_name in parent_policy.ports
+
+    - name: "PORT-CHANNEL MEMBER IDEMPOTENT: Reapply the safe update"
+      cisco.nd.nd_interface_ethernet_trunk_host: *merge_trunk_member
+      register: member_idempotent
+
+    - name: "PORT-CHANNEL MEMBER IDEMPOTENT: Verify no second mutation"
+      ansible.builtin.assert:
+        that:
+          - member_idempotent is not changed
+
+    - name: "PORT-CHANNEL MEMBER NEGATIVE: Reject an unsafe host-policy field"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - "{{ test_member_interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  description: "must be rejected atomically"
+                  allowed_vlans: "300-400"
+        config_actions:
+          deploy: false
+        state: merged
+      register: member_unsafe_field
+      ignore_errors: true
+      check_mode: true
+
+    - name: "PORT-CHANNEL MEMBER NEGATIVE: Reject replaced state"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - "{{ test_member_interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  description: "must be rejected under replaced"
+        config_actions:
+          deploy: false
+        state: replaced
+      register: member_replaced
+      ignore_errors: true
+      check_mode: true
+
+    - name: "PORT-CHANNEL MEMBER NEGATIVE: Reject overridden state"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - "{{ test_member_interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  description: "must be rejected under overridden"
+        config_actions:
+          deploy: false
+        state: overridden
+      register: member_overridden
+      ignore_errors: true
+      check_mode: true
+
+    - name: "PORT-CHANNEL MEMBER NEGATIVE: Reject deleted state"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - "{{ test_member_interface_name }}"
+        config_actions:
+          deploy: false
+        state: deleted
+      register: member_deleted
+      ignore_errors: true
+      check_mode: true
+
+    - name: "PORT-CHANNEL MEMBER NEGATIVE: Reject membership-changing extra_config"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names:
+              - "{{ test_member_interface_name }}"
+            config_data:
+              network_os:
+                policy:
+                  extra_config: "no channel-group 590"
+        config_actions:
+          deploy: false
+        state: merged
+      register: member_unsafe_extra_config
+      ignore_errors: true
+      check_mode: true
+
+    - name: "PORT-CHANNEL MEMBER NEGATIVE: Verify every unsafe request failed"
+      ansible.builtin.assert:
+        that:
+          - member_unsafe_field is failed
+          - member_replaced is failed
+          - member_overridden is failed
+          - member_deleted is failed
+          - member_unsafe_extra_config is failed
+  always:
+    - name: "PORT-CHANNEL MEMBER CLEANUP: Remove the owning trunk parent"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: "{{ test_member_port_channel_name }}"
+        config_actions:
+          deploy: false
+        state: deleted

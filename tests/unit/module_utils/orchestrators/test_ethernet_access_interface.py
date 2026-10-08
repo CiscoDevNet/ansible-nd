@@ -26,6 +26,8 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
@@ -96,6 +98,80 @@ def _build_access_model(policy_kwargs: dict, interface_name: str = "Ethernet1/1"
             ),
         ),
     )
+
+
+@pytest.mark.parametrize("policy_overrides", [{"description": "foreign trunk"}, {"adminState": False}, {"ptp": "true"}, {"unrecognizedField": 1}])
+def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch, policy_overrides: dict) -> None:
+    """The access module cannot deploy pending intent owned by a configured trunk policy."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())))
+    orchestrator.deploy = True
+    monkeypatch.setattr(EthernetAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    orchestrator._switch_interfaces_cache["FDO12345ABC"] = {
+        "ethernet1/13": {
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "trunk",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {"policyType": "trunkHost", "allowedVlans": "none", **policy_overrides},
+                },
+            },
+        }
+    }
+
+    absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
+    assert orchestrator.reconcile_absent_deletes([absent_access]) is False
+    assert orchestrator._pending_deploys == []
+    assert orchestrator.rest_send.response_count == 0
+
+
+def test_absent_access_delete_can_replay_exact_reset_target(monkeypatch) -> None:
+    """A defaults-only trunk echo remains eligible to finish a staged access deletion."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 207,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/preview",
+            "MESSAGE": "Multi-Status",
+            "DATA": {
+                "configurationDiffs": [
+                    {
+                        "interfaceName": "Ethernet1/13",
+                        "switchId": "FDO12345ABC",
+                        "status": "success",
+                        "combinedConfigs": [{"configType": "pending", "lines": 1}],
+                    }
+                ]
+            },
+        }
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    orchestrator.deploy = True
+    monkeypatch.setattr(EthernetAccessInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    orchestrator._switch_interfaces_cache["FDO12345ABC"] = {
+        "ethernet1/13": {
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "trunk",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "trunkHost",
+                        "allowedVlans": "none",
+                        "adminState": True,
+                        "accessVlan": "1",
+                        "ptp": "false",
+                    },
+                },
+            },
+        }
+    }
+
+    absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
+    assert orchestrator.reconcile_absent_deletes([absent_access]) is True
+    assert orchestrator._pending_deploys == [("Ethernet1/13", "FDO12345ABC")]
 
 
 # =============================================================================
@@ -391,6 +467,9 @@ def test_ethernet_access_orchestrator_00430() -> None:
 # =============================================================================
 # Test: port-channel membership enforcement (create / update / create_bulk)
 # =============================================================================
+# NOTE: The legacy fixtures in 00500-00565 intentionally combine a host policy with a
+# positive operData portChannelId. They validate fail-closed handling of inconsistent
+# evidence; authentic member-policy behavior lives in test_ethernet_member_updates.py.
 
 
 def test_ethernet_access_orchestrator_00500() -> None:
@@ -424,7 +503,7 @@ def test_ethernet_access_orchestrator_00500() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Create failed for.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Create failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.create(model)
 
     assert instance._pending_deploys == []
@@ -434,14 +513,14 @@ def test_ethernet_access_orchestrator_00510() -> None:
     """
     # Summary
 
-    Verify `create` succeeds on a port-channel member when only whitelisted policy fields are being changed.
+    Verify `create` rejects contradictory membership evidence even when only a safe field is requested.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10
-    - The model changes only `description`, which is in `PORT_CHANNEL_MODIFIABLE_FIELDS`
-    - `create` does not raise; the POST is issued and a deploy is queued
+    - interfaceList reports `accessHost` while operData claims port-channel 10
+    - The model changes only the otherwise-safe `description` field
+    - `create` raises before POST and queues no deploy
 
     ## Classes and Methods
 
@@ -459,12 +538,12 @@ def test_ethernet_access_orchestrator_00510() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"description": "uplink to host"})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Create failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.create(model)
 
-    assert rest_send.verb == HttpVerbEnum.POST.value
-    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces"
-    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+    assert rest_send.verb != HttpVerbEnum.POST.value
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?offset=0&max=500&sort=interfaceName%3Aasc"
+    assert instance._pending_deploys == []
 
 
 def test_ethernet_access_orchestrator_00520() -> None:
@@ -533,7 +612,7 @@ def test_ethernet_access_orchestrator_00530() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
     assert instance._pending_deploys == []
@@ -569,7 +648,7 @@ def test_ethernet_access_orchestrator_00540() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Bulk create failed.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.create_bulk([model])
 
     assert instance._pending_deploys == []
@@ -579,18 +658,18 @@ def test_ethernet_access_orchestrator_00550() -> None:
     """
     # Summary
 
-    Verify `update` succeeds on a port-channel member when the post-merge model carries non-whitelisted
-    wire-side values (e.g. `access_vlan`, `mtu`) that the user did NOT change. Regression test for the
-    state:merged path where the state machine merges the existing model into the proposed one before
-    calling `update`.
+    Verify `update` rejects contradictory membership evidence even when all carried host-policy values
+    match the wire except for a safe description. A host-policy record plus a positive operational
+    port-channel ID is stale or corrupt evidence, not an authentic member that may use the safe-update
+    path.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10 with `accessVlan=10`, `mtu=jumbo`
-    - The model passed to `update` carries `description='new'` (the user-set field) AND the existing
-      `access_vlan=10` / `mtu=jumbo` carried over by the state machine's merge step
-    - Only `description` differs from the wire; `access_vlan` / `mtu` match -> no flag -> `update` succeeds
+    - interfaceList reports `accessHost` plus operational port-channel 10
+    - The proposed access values match the wire except for `description`
+    - The evidence mismatch takes precedence over field comparison
+    - `update` raises without PUT or deploy
 
     ## Classes and Methods
 
@@ -608,10 +687,10 @@ def test_ethernet_access_orchestrator_00550() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"description": "new", "access_vlan": 10, "mtu": "jumbo"})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
-    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == []
 
 
 def test_ethernet_access_orchestrator_00560() -> None:
@@ -644,7 +723,7 @@ def test_ethernet_access_orchestrator_00560() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"access_vlan": 100})
 
-    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*access_vlan"):
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
     assert instance._pending_deploys == []
@@ -654,17 +733,17 @@ def test_ethernet_access_orchestrator_00565() -> None:
     """
     # Summary
 
-    Verify `update` does NOT raise on a port-channel member when the wire echoes a non-whitelisted field
-    with a different scalar type than the model's coercion (ND returns `stormControlBroadcastLevel` as the
-    string `"50"` while the model carries float `50.0`). Regression for the float-vs-raw-wire comparison
-    that flagged an unchanged field as modified and wrongly blocked an idempotent re-run.
+    Verify scalar coercion cannot bypass contradictory membership evidence. The wire returns an
+    `accessHost` policy and positive operational port-channel ID while also echoing
+    `stormControlBroadcastLevel` as string `"50"`; the model carries the equivalent float `50.0`, but the
+    host/member mismatch must still fail closed.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a port-channel member with `stormControlBroadcastLevel="50"` (str)
-    - The model carries `storm_control_broadcast_level=50.0` (float) — same logical value, different type
-    - Both sides are coerced through the model, so the field is NOT flagged -> `update` succeeds and deploys
+    - interfaceList reports `accessHost`, operational port-channel 10, and the string level `"50"`
+    - The model carries the logically equal float value `50.0`
+    - `update` rejects the evidence mismatch without PUT or deploy
 
     ## Classes and Methods
 
@@ -682,24 +761,24 @@ def test_ethernet_access_orchestrator_00565() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({"storm_control_broadcast_level": 50.0})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'accessHost'.*inconsistent"):
         instance.update(model)
 
-    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == []
 
 
 def test_ethernet_access_orchestrator_00570() -> None:
     """
     # Summary
 
-    Verify `delete` refuses to normalize a port-channel member: normalizing would strip the channel-group
-    membership and silently detach the interface from its port-channel.
+    Verify `delete` trusts current host intent over a stale positive operational
+    port-channel ID when no parent intent claims the interface.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10
-    - `delete` raises `RuntimeError` naming the port-channel; no normalize or deploy is queued
+    - interfaceList reports current `accessHost` intent, no parent claim, and stale `portChannelId: 10`
+    - `delete` queues normalize and deploy
 
     ## Classes and Methods
 
@@ -716,25 +795,25 @@ def test_ethernet_access_orchestrator_00570() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({})
 
-    with pytest.raises(RuntimeError, match=r"Delete failed for.*member of port-channel 10.*Refusing to normalize"):
+    with does_not_raise():
         instance.delete(model)
 
-    assert instance._pending_normalizes == []
-    assert instance._pending_deploys == []
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
 def test_ethernet_access_orchestrator_00580() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` refuses when any interface in the batch is a port-channel member, failing fast on
-    the first offender so the caller does not silently detach interfaces from their port-channels.
+    Verify `delete_bulk` uses the same intent-first stale-operational decision as
+    single delete.
 
     ## Test
 
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - interfaceList reports Ethernet1/1 as a member of port-channel 10
-    - `delete_bulk` raises `RuntimeError`; no normalize or deploy is queued
+    - interfaceList reports current `accessHost` intent, no parent claim, and stale `portChannelId: 10`
+    - `delete_bulk` queues normalize and deploy
 
     ## Classes and Methods
 
@@ -751,11 +830,11 @@ def test_ethernet_access_orchestrator_00580() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*Refusing to normalize"):
+    with does_not_raise():
         instance.delete_bulk([model])
 
-    assert instance._pending_normalizes == []
-    assert instance._pending_deploys == []
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
 def test_ethernet_access_orchestrator_00590() -> None:
@@ -797,17 +876,16 @@ def test_ethernet_access_orchestrator_00600() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` silently skips port-channel members when `state == "overridden"` so fabric-wide
-    convergence does not detach interfaces from their port-channels. Non-member interfaces in the same batch
-    are still queued for normalize / deploy.
+    Verify `state: overridden` resets an omitted host-policy interface despite a
+    stale operational ID, while also resetting an ordinary non-member.
 
     ## Test
 
     - state is "overridden"
     - switches-list resolves 192.168.1.1 -> FDO11111AAA and 192.168.1.2 -> FDO22222BBB
-    - Ethernet1/1 on FDO11111AAA is a PC 10 member -> skipped
+    - Ethernet1/1 on FDO11111AAA has host intent, no parent claim, and stale PC 10 operData -> queued
     - Ethernet1/2 on FDO22222BBB is not a PC member -> queued
-    - `delete_bulk` does not raise; only the non-member ends up in `_pending_normalizes` / `_pending_deploys`
+    - `delete_bulk` does not raise; both interfaces are queued
 
     ## Classes and Methods
 
@@ -829,8 +907,14 @@ def test_ethernet_access_orchestrator_00600() -> None:
     with does_not_raise():
         instance.delete_bulk([pc_member, non_member])
 
-    assert instance._pending_normalizes == [("Ethernet1/2", "FDO22222BBB")]
-    assert instance._pending_deploys == [("Ethernet1/2", "FDO22222BBB")]
+    assert instance._pending_normalizes == [
+        ("Ethernet1/1", "FDO11111AAA"),
+        ("Ethernet1/2", "FDO22222BBB"),
+    ]
+    assert instance._pending_deploys == [
+        ("Ethernet1/1", "FDO11111AAA"),
+        ("Ethernet1/2", "FDO22222BBB"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -882,15 +966,15 @@ def test_ethernet_access_orchestrator_00610() -> None:
     """
     # Summary
 
-    Verify `delete_bulk` still raises on a port-channel member when `state == "deleted"` (the user named the
-    interface explicitly), so the user is told loudly rather than having their PC silently broken.
+    Verify an explicitly named delete also permits current host intent with no
+    parent claim despite stale positive operational membership.
 
     ## Test
 
     - state is "deleted"
     - switches-list resolves 192.168.1.1 -> FDO11111AAA
-    - Ethernet1/1 is a PC 10 member, user named it
-    - `delete_bulk` raises `RuntimeError`; nothing is queued
+    - Ethernet1/1 has `accessHost` intent, no parent claim, and stale PC 10 operData
+    - `delete_bulk` queues normalize and deploy
 
     ## Classes and Methods
 
@@ -907,11 +991,11 @@ def test_ethernet_access_orchestrator_00610() -> None:
     instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
     model = _build_access_model({})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*Refusing to normalize"):
+    with does_not_raise():
         instance.delete_bulk([model])
 
-    assert instance._pending_normalizes == []
-    assert instance._pending_deploys == []
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
 def test_ethernet_access_orchestrator_00595() -> None:

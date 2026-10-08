@@ -6,6 +6,16 @@
 
 # Entry state (from overridden.yaml): port-channel520 exists; port-channel521 and port-channel522 do not.
 
+- name: "DELETED RECONCILE SETUP: Deploy port-channel520 before staging its deletion"
+  cisco.nd.nd_interface_port_channel_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_520 }}"
+    config_actions:
+      deploy: true
+    state: merged
+
 - name: "DELETED: Delete port-channel520 and the already-absent port-channel521 (check mode)"
   cisco.nd.nd_interface_port_channel_routed: &delete_pc520
     output_level: "{{ nd_info.output_level }}"
@@ -16,7 +26,7 @@
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel521
     config_actions:
-      deploy: true
+      deploy: false
     state: deleted
   check_mode: true
   register: cm_deleted
@@ -32,17 +42,32 @@
       - nm_deleted is changed
       - nm_deleted.after | selectattr('interface_name', 'equalto', 'port-channel520') | list | length == 0
 
-- name: "DELETED IDEMPOTENT: Re-delete (check mode)"
-  cisco.nd.nd_interface_port_channel_routed: *delete_pc520
+- name: "DELETED RECONCILE: Check exact staged delete with deployment enabled"
+  cisco.nd.nd_interface_port_channel_routed: &delete_pc520_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel520
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel521
+    config_actions:
+      deploy: true
+    state: deleted
   check_mode: true
-  register: cm_deleted_idem
+  register: cm_deleted_reconcile
 
-- name: "DELETED IDEMPOTENT: Re-delete (normal mode)"
-  cisco.nd.nd_interface_port_channel_routed: *delete_pc520
+- name: "DELETED RECONCILE: Deploy exact staged delete"
+  cisco.nd.nd_interface_port_channel_routed: *delete_pc520_deploy
+  register: nm_deleted_reconcile
+
+- name: "DELETED RECONCILE: Replay deployed delete"
+  cisco.nd.nd_interface_port_channel_routed: *delete_pc520_deploy
   register: nm_deleted_idem
 
-- name: "DELETED IDEMPOTENT: Verify no change"
+- name: "DELETED RECONCILE: Verify pending delete deployed once"
   ansible.builtin.assert:
     that:
-      - cm_deleted_idem is not changed
+      - cm_deleted_reconcile is changed
+      - nm_deleted_reconcile is changed
       - nm_deleted_idem is not changed

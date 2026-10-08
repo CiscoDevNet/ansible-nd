@@ -39,7 +39,9 @@ import re
 from collections.abc import Sequence
 from typing import ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -47,9 +49,22 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
+    EpVpcPairGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
+    EthernetMembershipIndex,
+    MemberPolicyDescriptor,
+    MembershipValidationError,
+    get_member_policy_descriptor_for_parent,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 ModelType = NDBaseModel
 
@@ -102,14 +117,48 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
 
-    # For each IOS-XE port-channel policy type: the member policy type ND requires BEFORE the create, the member type ND provisions once
-    # joined, and the cisco.nd module that converts a member (lab-verified 2026-09-15 on 4.2.1.10 and 4.3.1.175; the routed row
-    # 2026-09-18 on both, where the joined member reads `iosXeL3PoMember`, not the spec's `iosXeInternalPoMember`).
-    XE_MEMBER_HOST_POLICY: ClassVar[dict[str, tuple[str, str, str]]] = {
-        "iosXeAccessPoHost": ("iosXeAccess", "iosXeAccessPoMember", "nd_interface_ethernet_access"),
-        "iosXeTrunkPoHost": ("iosXeTrunkHost", "iosXeTrunkPoMember", "nd_interface_ethernet_trunk_host"),
-        "iosXeL3PortChannel": ("iosXeRoutedHost", "iosXeL3PoMember", "nd_interface_ethernet_routed"),
-    }
+    def model_post_init(self, __context) -> None:
+        """Initialize request-local ownership and authoritative vPC-pair caches."""
+
+        super().model_post_init(__context)
+        self._member_owners_cache: dict[str, dict[str, str]] = {}
+        self._membership_peer_cache: dict[str, str] = {}
+
+    def _resolve_membership_peer_switch_id(self, switch_id: str) -> str:
+        """Return the reciprocal authoritative vPC peer used to orient ownership."""
+
+        cached = self._membership_peer_cache.get(switch_id)
+        if cached is not None:
+            return cached
+
+        def fetch(source_switch_id: str) -> str:
+            cached_peer = self._membership_peer_cache.get(source_switch_id)
+            if cached_peer is not None:
+                return cached_peer
+            api_endpoint = EpVpcPairGet(fabric_name=self.fabric_name, switch_id=source_switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            returned_switch_id = result.get("switchId") if isinstance(result, dict) else None
+            if returned_switch_id not in (None, "", source_switch_id):
+                raise RuntimeError(f"Cannot validate member ownership on switch {source_switch_id!r}: " f"vpcPair returned switchId {returned_switch_id!r}")
+            peer_switch_id = result.get("peerSwitchId") if isinstance(result, dict) else None
+            if not isinstance(peer_switch_id, str) or not peer_switch_id.strip():
+                raise RuntimeError(
+                    f"Cannot validate member ownership on switch {source_switch_id!r}: " "authoritative vpcPair record is absent or missing peerSwitchId"
+                )
+            peer_switch_id = peer_switch_id.strip()
+            if peer_switch_id == source_switch_id:
+                raise RuntimeError(f"Cannot validate member ownership on switch {source_switch_id!r}: authoritative vpcPair identifies itself as its peer")
+            self._membership_peer_cache[source_switch_id] = peer_switch_id
+            return peer_switch_id
+
+        peer_switch_id = fetch(switch_id)
+        reciprocal_switch_id = fetch(peer_switch_id)
+        if reciprocal_switch_id != switch_id:
+            raise RuntimeError(
+                f"Cannot validate member ownership for vPC pair {switch_id!r}/{peer_switch_id!r}: "
+                f"peer reports {reciprocal_switch_id!r} instead of {switch_id!r}"
+            )
+        return peer_switch_id
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -125,6 +174,32 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Always, if not overridden by a subclass.
         """
         raise NotImplementedError("Subclasses must implement _managed_policy_types()")
+
+    def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Register this port-channel's intent and exact operational members."""
+
+        if not self.deploy:
+            return
+        derived = [(member_name, switch_id) for member_name in self._proposed_members(model_instance)]
+        match = _XE_PORT_CHANNEL_NAME_RE.match(model_instance.interface_name.lower())
+        if match:
+            derived.extend(self._operational_port_channel_members(switch_id, int(match.group(1))))
+        self._register_deploy_derived_identities(
+            model_instance.interface_name,
+            switch_id,
+            derived,
+        )
+
+    def _prepare_no_diff_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Discover pending switch-side children when unchanged intent has none."""
+
+        if self.deploy and not self._proposed_members(model_instance):
+            self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:  # pylint: disable=unused-argument
+        """Retain exact parent/member context before a grouped create is sent."""
+
+        self._prepare_deploy_context(model_instance, switch_id)
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
@@ -146,6 +221,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+            self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -166,11 +242,17 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            previous_model = kwargs.get("previous_model")
+            if previous_model is not None:
+                self._prepare_deploy_context(previous_model, switch_id)
+                if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
+                    self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -194,6 +276,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
         name = self._delete_side_name(model_instance)
+        self._prepare_deploy_context(model_instance, switch_id)
+        if not self._proposed_members(model_instance):
+            self._queue_preview_derived_discovery(name, switch_id)
         self._queue_remove(name, switch_id)
         self._queue_deploy(name, switch_id)
 
@@ -237,6 +322,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             name = self._delete_side_name(model_instance)
+            self._prepare_deploy_context(model_instance, switch_id)
+            if not self._proposed_members(model_instance):
+                self._queue_preview_derived_discovery(name, switch_id)
             self._queue_remove(name, switch_id)
             self._queue_deploy(name, switch_id)
 
@@ -306,11 +394,10 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Return `{member_name_lower: owning_port_channel_name}` for every member ethernet on `switch_id`, derived from the
-        `ports` list of every `portChannel` record in the switch's unfiltered inventory -- regardless of policy type, so a
-        member of an unmanaged port-channel flavor (e.g. `vpcPeerlinkPo`) is still seen as owned. A member whose own intent
-        `policyType` ends in `Member` but that no port-channel record lists is mapped to its policy type (e.g.
-        `accessPoMember`) so it is still treated as owned, with the owner reported as unknown.
+        Return `{member_name_lower: owning_parent_name}` for every owned ethernet on `switch_id`. Ownership is indexed from
+        all supported and protected member-policy descriptors plus every standalone port-channel or pair-aware vPC parent
+        member list in the unfiltered inventory. This catches protected policies whose names do not end in ``Member`` and
+        temporarily host-shaped physical records that remain claimed by a vPC parent during a controller transition.
 
         Membership is read from ND intent, not `operData.portChannelId`: ND rejects a conflicting create against intent even
         when the owning port-channel has never been deployed (`operData.portChannelId` is still `-1`).
@@ -321,22 +408,86 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - Via `_switch_interfaces` if the interface-list API request fails with a non-404 status.
         """
+        cached = self._member_owners_cache.get(switch_id)
+        if cached is not None:
+            return cached
+
         inventory = self._switch_interfaces(switch_id)
+        inventories = {switch_id: inventory}
+        has_vpc_parent = False
+        declared_peers: set[str] = set()
+        for iface in inventory.values():
+            if iface.get("interfaceType") != "vpc":
+                continue
+            has_vpc_parent = True
+            raw_peer = self._policy_of(iface).get("peerSwitchId")
+            if raw_peer in (None, ""):
+                continue
+            if not isinstance(raw_peer, str) or not raw_peer.strip():
+                raise RuntimeError(
+                    f"Cannot validate member ownership on switch {switch_id!r}: " f"vPC {iface.get('interfaceName')!r} has invalid peerSwitchId {raw_peer!r}"
+                )
+            peer_switch_id = raw_peer.strip()
+            if peer_switch_id == switch_id:
+                raise RuntimeError(
+                    f"Cannot validate member ownership on switch {switch_id!r}: " f"vPC {iface.get('interfaceName')!r} identifies itself as its peer"
+                )
+            declared_peers.add(peer_switch_id)
+        if len(declared_peers) > 1:
+            raise RuntimeError(
+                f"Cannot validate member ownership on switch {switch_id!r}: " f"vPC records declare conflicting peers {sorted(declared_peers)!r}"
+            )
+
+        peer_switch_ids: dict[str, str] = {}
+        if has_vpc_parent:
+            peer_switch_id = next(iter(declared_peers)) if declared_peers else self._resolve_membership_peer_switch_id(switch_id)
+            peer_inventory = self._switch_interfaces(peer_switch_id)
+            inventories[peer_switch_id] = peer_inventory
+            reciprocal_peers: set[str] = set()
+            for iface in peer_inventory.values():
+                if iface.get("interfaceType") != "vpc":
+                    continue
+                raw_peer = self._policy_of(iface).get("peerSwitchId")
+                if raw_peer in (None, ""):
+                    continue
+                if not isinstance(raw_peer, str) or not raw_peer.strip():
+                    raise RuntimeError(
+                        f"Cannot validate member ownership on switch {peer_switch_id!r}: "
+                        f"vPC {iface.get('interfaceName')!r} has invalid peerSwitchId {raw_peer!r}"
+                    )
+                reciprocal_peers.add(raw_peer.strip())
+            if reciprocal_peers and reciprocal_peers != {switch_id}:
+                raise RuntimeError(
+                    f"Cannot validate member ownership for pair {switch_id!r}/{peer_switch_id!r}: " f"peer inventory declares {sorted(reciprocal_peers)!r}"
+                )
+            peer_switch_ids = {
+                switch_id: peer_switch_id,
+                peer_switch_id: switch_id,
+            }
+
+        try:
+            membership_index = EthernetMembershipIndex(
+                inventories,
+                peer_switch_ids=peer_switch_ids,
+            )
+        except MembershipValidationError as exc:
+            raise RuntimeError(f"Cannot validate existing member ownership on switch {switch_id!r}: {exc}") from exc
+
         owners: dict[str, str] = {}
+        for (member_switch_id, member_name), member in membership_index.members.items():
+            if member_switch_id != switch_id:
+                continue
+            owners[member_name] = f"unknown parent (member policyType {member.policy_type})"
+
         for name, iface in inventory.items():
-            policy = self._policy_of(iface)
-            policy_type = policy.get("policyType")
-
-            # A member-typed ethernet defaults to an unknown owner; setdefault never overwrites an explicit owner already
-            # recorded from a port-channel seen earlier in the inventory.
-            if isinstance(policy_type, str) and policy_type.endswith("Member"):
-                owners.setdefault(name, f"unknown port-channel (member policyType {policy_type})")
-
-            # A port-channel's `ports` list names the explicit owner, replacing any unknown default recorded above or later.
-            if iface.get("interfaceType") == "portChannel":
-                for member in policy.get("ports") or []:
-                    if isinstance(member, str) and member:
-                        owners[member.lower()] = iface.get("interfaceName", "")
+            if iface.get("interfaceType") != "ethernet":
+                continue
+            claims = membership_index.claiming_parents(switch_id, name)
+            if not claims:
+                continue
+            parent_names = sorted({claim.interface_name for claim in claims})
+            owners[name] = parent_names[0] if len(parent_names) == 1 else f"multiple parents ({', '.join(parent_names)})"
+        self._member_owners_cache[switch_id] = owners
         return owners
 
     def _validate_members_available(self, model_instances: Sequence[ModelType]) -> None:
@@ -402,7 +553,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Fail fast when an IOS-XE port-channel names a member whose current intent policy does not match the port-channel mode. Unlike
         NX-OS, where the port-channel policy re-homes its members, ND requires an `iosXeAccessPoHost` member to already be `iosXeAccess`
         an `iosXeTrunkPoHost` member to be `iosXeTrunkHost` (the fabric default) and an `iosXeL3PortChannel` member to be `iosXeRoutedHost`
-        (`XE_MEMBER_HOST_POLICY`), and rejects the create otherwise: ND 4.2.1 with a flat
+        (from the shared membership registry), and rejects the create otherwise: ND 4.2.1 with a flat
         HTTP 500 that masquerades as a transient error, 4.3.1 with a 207 failed item. A member ND already lists as this port-channel's own
         member type (`portChannelId` naming this port-channel) passes so an idempotent re-apply is accepted. A member absent from the
         switch inventory is refused too (ND would otherwise create a phantom record). NX-OS models are skipped. Reads the same cached
@@ -433,7 +584,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Return one formatted mismatch string per proposed member of `model_instance` whose current intent policy does not match the
         IOS-XE host policy required by `model_instance`'s desired policy type. Returns `[]` when the model is not an IOS-XE host
-        port-channel type in `XE_MEMBER_HOST_POLICY` (including every NX-OS model), when it claims no members, or when every claimed
+        port-channel type with IOS-XE pre-attach guidance in the shared membership registry (including every NX-OS model), when it claims
+        no members, or when every claimed
         member already matches. Helper for `_validate_xe_member_modes`, split out (with `_xe_member_mismatch`) to keep every method
         under the local-variable limit.
 
@@ -444,8 +596,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Via `_resolve_switch_id` if a `switch_ip` does not match any switch in the fabric.
         - Via `_switch_interfaces` if the interface-list API request fails.
         """
-        requirement = self.XE_MEMBER_HOST_POLICY.get(self._desired_policy_type(model_instance) or "")
-        if requirement is None:
+        requirement = get_member_policy_descriptor_for_parent(self._desired_policy_type(model_instance) or "")
+        if requirement is None or requirement.required_host_policy_type is None or requirement.conversion_module is None:
             return []
         ports = self._proposed_members(model_instance)
         if not ports:
@@ -456,12 +608,18 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         return [mismatch for mismatch in mismatches if mismatch is not None]
 
     @staticmethod
-    def _xe_member_mismatch(model_instance: ModelType, requirement: tuple[str, str, str], inventory: dict[str, dict], po_name: str, member: str) -> str | None:
+    def _xe_member_mismatch(
+        model_instance: ModelType,
+        requirement: MemberPolicyDescriptor,
+        inventory: dict[str, dict],
+        po_name: str,
+        member: str,
+    ) -> str | None:
         """
         # Summary
 
-        Compare one proposed member's current intent policy (from the cached `inventory`) against the `(host_type, member_type,
-        module_name)` `requirement` for `model_instance`'s desired IOS-XE host policy type, returning a formatted mismatch string when
+        Compare one proposed member's current intent policy (from the cached `inventory`) against the shared relationship descriptor
+        for `model_instance`'s desired IOS-XE parent policy type, returning a formatted mismatch string when
         it does not match, or `None` when the member is already the required host-side type, or is already this port-channel's own
         member type (`portChannelId` naming `po_name`). Helper for `_xe_member_mode_mismatches`.
 
@@ -469,7 +627,11 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         None
         """
-        host_type, member_type, module_name = requirement
+        host_type = requirement.required_host_policy_type
+        member_type = requirement.policy_type
+        module_name = requirement.conversion_module
+        if host_type is None or module_name is None:  # Defensive: the caller filters relationships without pre-attach guidance.
+            return None
         record = inventory.get(member.lower())
         policy = PortChannelBaseOrchestrator._policy_of(record) if record else {}
         current = policy.get("policyType")

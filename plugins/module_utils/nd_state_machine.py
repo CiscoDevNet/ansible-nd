@@ -219,8 +219,10 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
+        execution_baseline = self.existing.copy()
         items_to_create: list[NDBaseModel] = []
         items_to_update: list[NDBaseModel] = []
+        items_with_no_diff: list[NDBaseModel] = []
 
         for proposed_item in self.proposed:
             identifier = None
@@ -253,6 +255,10 @@ class NDStateMachine:
 
                 # No changes needed
                 if diff_status == "no_diff":
+                    # Prefer the complete controller model over a sparse merged
+                    # proposal.  Interface deploy reconciliation needs the full
+                    # parent/member context to validate any derived 207 rows.
+                    items_with_no_diff.append(existing_match or final_candidate)
                     continue
 
                 # Prepare final config based on state
@@ -284,9 +290,52 @@ class NDStateMachine:
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
         # preflight and before this method mutates self.existing (PR #362 review).
 
-        # Execute updates (always individual)
-        for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+        # ``deploy: true`` is an execution-state request, not merely an intent
+        # mutation request.  A previous run can have accepted the PUT/POST and
+        # then failed to prove deployment convergence.  On a fresh retry the
+        # intent is ``no_diff`` and would otherwise never be deployed again.
+        # The base hook is a no-op; interface orchestrators preview these exact
+        # resources and queue only those whose convergence is not proven.
+        if items_with_no_diff:
+            try:
+                if self.model_orchestrator.reconcile_no_diff(items_with_no_diff):
+                    self.output.mark_changed()
+            except Exception as e:
+                # Planning above mutates ``self.existing`` before any I/O so
+                # check mode can expose the intended result. Reconciliation is
+                # the first runtime action; if its read-only preview is
+                # contradictory or otherwise fails, no proposed mutation has
+                # been accepted and failure output must retain the execution
+                # baseline rather than advertise every planned create/update.
+                self.existing = execution_baseline.copy()
+                self.output.assign(after=self.existing)
+                raise NDStateMachineError(f"Failed to reconcile unchanged resources: {e}") from e
+
+        # Execute updates (always individual). Planning above mutates
+        # ``self.existing`` before I/O so check mode can expose the intended
+        # result. If a real update fails, rebuild ``after`` from the execution
+        # baseline plus only the preceding updates the controller accepted;
+        # otherwise a rejected and every not-yet-attempted update appear as
+        # successful in changed/after output.
+        accepted_updates: list[NDBaseModel] = []
+        try:
+            for item in items_to_update:
+                self._execute_operation(
+                    self.model_orchestrator.update,
+                    item,
+                    previous_model=execution_baseline.get(item.get_identifier_value()),
+                    error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+                )
+                accepted_updates.append(item)
+        except Exception:
+            self.existing = execution_baseline.copy()
+            for item in accepted_updates:
+                if not self.existing.replace(item):
+                    self.existing.add(item)
+            if accepted_updates:
+                self.sent.add_many(accepted_updates)
+            self.output.assign(after=self.existing)
+            raise
 
         # Execute creates (bulk or individual)
         if items_to_create:
@@ -329,24 +378,33 @@ class NDStateMachine:
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
         items_to_delete = []
+        absent_items = []
         for proposed_item in self.proposed:
             existing_item = self.existing.get(proposed_item.get_identifier_value())
             if existing_item is None:
+                absent_items.append(proposed_item)
                 continue
             # An explicit delete that resolves to an unsupported object fails with a
             # focused message rather than blindly removing something we cannot model.
             if getattr(existing_item, "is_unsupported_policy", False):
                 raise NDStateMachineError(existing_item.describe_unsupported_policy() + "; this module cannot delete it.")
             items_to_delete.append(existing_item)
-        # Delete preflight (switch resolution, port-channel membership) runs here -- before _delete_items, whose
-        # mutation is skipped in check mode -- so a dry run rejects what a normal run would (PR #550 review).
+        # Delete preflight also covers absent targets before deploy-recovery preview: a type-filtered
+        # inventory must not let a named member or fabric-owned interface bypass the delete guards.
+        # This runs before _delete_items, whose mutation is skipped in check mode.
         # Same error normalization as the create/update preflights in manage_state.
         try:
-            self.model_orchestrator.preflight_delete(items_to_delete)
+            self.model_orchestrator.preflight_delete([*items_to_delete, *absent_items])
         except NDStateMachineError:
             raise
         except Exception as e:
             raise NDStateMachineError(f"Preflight failed: {e}") from e
+        if absent_items:
+            try:
+                if self.model_orchestrator.reconcile_absent_deletes(absent_items):
+                    self.output.mark_changed()
+            except Exception as e:
+                raise NDStateMachineError(f"Failed to reconcile absent deleted resources: {e}") from e
         self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:

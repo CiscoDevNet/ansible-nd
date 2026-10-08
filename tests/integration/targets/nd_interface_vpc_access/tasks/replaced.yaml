@@ -13,6 +13,8 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - "{{ vpc_access_updated }}"
+    config_actions:
+      deploy: true
     state: replaced
   check_mode: true
   register: cm_replaced
