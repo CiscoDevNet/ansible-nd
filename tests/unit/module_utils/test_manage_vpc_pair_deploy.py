@@ -124,6 +124,17 @@ def test_manage_vpc_pair_deploy_00020_save_only_runs_without_declarative_change(
     assert out["changed"] is False
 
 
+def test_manage_vpc_pair_deploy_00030_check_mode_save_only_without_declarative_change_is_unchanged():
+    # Check mode must match normal execution for a bare, idempotent configSave.
+    nrm = _make_nrm("switch", save=True, deploy_flag=False, check_mode=True)
+
+    with patch.object(deploy, "NDModuleV2", _boom):
+        out = deploy.custom_vpc_deploy(nrm, "fab1", {"changed": False})
+
+    assert out["deployment_needed"] is True
+    assert out["changed"] is False
+
+
 def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_endpoint():
     # check_mode must be side-effect free: no NDModuleV2 is constructed and the
     # preview names the switch-scoped endpoint.
@@ -133,6 +144,7 @@ def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_en
         out = deploy.custom_vpc_deploy(nrm, "fab1", {"changed": True})
 
     assert out["deployment_needed"] is True
+    assert out["changed"] is True
     planned = out["planned_actions"]
     assert any(SAVE_PATH in action for action in planned)
     assert any(SWITCH_DEPLOY_PATH in action for action in planned)
