@@ -1,0 +1,204 @@
+---
+- name: Run trunk-host replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Reconstruct exact replaced prerequisites"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
+        state: deleted
+
+    - name: "REPLACED SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "REPLACED SETUP: Create the original merged base state"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41 }}"
+          - "{{ ethernet_42_43 }}"
+          - "{{ ethernet_44 }}"
+          - "{{ ethernet_45_46_47 }}"
+        state: merged
+
+    - name: "REPLACED SETUP: Apply the original merged updates"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41_updated }}"
+          - "{{ ethernet_42_43_updated }}"
+        state: merged
+
+    - name: "REPLACED SETUP: Query exact post-merged controller state"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+        method: get
+      register: replaced_prerequisite_state
+      changed_when: false
+
+    - name: "REPLACED SETUP: Verify exact post-merged prerequisite values"
+      vars:
+        replaced_interfaces: "{{ replaced_prerequisite_state.current.interfaces | default([]) }}"
+        replaced_eth41: "{{ replaced_interfaces | selectattr('interfaceName', 'equalto', 'Ethernet1/41') | first }}"
+        replaced_eth42: "{{ replaced_interfaces | selectattr('interfaceName', 'equalto', 'Ethernet1/42') | first }}"
+        replaced_eth43: "{{ replaced_interfaces | selectattr('interfaceName', 'equalto', 'Ethernet1/43') | first }}"
+        replaced_eth44: "{{ replaced_interfaces | selectattr('interfaceName', 'equalto', 'Ethernet1/44') | first }}"
+        replaced_eth45: "{{ replaced_interfaces | selectattr('interfaceName', 'equalto', 'Ethernet1/45') | first }}"
+      ansible.builtin.assert:
+        that:
+          - replaced_eth41.configData.networkOS.policy.allowedVlans == "150-250"
+          - replaced_eth41.configData.networkOS.policy.nativeVlan == 150
+          - replaced_eth41.configData.networkOS.policy.description == "Updated Ethernet1/41 description"
+          - replaced_eth41.configData.networkOS.policy.bpduGuard == "disable"
+          - replaced_eth41.configData.networkOS.policy.cdp == false
+          - replaced_eth42.configData.networkOS.policy.allowedVlans == "250-350"
+          - replaced_eth42.configData.networkOS.policy.nativeVlan == 250
+          - replaced_eth42.configData.networkOS.policy.description == "Updated trunk ports description"
+          - replaced_eth42.configData.networkOS.policy.adminState == false
+          - replaced_eth42.configData.networkOS.policy.bpduGuard == "enable"
+          - replaced_eth42.configData.networkOS.policy.cdp == true
+          - replaced_eth43.configData.networkOS.policy.allowedVlans == "250-350"
+          - replaced_eth43.configData.networkOS.policy.nativeVlan == 250
+          - replaced_eth43.configData.networkOS.policy.description == "Updated trunk ports description"
+          - replaced_eth43.configData.networkOS.policy.adminState == false
+          - replaced_eth43.configData.networkOS.policy.bpduGuard == "enable"
+          - replaced_eth43.configData.networkOS.policy.cdp == true
+          - replaced_eth44.configData.networkOS.policy.allowedVlans == "all"
+          - replaced_eth44.configData.networkOS.policy.nativeVlan == 300
+          - replaced_eth44.configData.networkOS.policy.description == "Ansible integration test Ethernet1/44"
+          - replaced_eth45.configData.networkOS.policy.allowedVlans == "400-500"
+          - replaced_eth45.configData.networkOS.policy.nativeVlan == 400
+          - replaced_eth45.configData.networkOS.policy.description == "Fan-out test trunk ports"
+          - replaced_eth45.configData.networkOS.policy.bpduGuard == "enable"
+          - replaced_eth45.configData.networkOS.policy.cdp == true
+          - replaced_eth45.configData.networkOS.policy.mtu == "jumbo"
+
+    - name: "REPLACED SINGLE: Replace Ethernet1/41"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: replaced
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_41_replaced }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced Ethernet1/41
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "500-600"}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 500}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Replaced Ethernet1/41}
+      register: replaced_single
+
+    - name: "REPLACED SINGLE: Verify returned replacement"
+      ansible.builtin.assert:
+        that:
+          - replaced_single.first_run_result.changed | bool
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.allowed_vlans == "500-600"
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.native_vlan == 500
+          - (replaced_single.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.description == "Replaced Ethernet1/41"
+          - replaced_single.idempotency_attempts == 1
+          - not replaced_single.second_run_result.changed | bool
+
+    - name: "REPLACED FAN-OUT: Replace Ethernet1/42 and Ethernet1/43"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: replaced
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_42_43_replaced }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced fan-out
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/42' & @.configData.networkOS.policy.nativeVlan == 600)]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/43' & @.configData.networkOS.policy.nativeVlan == 600)]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/42' & @.configData.networkOS.policy.allowedVlans == '600-700' & @.configData.networkOS.policy.description == 'Replaced fan-out trunk ports' & @.configData.networkOS.policy.adminState == true)]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/43' & @.configData.networkOS.policy.allowedVlans == '600-700' & @.configData.networkOS.policy.description == 'Replaced fan-out trunk ports' & @.configData.networkOS.policy.adminState == true)]"
+                exists: true
+      register: replaced_fanout
+
+    - name: "REPLACED FAN-OUT: Verify both returned replacements"
+      ansible.builtin.assert:
+        that:
+          - replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 1
+          - replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 1
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.allowed_vlans == "600-700"
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.native_vlan == 600
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.description == "Replaced fan-out trunk ports"
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.admin_state is true
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.allowed_vlans == "600-700"
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.native_vlan == 600
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.description == "Replaced fan-out trunk ports"
+          - (replaced_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.admin_state is true
+          - not replaced_fanout.second_run_result.changed | bool
+
+    - name: "REPLACED MULTI: Replace Ethernet1/41 and Ethernet1/44 separately"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: replaced
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - "{{ ethernet_41_replaced_multi }}"
+          - "{{ ethernet_44_replaced }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate multi-replaced Ethernet1/41
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "700-800"}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Replaced again Ethernet1/41}
+          - name: Validate multi-replaced Ethernet1/44
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F44"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "800-900"}
+              - {jsonpath: "$.current.configData.networkOS.policy.adminState", equals: false}
+      register: replaced_multi
+
+    - name: "REPLACED MULTI: Verify module-specific returned values"
+      ansible.builtin.assert:
+        that:
+          - replaced_multi.first_run_result.changed | bool
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.allowed_vlans == "700-800"
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.native_vlan == 700
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.description == "Replaced again Ethernet1/41"
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first).config_data.network_os.policy.allowed_vlans == "800-900"
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first).config_data.network_os.policy.native_vlan == 800
+          - (replaced_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first).config_data.network_os.policy.admin_state is false
+          - replaced_multi.nd_query_results | length == 2
+
+  always:
+    - name: "REPLACED CLEANUP: Normalize reserved trunk-host interfaces"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
+        state: deleted

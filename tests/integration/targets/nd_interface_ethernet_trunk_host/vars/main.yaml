@@ -7,31 +7,23 @@
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
-# A separate interface and parent are reserved for authentic poMember tests.
-# Override these when the defaults are unavailable on the test switch.
-test_member_interface_name: "{{ nd_test_trunk_member_interface_name | default('Ethernet1/40') }}"
-test_member_port_channel_name: "{{ nd_test_trunk_member_port_channel_name | default('port-channel590') }}"
+nd4x_ethernet_reserved_interfaces: &nd4x_ethernet_reserved_interfaces
+  - Ethernet1/41
+  - Ethernet1/42
+  - Ethernet1/43
+  - Ethernet1/44
+  - Ethernet1/45
+  - Ethernet1/46
+  - Ethernet1/47
+  - Ethernet1/48
 
-# Pair-aware vpcMember coverage is opt-in. The selected interface must already
-# be an authentic member of a consistent vPC on both peers. Explicitly supply
-# all three current safe-field values; the scenario compares them to the
-# controller before its first write and restores them after an attempted update.
-# admin_state must be boolean; description and extra_config must be strings.
-trunk_vpc_member_case:
-  fabric_name: "{{ nd_test_trunk_vpc_member_fabric_name | default(test_fabric_name) }}"
-  switch_ip: "{{ nd_test_trunk_vpc_member_switch_ip | default(test_switch_ip) }}"
-  interface_name: "{{ nd_test_trunk_vpc_member_interface_name | default('') }}"
-  expected_policy_type: vpcMember
-  baseline_supplied: >-
-    {{ nd_test_trunk_vpc_member_baseline_admin_state is defined
-       and nd_test_trunk_vpc_member_baseline_description is defined
-       and nd_test_trunk_vpc_member_baseline_extra_config is defined }}
-  baseline_admin_state: "{{ nd_test_trunk_vpc_member_baseline_admin_state | default(none) }}"
-  baseline_description: "{{ nd_test_trunk_vpc_member_baseline_description | default(none) }}"
-  baseline_extra_config: "{{ nd_test_trunk_vpc_member_baseline_extra_config | default(none) }}"
+nd4x_ethernet_overridden_allowed_interfaces: *nd4x_ethernet_reserved_interfaces
 
-  updated_description: IFACE-004 trunk vPC member updated
-  updated_extra_config: logging event trunk-status
+nd4x_ethernet_reserved_ports_confirmed: >-
+  {{ nd_ethernet_reserved_ports_confirmed | default(false) | bool }}
+
+nd4x_ethernet_destructive_tests_enabled: >-
+  {{ nd_ethernet_destructive_tests_enabled | default(false) | bool }}
 
 # Ethernet interfaces used across tests.
 # Ethernet1/41 through Ethernet1/48 are reserved for these integration tests.
@@ -111,6 +103,94 @@ ethernet_42_43_updated:
         allowed_vlans: "250-350"
         native_vlan: 250
         description: "Updated trunk ports description"
+
+ethernet_48_no_deploy:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/48
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "999"
+        description: "No-deploy test Ethernet1/48"
+
+# --- Replaced-state payloads ---
+
+ethernet_41_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "500-600"
+        native_vlan: 500
+        description: "Replaced Ethernet1/41"
+
+ethernet_42_43_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/42
+    - Ethernet1/43
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "600-700"
+        native_vlan: 600
+        description: "Replaced fan-out trunk ports"
+
+ethernet_41_replaced_multi:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "700-800"
+        native_vlan: 700
+        description: "Replaced again Ethernet1/41"
+
+ethernet_44_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/44
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        allowed_vlans: "800-900"
+        native_vlan: 800
+        description: "Replaced Ethernet1/44"
+
+# --- Overridden-state payloads ---
+
+ethernet_41_overridden:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/41
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "900-950"
+        native_vlan: 900
+        description: "Overridden Ethernet1/41"
+
+ethernet_42_overridden:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/42
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "901-951"
+        native_vlan: 901
+        description: "Overridden Ethernet1/42"
 
 # --- Fan-out test: multiple interfaces sharing one config ---
 

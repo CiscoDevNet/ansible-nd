@@ -1,0 +1,305 @@
+---
+- name: Run trunk-host merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Normalize reserved trunk-host interfaces"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
+        state: deleted
+
+    - name: "MERGED SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "MERGED SETUP: Verify reserved interfaces are normalized"
+      ansible.builtin.assert:
+        that:
+          - nd4x_ethernet_reserved_interfaces | length == 8
+
+    - name: "MERGED CREATE: Configure Ethernet1/41"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41 }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate trunk-host Ethernet1/41
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaceName", equals: Ethernet1/41}
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "100-200"}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 99}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Ansible integration test Ethernet1/41}
+              - {jsonpath: "$.current.configData.networkOS.policy.cdp", equals: true}
+      register: merged_create_41
+
+    - name: "MERGED CREATE: Verify Ethernet1/41 returned state"
+      ansible.builtin.assert:
+        that:
+          - merged_create_41.check_mode_result.changed | bool
+          - merged_create_41.first_run_result.changed | bool
+          - merged_create_41.second_run_result.changed is false
+          - merged_create_41.check_mode_query_results | length == nd4x_fabric_check_mode_queries | length
+          - merged_create_41.nd_query_results | length == 1
+          - merged_create_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+          - (merged_create_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.allowed_vlans == "100-200"
+          - (merged_create_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.native_vlan == 99
+
+    - name: "MERGED FAN-OUT: Configure Ethernet1/42 and Ethernet1/43"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_42_43 }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate fan-out trunk-host interfaces
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/42' & @.configData.networkOS.policy.allowedVlans == '200-300')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/43' & @.configData.networkOS.policy.allowedVlans == '200-300')]"
+                exists: true
+      register: merged_fanout
+
+    - name: "MERGED FAN-OUT: Verify both returned interfaces"
+      ansible.builtin.assert:
+        that:
+          - merged_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 1
+          - merged_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 1
+          - (merged_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.native_vlan == 1
+          - (merged_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.description == "Ansible integration test trunk ports"
+
+    - name: "MERGED CREATE: Configure Ethernet1/44 as a separate group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_44 }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate trunk-host Ethernet1/44
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F44"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: all}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 300}
+      register: merged_create_44
+
+    - name: "MERGED IDEMPOTENT: Re-run Ethernet1/41"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_41 }}"]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate converged Ethernet1/41
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "100-200"}
+      register: merged_idempotent_41
+
+    - name: "MERGED IDEMPOTENT: Verify Ethernet1/41 and fan-out are unchanged"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_41.check_mode_result.changed | bool
+          - not merged_idempotent_41.first_run_result.changed | bool
+          - not merged_idempotent_41.second_run_result.changed | bool
+          - not merged_fanout.second_run_result.changed | bool
+
+    - name: "MERGED UPDATE: Update Ethernet1/41"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_41_updated }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated Ethernet1/41
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F41"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "150-250"}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 150}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Updated Ethernet1/41 description}
+              - {jsonpath: "$.current.configData.networkOS.policy.bpduGuard", equals: disable}
+              - {jsonpath: "$.current.configData.networkOS.policy.cdp", equals: false}
+      register: merged_update_41
+
+    - name: "MERGED UPDATE: Verify returned Ethernet1/41 values"
+      ansible.builtin.assert:
+        that:
+          - merged_update_41.first_run_result.changed | bool
+          - (merged_update_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.allowed_vlans == "150-250"
+          - (merged_update_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.native_vlan == 150
+          - (merged_update_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.description == "Updated Ethernet1/41 description"
+          - (merged_update_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.bpdu_guard == "disable"
+          - (merged_update_41.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first).config_data.network_os.policy.cdp is false
+
+    - name: "MERGED FAN-OUT UPDATE: Update Ethernet1/42 and Ethernet1/43"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_42_43_updated }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated fan-out interfaces
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/42' & @.configData.networkOS.policy.nativeVlan == 250)]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/43' & @.configData.networkOS.policy.nativeVlan == 250)]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/42' & @.configData.networkOS.policy.allowedVlans == '250-350' & @.configData.networkOS.policy.description == 'Updated trunk ports description' & @.configData.networkOS.policy.adminState == false)]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/43' & @.configData.networkOS.policy.allowedVlans == '250-350' & @.configData.networkOS.policy.description == 'Updated trunk ports description' & @.configData.networkOS.policy.adminState == false)]"
+                exists: true
+      register: merged_update_fanout
+
+    - name: "MERGED FAN-OUT UPDATE: Verify both returned values"
+      ansible.builtin.assert:
+        that:
+          - merged_update_fanout.first_run_result.changed | bool
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.allowed_vlans == "250-350"
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.native_vlan == 250
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.description == "Updated trunk ports description"
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first).config_data.network_os.policy.admin_state is false
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.allowed_vlans == "250-350"
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.native_vlan == 250
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.description == "Updated trunk ports description"
+          - (merged_update_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first).config_data.network_os.policy.admin_state is false
+
+    - name: "MERGED NO-DEPLOY: Stage Ethernet1/48"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        module_args:
+          config_actions: {deploy: false}
+        config: ["{{ ethernet_48_no_deploy }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate staged Ethernet1/48
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: 999}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: No-deploy test Ethernet1/48}
+      register: merged_no_deploy
+
+    - name: "MERGED NO-DEPLOY: Verify staged result"
+      ansible.builtin.assert:
+        that:
+          - merged_no_deploy.first_run_result.changed | bool
+          - not merged_no_deploy.second_run_result.changed | bool
+
+    - name: "MERGED LARGE FAN-OUT: Configure Ethernet1/45 through Ethernet1/47"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ ethernet_45_46_47 }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate jumbo trunk-host fan-out
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/45' & @.configData.networkOS.policy.mtu == 'jumbo')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/46' & @.configData.networkOS.policy.mtu == 'jumbo')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/47' & @.configData.networkOS.policy.mtu == 'jumbo')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/45' & @.configData.networkOS.policy.allowedVlans == '400-500' & @.configData.networkOS.policy.description == 'Fan-out test trunk ports')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/46' & @.configData.networkOS.policy.allowedVlans == '400-500' & @.configData.networkOS.policy.description == 'Fan-out test trunk ports')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/47' & @.configData.networkOS.policy.allowedVlans == '400-500' & @.configData.networkOS.policy.description == 'Fan-out test trunk ports')]"
+                exists: true
+      register: merged_large_fanout
+
+    - name: "MERGED LARGE FAN-OUT: Verify every returned interface"
+      ansible.builtin.assert:
+        that:
+          - merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 1
+          - merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | list | length == 1
+          - merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | list | length == 1
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first).config_data.network_os.policy.allowed_vlans == "400-500"
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first).config_data.network_os.policy.description == "Fan-out test trunk ports"
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | first).config_data.network_os.policy.allowed_vlans == "400-500"
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | first).config_data.network_os.policy.description == "Fan-out test trunk ports"
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | first).config_data.network_os.policy.allowed_vlans == "400-500"
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | first).config_data.network_os.policy.description == "Fan-out test trunk ports"
+          - (merged_large_fanout.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | first).config_data.network_os.policy.mtu == "jumbo"
+
+  always:
+    - name: "MERGED CLEANUP: Normalize all reserved trunk-host interfaces"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
+        state: deleted

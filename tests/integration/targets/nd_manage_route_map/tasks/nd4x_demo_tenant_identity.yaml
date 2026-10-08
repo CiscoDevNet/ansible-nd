@@ -1,0 +1,197 @@
+---
+- name: Run nd_manage_route_map tenant identity harness scenarios
+  block:
+    - name: "TENANT IDENTITY SAFETY: Require two distinct test tenants"
+      ansible.builtin.assert:
+        that:
+          - nd_test_tenant_name_a is defined
+          - nd_test_tenant_name_b is defined
+          - nd_test_tenant_name_a | length > 0
+          - nd_test_tenant_name_b | length > 0
+          - nd_test_tenant_name_a != nd_test_tenant_name_b
+        fail_msg: >-
+          Set distinct nd_test_tenant_name_a and nd_test_tenant_name_b values
+          for nd_manage_route_map tenant identity coverage.
+
+    - name: "TENANT IDENTITY SETUP: Remove old tenant-scoped test route maps"
+      ansible.builtin.include_tasks: nd4x_demo_tenant_identity_cleanup.yaml
+
+    - name: "TENANT IDENTITY CREATE: Create same-name route maps in both tenants"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ test_route_map_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            entries:
+              - sequence_number: 10
+                action: permit
+                rule_entries:
+                  - rule_type: setLocalPreference
+                    value: 101
+          - name: "{{ nd_test_tenant_name_b }}~{{ test_route_map_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            entries:
+              - sequence_number: 10
+                action: permit
+                rule_entries:
+                  - rule_type: setLocalPreference
+                    value: 202
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Validate tenant A route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps/{{ nd_test_tenant_name_a }}~{{ test_route_map_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.tenantName"
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 101
+          - name: Validate tenant B route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps/{{ nd_test_tenant_name_b }}~{{ test_route_map_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.tenantName"
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 202
+      register: tenant_route_map_create
+
+    - name: "TENANT IDENTITY CREATE: Verify distinct returned identities"
+      ansible.builtin.assert:
+        that:
+          - tenant_route_map_create.check_mode_result.changed | bool
+          - tenant_route_map_create.first_run_result.changed | bool
+          - >-
+            tenant_route_map_create.first_run_result.after
+            | selectattr('name', 'equalto', test_route_map_tenant_identity_name)
+            | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+            | list | length == 1
+          - >-
+            tenant_route_map_create.first_run_result.after
+            | selectattr('name', 'equalto', test_route_map_tenant_identity_name)
+            | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+            | list | length == 1
+          - tenant_route_map_create.second_run_result.changed == false
+          - tenant_route_map_create.nd_query_results | length == 2
+
+    - name: "TENANT IDENTITY UPDATE: Update tenant A using qualified name"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ nd_test_tenant_name_a }}~{{ test_route_map_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            entries:
+              - sequence_number: 10
+                action: permit
+                rule_entries:
+                  - rule_type: setLocalPreference
+                    value: 303
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Validate tenant A updated route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps/{{ nd_test_tenant_name_a }}~{{ test_route_map_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 303
+          - name: Validate tenant B route map was not changed
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps/{{ nd_test_tenant_name_b }}~{{ test_route_map_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 202
+      register: tenant_route_map_update
+
+    - name: "TENANT IDENTITY UPDATE: Verify update and isolation"
+      ansible.builtin.assert:
+        that:
+          - tenant_route_map_update.first_run_result.changed | bool
+          - tenant_route_map_update.second_run_result.changed == false
+          - tenant_route_map_update.nd_query_results | length == 2
+
+    - name: "TENANT IDENTITY DELETE: Delete tenant A using qualified name"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ nd_test_tenant_name_a }}~{{ test_route_map_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Verify tenant A route map was deleted
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps/{{ nd_test_tenant_name_a }}~{{ test_route_map_tenant_identity_name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify same-name tenant B route map remains
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps/{{ nd_test_tenant_name_b }}~{{ test_route_map_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 202
+      register: tenant_route_map_delete
+
+    - name: "TENANT IDENTITY DELETE: Verify only tenant A was deleted"
+      ansible.builtin.assert:
+        that:
+          - tenant_route_map_delete.check_mode_result.changed | bool
+          - tenant_route_map_delete.first_run_result.changed | bool
+          - tenant_route_map_delete.first_run_result.after | selectattr('name', 'equalto', test_route_map_tenant_identity_name) | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a) | list | length == 0
+          - tenant_route_map_delete.first_run_result.after | selectattr('name', 'equalto', test_route_map_tenant_identity_name) | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b) | list | length == 1
+          - tenant_route_map_delete.second_run_result.changed == false
+          - tenant_route_map_delete.nd_query_results | length == 2
+  always:
+    - name: "TENANT IDENTITY CLEANUP: Remove both tenant route maps"
+      ansible.builtin.include_tasks: nd4x_demo_tenant_identity_cleanup.yaml

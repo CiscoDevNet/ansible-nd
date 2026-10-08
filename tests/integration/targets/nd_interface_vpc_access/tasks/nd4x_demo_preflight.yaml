@@ -1,0 +1,358 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version(nd4x_vpc_access_minimum_version, '>=')
+      }}
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x vPC-access harness scenarios because controller version
+      {{ nd4x_version.current.platformVersion }} is older than
+      {{ nd4x_vpc_access_minimum_version }}.
+  when: not nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require reserved-resource confirmation"
+  ansible.builtin.assert:
+    that:
+      - nd4x_vpc_access_reserved_resources_confirmed | bool
+    fail_msg: >-
+      Confirm that {{ nd4x_vpc_access_reserved_interfaces | join(', ') }},
+      peer-1 ports {{ nd4x_vpc_access_peer1_reserved_ports | join(', ') }},
+      and peer-2 ports {{ nd4x_vpc_access_peer2_reserved_ports | join(', ') }}
+      are dedicated to this integration test by setting
+      nd_vpc_access_reserved_resources_confirmed=true.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify switch inventory response"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_inventory.current.switches | default([]) | length > 0
+    fail_msg: >-
+      No switches were returned for fabric {{ test_fabric_name }}. Check the
+      fabric name and Nexus Dashboard connectivity before running the tests.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify every switch has an ID"
+  ansible.builtin.assert:
+    that:
+      - item.switchId is defined
+      - item.switchId | string | length > 0
+    fail_msg: >-
+      A switch in fabric {{ test_fabric_name }} does not have a usable
+      switchId, so complete predictive snapshot coverage cannot be prepared.
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{ item.fabricManagementIp | default('unknown-management-ip') }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Select both peers by management IP"
+  ansible.builtin.set_fact:
+    nd4x_peer1_matches: >-
+      {{
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip_peer1
+          )
+        | list
+      }}
+    nd4x_peer2_matches: >-
+      {{
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_switch_ip_peer2
+          )
+        | list
+      }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require exactly two distinct peers"
+  ansible.builtin.assert:
+    that:
+      - nd4x_peer1_matches | length == 1
+      - nd4x_peer2_matches | length == 1
+      - nd4x_peer1_matches[0].switchId != nd4x_peer2_matches[0].switchId
+    fail_msg: >-
+      Expected exactly one switch for peer-1 {{ test_switch_ip_peer1 }} and
+      peer-2 {{ test_switch_ip_peer2 }}, with distinct switch IDs. Found
+      {{ nd4x_peer1_matches | length }} peer-1 matches and
+      {{ nd4x_peer2_matches | length }} peer-2 matches.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record current peer switch IDs"
+  ansible.builtin.set_fact:
+    test_switch_id_peer1: "{{ nd4x_peer1_matches[0].switchId }}"
+    test_switch_id_peer2: "{{ nd4x_peer2_matches[0].switchId }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query peer-1 interfaces"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id_peer1 }}/interfaces
+    method: get
+  register: nd4x_peer1_interface_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query peer-2 interfaces"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id_peer2 }}/interfaces
+    method: get
+  register: nd4x_peer2_interface_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record existing vPC interfaces on both peers"
+  ansible.builtin.set_fact:
+    nd4x_existing_peer_vpc_names: >-
+      {{
+        (
+          (
+            nd4x_peer1_interface_inventory.current.interfaces
+            | default([])
+          )
+          + (
+              nd4x_peer2_interface_inventory.current.interfaces
+              | default([])
+            )
+        )
+        | selectattr('interfaceType', 'equalto', 'vpc')
+        | map(attribute='interfaceName')
+        | unique
+        | list
+      }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require every peer-1 reserved port"
+  vars:
+    matching_reserved_ports: >-
+      {{
+        nd4x_peer1_interface_inventory.current.interfaces
+        | default([])
+        | selectattr('interfaceName', 'equalto', item)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - matching_reserved_ports | length == 1
+    fail_msg: >-
+      Expected exactly one {{ item }} interface on peer-1
+      {{ test_switch_ip_peer1 }}, but found
+      {{ matching_reserved_ports | length }}.
+  loop: "{{ nd4x_vpc_access_peer1_reserved_ports }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Validate peer-1 reserved-port safety"
+  vars:
+    reserved_port: >-
+      {{
+        nd4x_peer1_interface_inventory.current.interfaces
+        | default([])
+        | selectattr('interfaceName', 'equalto', item)
+        | list
+        | first
+      }}
+    reserved_port_channel_id: >-
+      {{
+        reserved_port
+        .get('operData', {})
+        .get('portChannelId', -1)
+        | default(-1, true)
+        | int
+      }}
+  ansible.builtin.assert:
+    that:
+      - reserved_port.interfaceType | default('') == 'ethernet'
+      - >-
+        reserved_port_channel_id | int < 1
+        or (
+          reserved_port_channel_id | int
+          in nd4x_vpc_access_reserved_port_channel_ids
+          and (
+            'vpc' ~ (reserved_port_channel_id | string)
+          ) in nd4x_existing_peer_vpc_names
+        )
+    fail_msg: >-
+      Reserved peer-1 interface {{ item }} is not safe for this test. It must
+      be Ethernet and either unused or a member of a matching reserved vpc100
+      or vpc101 interface. The reported interface type is
+      {{ reserved_port.interfaceType | default('missing') }} and portChannelId
+      is {{ reserved_port_channel_id }}.
+  loop: "{{ nd4x_vpc_access_peer1_reserved_ports }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require every peer-2 reserved port"
+  vars:
+    matching_reserved_ports: >-
+      {{
+        nd4x_peer2_interface_inventory.current.interfaces
+        | default([])
+        | selectattr('interfaceName', 'equalto', item)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - matching_reserved_ports | length == 1
+    fail_msg: >-
+      Expected exactly one {{ item }} interface on peer-2
+      {{ test_switch_ip_peer2 }}, but found
+      {{ matching_reserved_ports | length }}.
+  loop: "{{ nd4x_vpc_access_peer2_reserved_ports }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Validate peer-2 reserved-port safety"
+  vars:
+    reserved_port: >-
+      {{
+        nd4x_peer2_interface_inventory.current.interfaces
+        | default([])
+        | selectattr('interfaceName', 'equalto', item)
+        | list
+        | first
+      }}
+    reserved_port_channel_id: >-
+      {{
+        reserved_port
+        .get('operData', {})
+        .get('portChannelId', -1)
+        | default(-1, true)
+        | int
+      }}
+  ansible.builtin.assert:
+    that:
+      - reserved_port.interfaceType | default('') == 'ethernet'
+      - >-
+        reserved_port_channel_id | int < 1
+        or (
+          reserved_port_channel_id | int
+          in nd4x_vpc_access_reserved_port_channel_ids
+          and (
+            'vpc' ~ (reserved_port_channel_id | string)
+          ) in nd4x_existing_peer_vpc_names
+        )
+    fail_msg: >-
+      Reserved peer-2 interface {{ item }} is not safe for this test. It must
+      be Ethernet and either unused or a member of a matching reserved vpc100
+      or vpc101 interface. The reported interface type is
+      {{ reserved_port.interfaceType | default('missing') }} and portChannelId
+      is {{ reserved_port_channel_id }}.
+  loop: "{{ nd4x_vpc_access_peer2_reserved_ports }}"
+  loop_control:
+    label: "{{ item }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Reject unsafe vPCs before pair reset"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_existing_peer_vpc_names
+        | difference(nd4x_vpc_access_reserved_interfaces)
+        | length == 0
+    fail_msg: >-
+      Pair reset is unsafe. The selected peers contain vPC interfaces outside
+      the reserved vpc100-vpc101 scope: {{ nd4x_existing_peer_vpc_names }}.
+      No pair reset was attempted.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record pair-scoped snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_vpc_pair_check_mode_queries:
+      - name: Snapshot complete interface state on vPC peer 1
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces
+        expected_status: 200
+        unordered: true
+        ignore_keys:
+          - operData
+      - name: Snapshot complete interface state on vPC peer 2
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer2 }}/interfaces
+        expected_status: 200
+        unordered: true
+        ignore_keys:
+          - operData
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Initialize fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: []
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Build fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: >-
+      {{
+        nd4x_fabric_check_mode_queries
+        + [
+            {
+              'name':
+                'Snapshot interfaces on switch '
+                ~ (
+                    item.fabricManagementIp
+                    | default(item.switchId)
+                  ),
+              'path': (
+                '/api/v1/manage/fabrics/'
+                ~ test_fabric_name
+                ~ '/switches/'
+                ~ item.switchId
+                ~ '/interfaces'
+              ),
+              'expected_status': 200,
+              'unordered': true,
+              'ignore_keys': ['operData']
+            }
+          ]
+      }}
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{ item.fabricManagementIp | default(item.switchId) }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify complete snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_vpc_pair_check_mode_queries | length == 2
+      - nd4x_fabric_check_mode_queries | length > 0
+      - >-
+        nd4x_fabric_check_mode_queries | length
+        == nd4x_switch_inventory.current.switches | default([]) | length
+    fail_msg: >-
+      Could not prepare predictive snapshots for both vPC peers and every
+      switch in fabric {{ test_fabric_name }}.
+  when: nd4x_supported | bool

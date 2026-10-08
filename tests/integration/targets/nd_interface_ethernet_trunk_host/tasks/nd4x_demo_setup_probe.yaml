@@ -1,0 +1,48 @@
+---
+- name: "HARNESS SETUP: Re-query Ethernet1/41 after cleanup"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy: {}
+    state: merged
+  check_mode: true
+  register: nd4x_setup_probe
+
+- name: "HARNESS SETUP: Show re-query result"
+  ansible.builtin.debug:
+    msg: >-
+      Before count: {{ nd4x_setup_probe.before | default([]) | length }},
+      Eth1/41 in before:
+      {{ nd4x_setup_probe.before | default([])
+         | selectattr('switch_ip', 'equalto', test_switch_ip)
+         | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+         | list | length }}
+
+- name: "HARNESS SETUP: Verify re-query shows fabric-default state"
+  vars:
+    clean_interfaces: >-
+      {{ nd4x_setup_probe.before | default([])
+         | selectattr('switch_ip', 'equalto', test_switch_ip)
+         | selectattr('interface_name', 'equalto', 'Ethernet1/41')
+         | list }}
+    clean_interface: "{{ clean_interfaces | first | default({}, true) }}"
+    clean_policy: >-
+      {{ clean_interface.config_data.network_os.policy
+         | default({}, true) }}
+  ansible.builtin.assert:
+    that:
+      - (nd4x_setup_probe.failed | default(false) | bool) == false
+      - nd4x_setup_probe.before is defined
+      - clean_interfaces | length == 1
+      - clean_policy.policy_type | default('') == 'trunkHost'
+      - clean_policy.allowed_vlans | default('') == 'none'
+      - clean_policy.native_vlan | default(0) | int == 1
+    fail_msg: >-
+      Ethernet1/41 was not reset to the fabric-default trunkHost state:
+      {{ clean_interfaces }}
