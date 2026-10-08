@@ -50,17 +50,19 @@ options:
             deploy:
                 description:
                 - Deploy configuration after save.
+                - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
                 type: bool
-                default: true
+                default: false
             type:
                 description:
                 - Deploy scope for configuration actions.
-                - C(switch) deploys only the switches left out-of-sync by the vPC pair changes using the per-switch deploy action.
+                - C(switch) deploys only the out-of-sync peer switches of the vPC pair(s) changed by this task, using the per-switch deploy action.
+                - Peers of vPC pairs removed by this task (via O(state=overridden) omissions, an empty O(config), or O(state=deleted))
+                  are also deployed so the removal takes effect.
                 - C(global) deploys the entire fabric.
-                - Configuration is saved at the fabric level before deploying for both scopes.
+                - Configuration is saved at the fabric level before deploying for all scopes.
                 type: str
                 choices: [switch, global]
-                default: switch
     force:
         description:
         - Force deletion without pre-deletion validation checks.
@@ -175,6 +177,19 @@ EXAMPLES = """
 
 # Create and deploy
 - name: Create vPC pair and deploy
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myFabric
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
+
+# Deploy only the changed vPC pair's peer switches (switch scope)
+- name: Reconcile a vPC pair and deploy only its peer switches
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: merged

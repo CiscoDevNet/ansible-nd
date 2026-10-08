@@ -17,7 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
     EpManageFabricsSwitchActionsDeployPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 
 # Ansible's placeholder for masked secret values. Used to keep secret keys visible
 # in module output while hiding their values (instead of dropping the key).
@@ -228,6 +228,10 @@ def register_action_api_call(
         "DATA": payload,
     }
     results.result_current = {"success": success, "changed": changed}
+    # Save/deploy are write actions. Results defaults to the read-only QUERY
+    # operation type, which makes _determine_if_changed() discard the explicit
+    # changed flag and under-report changed for save/deploy.
+    results.operation_type = OperationType.UPDATE
     results.register_api_call()
 
 
@@ -267,12 +271,16 @@ class FabricUtils:
     def config_deploy_path(self, force_show_run: bool = True) -> str:
         return self.build_config_deploy_path(self.fabric_name, force_show_run=force_show_run)
 
-    def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def save_config(self) -> dict[str, Any]:
         """
         Call fabric config-save action.
+
+        Nexus Dashboard's config-save action is bodyless; the deploy-scope
+        selection is applied only to the separate deploy request and is never
+        sent to config-save.
         """
         path = self.config_save_path
-        response_data = self.nd.request(path, HttpVerbEnum.POST, payload)
+        response_data = self.nd.request(path, HttpVerbEnum.POST)
         return {
             "path": path,
             "status": self.nd.status,

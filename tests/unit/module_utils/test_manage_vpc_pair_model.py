@@ -215,3 +215,54 @@ def test_manage_vpc_pair_model_00100() -> None:
     assert model.switch_id == "SN01"
     assert model.peer_switch_id == "SN02"
     assert model.use_virtual_peer_link is True
+
+
+def test_manage_vpc_pair_model_00110() -> None:
+    """Verify config_actions.type accepts 'switch' and argument_spec exposes it."""
+    with does_not_raise():
+        model = VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "config_actions": {"save": True, "deploy": True, "type": "switch"},
+            }
+        )
+
+    assert model.config_actions is not None
+    assert model.config_actions.type == "switch"
+
+    spec = VpcPairPlaybookConfigModel.get_argument_spec()
+    assert spec["config_actions"]["options"]["type"]["choices"] == ["switch", "global"]
+    assert "default" not in spec["config_actions"]["options"]["type"]
+
+
+def test_manage_vpc_pair_model_00120() -> None:
+    """Verify config_actions.type rejects values outside the allowed choices."""
+    with pytest.raises(ValidationError):
+        VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "config_actions": {"save": True, "deploy": True, "type": "bogus"},
+            }
+        )
+
+
+def test_manage_vpc_pair_model_00130() -> None:
+    """Verify deploy defaults to False while type has no model default."""
+    with does_not_raise():
+        model = VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "config_actions": {"save": True},
+            }
+        )
+
+    assert model.config_actions is not None
+    assert model.config_actions.save is True
+    assert model.config_actions.deploy is False
+    assert model.config_actions.type is None
+
+    spec = VpcPairPlaybookConfigModel.get_argument_spec()
+    assert spec["config_actions"]["options"]["deploy"]["default"] is False
