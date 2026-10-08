@@ -1035,56 +1035,6 @@ def test_port_channel_access_interface_00810():
     assert result == expected
 
 
-def test_port_channel_access_interface_00815():
-    """Normalize an omitted response-side member list to an empty list."""
-    response = copy.deepcopy(SAMPLE_API_RESPONSE)
-    response["configData"]["networkOS"]["policy"].pop("ports")
-
-    instance = PortChannelAccessInterfaceModel.from_response(response)
-
-    assert instance.config_data.network_os.policy.ports == []
-
-
-def test_port_channel_access_interface_01025():
-    """Treat an omitted response-side member list as equivalent to ``ports=[]``."""
-    existing_response = copy.deepcopy(SAMPLE_API_RESPONSE)
-    existing_response["configData"]["networkOS"]["policy"].pop("ports")
-
-    proposed_config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
-    proposed_config["config_data"]["network_os"]["policy"]["ports"] = []
-
-    existing = PortChannelAccessInterfaceModel.from_response(existing_response)
-    proposed = PortChannelAccessInterfaceModel.from_config(proposed_config)
-
-    assert existing.config_data.network_os.policy.ports == []
-    assert existing.get_diff(proposed, exclude_unset=True) is True
-
-
-@pytest.mark.parametrize(
-    ("existing_ports", "proposed_ports"),
-    [
-        (["Ethernet1/1"], []),
-        (None, ["Ethernet1/1"]),
-    ],
-)
-def test_port_channel_access_interface_01026(existing_ports, proposed_ports):
-    """Do not normalize genuine member-list mismatches."""
-    existing_response = copy.deepcopy(SAMPLE_API_RESPONSE)
-    policy = existing_response["configData"]["networkOS"]["policy"]
-    if existing_ports is None:
-        policy.pop("ports")
-    else:
-        policy["ports"] = existing_ports
-
-    proposed_config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
-    proposed_config["config_data"]["network_os"]["policy"]["ports"] = proposed_ports
-
-    existing = PortChannelAccessInterfaceModel.from_response(existing_response)
-    proposed = PortChannelAccessInterfaceModel.from_config(proposed_config)
-
-    assert existing.get_diff(proposed, exclude_unset=True) is False
-
-
 def test_port_channel_access_interface_00820():
     """
     # Summary

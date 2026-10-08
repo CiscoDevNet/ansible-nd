@@ -619,11 +619,7 @@ class NDBaseModel(BaseModel, ABC):
                     # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
                     value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
 
-    def get_diff(
-        self,
-        other: "NDBaseModel",
-        exclude_unset: bool = False,
-    ) -> bool:
+    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.
 
         Args:
@@ -657,7 +653,6 @@ class NDBaseModel(BaseModel, ABC):
 
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
-
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False

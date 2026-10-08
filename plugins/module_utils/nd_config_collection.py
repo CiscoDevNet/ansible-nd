@@ -156,11 +156,7 @@ class NDConfigCollection:
 
     # Diff Operations
 
-    def get_diff_config(
-        self,
-        new_item: NDBaseModel,
-        exclude_unset: bool = False,
-    ) -> Literal["new", "no_diff", "changed"]:
+    def get_diff_config(self, new_item: NDBaseModel, exclude_unset: bool = False) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
 
@@ -180,10 +176,7 @@ class NDConfigCollection:
         if existing is None:
             return "new"
 
-        is_subset = existing.get_diff(
-            new_item,
-            exclude_unset=exclude_unset,
-        )
+        is_subset = existing.get_diff(new_item, exclude_unset=exclude_unset)
 
         return "no_diff" if is_subset else "changed"
 

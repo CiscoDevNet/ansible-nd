@@ -42,7 +42,6 @@ from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional neede
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     Field,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -324,16 +323,6 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
         None
         """
         return default_policy_type(data, TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST.value)
-
-    # TODO(4.2.1) port-channel-empty-ports-echoed-as-absent
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_response_ports(cls, data: Any, info: ValidationInfo) -> Any:
-        """Treat ND's omitted response-side member list as an empty list."""
-        if isinstance(data, dict) and info.context and info.context.get("mode") == "response" and "ports" not in data:
-            data = dict(data)
-            data["ports"] = []
-        return data
 
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
