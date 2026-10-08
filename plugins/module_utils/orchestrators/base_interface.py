@@ -34,7 +34,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import (
-    InterfaceOffsetPaginator,
     InterfacePaginationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
@@ -43,7 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import (
     InterfaceCapabilityPreflight,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot, _InterfaceSwitchIdentityMismatch
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     ModelType,
     NDBaseOrchestrator,
@@ -57,9 +56,6 @@ _DEPLOY_DERIVED_INTERFACE_RE = re.compile(
     r"(?i)^(?:ethernet|gigabitethernet|tengigabitethernet|twentyfivegige|fortygigabitethernet|hundredgige|port-channel)[0-9][0-9/.:_-]*$"
 )
 
-
-class _InterfaceSwitchIdentityMismatch(ValueError):
-    """Signal a transient mixed-switch row in a switch-scoped inventory."""
 
 _UNSET_RESPONSE = object()
 
@@ -169,6 +165,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         self._pending_removes: list[tuple[str, str]] = []
         self._deploy_attempted: bool = False
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
+        self._switch_interfaces_cache_revisions: dict[str, int] = {}
         self._deploy_derived_identities: dict[tuple[str, str], set[tuple[str, str]]] = {}
         self._pending_preview_derived_discovery: set[tuple[str, str]] = set()
         if self.interface_state_snapshot is not None and self.interface_state_snapshot.fabric_name != self.fabric_name:
@@ -267,39 +264,12 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - Via `_request` if the interface-list API request fails with a non-404 status.
         """
-        if switch_id not in self._switch_interfaces_cache:
-            if self.interface_state_snapshot is not None:
-                self._switch_interfaces_cache[switch_id] = self.interface_state_snapshot.load_switch(switch_id)
-                return self._switch_interfaces_cache[switch_id]
-            paginator = InterfaceOffsetPaginator()
-
-            def fetch_page(offset: int, page_size: int):
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                api_endpoint.endpoint_params.max = page_size
-                api_endpoint.endpoint_params.offset = offset
-                api_endpoint.endpoint_params.sort = "interfaceName:asc"
-                return self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-
-            def identity(interface: Mapping[str, Any]) -> tuple[str, str]:
-                interface_name = interface.get("interfaceName")
-                if not isinstance(interface_name, str) or not interface_name:
-                    raise ValueError("interfaceName must be a non-empty string")
-                returned_switch_id = interface.get("switchId")
-                if returned_switch_id is not None:
-                    if not isinstance(returned_switch_id, str) or not returned_switch_id:
-                        raise ValueError("row switchId must be a non-empty string when supplied")
-                    if returned_switch_id != switch_id:
-                        raise _InterfaceSwitchIdentityMismatch(f"row switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
-                return switch_id, interface_name.lower()
-
-            interfaces: list[dict[str, Any]] | None = None
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id) or self._switch_interfaces_cache_revisions.get(switch_id) != snapshot.switch_revision(switch_id):
             for attempt in range(1, self.INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS + 1):
                 try:
-                    interfaces = paginator.collect(
-                        fetch_page=fetch_page,
-                        identity=identity,
-                        context=f"interface inventory for switch {switch_id!r}",
-                    )
+                    self._switch_interfaces_cache[switch_id] = snapshot.load_switch(switch_id)
+                    self._switch_interfaces_cache_revisions[switch_id] = snapshot.switch_revision(switch_id)
                     break
                 except InterfacePaginationError as error:
                     retryable = isinstance(error.__cause__, _InterfaceSwitchIdentityMismatch)
@@ -315,9 +285,6 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                         error,
                     )
                     sleep(delay)
-            if interfaces is None:
-                raise AssertionError("interface inventory retry loop exited unexpectedly")
-            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces}
         return self._switch_interfaces_cache[switch_id]
 
     def _switches_to_query(self) -> dict[str, str]:
@@ -492,6 +459,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if names_before is None:
             return []
         self._switch_interfaces_cache.pop(switch_id, None)
+        self._switch_interfaces_cache_revisions.pop(switch_id, None)
         if self.interface_state_snapshot is not None:
             self.interface_state_snapshot.invalidate(switch_id)
         try:

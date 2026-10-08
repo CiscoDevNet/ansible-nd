@@ -26,6 +26,7 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -100,6 +101,14 @@ def _build_access_model(policy_kwargs: dict, interface_name: str = "Ethernet1/1"
     )
 
 
+def _seed_inventory(orchestrator, switch_id: str, inventory: dict) -> None:
+    """Preload the shared snapshot used by current-state safety checks."""
+    snapshot = orchestrator.state_snapshot
+    snapshot._interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._original_interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._revisions_by_switch[switch_id] = 1
+
+
 @pytest.mark.parametrize("policy_overrides", [{"description": "foreign trunk"}, {"adminState": False}, {"ptp": "true"}, {"unrecognizedField": 1}])
 def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch, policy_overrides: dict) -> None:
     """The access module cannot deploy pending intent owned by a configured trunk policy."""
@@ -119,6 +128,7 @@ def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch
             },
         }
     }
+    _seed_inventory(orchestrator, "FDO12345ABC", orchestrator._switch_interfaces_cache["FDO12345ABC"])
 
     absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
     assert orchestrator.reconcile_absent_deletes([absent_access]) is False
@@ -168,6 +178,7 @@ def test_absent_access_delete_can_replay_exact_reset_target(monkeypatch) -> None
             },
         }
     }
+    _seed_inventory(orchestrator, "FDO12345ABC", orchestrator._switch_interfaces_cache["FDO12345ABC"])
 
     absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
     assert orchestrator.reconcile_absent_deletes([absent_access]) is True

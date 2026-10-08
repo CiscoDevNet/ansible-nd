@@ -24,6 +24,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.inter
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 
 
+class _InterfaceSwitchIdentityMismatch(ValueError):
+    """A switch-scoped page contained a row for a different switch."""
+
+
 class InterfaceStateSnapshot:
     """Cache and index interface state for one fabric and module execution.
 
@@ -65,6 +69,8 @@ class InterfaceStateSnapshot:
         self.max_pages = max_pages
         self._paginator = InterfaceOffsetPaginator(page_size=page_size, max_pages=max_pages)
         self._interfaces_by_switch: dict[str, dict[str, dict]] = {}
+        self._overlay_baselines_by_switch: dict[str, dict[str, dict]] = {}
+        self._revisions_by_switch: dict[str, int] = {}
         self._original_interfaces_by_switch: dict[str, dict[str, dict]] = {}
         self._interface_summaries_by_switch: dict[str, dict[str, dict]] = {}
         self._dirty_switches: set[str] = set()
@@ -115,7 +121,7 @@ class InterfaceStateSnapshot:
 
             self._interface_inventory_gets += 1
             self._interface_inventory_pages += 1
-            return self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
+            return self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=False)
 
         def identity(interface: dict[str, Any]) -> tuple[str, str]:
             interface_name = interface.get("interfaceName")
@@ -125,13 +131,14 @@ class InterfaceStateSnapshot:
             if returned_switch_id is not None and (not isinstance(returned_switch_id, str) or not returned_switch_id):
                 raise ValueError(f"switchId must be a non-empty string, received {returned_switch_id!r}")
             if returned_switch_id is not None and returned_switch_id != switch_id:
-                raise ValueError(f"switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
+                raise _InterfaceSwitchIdentityMismatch(f"switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
             return switch_id, interface_name.lower()
 
         interfaces = self._paginator.collect(
             fetch_page=fetch_page,
             identity=identity,
             context=f"interface inventory for switch '{switch_id}'",
+            require_collection_wrapper=True,
         )
         return {interface["interfaceName"].lower(): deepcopy(interface) for interface in interfaces}
 
@@ -145,13 +152,13 @@ class InterfaceStateSnapshot:
             # responses small where supported; exact client-side switch selection below remains authoritative.
             endpoint.endpoint_params.switch_id = switch_id
             endpoint.endpoint_params.filter = f"switchId:{switch_id}"
-            endpoint.endpoint_params.sort = "interfaceName:asc"
+            endpoint.endpoint_params.sort = "interfaceName:asc,switchId:asc"
             endpoint.endpoint_params.max = page_size
             endpoint.endpoint_params.offset = offset
 
             self._interface_summary_gets += 1
             self._interface_summary_pages += 1
-            return self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
+            return self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=False)
 
         def identity(summary: dict[str, Any]) -> tuple[str, str]:
             returned_switch_id = summary.get("switchId")
@@ -166,6 +173,7 @@ class InterfaceStateSnapshot:
             fetch_page=fetch_page,
             identity=identity,
             context=f"interface summary for requested switch '{switch_id}'",
+            require_collection_wrapper=True,
         )
         return {summary["interfaceName"].lower(): deepcopy(summary) for summary in summaries if summary["switchId"] == switch_id}
 
@@ -187,6 +195,8 @@ class InterfaceStateSnapshot:
             self._dirty_refetches += 1
         interfaces = self._fetch_switch(switch_id)
         self._interfaces_by_switch[switch_id] = interfaces
+        self._overlay_baselines_by_switch.pop(switch_id, None)
+        self._revisions_by_switch[switch_id] = self._revisions_by_switch.get(switch_id, 0) + 1
         self._original_interfaces_by_switch.setdefault(switch_id, deepcopy(interfaces))
         self._requested_switches.add(switch_id)
         self._dirty_switches.discard(switch_id)
@@ -215,6 +225,10 @@ class InterfaceStateSnapshot:
     def has_switch(self, switch_id: str) -> bool:
         """Return whether a complete, clean current inventory is cached."""
         return switch_id in self._interfaces_by_switch and switch_id not in self._dirty_switches
+
+    def switch_revision(self, switch_id: str) -> int:
+        """Return the cache generation for one switch without copying its inventory."""
+        return self._revisions_by_switch.get(switch_id, 0)
 
     def cached_switch(self, switch_id: str) -> dict[str, dict] | None:
         """Return a clean cached inventory without triggering an API request."""
@@ -355,16 +369,27 @@ class InterfaceStateSnapshot:
             raise ValueError(f"InterfaceStateSnapshot overlay cannot upsert and delete the same interface(s): {sorted(overlap)}.")
 
         candidate = deepcopy(self._interfaces_by_switch[switch_id])
+        self._overlay_baselines_by_switch.setdefault(switch_id, deepcopy(candidate))
         for interface_name in prepared_deletes:
             candidate.pop(interface_name, None)
         candidate.update(prepared_upserts)
         self._interfaces_by_switch[switch_id] = candidate
+        self._revisions_by_switch[switch_id] = self._revisions_by_switch.get(switch_id, 0) + 1
         # Summary rows describe the same controller intent through a different
         # endpoint.  A raw-state overlay makes any previously cached summary for
         # this switch stale even though the raw cache itself remains clean.
         self._interface_summaries_by_switch.pop(switch_id, None)
         self._snapshot_overlays += 1
         return deepcopy(candidate)
+
+    def discard_overlays(self) -> None:
+        """Restore uncommitted planning projections before a no-write reconciliation."""
+        for switch_id, baseline in self._overlay_baselines_by_switch.items():
+            if switch_id not in self._dirty_switches:
+                self._interfaces_by_switch[switch_id] = deepcopy(baseline)
+                self._revisions_by_switch[switch_id] = self._revisions_by_switch.get(switch_id, 0) + 1
+                self._interface_summaries_by_switch.pop(switch_id, None)
+        self._overlay_baselines_by_switch.clear()
 
     def mark_dirty(self, switch_ids: str | Iterable[str]) -> None:
         """Mark local switch inventories stale without issuing a request.
@@ -374,12 +399,14 @@ class InterfaceStateSnapshot:
         controller configuration synchronization status.
         """
         for switch_id in self._normalise_switch_ids(switch_ids):
+            self._overlay_baselines_by_switch.pop(switch_id, None)
             self._interface_summaries_by_switch.pop(switch_id, None)
             self._dirty_switches.add(switch_id)
 
     def invalidate(self, switch_ids: str | Iterable[str]) -> None:
         """Discard current switch caches, retain originals, and mark locally dirty."""
         for switch_id in self._normalise_switch_ids(switch_ids):
+            self._overlay_baselines_by_switch.pop(switch_id, None)
             self._interfaces_by_switch.pop(switch_id, None)
             self._interface_summaries_by_switch.pop(switch_id, None)
             self._dirty_switches.add(switch_id)

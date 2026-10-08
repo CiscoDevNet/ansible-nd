@@ -109,6 +109,8 @@ class InterfaceWorkflowCoordinator:
         rest_send.commit()
         if not_found_ok and rest_send.return_code == 404:
             return {}
+        if rest_send.return_code in (204, 404):
+            raise RuntimeError(f"Request failed {rest_send.error_summary}")
         if not rest_send.success:
             raise RuntimeError(f"Request failed {rest_send.error_summary}")
         data = rest_send.response_current.get("DATA", {})
@@ -1020,12 +1022,67 @@ class InterfaceWorkflowCoordinator:
             return self._format_result(plan)
         if self._snapshot is None:
             raise RuntimeError("Interface workflow snapshot was not initialized.")
-        execution = self.executor_factory(snapshot=self._snapshot, deploy=deploy, verify=verify).execute(
-            plan,
-            deployment_targets=pending_deployment_targets,
-        )
-        result = self._format_result(plan, execution)
+        executor = self.executor_factory(snapshot=self._snapshot, deploy=deploy, verify=verify)
+        try:
+            execution = executor.execute(
+                plan,
+                deployment_targets=pending_deployment_targets,
+            )
+        except Exception as exc:
+            raise self._unexpected_execution_failure(plan, exc) from exc
+        try:
+            result = self._format_result(plan, execution)
+        except Exception as exc:
+            raise self._unexpected_execution_failure(plan, exc, execution=execution) from exc
         if execution.failed:
             result["failed"] = True
             raise InterfaceWorkflowExecutionFailed(result, execution.message)
         return result
+
+    @staticmethod
+    def _unexpected_execution_failure(
+        plan: InterfaceWorkflowPlan,
+        error: Exception,
+        *,
+        execution: InterfaceWorkflowExecution | None = None,
+    ) -> InterfaceWorkflowExecutionFailed:
+        """Preserve write evidence if execution or result projection unexpectedly fails."""
+        message = f"Unexpected interface workflow execution error: {error}"
+        if execution is None:
+            try:
+                mutation_requests, deploy_requests, _changed = InterfaceWorkflowExecutor._write_observations(plan)
+            except Exception:  # pylint: disable=broad-except
+                mutation_requests, deploy_requests = 0, 0
+            # The exception may have interrupted the transport before it recorded a
+            # response. Once execution starts, controller change is possible.
+            changed = True
+            ledger = {
+                "status": "partial_failure",
+                "mutations_sent": mutation_requests,
+                "deployments_sent": deploy_requests,
+                "affected_switch_ids": list(plan.target_switch_ids),
+                "items": [],
+                "deployment": {"status": "unknown", "targets": []},
+                "errors": [message],
+                "state_uncertain": True,
+            }
+        else:
+            changed = execution.changed or bool(execution.mutation_requests or execution.deploy_requests)
+            try:
+                ledger = execution.to_dict()
+            except Exception:  # pylint: disable=broad-except
+                ledger = {"mutations_sent": execution.mutation_requests, "deployments_sent": execution.deploy_requests, "items": []}
+            ledger["status"] = "partial_failure" if changed else "failed"
+            ledger["errors"] = [*ledger.get("errors", []), message]
+            ledger["state_uncertain"] = not bool(execution.actual_after_by_resource)
+        result = {
+            "changed": changed,
+            "failed": True,
+            "planned_changed": plan.changed,
+            "mutation_count": plan.mutation_count,
+            "target_switch_ids": list(plan.target_switch_ids),
+            "resources": [],
+            "request_stats": dict(plan.request_stats),
+            "execution": ledger,
+        }
+        return InterfaceWorkflowExecutionFailed(result, message)

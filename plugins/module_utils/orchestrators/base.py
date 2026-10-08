@@ -134,6 +134,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         if not_found_ok and self.rest_send.return_code == 404:
             return {}
 
+        if verb == HttpVerbEnum.GET and self.rest_send.return_code in (204, 404):
+            raise RuntimeError(f"Request failed {self.rest_send.error_summary}")
+
         if not self.rest_send.success:
             raise Exception(f"Request failed {self.rest_send.error_summary}")
 

@@ -133,6 +133,27 @@ class InterfaceFamilyAdapter:
             raise InterfaceWorkflowValidationError(
                 f"resources[{resource_index}] type '{self.resource_type}' config must be a list using {self.module_name} input."
             )
+        if self.resource_type == "loopback":
+            for item_index, item in enumerate(config):
+                if not isinstance(item, dict):
+                    continue
+                config_data = item.get("config_data", item.get("configData"))
+                if config_data is None:
+                    continue
+                if not isinstance(config_data, dict):
+                    continue  # The family model reports malformed container types.
+                network_os = config_data.get("network_os", config_data.get("networkOS"))
+                if not isinstance(network_os, dict):
+                    continue
+                if not (network_os.get("network_os_type") or network_os.get("networkOSType")):
+                    raise InterfaceWorkflowValidationError(
+                        f"resources[{resource_index}].config[{item_index}].config_data.network_os.network_os_type is required for a configured loopback."
+                    )
+                policy = network_os.get("policy")
+                if not isinstance(policy, dict) or not (policy.get("policy_type") or policy.get("policyType")):
+                    raise InterfaceWorkflowValidationError(
+                        f"resources[{resource_index}].config[{item_index}].config_data.network_os.policy.policy_type is required for a configured loopback."
+                    )
         try:
             normalized = self.config_normalizer(config) if self.config_normalizer is not None else config
             return NDConfigCollection.from_ansible_config(data=normalized, model_class=self.model_class, context={"state": state})

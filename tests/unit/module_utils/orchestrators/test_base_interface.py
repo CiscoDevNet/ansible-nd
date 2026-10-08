@@ -25,6 +25,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
 import logging
+from copy import deepcopy
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -216,7 +217,7 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
 
     def request(*, path, verb, not_found_ok=False, **_kwargs):
         assert verb == HttpVerbEnum.GET
-        assert not_found_ok is True
+        assert not_found_ok is False
         calls.append(path)
         offset = int(parse_qs(urlsplit(path).query)["offset"][0])
         return pages[offset]
@@ -227,7 +228,8 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
 
     assert list(inventory) == ["ethernet1/1", "ethernet1/2"]
     assert instance._switch_interfaces("SERIAL1") == inventory
-    assert instance._switch_interfaces("SERIAL1") is not inventory
+    assert instance._switch_interfaces("SERIAL1") is inventory
+    assert instance.state_snapshot.cached_switch("SERIAL1") is not inventory
     assert len(calls) == 2
     for expected_offset, path in enumerate(calls):
         assert "/switches/SERIAL1/interfaces?" in path
@@ -1127,6 +1129,16 @@ def test_reconcile_no_diff_contradictory_preview_fails_without_deploy(monkeypatc
     assert instance._pending_deploys == []
 
 
+def _seed_shared_inventory(instance, switch_id: str, inventory: dict) -> None:
+    """Seed the authoritative snapshot and its orchestrator-local read cache together."""
+    snapshot = instance.state_snapshot
+    snapshot._interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._original_interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._revisions_by_switch[switch_id] = 1
+    instance._switch_interfaces_cache[switch_id] = deepcopy(inventory)
+    instance._switch_interfaces_cache_revisions[switch_id] = 1
+
+
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode: bool) -> None:
     """An explicit absent delete remains actionable while preview shows pending CLI."""
@@ -1142,7 +1154,7 @@ def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {}
+    _seed_shared_inventory(instance, "FDO12345ABC", {})
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is True
@@ -1166,7 +1178,7 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {}
+    _seed_shared_inventory(instance, "FDO12345ABC", {})
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is False
@@ -1187,9 +1199,9 @@ def test_reconcile_absent_delete_skips_foreign_policy_and_previews_only_absent_t
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {
-        "loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}
-    }
+    _seed_shared_inventory(
+        instance, "FDO12345ABC", {"loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}}
+    )
     foreign = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
     truly_absent = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback11")
 

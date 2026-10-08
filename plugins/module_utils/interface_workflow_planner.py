@@ -432,14 +432,20 @@ class InterfaceWorkflowPlanner:
         return self._membership_index
 
     def _shared_vpc_peer_serial_cache(self) -> dict[str, str]:
-        """Return one authoritative peer cache shared by all workflow vPC orchestrators."""
+        """Return both directions of each controller-proven vPC pair."""
         if self._vpc_peer_serial_cache is None:
             cache: dict[str, str] = {}
             for switch_ip in self.vpc_pair_by_switch_ip:
-                primary_id = self.fabric_context.get_switch_id(switch_ip)
                 scope = self._vpc_pair_scope(switch_ip)
                 if len(scope) == 2:
-                    cache[primary_id] = next(switch_id for switch_id in scope if switch_id != primary_id)
+                    first, second = scope
+                    for switch_id, peer_id in ((first, second), (second, first)):
+                        previous_peer = cache.get(switch_id)
+                        if previous_peer is not None and previous_peer != peer_id:
+                            raise InterfaceWorkflowValidationError(
+                                f"Conflicting vPC pair context for switch '{switch_id}': '{previous_peer}' and '{peer_id}'."
+                            )
+                        cache[switch_id] = peer_id
             self._vpc_peer_serial_cache = cache
         return self._vpc_peer_serial_cache
 
@@ -1379,6 +1385,23 @@ class InterfaceWorkflowPlanner:
                     f"{identity.label} is claimed by multiple resource groups {indices}.",
                 )
 
+        # A delete is a declaration of desired absence even when its sibling's
+        # identical merged/replaced declaration produces no mutation. Compare
+        # declarations, not only the later operation ledger.
+        for resource in resources:
+            if resource.state != "deleted":
+                continue
+            for item in resource.proposed:
+                identity = self._identity(resource.adapter, item)
+                other_claims = [claim for claim in desired_claims.get(identity, []) if claim.resource_index != resource.resource_index]
+                if other_claims:
+                    add(
+                        "delete_desired_collision",
+                        identity,
+                        [resource, *other_claims],
+                        f"resources[{resource.resource_index}] explicitly deletes {identity.label} while another group declares it desired.",
+                    )
+
         actions: dict[InterfaceIdentity, list[tuple[InterfaceResourcePlan, str]]] = defaultdict(list)
         for resource in resources:
             for action, item in self._iter_operations(resource):
@@ -1915,6 +1938,9 @@ class InterfaceWorkflowPlanner:
                 resource.orchestrator.preflight_safety(mutation_candidates)
                 if self.run_capability_preflight:
                     resource.orchestrator.validate_switches_capable(mutation_candidates)
+                # The removal guard compares the complete desired set, including
+                # unchanged retained interfaces, against existing inventory.
+                resource.orchestrator._check_overridden_removals_discovered(list(resource.proposed))
             except Exception as exc:
                 raise InterfaceWorkflowValidationError(
                     f"resources[{resource.resource_index}] type '{resource.resource_type}' preflight failed: {exc}"

@@ -225,6 +225,27 @@ class InterfaceWorkflowExecutor:
         result = rest_send.result_current if result_count > result_start else {}
         return response, result
 
+    @classmethod
+    def _fresh_mutation_result(
+        cls,
+        rest_send,
+        markers: tuple[int, int],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Select a write response, never a later recovery inventory GET."""
+        response_start, result_start = markers
+        response_count, _result_count = cls._request_markers(rest_send)
+        if response_count <= response_start:
+            return {}, {}
+        responses = rest_send.responses[response_start:response_count]
+        results = rest_send.results[result_start:]
+        for index in range(len(responses) - 1, -1, -1):
+            response = responses[index]
+            if not isinstance(response, dict) or response.get("METHOD") == "GET":
+                continue
+            result = results[index] if index < len(results) and isinstance(results[index], dict) else {}
+            return response, result
+        return {}, {}
+
     @staticmethod
     def _response_outcomes(response: dict[str, Any]) -> list[dict[str, Any]]:
         """Return per-item response outcomes using the HTTP 207 exact-success contract."""
@@ -334,12 +355,20 @@ class InterfaceWorkflowExecutor:
         context: str,
     ) -> bool:
         markers = self._request_markers(orchestrator.rest_send)
+        create_targets = {item.target for item in items if item.action == "create"}
+        pending_before = set(orchestrator.pending_deploys) if create_targets else set()
         try:
             operation()
         except Exception as exc:  # pylint: disable=broad-except
             error = f"{context}: {exc}"
-            response, result = self._fresh_current(orchestrator.rest_send, markers)
+            response, result = self._fresh_mutation_result(orchestrator.rest_send, markers)
             outcomes = self._classify_response((item.target for item in items), response, result, error)
+            # The standalone bulk-create path can recover exact accepted names
+            # after a flat HTTP 500. Its recovery GET is not a write result;
+            # only newly queued exact targets may override failed/uncertain.
+            newly_accepted = set(orchestrator.pending_deploys) - pending_before if create_targets else set()
+            for target in create_targets & newly_accepted:
+                outcomes[target] = ("succeeded", None)
             self._apply_outcomes(items, outcomes)
             self._errors.append(error)
             return False
@@ -376,7 +405,8 @@ class InterfaceWorkflowExecutor:
                     *resource.operations.updates,
                     *resource.operations.creates,
                 ]
-                resource.orchestrator.preflight(mutation_candidates)
+                preflight_candidates = list(resource.proposed) if resource.state == "overridden" else mutation_candidates
+                resource.orchestrator.preflight(preflight_candidates)
         except Exception as exc:  # pylint: disable=broad-except
             self._errors.append(f"Pre-mutation prerequisite validation failed: {exc}")
             return False
@@ -831,6 +861,10 @@ class InterfaceWorkflowExecutor:
         force_after_write: bool,
     ) -> dict[int, NDConfigCollection]:
         """Return observed state, skipping successful post-write refresh when verification is disabled."""
+        if not mutation_attempted:
+            discard_overlays = getattr(self.snapshot, "discard_overlays", None)
+            if callable(discard_overlays):
+                discard_overlays()
         if mutation_attempted and not (self.verify or force_after_write):
             return {}
         if mutation_attempted:

@@ -11,10 +11,16 @@ from typing import Any
 
 
 def validate_ethernet_interface_names(config_list: list[dict[str, Any]]) -> None:
-    """Reject null, non-string, and empty entries in grouped Ethernet input."""
+    """Require an explicit list; only an actual empty list means reset-all."""
     for item_index, group in enumerate(config_list):
+        if not isinstance(group, dict):
+            raise ValueError(f"Ethernet config item {item_index} must be a mapping.")
         switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
+        if "interface_names" not in group:
+            raise ValueError(f"interface_names is required for Ethernet config item {item_index} on switch '{switch_ip}'.")
+        interface_names = group["interface_names"]
+        if not isinstance(interface_names, list):
+            raise ValueError(f"interface_names for Ethernet config item {item_index} on switch '{switch_ip}' must be a list.")
         for entry_index, name in enumerate(interface_names):
             if isinstance(name, str) and name:
                 continue
@@ -34,7 +40,7 @@ def validate_ethernet_within_item_duplicates(config_list: list[dict[str, Any]]) 
     """Reject a repeated case-insensitive name within one Ethernet group."""
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
+        interface_names = group["interface_names"]
         seen: set[str] = set()
         for name in interface_names:
             key = name.lower()
@@ -51,7 +57,7 @@ def validate_ethernet_across_item_duplicates(config_list: list[dict[str, Any]]) 
     seen: dict[tuple[Any, str], int] = {}
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
+        interface_names = group["interface_names"]
         for name in interface_names:
             key = (switch_ip, name.lower())
             if key in seen:
@@ -70,7 +76,7 @@ def expand_ethernet_config(config_list: list[dict[str, Any]]) -> list[dict[str, 
 
     expanded: list[dict[str, Any]] = []
     for group in config_list:
-        for name in group.get("interface_names") or []:
+        for name in group["interface_names"]:
             item = deepcopy(group)
             item.pop("interface_names", None)
             item["interface_name"] = name

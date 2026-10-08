@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor import (
@@ -1482,6 +1484,57 @@ def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_chan
     assert result.status == "failed"
 
 
+def test_preflight_failure_discards_uncommitted_planning_overlay_before_reporting_actual_state():
+    rest_send = RestSend({"fabric_name": "FABRIC1", "check_mode": True})
+    context = FabricContext(rest_send=rest_send, fabric_name="FABRIC1")
+    context._switch_map = {"192.0.2.1": "SERIAL1"}
+    context._switch_map_by_id = {"SERIAL1": "192.0.2.1"}
+    snapshot = InterfaceStateSnapshot(
+        fabric_name="FABRIC1",
+        fabric_context=context,
+        request=lambda **_kwargs: {"interfaces": [{"interfaceName": "loopback1", "configData": {"networkOS": {"policy": {"policyType": "loopback"}}}}]},
+    )
+    snapshot.load_switch("SERIAL1")
+    snapshot.apply_overlay("SERIAL1", upserts=[{"interfaceName": "loopback1", "configData": {"networkOS": {"policy": {"policyType": "projected"}}}}])
+
+    class SnapshotAdapter:
+        ownership_domain = "loopback"
+
+        def existing_collection(self, _orchestrator):
+            current = snapshot.cached_interface("SERIAL1", "loopback1")
+            return FakeCollection(["before" if snapshot.policy_type(current) == "loopback" else "projected"])
+
+    events = []
+    orchestrator = FakeOrchestrator("reject", events, fail_preflight=True)
+    resource_plan = resource(0, orchestrator, updates=[FakeModel("loopback1")])
+    resource_plan.adapter = SnapshotAdapter()
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot).execute(plan(resource_plan))
+
+    assert result.failed is True
+    assert result.status == "failed"
+    assert result.changed is False
+    assert result.mutation_requests == 0
+    assert result.actual_after_by_resource[0].values == ["before"]
+    assert snapshot.policy_type(snapshot.cached_interface("SERIAL1", "loopback1")) == "loopback"
+
+
+def test_overridden_execution_preflight_receives_retained_no_diff_interfaces():
+    events = []
+
+    class RecordingOrchestrator(FakeOrchestrator):
+        def preflight(self, models):
+            events.append(("preflight_models", tuple(model.interface_name for model in models)))
+
+    orchestrator = RecordingOrchestrator("retained", events)
+    resource_plan = resource(0, orchestrator, deletes=[FakeModel("loopback20")], state="overridden")
+    resource_plan.proposed = FakeCollection([FakeModel("loopback10")])
+    executor = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events))
+
+    assert executor._enable_writes_and_preflight(plan(resource_plan)) is True
+    assert ("preflight_models", ("loopback10",)) in events
+
+
 def test_207_exact_success_allowlist_fails_all_identified_non_success_outcomes():
     """HTTP 207 trusts only exact success while retaining target-specific mixed-success evidence."""
     targets = tuple((f"loopback{index}", "SERIAL1") for index in range(1, 7))
@@ -1609,6 +1662,37 @@ def test_normal_return_207_create_with_exact_success_for_every_target_succeeds()
     assert result.deploy_requests == 0
     assert {item.status for item in result.items} == {"succeeded"}
     assert result.errors == ()
+
+
+@pytest.mark.parametrize("accepted_names", [(), ("loopback1",), ("loopback1", "loopback2")])
+def test_flat_500_create_recovery_get_only_accepts_exact_queued_targets(accepted_names):
+    """A successful recovery GET cannot turn a failed bulk POST into an all-target success."""
+    events = []
+
+    class RecoveringCreate(FakeOrchestrator):
+        def create_bulk(self, models):
+            self.events.append(("create", self.name, tuple(model.interface_name for model in models)))
+            self.rest_send.record("/interfaces", success=False, changed=False, return_code=500)
+            self.queue_deploy_targets((name, "SERIAL1") for name in accepted_names)
+            self.rest_send.record("/interfaces", method="GET", success=True, changed=False, data={"interfaces": []})
+            raise RuntimeError("bulk create failed after recovery")
+
+    orchestrator = RecoveringCreate("recovering", events)
+    workflow_plan = plan(
+        resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")], actual=("after",) if accepted_names else ("before",))
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.mutation_requests == 1
+    assert result.changed is bool(accepted_names)
+    assert {item.interface_name: item.status for item in result.items} == {
+        name: ("succeeded" if name in accepted_names else "failed") for name in ("loopback1", "loopback2")
+    }
+    deployed = {entry["interface_name"] for entry in result.deployment["targets"]}
+    assert deployed == set(accepted_names)
+    assert result.deploy_requests == (1 if accepted_names else 0)
 
 
 def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(monkeypatch):

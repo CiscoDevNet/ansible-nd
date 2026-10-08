@@ -172,6 +172,10 @@ def test_absent_access_delete_does_not_deploy_staged_trunk_port_channel(monkeypa
             "configData": {"networkOS": {"policy": {"policyType": "trunkPoHost", "description": "staged trunk change"}}},
         }
     }
+    snapshot = orchestrator.state_snapshot
+    snapshot._interfaces_by_switch["FDO11111AAA"] = dict(orchestrator._switch_interfaces_cache["FDO11111AAA"])
+    snapshot._original_interfaces_by_switch["FDO11111AAA"] = dict(orchestrator._switch_interfaces_cache["FDO11111AAA"])
+    snapshot._revisions_by_switch["FDO11111AAA"] = 1
 
     access_delete = _build_pc_model(interface_name="port-channel997", include_config=False)
     assert orchestrator.reconcile_absent_deletes([access_delete]) is False
@@ -447,13 +451,12 @@ def test_port_channel_access_orchestrator_00430() -> None:
     """
     # Summary
 
-    Verify `query_all` returns an empty list when a switch's interfaces endpoint returns no body
-    (the `not_found_ok=True` branch in `PortChannelBaseOrchestrator.query_all`).
+    Verify a switch-scoped interface-list 404 fails closed.
 
     ## Test
 
-    - Switch's interface list returns 404 (treated as no interfaces present)
-    - query_all skips the switch and yields []
+    - Switch's interface list returns 404
+    - query_all raises instead of assuming a complete empty inventory
 
     ## Classes and Methods
 
@@ -467,12 +470,9 @@ def test_port_channel_access_orchestrator_00430() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
-    with does_not_raise():
-        # state=overridden keeps query_all fabric-wide so the 404 switch is still visited and skipped.
-        orchestrator = _build_orchestrator(gen_responses, state="overridden")
-        result = orchestrator.query_all()
-
-    assert result == []
+    orchestrator = _build_orchestrator(gen_responses, state="overridden")
+    with pytest.raises(RuntimeError, match=r"Query all failed.*404"):
+        orchestrator.query_all()
 
 
 def test_port_channel_access_orchestrator_00440() -> None:

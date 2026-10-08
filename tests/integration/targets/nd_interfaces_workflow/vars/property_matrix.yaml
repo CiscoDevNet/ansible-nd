@@ -723,7 +723,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
               description: IW loopback minimal
@@ -732,7 +734,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "{{ nd_iw_active_resources.loopback.primary_ipv4 }}"
               # TODO: Re-enable loopback IPv6 after nd_interface_loopback normalizes CIDR input
@@ -747,7 +751,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: false
               ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
               # ipv6: "{{ nd_iw_active_resources.loopback.alternate_ipv6 }}"
@@ -760,7 +766,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
               description: IW loopback replaced
@@ -769,7 +777,9 @@ nd_iw_property_matrix:
         interface_name: "{{ nd_iw_active_resources.loopback.secondary_name }}"
         config_data:
           network_os:
+            network_os_type: nx-os
             policy:
+              policy_type: loopback
               admin_state: true
               ip: 198.18.90.3
               description: IW loopback override victim
@@ -790,13 +800,13 @@ nd_iw_property_matrix:
         config:
           - switch_ip: "{{ nd_iw_active_switches.primary }}"
             interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
-            config_data: {network_os: {policy: {description: "IW café"}}}
+            config_data: {network_os: {network_os_type: nx-os, policy: {policy_type: loopback, description: "IW café"}}}
       - name: empty_vrf
         expected_error: at least 1 character
         config:
           - switch_ip: "{{ nd_iw_active_switches.primary }}"
             interface_name: "{{ nd_iw_active_resources.loopback.primary_name }}"
-            config_data: {network_os: {policy: {vrf: ""}}}
+            config_data: {network_os: {network_os_type: nx-os, policy: {policy_type: loopback, vrf: ""}}}
     properties:
       - switch_ip
       - interface_name

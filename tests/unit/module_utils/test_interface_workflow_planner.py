@@ -9,11 +9,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import PlatformType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters import (
     IMPLICIT_TRANSITION_STATES,
@@ -331,6 +332,85 @@ def test_ethernet_adapter_accepts_the_grouped_standalone_input_contract() -> Non
     assert proposed.keys() == [("192.0.2.1", "Ethernet1/1"), ("192.0.2.1", "Ethernet1/2")]
 
 
+@pytest.mark.parametrize(
+    "group,expected_error",
+    [
+        ({"switch_ip": "192.0.2.1"}, "interface_names is required"),
+        ({"switch_ip": "192.0.2.1", "interface_names": None}, "interface_names.*must be a list"),
+        ({"switch_ip": "192.0.2.1", "interface_names": "Ethernet1/1"}, "interface_names.*must be a list"),
+    ],
+)
+def test_ethernet_overridden_rejects_ambiguous_grouped_input(group, expected_error: str) -> None:
+    """Missing or malformed names cannot become an authoritative empty set."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["ethernet_access"]
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=expected_error):
+        adapter.validate_config([group], "overridden", 0)
+
+    explicit_empty = adapter.validate_config([{"switch_ip": "192.0.2.1", "interface_names": []}], "overridden", 0)
+    assert list(explicit_empty) == []
+
+
+@pytest.mark.parametrize(
+    "resource_type",
+    ["port_channel_access", "port_channel_routed", "port_channel_trunk_host", "subinterface_managed", "svi"],
+)
+def test_ios_xe_overridden_discovery_guard_runs_in_read_only_planning(resource_type, monkeypatch) -> None:
+    """A check-mode plan must not approve an override rejected by normal preflight."""
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"})
+    orchestrator_class = INTERFACE_FAMILY_ADAPTERS[resource_type].orchestrator_class
+
+    def reject_undiscovered(_self, _models):
+        raise RuntimeError("IOS-XE removal is not discovered")
+
+    monkeypatch.setattr(orchestrator_class, "_check_overridden_removals_discovered", reject_undiscovered)
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="IOS-XE removal is not discovered"):
+        planner.plan([{"type": resource_type, "state": "overridden", "config": []}])
+
+
+def test_overridden_discovery_preflight_keeps_unchanged_desired_interfaces() -> None:
+    """The guard must not mistake a retained no-diff interface for a removal."""
+    planner, _recorder = _planner()
+    retained = object()
+    observed = []
+    orchestrator = SimpleNamespace(
+        preflight_create=lambda _models: None,
+        preflight_safety=lambda _models: None,
+        _check_overridden_removals_discovered=observed.extend,
+    )
+    resource_plan = SimpleNamespace(
+        resource_index=0,
+        resource_type="svi",
+        state="overridden",
+        orchestrator=orchestrator,
+        proposed=[retained],
+        operations=SimpleNamespace(creates=(), updates=(), deletes=()),
+        transitions=(),
+    )
+
+    planner._run_preflights([resource_plan])
+
+    assert observed == [retained]
+
+
+@pytest.mark.parametrize(
+    "config_data,missing",
+    [
+        ({"network_os": {"policy": {"ip": "198.51.100.10/32"}}}, "network_os_type"),
+        ({"network_os": {"network_os_type": "nx-os", "policy": {"ip": "198.51.100.10/32"}}}, "policy_type"),
+    ],
+)
+def test_workflow_loopback_rejects_implicit_discriminator_defaults(config_data, missing):
+    adapter = INTERFACE_FAMILY_ADAPTERS["loopback"]
+    config = [{"switch_ip": "192.0.2.1", "interface_name": "loopback10", "config_data": config_data}]
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=missing):
+        adapter.validate_config(config, "merged", 0)
+
+    assert len(adapter.validate_config([{"switch_ip": "192.0.2.1", "interface_name": "loopback10"}], "deleted", 0)) == 1
+
+
 def test_ethernet_trunk_vlan_mapping_plan_retains_entries() -> None:
     """The aggregate path inherits the standalone atomic VLAN-mapping merge."""
     current = _wire_interface(
@@ -529,6 +609,27 @@ def test_sibling_families_cannot_claim_the_same_switch_interface() -> None:
 
     assert "duplicate_ownership" in {conflict.code for conflict in exc_info.value.conflicts}
     assert exc_info.value.conflicts[0].resource_indices == (0, 1)
+
+
+@pytest.mark.parametrize("write_state", ["merged", "replaced"])
+@pytest.mark.parametrize("delete_first", [False, True])
+def test_explicit_delete_conflicts_with_sibling_noop_desired_state(write_state: str, delete_first: bool) -> None:
+    """An unchanged desired claim still conflicts with explicit removal."""
+    current = _wire_interface("Ethernet1/1", "ethernet", "accessHost", accessVlan=10)
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+    wanted = {"type": "ethernet_access", "state": write_state, "config": [_ethernet("192.0.2.1")]}
+    removed = {
+        "type": "ethernet_access",
+        "state": "deleted",
+        "config": [{"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]}],
+    }
+    resources = [removed, wanted] if delete_first else [wanted, removed]
+
+    with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
+        planner.plan(resources)
+
+    assert "delete_desired_collision" in {conflict.code for conflict in exc_info.value.conflicts}
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced"])

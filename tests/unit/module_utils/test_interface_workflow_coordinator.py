@@ -34,6 +34,69 @@ COMPACT_RESULT_KEYS = {
     "request_stats",
     "execution",
 }
+
+
+@pytest.mark.parametrize("status", [204, 404])
+def test_collection_read_rejects_204_or_404_even_if_transport_reports_success(status):
+    rest_send = SimpleNamespace(
+        path=None,
+        verb=None,
+        commit=lambda: None,
+        return_code=status,
+        success=True,
+        error_summary="list response was not HTTP 200",
+        response_current={"DATA": {"interfaces": []}},
+    )
+
+    with pytest.raises(RuntimeError, match="list response was not HTTP 200"):
+        InterfaceWorkflowCoordinator._request(rest_send, path="/interfaces", verb="GET")
+
+
+def test_formatting_exception_after_accepted_execution_preserves_changed_and_ledger(monkeypatch):
+    workflow_plan = plan()
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=False))
+    coordinator._snapshot = SimpleNamespace(request_stats=workflow_plan.request_stats)
+    coordinator.executor_factory = lambda **kwargs: FakeExecutor([], **kwargs)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+    monkeypatch.setattr(coordinator, "_pending_deployment_targets", lambda _plan: ())
+
+    def fail_projection(_plan, _execution):
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(coordinator, "_format_result", fail_projection)
+
+    with pytest.raises(InterfaceWorkflowExecutionFailed, match="projection failed") as failure:
+        coordinator.run()
+
+    result = failure.value.result
+    assert result["changed"] is True
+    assert result["failed"] is True
+    assert result["execution"]["status"] == "partial_failure"
+    assert result["execution"]["mutations_sent"] == 1
+    assert result["execution"]["items"][0]["status"] == "succeeded"
+
+
+def test_unexpected_executor_exception_reports_possible_change_with_structured_failure(monkeypatch):
+    workflow_plan = plan()
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=False))
+    coordinator._snapshot = SimpleNamespace(request_stats=workflow_plan.request_stats)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+    monkeypatch.setattr(coordinator, "_pending_deployment_targets", lambda _plan: ())
+
+    def fail_execution(*_args, **_kwargs):
+        raise RuntimeError("transport interrupted")
+
+    coordinator.executor_factory = lambda **_kwargs: SimpleNamespace(execute=fail_execution)
+
+    with pytest.raises(InterfaceWorkflowExecutionFailed, match="transport interrupted") as failure:
+        coordinator.run()
+
+    result = failure.value.result
+    assert result["changed"] is True
+    assert result["execution"]["status"] == "partial_failure"
+    assert result["execution"]["state_uncertain"] is True
+
+
 COMPACT_RESOURCE_KEYS = {
     "resource_index",
     "type",

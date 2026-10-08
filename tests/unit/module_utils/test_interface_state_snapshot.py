@@ -323,6 +323,39 @@ def test_interface_summary_page_two_failure_does_not_publish_partial_cache() -> 
     assert snapshot.request_stats["interface_summary_pages"] == 2
 
 
+@pytest.mark.parametrize("second_page", [{}, {"unexpected": []}, None])
+@pytest.mark.parametrize("summary", [False, True])
+def test_collection_page_two_requires_success_wrapper_without_publishing_partial_cache(second_page, summary) -> None:
+    first = _summary("Ethernet1/1", "SERIAL1", "ethernet", "accessHost") if summary else _interface("Ethernet1/1", "ethernet", "accessHost")
+    recorder = _RequestRecorder([{"interfaces": [first], "meta": {"counts": {"total": 2, "remaining": 1}}}, second_page])
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError):
+        if summary:
+            snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1")])
+        else:
+            snapshot.load_switch("SERIAL1")
+
+    assert snapshot.interface_summaries_by_identity == {}
+    assert snapshot.interfaces_by_identity == {}
+    assert all(call["not_found_ok"] is False for call in recorder.calls)
+
+
+def test_summary_pagination_total_order_keeps_same_names_on_different_switches() -> None:
+    recorder = _RequestRecorder(
+        [
+            {"interfaces": [_summary("Ethernet1/1", "SERIAL1", "ethernet", "accessHost"), _summary("Ethernet1/1", "SERIAL2", "ethernet", "accessHost")]},
+            {"interfaces": [_summary("Ethernet1/2", "SERIAL1", "ethernet", "accessHost")]},
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=2)
+
+    result = snapshot.load_interface_summaries([("SERIAL1", "Ethernet1/1"), ("SERIAL1", "Ethernet1/2")])
+
+    assert set(result) == {("SERIAL1", "ethernet1/1"), ("SERIAL1", "ethernet1/2")}
+    assert all("sort=interfaceName%3Aasc%2CswitchId%3Aasc" in call["path"] for call in recorder.calls)
+
+
 def test_interface_summary_rejects_case_insensitive_duplicate_within_page() -> None:
     recorder = _RequestRecorder(
         [
