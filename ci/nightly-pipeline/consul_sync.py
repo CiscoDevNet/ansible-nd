@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 
 CONSUL = os.environ.get(
-    "ND_CONSUL_BASE", "http://10.78.210.155:8500/v1/kv/ansible-nd"
+    "ND_CONSUL_BASE", "http://198.51.100.155:8500/v1/kv/ansible-nd"
 )
 WORKSPACE = "/Users/sivakasi/Library/CloudStorage/OneDrive-Cisco/2/Ansible work/NX_ansible/jenkins/jenkins_nd"
 ROOT = os.environ.get("ND_LOCAL_ROOT", WORKSPACE)
@@ -104,7 +104,7 @@ def read_local(path, timeout=READ_TIMEOUT):
     if not os.path.exists(path):
         return None, "missing"
     try:
-        p = subprocess.run(["cat", path], capture_output=True, timeout=timeout, check=False)
+        p = subprocess.run(["cat", path], capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return None, "timeout>%ss (dataless/stall)" % timeout
     if p.returncode != 0:

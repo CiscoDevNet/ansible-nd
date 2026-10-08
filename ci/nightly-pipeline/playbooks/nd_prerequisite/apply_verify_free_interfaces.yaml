@@ -1,0 +1,21 @@
+---
+# verify_free_interfaces is deliberately read-only. The offline planner has
+# already correlated controller inventory, fabric links, and interface-detail
+# policy data; this apply-time gate preserves the typed operation in logs.
+- name: "verify_free_interfaces guard {{ _ndp_operation.switch_ref }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.interfaces | length > 0
+      - _ndp_operation.interfaces | unique | list | length == _ndp_operation.interfaces | length
+      - _ndp_operation.constraints | sort == ['exists', 'not_fabric_link', 'not_port_channel_member']
+      - >-
+        (_ndp_operation.interfaces
+         | difference(_ndp_registry.lab.interface_allowlist[_ndp_operation.switch_ref]))
+        | length == 0
+    fail_msg: >-
+      The planner emitted an invalid free-interface verification operation for
+      {{ _ndp_operation.switch_ref }}.
+    success_msg: >-
+      Reserved interfaces are present, outside fabric links, and free of
+      port-channel membership: {{ _ndp_operation.interfaces | join(', ') }}.
+  run_once: true

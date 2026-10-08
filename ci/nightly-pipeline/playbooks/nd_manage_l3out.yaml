@@ -85,11 +85,11 @@
                 - mtu: 9216
                   ipv4_mask_length: 30
                   switch1_details:
-                    switch_id: 9PICV0LTD7C
+                    switch_id: SERIAL00001
                     interface_name: Ethernet1/1
                     interface_ipv4_address: 10.0.0.1
                   switch2_details:
-                    switch_id: 9V1IZP23KBG
+                    switch_id: SERIAL00005
                     interface_name: Ethernet1/1
                     interface_ipv4_address: 10.0.0.2
             routing_details:

@@ -1,6 +1,7 @@
 import copy
 import json
 import pathlib
+import re
 import sys
 
 import pytest
@@ -31,6 +32,12 @@ EXPECTED_INTEGRATION = {
     "nd_manage_policy", "nd_manage_policy_group", "nd_manage_vrfs", "nd_manage_networks",
     "nd_manage_route_map", "nd_manage_acl", "nd_manage_l3out", "nd_interface_vpc_access",
     "nd_interface_vpc_trunk_host", "nd_manage_switches", "nd_manage_fabric", "nd_resource_manager", "nd_vpc_pair",
+    "nd_interface_ethernet_routed", "nd_manage_links", "nd_manage_fabric_group_vxlan",
+    "nd_manage_fabric_group_members", "nd_manage_tor",
+    "nd_interface_loopback", "nd_interface_svi", "nd_interface_ethernet_access",
+    "nd_interface_ethernet_trunk_host", "nd_interface_port_channel_access",
+    "nd_interface_port_channel_trunk_host", "nd_interface_subinterface_managed",
+    "nd_interface_subinterface_unmanaged",
 }
 EXPECTED_SMOKE = {
     "nd_manage_acl", "nd_manage_prefix_list", "nd_manage_route_map", "nd_manage_vrfs", "nd_manage_networks",
@@ -213,6 +220,118 @@ def test_allow_auto_confirm_runs_concrete_pending_but_blocks_unresolved_and_reje
     ) == ["integration.nd_manage_policy: owner confirmation is rejected"]
 
 
+def test_new_controller_only_fabric_group_profiles_are_self_contained(registry):
+    for profile_id in (
+        "integration.nd_manage_fabric_group_vxlan",
+        "integration.nd_manage_fabric_group_members",
+    ):
+        profile = registry["profiles"][profile_id]
+        assert profile["phase"] == "controller_disposable"
+        assert profile["fabrics"] == []
+        assert profile["switches"] == {"required_count": 0, "members": []}
+        assert profile["resources"][0]["requirement_status"] == "ready"
+        assert validate_selected_profiles(
+            registry, [profile_id], allow_auto_confirm=True
+        ) == []
+
+
+def test_routed_ethernet_profile_reserves_leaf1_interfaces(registry):
+    profile = registry["profiles"]["integration.nd_interface_ethernet_routed"]
+    assert [member["ref"] for member in profile["switches"]["members"]] == [
+        "vxlan_leaf_1"
+    ]
+    assert profile["runtime_vars"] == {
+        "nd_test_fabric_name": "VXLAN_EVPN_Fabric",
+        "nd_test_switch_ip": "192.0.2.195",
+    }
+    resource = profile["resources"][0]
+    assert resource["kind"] == "verify_free_interfaces"
+    assert resource["requirement_status"] == "ready"
+    assert resource["interfaces"] == [
+        "Ethernet1/31", "Ethernet1/32", "Ethernet1/33", "Ethernet1/34",
+    ]
+
+
+def test_interface_profiles_declare_typed_checks_and_reversible_parents(registry):
+    expected_namespaces = {
+        "integration.nd_interface_loopback": {
+            "loopback200", "loopback201", "loopback202", "loopback203",
+            "loopback204", "loopback205", "loopback206", "loopback299",
+        },
+        "integration.nd_interface_svi": {
+            "vlan333", "vlan334", "vlan335", "vlan336",
+            "vlan337", "vlan338", "vlan500", "vlan501",
+        },
+    }
+    for profile_id, interfaces in expected_namespaces.items():
+        resource = registry["profiles"][profile_id]["resources"][0]
+        assert resource["kind"] == "verify_logical_interface_namespace"
+        assert set(resource["interfaces"]) == interfaces
+        assert resource["expected_state"] == "absent"
+
+    for profile_id, interfaces in {
+        "integration.nd_interface_ethernet_access": {f"Ethernet1/{port}" for port in range(41, 51)},
+        "integration.nd_interface_ethernet_trunk_host": {f"Ethernet1/{port}" for port in range(41, 49)},
+        "integration.nd_interface_port_channel_access": {f"Ethernet1/{port}" for port in range(10, 14)},
+        "integration.nd_interface_port_channel_trunk_host": {f"Ethernet1/{port}" for port in range(10, 14)},
+    }.items():
+        resource = registry["profiles"][profile_id]["resources"][0]
+        assert resource["kind"] == "verify_free_interfaces"
+        assert set(resource["interfaces"]) == interfaces
+        assert set(resource["constraints"]) == {
+            "exists", "not_port_channel_member", "not_fabric_link",
+        }
+
+    for profile_id in (
+        "integration.nd_interface_subinterface_managed",
+        "integration.nd_interface_subinterface_unmanaged",
+    ):
+        resources = registry["profiles"][profile_id]["resources"]
+        parent = next(item for item in resources if item["kind"] == "ensure_routed_parent")
+        port_channel = next(
+            item for item in resources if item["kind"] == "ensure_routed_port_channel"
+        )
+        assert (parent["interface"], parent["desired_policy"]) == (
+            "Ethernet1/1", "routedHost",
+        )
+        assert parent["existing_link"] == {
+            "peer_switch_ref": "external_edge_1", "peer_interface": "Ethernet1/1",
+        }
+        assert (port_channel["interface"], port_channel["desired_policy"]) == (
+            "Port-channel10", "int_l3_port_channel",
+        )
+        assert port_channel["member_interfaces"] == []
+
+
+def test_existing_link_parent_must_join_two_registered_fabrics(registry):
+    profile_id = "integration.nd_interface_subinterface_managed"
+    for peer, interface, expected in (
+        ("vxlan_leaf_2", "Ethernet1/1", "existing link must join two different fabrics"),
+        ("missing_switch", "Ethernet1/1", "existing link uses unknown peer switch"),
+        ("external_edge_1", "eth1", "existing link peer interface is invalid"),
+    ):
+        candidate = copy.deepcopy(registry)
+        parent = next(
+            item for item in candidate["profiles"][profile_id]["resources"] if item["kind"] == "ensure_routed_parent"
+        )
+        parent["existing_link"] = {"peer_switch_ref": peer, "peer_interface": interface}
+        assert any(expected in error for error in validate_registry(candidate)), peer
+
+
+def test_physical_topology_profiles_fail_closed_until_lab_is_available(registry):
+    # nd_manage_links now targets live-verified free ports on the shared fabric; ToR still needs a
+    # dedicated seven-switch topology the lab does not have.
+    assert validate_selected_profiles(
+        registry, ["integration.nd_manage_links"], allow_auto_confirm=True
+    ) == []
+    assert validate_selected_profiles(
+        registry, ["integration.nd_manage_tor"], allow_auto_confirm=True
+    ) == [
+        "integration.nd_manage_tor: prerequisite resource "
+        "dedicated_tor_topology is unavailable"
+    ]
+
+
 def test_logical_multi_execution_selection_requires_every_child(registry):
     candidate = copy.deepcopy(registry)
     candidate["profiles"]["integration.nd_vpc_pair"]["confirmation"] = {
@@ -248,6 +367,11 @@ def test_jenkins_target_parser_ignores_commented_entries():
     targets = jenkins_targets(jenkins_text)
     assert targets["PLAYBOOK_FILES"] == []
     assert "nd_manage_policy" in targets["INTEGRATION_MODULES"]
+    assert {
+        "nd_manage_fabric_group_vxlan",
+        "nd_manage_fabric_group_members",
+        "nd_manage_tor",
+    } <= set(targets["INTEGRATION_MODULES"])
     assert targets["INTERFACE_INTEGRATION_MODULES"] == [
         "nd_interface_loopback",
         "nd_interface_svi",
@@ -262,12 +386,33 @@ def test_jenkins_target_parser_ignores_commented_entries():
     assert {
         *targets["INTEGRATION_MODULES"],
         *targets["INTERFACE_INTEGRATION_MODULES"],
-        "nd_manage_links",
         "nd_resource_manager",
         "nd_manage_fabric",
+        "nd_manage_links",
         "nd_manage_switches",
     } == set(targets["EFFECTIVE_INTEGRATION_MODULES"])
-    assert targets["STANDALONE_INTEGRATION_MODULES"] == []
+    assert "ND_TOR_ENABLED" in jenkins_text
+    assert "def effectiveIntegrationModulesForResults = effectiveIntegrationModules" in jenkins_text
+    assert targets["STANDALONE_INTEGRATION_MODULES"] == ["nd_vpc_pair"]
+
+
+def test_jenkins_exposes_only_debug_and_git_branch_parameters():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    block = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S).group(1)
+    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == ["DEBUG", "ND_GIT_BRANCH"]
+    # Everything else is a fixed constant of the script, so nothing may read another job parameter.
+    assert re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text) == ["ND_GIT_BRANCH"]
+    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC", "ND_SUBIF_ETHERNET_PARENT", "ND_INTERFACE_TEST_SWITCH_IP"):
+        assert removed not in jenkins_text, removed
+
+
+def test_jenkins_always_runs_nd_vpc_pair_and_never_skips_it():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    standalone = jenkins_text.split("Running Standalone Integration Modules")[1].split("Running Integration Modules")[0]
+    # A missing peer-link is logged and the module still runs; nothing may turn it back into a SKIP.
+    assert "NDP_MODULE_SKIPPED" not in standalone
+    assert "running the module anyway" in standalone
+    assert '"${TARGET_PLAYBOOK}"' in standalone
 
 
 def test_effective_module_profile_coverage_reports_all_missing_profiles_once():
@@ -292,19 +437,19 @@ def test_profile_coverage_command_passes_and_fails_closed(capsys):
         "--registry",
         registry_path,
         "--modules",
-        "nd_manage_policy,nd_manage_switches",
+        "nd_manage_policy,nd_interface_ethernet_routed,nd_manage_switches",
     ]) == 0
-    assert "NDP_PROFILE_COVERAGE_OK: 2 effective module(s) have profiles" in capsys.readouterr().out
+    assert "NDP_PROFILE_COVERAGE_OK: 3 effective module(s) have profiles" in capsys.readouterr().out
 
     assert main([
         "coverage",
         "--registry",
         registry_path,
         "--modules",
-        "nd_manage_policy,nd_interface_loopback",
+        "nd_manage_policy,missing_profile_fixture",
     ]) == 1
     assert (
-        "integration.nd_interface_loopback: effective Jenkins module has no profile"
+        "integration.missing_profile_fixture: effective Jenkins module has no profile"
         in capsys.readouterr().err
     )
 
@@ -321,6 +466,65 @@ def test_jenkins_runs_profile_coverage_gate_before_the_module_loop():
         < jenkins_text.index(coverage_call)
         < jenkins_text.index(module_loop)
     )
+
+
+def test_live_link_capture_uses_an_ansible_loop_not_a_python_comprehension():
+    capture_text = (
+        ROOT / "playbooks/nd_prerequisite/nd_prerequisite_capture.yaml"
+    ).read_text()
+    task_text = capture_text.split(
+        "- name: Normalize captured inter-fabric links for the planner", 1
+    )[1].split("- name: Persist normalized live prerequisite state for planning", 1)[0]
+
+    assert "for _ndp_link in" not in task_text
+    assert "| subelements('current.links', skip_missing=True)" in task_text
+    assert "loop_var: _ndp_link_item" in task_text
+    assert "'links': _ndp_live_state.links + [{" in task_text
+    assert "_ndp_link_item.1.srcSwitchId" in task_text
+
+
+def test_subinterface_parent_lifecycle_is_owned_by_typed_prerequisites():
+    runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    assert "SUBIF SETUP - provision routed parent" not in runner_text
+    assert "_subif_parent_is_underlay" not in runner_text
+    assert "force_handlers: true" in runner_text
+    assert "restore any prerequisite interfaces after preparation failure" in runner_text
+    assert "notify: Restore prerequisite interface changes" in runner_text
+    assert "nd_prerequisite_restore.yaml" in runner_text
+
+    for filename in (
+        "apply_verify_free_interfaces.yaml",
+        "apply_verify_logical_interface_namespace.yaml",
+        "apply_ensure_routed_parent.yaml",
+        "apply_ensure_routed_port_channel.yaml",
+        "nd_prerequisite_restore.yaml",
+        "restore_interface_operation.yaml",
+    ):
+        assert f"nd_prerequisite/{filename}" in jenkins_text
+
+
+def test_runner_maps_and_validates_dedicated_physical_topologies():
+    runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
+    for token in (
+        "ND_LINKS_FABRIC",
+        "ND_LINKS_SWITCH_A",
+        "ND_LINKS_SWITCH_B",
+        "ND_TOR_FABRIC",
+        "ND_TOR_SWITCH_SERIAL",
+        "ND_VPC_TOR_PEER_SERIAL",
+        "ND_VPC_LEAF_PEER_SERIAL",
+        "ND_TOR2_SWITCH_SERIAL",
+    ):
+        assert token in runner_text
+    # nd_manage_links no longer demands a dedicated fabric: its inputs must be roster members and, with
+    # prerequisites enabled, equal to what the planner verified live (profile runtime_vars).
+    assert "validate dedicated numbered-link topology" not in runner_text
+    assert "_ndp_result.runtime_vars.nd_test_switch_a" in runner_text
+    assert "nd_test_fabric_numbered in nd_test_fabric_switches" in runner_text
+    assert "validate dedicated seven-switch ToR topology" in runner_text
+    assert "The current six-switch shared lab cannot satisfy it" in runner_text
 
 
 def test_jenkins_derives_every_switch_alias_from_canonical_names(registry):
@@ -434,24 +638,29 @@ def test_local_runner_l3out_projection_uses_border_and_external_edge():
 
     # Keep the local runner aligned with the confirmed L3Out profile and the
     # Jenkins runner: border_1 is the VXLAN endpoint, edge_1 is the external endpoint.
-    assert "nd_test_switch1_id=9FTTP2QGS0H" in runner_text
-    assert "nd_test_switch1_mgmt_ip=10.122.84.88" in runner_text
-    assert "nd_test_switch2_id=9V1IZP23KBG" in runner_text
-    assert "nd_test_switch2_mgmt_ip=10.122.84.89" in runner_text
-    assert "nd_test_switch1_id=9PICV0LTD7C -e nd_test_switch1_mgmt_ip=10.122.84.195" not in runner_text
+    assert "nd_test_switch1_id=SERIAL00004" in runner_text
+    assert "nd_test_switch1_mgmt_ip=192.0.2.88" in runner_text
+    assert "nd_test_switch2_id=SERIAL00005" in runner_text
+    assert "nd_test_switch2_mgmt_ip=192.0.2.89" in runner_text
+    assert "nd_test_switch1_id=SERIAL00001 -e nd_test_switch1_mgmt_ip=192.0.2.195" not in runner_text
 
 
-def test_webex_results_table_uses_module_specific_log_links():
+def test_webex_results_table_uses_markdown_and_separate_artifact_links():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
 
-    # Webex receives a Markdown table, not an ASCII code block, so the artifact
-    # link can remain in the same row as the module result. Keep the link label
-    # concise and module-specific (for example, policy-logs).
-    assert "def markdownHeaders = ['Status', 'Playbook', 'Fabric', 'ND', 'Passed', 'Failed', 'Skipped', 'Duration', 'Logs']" in jenkins_text
-    assert '"[${artifactLabel(r[1])}](${JOB_URL}${BUILD_NUMBER}/artifact/${artifact})"' in jenkins_text
-    assert ".replaceFirst(/^nd_manage_/, '')" in jenkins_text
-    assert '"${token ?: \'module\'}-logs"' in jenkins_text
-    assert "Artifact links:" not in jenkins_text
+    # The notification is plain Webex Markdown. Webex documents fenced code
+    # blocks, so the compact result table uses monospaced aligned columns and
+    # deliberately omits Fabric and ND. Full links follow in a separate section.
+    assert "def headers = ['Status', 'Playbook', 'Passed', 'Failed', 'Skipped', 'Duration']" in jenkins_text
+    assert '"```\\n${renderRow(headers)}' in jenkins_text
+    assert "[cell(0), cell(1), cell(4), cell(5), cell(6), cell(7)]" in jenkins_text
+    assert "**Artifact links:**" in jenkins_text
+    assert "def formatArtifactLinks(rawArtifacts)" in jenkins_text
+    assert "def formatSkippedTestLinks(rawSkipFiles)" in jenkins_text
+    assert "def calculateTotalDuration(rawSummary)" in jenkins_text
+    assert "Total module duration:" in jenkins_text
+    assert "buildWebexAdaptiveCard" not in jenkins_text
+    assert '\"attachments\"' not in jenkins_text
 
 
 def test_switch_credentials_are_separate_and_runtime_bound():
@@ -608,7 +817,7 @@ def test_interface_sanitizer_is_recursive_allowlisted_and_normalization_is_stric
             }}},
         }
     }
-    sanitized = sanitize_interface_payload(payload, "9PICV0LTD7C", True, registry)
+    sanitized = sanitize_interface_payload(payload, "SERIAL00001", True, registry)
     policy = sanitized["configData"]["networkOS"]["policy"]
     assert policy == {"adminState": True, "nested": {"value": 7}}
     assert normalized_equal("switches", [{"uuid": "a", "id": 1}], [{"uuid": "b", "id": 1}])
@@ -616,11 +825,11 @@ def test_interface_sanitizer_is_recursive_allowlisted_and_normalization_is_stric
         normalized_equal("unknown", [], [])
     payload["current"]["interfaceName"] = "Ethernet99/99"
     with pytest.raises(ValueError, match="allowlisted"):
-        sanitize_interface_payload(payload, "9PICV0LTD7C", True, registry)
+        sanitize_interface_payload(payload, "SERIAL00001", True, registry)
     tampered = copy.deepcopy(registry)
     tampered["lab"]["interface_allowlist"]["vxlan_leaf_1"].append("Ethernet99/99")
     with pytest.raises(ValueError, match="registry failed validation"):
-        sanitize_interface_payload(payload, "9PICV0LTD7C", True, tampered)
+        sanitize_interface_payload(payload, "SERIAL00001", True, tampered)
 
 
 def test_registry_requires_exact_switches_and_canonical_profile_fabrics(registry):

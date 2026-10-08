@@ -15,6 +15,12 @@
     _ndp_state_file: "{{ nd_prerequisite_state_dir | default('/tmp/.nd-prerequisite-recovery/' ~ (nd_prerequisite_run_id | default('local-' ~ nd_prerequisite.profile, true)), true) }}/current-state.yaml"
   run_once: true
 
+- name: Initialize run-scoped prerequisite interface restore journal
+  ansible.builtin.set_fact:
+    _ndp_restore_file: "{{ _ndp_state_dir }}/interface-restore.yaml"
+    _ndp_prerequisite_restore_operations: []
+  run_once: true
+
 - name: Load the canonical prerequisite registry
   ansible.builtin.command:
     argv:
@@ -80,7 +86,23 @@
   register: _ndp_plan
   failed_when:
     - not (nd_prerequisite_only | default(false) | bool)
-    - _ndp_plan.rc != 0
+    - _ndp_plan.rc not in [0, 3]
+
+# Planner exit code 3 = the lab lacks a declared port/link/vPC substrate. That is a lab limitation,
+# not a regression: report it under a greppable marker and end the play before any mutation.
+- name: Report a module whose declared lab substrate is unavailable
+  ansible.builtin.debug:
+    msg: "NDP_MODULE_SKIPPED [{{ _ndp_execution_id }}]: {{ _ndp_plan.stderr | default('') | trim }}"
+  run_once: true
+  when:
+    - _ndp_plan.rc == 3
+    - not (nd_prerequisite_only | default(false) | bool)
+
+- name: End the play cleanly because the declared lab substrate is unavailable
+  ansible.builtin.meta: end_play
+  when:
+    - _ndp_plan.rc == 3
+    - not (nd_prerequisite_only | default(false) | bool)
 
 - name: Decode the confirmed ND prerequisite plan
   ansible.builtin.set_fact:
@@ -124,6 +146,10 @@
       - ensure_virtual_vpc
       - ensure_bfd
       - ensure_link
+      - verify_free_interfaces
+      - verify_logical_interface_namespace
+      - ensure_routed_parent
+      - ensure_routed_port_channel
       - verify_resource
 
 - name: Show the confirmed ND prerequisite operations
@@ -213,13 +239,14 @@
 - name: Confirm reconciled prerequisites have no remaining topology delta
   ansible.builtin.assert:
     that:
-      # verify_resource / ensure_interface are non-mutating stubs that never converge.
+      # verify_resource / ensure_interface and the typed verify operations are
+      # non-mutating checks that intentionally remain in every replan.
       # ensure_link is mutating but self-verifying: apply_ensure_link.yaml is GET-first
       # (skips when the link already exists) and asserts the create was accepted, so a
       # failed create already fails the run before this gate. Its post-create GET shape
       # is controller-version-dependent, so it is trusted to that apply-time assert
       # rather than re-verified by this offline replan.
-      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'ensure_interface', 'ensure_link']) | list | length == 0
+      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'ensure_interface', 'ensure_link', 'verify_free_interfaces', 'verify_logical_interface_namespace']) | list | length == 0
     fail_msg: "ND prerequisite reconciliation completed with remaining topology operations; refusing to run {{ _ndp_execution_id }}."
   run_once: true
   when:

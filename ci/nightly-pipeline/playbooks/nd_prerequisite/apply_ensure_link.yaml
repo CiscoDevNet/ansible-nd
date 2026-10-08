@@ -1,19 +1,23 @@
 ---
 # ensure_link: ensure a module's prerequisite inter-fabric link exists.
 #
-# Two provisioning modes (per-operation `provisioning`):
-#   * api            (default) -- POST the link to the native NDFC lan-fabric links API.
-#                    Use for templates that can be created standalone.
-#   * module_managed          -- the link is an IFC whose L3 addressing is "Input from
-#                    l3out" / ReadOnly (e.g. ext_l3_dci_link) and is populated by the
-#                    owning module's L3Out/VRF-Lite workflow. A raw link POST fails
-#                    template execution, so this file only VERIFIES the physical
-#                    prerequisite and lets the owning module create the IFC.
+# Provisioning modes (per-operation `provisioning`):
+#   * nd_manage_links         -- create/update the link through cisco.nd.nd_manage_links with the
+#                    operation's policy_type + template_inputs. This is the supported path on ND 4.3:
+#                    nd_manage_l3out validates one link template per connectivity type (routed ->
+#                    ext_l3_dci_link/layer3DciVrfLite, subInterface -> ext_fabric_setup/ebgpVrfLite,
+#                    svi -> ext_l2_dci_link/layer2Dci). A discovered ethisl link is updated in place; a
+#                    pair with no cable becomes a PLANNED (config-only) link, which is journaled so the
+#                    restore handler deletes it again (operation.config_only).
+#   * api            (legacy) -- POST the link to the native NDFC lan-fabric links API. ND 4.3 answers
+#                    HTTP 500 template execution for the DCI templates, so profiles no longer use it.
+#   * module_managed (legacy) -- only VERIFIES the physical prerequisite and creates nothing.
 #
-# Every logical IFC needs an underlying discovered (ethisl) physical link between the two
+# Every cabled IFC needs an underlying discovered (ethisl) physical link between the two
 # switches first; when `requires_physical` is true (default) this file asserts that
 # adjacency exists and, if not, fails with the exact cabling instruction (which two
-# switches/ports to connect). ext_l3_dci_link additionally requires the SOURCE switch to
+# switches/ports to connect). requires_physical=false specs skip that assert on purpose.
+# ext_l3_dci_link additionally requires the SOURCE switch to
 # hold a BORDER-type role -- a plain leaf cannot host an L3Out DCI IFC.
 #
 # CREATE endpoint (api mode): native single-object camelCase payload
@@ -108,10 +112,12 @@
           ansible.builtin.include_tasks: admin_up_interface.yaml
           run_once: true
           loop:
-            - serial: "{{ _ndp_operation.src.serial }}"
+            - fabric: "{{ _ndp_operation.src.fabric_name }}"
+              serial: "{{ _ndp_operation.src.serial }}"
               ifname: "{{ _ndp_operation.src.interface }}"
               label: "{{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }}"
-            - serial: "{{ _ndp_operation.dst.serial }}"
+            - fabric: "{{ _ndp_operation.dst.fabric_name }}"
+              serial: "{{ _ndp_operation.dst.serial }}"
               ifname: "{{ _ndp_operation.dst.interface }}"
               label: "{{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }}"
           loop_control:
@@ -193,6 +199,85 @@
           Physical adjacency between {{ _ndp_operation.src.switch_name }} and
           {{ _ndp_operation.dst.switch_name }} is present.
       when: _ndp_operation.requires_physical | default(true) | bool
+
+    - name: "ensure_link journal the planned {{ _ndp_operation.template }} link so the restore handler removes it again"
+      when:
+        - (_ndp_operation.provisioning | default('api')) == 'nd_manage_links'
+        - _ndp_operation.config_only | default(false) | bool
+      block:
+        - name: "ensure_link append the planned link to the restore journal"
+          ansible.builtin.set_fact:
+            _ndp_prerequisite_restore_operations: >-
+              {{ _ndp_prerequisite_restore_operations + [{
+                'action': 'delete_planned_link',
+                'switch_ref': _ndp_operation.src.switch_ref,
+                'serial': _ndp_operation.src.serial,
+                'fabric_name': _ndp_operation.src.fabric_name,
+                'interface': _ndp_operation.src.interface,
+                'link': {
+                  'src_fabric_name': _ndp_operation.src.fabric_name,
+                  'dst_fabric_name': _ndp_operation.dst.fabric_name,
+                  'src_switch_id': _ndp_operation.src.serial,
+                  'dst_switch_id': _ndp_operation.dst.serial,
+                  'src_interface_name': _ndp_operation.src.interface,
+                  'dst_interface_name': _ndp_operation.dst.interface
+                },
+                'pre_change_intent_exists': false
+              }] }}
+          run_once: true
+
+        - name: "ensure_link persist the restore journal before mutation"
+          ansible.builtin.copy:
+            dest: "{{ _ndp_restore_file }}"
+            content: >-
+              {{ {'schema_version': 1, 'run_id': _ndp_run_id,
+                  'execution_id': _ndp_execution_id,
+                  'operations': _ndp_prerequisite_restore_operations} | to_nice_yaml }}
+            mode: "0600"
+          delegate_to: localhost
+          run_once: true
+          check_mode: false
+
+    - name: "ensure_link {{ _ndp_operation.template }} via cisco.nd.nd_manage_links ({{ _ndp_operation.policy_type | default('n/a') }})"
+      when: (_ndp_operation.provisioning | default('api')) == 'nd_manage_links'
+      block:
+        - name: "ensure_link merge the {{ _ndp_operation.policy_type | default('n/a') }} link"
+          cisco.nd.nd_manage_links:
+            fabric_name: "{{ _ndp_operation.src.fabric_name }}"
+            link_scope: manage
+            config:
+              - src_fabric_name: "{{ _ndp_operation.src.fabric_name }}"
+                dst_fabric_name: "{{ _ndp_operation.dst.fabric_name }}"
+                src_switch_id: "{{ _ndp_operation.src.serial }}"
+                dst_switch_id: "{{ _ndp_operation.dst.serial }}"
+                src_interface_name: "{{ _ndp_operation.src.interface }}"
+                dst_interface_name: "{{ _ndp_operation.dst.interface }}"
+                config_data:
+                  policy_type: "{{ _ndp_operation.policy_type }}"
+                  template_inputs: "{{ _ndp_operation.template_inputs | default({}) }}"
+            state: merged
+          register: _ndp_link_module
+          run_once: true
+
+        - name: "ensure_link read the link back until ND reports the {{ _ndp_operation.template }} template"
+          cisco.nd.nd_rest:
+            path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric={{ _ndp_operation.src.fabric_name }}"
+            method: get
+          register: _ndp_link_after
+          retries: 6
+          delay: 5
+          until: >-
+            {{ ((_ndp_link_after.current if _ndp_link_after.current is not mapping
+                 else (_ndp_link_after.current.DATA | default(_ndp_link_after.current.links | default([]))))
+                | selectattr('templateName', 'defined')
+                | selectattr('templateName', 'equalto', _ndp_operation.template)
+                | selectattr('sw1-info.sw-serial-number', 'in', [_ndp_operation.src.serial, _ndp_operation.dst.serial])
+                | selectattr('sw2-info.sw-serial-number', 'in', [_ndp_operation.src.serial, _ndp_operation.dst.serial])
+                | selectattr('sw1-info.if-name', 'in', [_ndp_operation.src.interface, _ndp_operation.dst.interface])
+                | selectattr('sw2-info.if-name', 'in', [_ndp_operation.src.interface, _ndp_operation.dst.interface])
+                | list | length) > 0 }}
+          no_log: true
+          run_once: true
 
     - name: "ensure_link {{ _ndp_operation.template }} is provisioned by its owning module workflow -- no standalone create"
       ansible.builtin.debug:

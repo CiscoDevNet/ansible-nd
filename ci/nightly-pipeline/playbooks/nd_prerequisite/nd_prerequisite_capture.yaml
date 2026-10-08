@@ -62,6 +62,9 @@
       fabrics: {}
       switches: {}
       interfaces: {}
+      logical_interfaces: {}
+      interface_details: {}
+      physical_links: []
       vpc_pairs: []
       links: []
       resources: []
@@ -174,9 +177,9 @@
     that:
       - not (_ndp_interface_result.failed | default(false))
       - _ndp_interface_result.current.interfaceName is defined
-      - >-
-        (_ndp_interface_result.current.configData.networkOS.policy.adminState | default(false) | bool)
-        or (_ndp_interface_result.current.operData.adminStatus | default('') | lower == 'up')
+    # Admin state is deliberately NOT asserted here: the planner turns an admin-down endpoint into an
+    # ensure_interface operation (no-shutdown), so a shut cable (e.g. the leaf_1/leaf_2 vPC peer-link ports)
+    # must be capturable rather than failing the whole module before it can be recovered.
     fail_msg: "Required physical interface {{ _ndp_interface_result._ndp_link_item.0.switch_ref }}/{{ _ndp_interface_result._ndp_link_item.1 }} could not be captured."
   loop: "{{ _ndp_live_link_results.results | default([]) }}"
   loop_control:
@@ -211,6 +214,339 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - _ndp_profile.links | length > 0
+
+# Typed interface prerequisites are captured independently of profile.links.
+# `links` models known cabled/admin-up endpoints; these resources model ports
+# and logical namespaces that an integration target is allowed to consume.
+- name: Initialize typed interface prerequisite capture queries
+  ansible.builtin.set_fact:
+    _ndp_resource_physical_queries: []
+    _ndp_resource_logical_queries: []
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Expand free-interface resource queries
+  ansible.builtin.set_fact:
+    _ndp_resource_physical_queries: >-
+      {{ _ndp_resource_physical_queries + [{
+        'switch_ref': _ndp_resource_interface.0.switch_ref,
+        'interface': _ndp_resource_interface.1
+      }] }}
+  loop: >-
+    {{
+      (_ndp_profile.resources
+        | selectattr('kind', 'equalto', 'verify_free_interfaces') | list)
+        | subelements('interfaces', skip_missing=True)
+    }}
+  loop_control:
+    loop_var: _ndp_resource_interface
+    label: "{{ _ndp_resource_interface.0.switch_ref }}/{{ _ndp_resource_interface.1 }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Expand routed Ethernet parent resource queries
+  ansible.builtin.set_fact:
+    _ndp_resource_physical_queries: >-
+      {{ _ndp_resource_physical_queries + [{
+        'switch_ref': _ndp_parent_resource.switch_ref,
+        'interface': _ndp_parent_resource.interface
+      }] }}
+  loop: "{{ _ndp_profile.resources | selectattr('kind', 'equalto', 'ensure_routed_parent') | list }}"
+  loop_control:
+    loop_var: _ndp_parent_resource
+    label: "{{ _ndp_parent_resource.switch_ref }}/{{ _ndp_parent_resource.interface }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Expand reserved logical-interface namespace queries
+  ansible.builtin.set_fact:
+    _ndp_resource_logical_queries: >-
+      {{ _ndp_resource_logical_queries + [{
+        'switch_ref': _ndp_resource_interface.0.switch_ref,
+        'interface': _ndp_resource_interface.1
+      }] }}
+  loop: >-
+    {{
+      (_ndp_profile.resources
+        | selectattr('kind', 'equalto', 'verify_logical_interface_namespace') | list)
+        | subelements('interfaces', skip_missing=True)
+    }}
+  loop_control:
+    loop_var: _ndp_resource_interface
+    label: "{{ _ndp_resource_interface.0.switch_ref }}/{{ _ndp_resource_interface.1 }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Expand routed port-channel parent resource queries
+  ansible.builtin.set_fact:
+    _ndp_resource_logical_queries: >-
+      {{ _ndp_resource_logical_queries + [{
+        'switch_ref': _ndp_port_channel_resource.switch_ref,
+        'interface': _ndp_port_channel_resource.interface
+      }] }}
+  loop: "{{ _ndp_profile.resources | selectattr('kind', 'equalto', 'ensure_routed_port_channel') | list }}"
+  loop_control:
+    loop_var: _ndp_port_channel_resource
+    label: "{{ _ndp_port_channel_resource.switch_ref }}/{{ _ndp_port_channel_resource.interface }}"
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
+- name: Capture full switch interface details for port-channel membership checks
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface/detail?serialNumber={{
+        _ndp_registry.lab.switches[_ndp_detail_member.ref].serial
+      }}
+    method: get
+  loop: "{{ _ndp_profile.switches.members }}"
+  loop_control:
+    loop_var: _ndp_detail_member
+    label: "{{ _ndp_detail_member.ref }}"
+  register: _ndp_live_interface_detail_results
+  no_log: true
+  failed_when: false
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Require interface-detail capture for safe membership verification
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_detail_result.failed | default(false))
+      - _ndp_detail_result.current is defined
+    fail_msg: >-
+      Cannot prove port-channel membership safety for {{ _ndp_detail_result._ndp_detail_member.ref }};
+      refusing to release reserved physical interfaces to the integration target.
+  loop: "{{ _ndp_live_interface_detail_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_detail_result
+    label: "{{ _ndp_detail_result._ndp_detail_member.ref }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Normalize full switch interface details for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'interface_details': _ndp_live_state.interface_details | combine({
+            _ndp_detail_result._ndp_detail_member.ref: _ndp_detail_items
+          })
+        })
+      }}
+  vars:
+    _ndp_detail_current: "{{ _ndp_detail_result.current | default([]) }}"
+    _ndp_detail_items: >-
+      {{
+        _ndp_detail_current
+        if (_ndp_detail_current is not mapping)
+        else (_ndp_detail_current.DATA | default(_ndp_detail_current.interfaces | default([])))
+      }}
+  loop: "{{ _ndp_live_interface_detail_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_detail_result
+    label: "{{ _ndp_detail_result._ndp_detail_member.ref }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Capture physical link inventory for reserved-port safety checks
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric={{ _ndp_resource_fabric.name }}
+    method: get
+  loop: "{{ _ndp_profile.fabrics }}"
+  loop_control:
+    loop_var: _ndp_resource_fabric
+    label: "{{ _ndp_resource_fabric.name }}"
+  register: _ndp_live_physical_link_results
+  no_log: true
+  failed_when: false
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Require physical-link capture for reserved-port safety
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_physical_link_result.failed | default(false))
+      - _ndp_physical_link_result.current is defined
+    fail_msg: >-
+      Cannot prove fabric-link safety in {{ _ndp_physical_link_result._ndp_resource_fabric.name }};
+      refusing to release reserved physical interfaces to the integration target.
+  loop: "{{ _ndp_live_physical_link_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_physical_link_result
+    label: "{{ _ndp_physical_link_result._ndp_resource_fabric.name }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Normalize physical link inventory for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'physical_links': _ndp_live_state.physical_links + _ndp_physical_link_items
+        })
+      }}
+  vars:
+    _ndp_physical_link_current: "{{ _ndp_physical_link_result.current | default([]) }}"
+    _ndp_physical_link_items: >-
+      {{
+        _ndp_physical_link_current
+        if (_ndp_physical_link_current is not mapping)
+        else (_ndp_physical_link_current.DATA | default(_ndp_physical_link_current.links | default([])))
+      }}
+  loop: "{{ _ndp_live_physical_link_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_physical_link_result
+    label: "{{ _ndp_physical_link_result._ndp_resource_fabric.name }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Capture reserved physical interfaces from the managed-interface API
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{
+        _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_resource_interface.switch_ref].baseline_fabric_ref].name
+      }}/switches/{{ _ndp_registry.lab.switches[_ndp_resource_interface.switch_ref].serial
+      }}/interfaces/{{ _ndp_resource_interface.interface | replace('/', '%2F') }}
+    method: get
+  loop: "{{ _ndp_resource_physical_queries }}"
+  loop_control:
+    loop_var: _ndp_resource_interface
+    label: "{{ _ndp_resource_interface.switch_ref }}/{{ _ndp_resource_interface.interface }}"
+  register: _ndp_live_resource_interface_results
+  no_log: true
+  failed_when: false
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Capture reserved physical-interface policy intent
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_registry.lab.switches[_ndp_resource_interface.switch_ref].serial
+      }}&ifName={{ _ndp_resource_interface.interface | replace('/', '%2F') }}
+    method: get
+  loop: "{{ _ndp_resource_physical_queries }}"
+  loop_control:
+    loop_var: _ndp_resource_interface
+    label: "{{ _ndp_resource_interface.switch_ref }}/{{ _ndp_resource_interface.interface }}"
+  register: _ndp_live_resource_policy_results
+  no_log: true
+  failed_when: false
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Normalize reserved physical-interface state for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'interfaces': _ndp_live_state.interfaces | combine({
+            _ndp_interface_result._ndp_resource_interface.switch_ref:
+              (_ndp_live_state.interfaces[_ndp_interface_result._ndp_resource_interface.switch_ref] | default({})) | combine({
+                _ndp_interface_result._ndp_resource_interface.interface: {
+                  'exists': (not (_ndp_interface_result.failed | default(false))) and (_ndp_interface_current.interfaceName is defined),
+                  'configured': _ndp_policy_objects | length > 0,
+                  'policy': _ndp_policy_object.policy | default(''),
+                  'policy_type': _ndp_interface_current.configData.networkOS.policy.policyType | default(''),
+                  'nv_pairs': (_ndp_policy_object.interfaces | default([{}]) | first).nvPairs | default({}),
+                  'admin_state': _ndp_interface_current.configData.networkOS.policy.adminState | default(false) | bool,
+                  'operational_state': _ndp_interface_current.operData.operationalStatus | default(None) | lower
+                }
+              })
+          })
+        })
+      }}
+  vars:
+    _ndp_interface_current: "{{ _ndp_interface_result.current | default({}) }}"
+    _ndp_policy_result: "{{ _ndp_live_resource_policy_results.results[_ndp_resource_index] }}"
+    _ndp_policy_current: "{{ _ndp_policy_result.current | default([]) }}"
+    _ndp_policy_objects: >-
+      {{
+        _ndp_policy_current
+        if (_ndp_policy_current is not mapping)
+        else (_ndp_policy_current.DATA | default(_ndp_policy_current.response | default([])))
+      }}
+    _ndp_policy_object: "{{ _ndp_policy_objects | first | default({}) }}"
+  loop: "{{ _ndp_live_resource_interface_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_interface_result
+    index_var: _ndp_resource_index
+    label: "{{ _ndp_interface_result._ndp_resource_interface.switch_ref }}/{{ _ndp_interface_result._ndp_resource_interface.interface }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_physical_queries | length > 0
+
+- name: Capture reserved logical interfaces and routed port-channel parents
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_registry.lab.switches[_ndp_resource_interface.switch_ref].serial
+      }}&ifName={{ _ndp_resource_interface.interface | replace('/', '%2F') }}
+    method: get
+  loop: "{{ _ndp_resource_logical_queries }}"
+  loop_control:
+    loop_var: _ndp_resource_interface
+    label: "{{ _ndp_resource_interface.switch_ref }}/{{ _ndp_resource_interface.interface }}"
+  register: _ndp_live_resource_logical_results
+  no_log: true
+  failed_when: false
+  check_mode: false
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_logical_queries | length > 0
+
+- name: Normalize reserved logical-interface state for the planner
+  ansible.builtin.set_fact:
+    _ndp_live_state: >-
+      {{
+        _ndp_live_state | combine({
+          'logical_interfaces': _ndp_live_state.logical_interfaces | combine({
+            _ndp_logical_result._ndp_resource_interface.switch_ref:
+              (_ndp_live_state.logical_interfaces[_ndp_logical_result._ndp_resource_interface.switch_ref] | default({})) | combine({
+                _ndp_logical_result._ndp_resource_interface.interface: {
+                  'exists': _ndp_logical_objects | length > 0,
+                  'policy': _ndp_logical_object.policy | default(''),
+                  'nv_pairs': (_ndp_logical_object.interfaces | default([{}]) | first).nvPairs | default({})
+                }
+              })
+          })
+        })
+      }}
+  vars:
+    _ndp_logical_current: "{{ _ndp_logical_result.current | default([]) }}"
+    _ndp_logical_objects: >-
+      {{
+        _ndp_logical_current
+        if (_ndp_logical_current is not mapping)
+        else (_ndp_logical_current.DATA | default(_ndp_logical_current.response | default([])))
+      }}
+    _ndp_logical_object: "{{ _ndp_logical_objects | first | default({}) }}"
+  loop: "{{ _ndp_live_resource_logical_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_logical_result
+    label: "{{ _ndp_logical_result._ndp_resource_interface.switch_ref }}/{{ _ndp_logical_result._ndp_resource_interface.interface }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_resource_logical_queries | length > 0
 
 - name: Discover configured vPC pairs from the live controller
   cisco.nd.nd_manage_vpc_pair:
@@ -268,6 +604,18 @@
     - _ndp_profile.vpc_pairs | length > 0
     - _ndp_vpc_result.gathered.vpc_pairs | length > 0
 
+- name: Collect every declared link the planner must see (inter-fabric DCI links and vPC peer-links)
+  ansible.builtin.set_fact:
+    _ndp_link_probe_specs: >-
+      {{
+        (_ndp_profile.interfabric_links | default([]))
+        + (_ndp_profile.vpc_pairs | default([])
+           | selectattr('physical_peer_links', 'defined')
+           | map(attribute='physical_peer_links') | flatten
+           | map('combine', {'template': 'vpc_peer_link'}) | list)
+      }}
+  run_once: true
+
 - name: Discover declared inter-fabric links from the live controller
   cisco.nd.nd_rest:
     path: >-
@@ -275,7 +623,7 @@
         _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_ifl.src.switch_ref].baseline_fabric_ref].name
       }}
     method: get
-  loop: "{{ _ndp_profile.interfabric_links | default([]) }}"
+  loop: "{{ _ndp_link_probe_specs }}"
   loop_control:
     loop_var: _ndp_ifl
     label: "{{ _ndp_ifl.template }} {{ _ndp_ifl.src.switch_ref }}<->{{ _ndp_ifl.dst.switch_ref }}"
@@ -284,34 +632,38 @@
   check_mode: false
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
-    - _ndp_profile.interfabric_links | default([]) | length > 0
+    - _ndp_link_probe_specs | length > 0
 
 - name: Normalize captured inter-fabric links for the planner
   ansible.builtin.set_fact:
     _ndp_live_state: >-
       {{
         _ndp_live_state | combine({
-          'links': _ndp_live_state.links + [
-            {
-              'srcSwitchId': _ndp_link.srcSwitchId | default(''),
-              'srcInterfaceName': _ndp_link.srcInterfaceName | default(''),
-              'dstSwitchId': _ndp_link.dstSwitchId | default(''),
-              'dstInterfaceName': _ndp_link.dstInterfaceName | default(''),
-              'templateName': _ndp_link.templateName | default(''),
-              'linkType': _ndp_link.linkType | default('')
-            }
-            for _ndp_link in (_ndp_link_result.current.links | default([]))
-          ]
+          'links': _ndp_live_state.links + [{
+            'srcSwitchId': _ndp_link_item.1.srcSwitchId | default(''),
+            'srcInterfaceName': _ndp_link_item.1.srcInterfaceName | default(''),
+            'dstSwitchId': _ndp_link_item.1.dstSwitchId | default(''),
+            'dstInterfaceName': _ndp_link_item.1.dstInterfaceName | default(''),
+            'templateName': _ndp_link_item.1.templateName | default(''),
+            'linkType': _ndp_link_item.1.linkType | default(''),
+            'policyType': (_ndp_link_item.1.configData | default({})).policyType | default(''),
+            'linkPlanned': _ndp_link_item.1.linkPlanned | default(false),
+            'linkPresent': _ndp_link_item.1.linkPresent | default(true)
+          }]
         })
       }}
-  loop: "{{ _ndp_live_interfabric_link_results.results | default([]) }}"
+  loop: >-
+    {{
+      _ndp_live_interfabric_link_results.results | default([])
+        | subelements('current.links', skip_missing=True)
+    }}
   loop_control:
-    loop_var: _ndp_link_result
-    label: "{{ _ndp_link_result._ndp_ifl.template | default('link') }}"
+    loop_var: _ndp_link_item
+    label: "{{ _ndp_link_item.0._ndp_ifl.template | default('link') }}"
   run_once: true
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
-    - _ndp_profile.interfabric_links | default([]) | length > 0
+    - _ndp_link_probe_specs | length > 0
 
 - name: Persist normalized live prerequisite state for planning
   ansible.builtin.copy:

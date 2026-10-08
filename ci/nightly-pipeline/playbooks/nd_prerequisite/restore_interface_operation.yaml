@@ -1,0 +1,247 @@
+---
+- name: Validate the journaled prerequisite restore operation
+  ansible.builtin.assert:
+    that:
+      - _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel', 'delete_planned_link']
+      - not (_ndp_restore_operation.pre_change_intent_exists | bool)
+    fail_msg: "Refusing an unsupported or non-empty prerequisite restore snapshot."
+  run_once: true
+
+# The routed Ethernet / Port-channel parent is one this run created on a port the planner proved free, so every
+# sub-interface still on it was created by the test that just ran. ND refuses to change or delete the parent while
+# they exist (400 "Changing the routed interface policy type is prohibited when subinterfaces are configured on the
+# interface"; live 2026-10-08) and the targets have no cleanup file, so a test that stopped part-way would leave the
+# parent routed. Remove them with the collection's own module (remove + deploy) before restoring the parent.
+- name: "List the interfaces of {{ _ndp_restore_operation.serial }} to find sub-interfaces left on {{ _ndp_restore_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces
+    method: get
+  register: _ndp_restore_iface_list
+  no_log: true
+  failed_when: false
+  run_once: true
+  when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel']
+
+- name: "Find the sub-interfaces left on {{ _ndp_restore_operation.interface }}"
+  ansible.builtin.set_fact:
+    _ndp_restore_leftover_subifs: >-
+      {{ ((((_ndp_restore_iface_list | default({})).current | default({})).interfaces | default([]))
+          | map(attribute='interfaceName')
+          | select('match', '(?i)^' ~ (_ndp_restore_operation.interface | regex_escape) ~ '[.][0-9]+$') | list) }}
+  run_once: true
+  when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel']
+
+- name: "Remove the managed sub-interfaces {{ test_module | default('') }} left on {{ _ndp_restore_operation.interface }}"
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: "{{ _ndp_restore_operation.fabric_name }}"
+    config:
+      - switch_ip: "{{ _ndp_restore_operation.switch_ip }}"
+        interface_name: "{{ item | regex_replace('(?i)^port-channel', 'Port-channel') | regex_replace('(?i)^ethernet', 'Ethernet') }}"
+    state: deleted
+  loop: "{{ _ndp_restore_leftover_subifs | default([]) }}"
+  run_once: true
+  ignore_errors: true
+  when:
+    - _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel']
+    - (_ndp_restore_operation.switch_ip | default('')) | length > 0
+    - test_module | default('') == 'nd_interface_subinterface_managed'
+
+- name: "Remove the unmanaged sub-interfaces {{ test_module | default('') }} left on {{ _ndp_restore_operation.interface }}"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    fabric_name: "{{ _ndp_restore_operation.fabric_name }}"
+    config:
+      - switch_ip: "{{ _ndp_restore_operation.switch_ip }}"
+        interface_name: "{{ item | regex_replace('(?i)^port-channel', 'Port-channel') | regex_replace('(?i)^ethernet', 'Ethernet') }}"
+    state: deleted
+  loop: "{{ _ndp_restore_leftover_subifs | default([]) }}"
+  run_once: true
+  ignore_errors: true
+  when:
+    - _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel']
+    - (_ndp_restore_operation.switch_ip | default('')) | length > 0
+    - test_module | default('') == 'nd_interface_subinterface_unmanaged'
+
+# Only config-only (planned) links are journaled, so deleting them can never remove a real cable's link.
+- name: "Delete the planned link {{ _ndp_restore_operation.interface }} created for this execution"
+  cisco.nd.nd_manage_links:
+    fabric_name: "{{ _ndp_restore_operation.link.src_fabric_name }}"
+    link_scope: manage
+    config:
+      - src_fabric_name: "{{ _ndp_restore_operation.link.src_fabric_name }}"
+        dst_fabric_name: "{{ _ndp_restore_operation.link.dst_fabric_name }}"
+        src_switch_id: "{{ _ndp_restore_operation.link.src_switch_id }}"
+        dst_switch_id: "{{ _ndp_restore_operation.link.dst_switch_id }}"
+        src_interface_name: "{{ _ndp_restore_operation.link.src_interface_name }}"
+        dst_interface_name: "{{ _ndp_restore_operation.link.dst_interface_name }}"
+    state: deleted
+  register: _ndp_restore_planned_link
+  run_once: true
+  # A leftover planned link is harmless (the next prerequisite run finds and reuses it), so a refusal here
+  # must not mask the module's own result.
+  ignore_errors: true
+  when: _ndp_restore_operation.action == 'delete_planned_link'
+
+- name: "Report a planned link that could not be deleted"
+  ansible.builtin.debug:
+    msg: >-
+      NDP_PLANNED_LINK_LEFTOVER: could not delete the planned link
+      {{ _ndp_restore_operation.link.src_switch_id }}/{{ _ndp_restore_operation.link.src_interface_name }} <->
+      {{ _ndp_restore_operation.link.dst_switch_id }}/{{ _ndp_restore_operation.link.dst_interface_name }};
+      the next prerequisite run reuses it.
+  run_once: true
+  when:
+    - _ndp_restore_operation.action == 'delete_planned_link'
+    - _ndp_restore_planned_link is failed
+
+# The routed parent is reset through the manage API instead of cisco.nd.nd_interface_ethernet_routed state: deleted.
+# That module's normalize request carries description: "" and ND 4.3 rejects it (400 ".../policy/description: minimum
+# string length is 1"; live 2026-10-08), which would leave the physical port routed. A per-interface PUT replace with
+# the int_trunk_host template defaults (every field ND reports for a default port; adminState+policyType alone is
+# refused with "Validation failed for following fields: [allowedVlans]") followed by an interface deploy is accepted.
+# The PUT is only sent while the port still carries routed intent, and the deploy runs only after the PUT succeeded
+# (nd_rest fails the task on an HTTP error), so a creation that never happened is not "reset" and a refused PUT is never
+# deployed.
+- name: "Read the current intent of Ethernet parent {{ _ndp_restore_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
+        _ndp_restore_operation.interface | replace('/', '%2F') }}
+    method: get
+  register: _ndp_restore_ethernet_cur
+  no_log: true
+  failed_when: false
+  run_once: true
+  when: _ndp_restore_operation.action == 'reset_routed_ethernet'
+
+- name: "Reset Ethernet parent {{ _ndp_restore_operation.interface }} to its pre-test default"
+  when:
+    - _ndp_restore_operation.action == 'reset_routed_ethernet'
+    - >-
+      ((_ndp_restore_ethernet_cur.current | default({})) is mapping)
+      and ((_ndp_restore_ethernet_cur.current.configData.networkOS.policy.policyType | default('')) | lower) == 'routedhost'
+  run_once: true
+  block:
+    - name: "Reset {{ _ndp_restore_operation.interface }} to the default trunk-host intent"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
+            _ndp_restore_operation.interface | replace('/', '%2F') }}
+        method: put
+        content:
+          switchId: "{{ _ndp_restore_operation.serial }}"
+          interfaceName: "{{ _ndp_restore_operation.interface }}"
+          interfaceType: ethernet
+          configData:
+            mode: trunk
+            networkOS:
+              networkOSType: nx-os
+              policy:
+                adminState: true
+                allowedVlans: none
+                bpduGuard: default
+                mtu: jumbo
+                netflow: false
+                policyType: trunkHost
+                portTypeEdgeTrunk: true
+                speed: auto
+      register: _ndp_restore_ethernet_put
+      no_log: true
+
+    # ND answers interfaceActions/deploy with HTTP 207 Multi-Status. nd_rest only returns a body for 200/201/202/204, so it
+    # raises "object to sanitize can only be of type list or dict. Got NoneType" AFTER ND accepted and ran the deploy
+    # (live 2026-10-08: the port was back in trunk mode on the switch). The task result therefore proves nothing; the
+    # deploy is verified below through the mode the switch itself reports.
+    - name: "Deploy the reset of {{ _ndp_restore_operation.interface }}"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/interfaceActions/deploy"
+        method: post
+        content:
+          interfaces:
+            - interfaceName: "{{ _ndp_restore_operation.interface }}"
+              switchId: "{{ _ndp_restore_operation.serial }}"
+      register: _ndp_restore_ethernet_deploy
+      no_log: true
+      failed_when: false
+
+    # operData.mode is the mode discovered from the switch. An unreported mode (down or undiscovered port) cannot be
+    # judged, only a port that still reports routed is an unfinished restore.
+    - name: "Verify the switch no longer reports {{ _ndp_restore_operation.interface }} in routed mode"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
+            _ndp_restore_operation.interface | replace('/', '%2F') }}
+        method: get
+      register: _ndp_restore_ethernet_mode
+      retries: 12
+      delay: 10
+      until: >-
+        (((_ndp_restore_ethernet_mode.current | default({})).operData | default({})).mode | default('') | string | lower) != 'routed'
+      no_log: true
+
+- name: "Verify Ethernet parent {{ _ndp_restore_operation.interface }} no longer has routed intent"
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_restore_operation.serial
+      }}&ifName={{ _ndp_restore_operation.interface | replace('/', '%2F') }}
+    method: get
+  register: _ndp_restore_ethernet_verify
+  retries: 3
+  delay: 5
+  until: >-
+    {{
+      ((_ndp_restore_ethernet_verify.current
+        if (_ndp_restore_ethernet_verify.current is not mapping)
+        else (_ndp_restore_ethernet_verify.current.DATA | default(_ndp_restore_ethernet_verify.current.response | default([]))))
+       | selectattr('policy', 'match', '^int_routed_host') | list | length) == 0
+    }}
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action == 'reset_routed_ethernet'
+
+- name: "Mark temporary port-channel {{ _ndp_restore_operation.interface }} for deletion"
+  cisco.nd.nd_rest:
+    path: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface/markdelete
+    method: delete
+    content:
+      - serialNumber: "{{ _ndp_restore_operation.serial }}"
+        ifName: "{{ _ndp_restore_operation.interface }}"
+  register: _ndp_restore_port_channel_delete
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action == 'delete_created_port_channel'
+
+- name: "Deploy temporary port-channel deletion {{ _ndp_restore_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/globalInterface/deploy
+    method: post
+    content:
+      - serialNumber: "{{ _ndp_restore_operation.serial }}"
+        ifName: "{{ _ndp_restore_operation.interface }}"
+        fabricName: "{{ _ndp_restore_operation.fabric_name }}"
+  register: _ndp_restore_port_channel_deploy
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action == 'delete_created_port_channel'
+
+- name: "Verify temporary port-channel {{ _ndp_restore_operation.interface }} is absent"
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_restore_operation.serial
+      }}&ifName={{ _ndp_restore_operation.interface }}
+    method: get
+  register: _ndp_restore_port_channel_verify
+  retries: 3
+  delay: 5
+  until: >-
+    {{
+      (_ndp_restore_port_channel_verify.current
+       if (_ndp_restore_port_channel_verify.current is not mapping)
+       else (_ndp_restore_port_channel_verify.current.DATA | default(_ndp_restore_port_channel_verify.current.response | default([]))))
+      | length == 0
+    }}
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action == 'delete_created_port_channel'

@@ -16,6 +16,7 @@
   ansible.builtin.include_tasks: admin_up_interface.yaml
   vars:
     _auif:
+      fabric: "{{ _ndp_operation.fabric_name }}"
       serial: "{{ _ndp_switch_serial[_ndp_operation.switch_ref] }}"
       ifname: "{{ _ndp_operation.interface }}"
       label: "{{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"

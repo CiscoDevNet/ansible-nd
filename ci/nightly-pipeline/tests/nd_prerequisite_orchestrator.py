@@ -24,6 +24,13 @@ class OrchestrationError(RuntimeError):
     """Raised before an undeclared or unsafe operation can be executed."""
 
 
+class UnavailableError(OrchestrationError):
+    """The lab lacks a declared fabric/port/link/vPC substrate, so the module cannot meaningfully run."""
+
+
+UNAVAILABLE_EXIT_CODE = 3
+
+
 ALLOWED_OPERATIONS = {
     "create_disposable_fabric",
     "ensure_switch_membership",
@@ -33,13 +40,28 @@ ALLOWED_OPERATIONS = {
     "ensure_virtual_vpc",
     "ensure_bfd",
     "ensure_link",
+    "verify_free_interfaces",
+    "verify_logical_interface_namespace",
+    "ensure_routed_parent",
+    "ensure_routed_port_channel",
     "verify_resource",
 }
 # Inter-fabric link templates the planner may request via `ensure_link`. Kept to a
 # strict allowlist so a profile can never ask for an arbitrary/unsafe link template.
+# ND validates one template per L3Out connectivity type (live-probed on ND 4.3):
+# routed -> ext_l3_dci_link, subInterface -> ext_fabric_setup, svi -> ext_l2_dci_link.
 ALLOWED_LINK_TEMPLATES = {
     "ext_l3_dci_link",
+    "ext_fabric_setup",
+    "ext_l2_dci_link",
 }
+# cisco.nd.nd_manage_links policy_type that provisions each template.
+LINK_POLICY_BY_TEMPLATE = {
+    "ext_l3_dci_link": "layer3DciVrfLite",
+    "ext_fabric_setup": "ebgpVrfLite",
+    "ext_l2_dci_link": "layer2Dci",
+}
+LINK_PROVISIONING_MODES = {"api", "module_managed", "nd_manage_links"}
 SERVER_MANAGED_FIELDS = {
     "createdOn", "lastModified", "status", "metadata", "uuid",
     "deploymentStatus", "configSyncStatus",
@@ -177,8 +199,20 @@ def _pair_exists(current_state, fabric_ref, peer_refs, mode):
     )
 
 
-def _link_exists(current_state, src, dst, template):
+def _pair_present(current_state, fabric_ref, peer_refs):
+    """True when the vPC pair exists in either peer-link mode."""
+    wanted = set(peer_refs)
+    return any(
+        item.get("fabric_ref") == fabric_ref and set(item.get("peer_refs", [])) == wanted
+        for item in current_state.get("vpc_pairs", [])
+    )
+
+
+def _link_exists(current_state, src, dst, template, policy_type=None):
     """True when a link of `template` already spans the two endpoints.
+
+    `policy_type` additionally matches the nd_manage_links policy the capture records
+    from configData.policyType (the manage links API does not populate templateName).
 
     Endpoints are compared unordered (a controller may report either switch as
     src) and by serial+interface, which the ND links GET exposes as
@@ -190,7 +224,9 @@ def _link_exists(current_state, src, dst, template):
     """
     wanted = frozenset({(src["serial"], src["interface"]), (dst["serial"], dst["interface"])})
     for item in current_state.get("links", []):
-        if template not in {item.get("templateName"), item.get("linkType")}:
+        if template not in {item.get("templateName"), item.get("linkType")} and not (
+            policy_type and item.get("policyType") == policy_type
+        ):
             continue
         endpoints = frozenset({
             (item.get("srcSwitchId"), item.get("srcInterfaceName")),
@@ -199,6 +235,259 @@ def _link_exists(current_state, src, dst, template):
         if endpoints == wanted:
             return True
     return False
+
+
+def _casefold_lookup(mapping, key):
+    if not isinstance(mapping, dict):
+        return None
+    wanted = str(key).lower()
+    return next((value for name, value in mapping.items() if str(name).lower() == wanted), None)
+
+
+def _physical_interface_state(current_state, switch_ref, interface):
+    return _casefold_lookup(current_state.get("interfaces", {}).get(switch_ref, {}), interface)
+
+
+def _logical_interface_state(current_state, switch_ref, interface):
+    return _casefold_lookup(current_state.get("logical_interfaces", {}).get(switch_ref, {}), interface)
+
+
+def _link_endpoints(link):
+    endpoints = []
+    for serial_key, interface_key in (
+        ("srcSwitchId", "srcInterfaceName"),
+        ("dstSwitchId", "dstInterfaceName"),
+    ):
+        if link.get(serial_key) and link.get(interface_key):
+            endpoints.append((str(link[serial_key]), str(link[interface_key])))
+    for side in ("sw1-info", "sw2-info"):
+        side_data = link.get(side, {})
+        if not isinstance(side_data, dict):
+            continue
+        serial = side_data.get("sw-serial-number") or side_data.get("serialNumber")
+        interface = side_data.get("if-name") or side_data.get("interfaceName")
+        if serial and interface:
+            endpoints.append((str(serial), str(interface)))
+    return endpoints
+
+
+def _is_fabric_link(current_state, serial, interface):
+    wanted = (str(serial).lower(), str(interface).lower())
+    links = list(current_state.get("physical_links", [])) + list(current_state.get("links", []))
+    return any(
+        (endpoint[0].lower(), endpoint[1].lower()) == wanted
+        for link in links
+        if isinstance(link, dict)
+        for endpoint in _link_endpoints(link)
+    )
+
+
+def _link_is_planned(link):
+    """A planned (config-only) link has no cable behind it, so it never proves physical adjacency."""
+    return (
+        link.get("linkPlanned") is True
+        or link.get("is-planned") is True
+        or str(link.get("linkType") or link.get("link-type") or "").lower() == "lan_planned_link"
+    )
+
+
+def _link_is_up(link):
+    # Captures that predate these flags carry neither key; an unknown state counts as present.
+    return link.get("linkPresent") is not False and link.get("is-present") is not False
+
+
+def _physical_link_present(current_state, src, dst, allow_down=False):
+    """True when a captured, non-planned link joins the two endpoints in either order.
+
+    `allow_down` accepts a link ND still lists but reports as not present (for example both
+    ports administratively shut), which a later ensure_interface can recover.
+    """
+    wanted = frozenset({
+        (str(src["serial"]).lower(), str(src["interface"]).lower()),
+        (str(dst["serial"]).lower(), str(dst["interface"]).lower()),
+    })
+    links = list(current_state.get("physical_links", [])) + list(current_state.get("links", []))
+    return any(
+        frozenset((str(serial).lower(), str(interface).lower()) for serial, interface in _link_endpoints(link)) == wanted
+        and not _link_is_planned(link)
+        and (allow_down or _link_is_up(link))
+        for link in links
+        if isinstance(link, dict)
+    )
+
+
+def _interface_detail(current_state, switch_ref, interface):
+    wanted = str(interface).lower()
+    return next(
+        (
+            item
+            for item in current_state.get("interface_details", {}).get(switch_ref, [])
+            if isinstance(item, dict) and str(item.get("ifName", "")).lower() == wanted
+        ),
+        {},
+    )
+
+
+def _is_port_channel_member(current_state, switch_ref, interface, state):
+    if state.get("port_channel_member") is True:
+        return True
+    detail = _interface_detail(current_state, switch_ref, interface)
+    searchable = " ".join(
+        str(value).lower()
+        for value in (
+            state.get("policy", ""),
+            state.get("policy_type", ""),
+            json.dumps(state.get("nv_pairs", {}), sort_keys=True),
+            json.dumps(detail.get("underlayPolicies", []), sort_keys=True),
+        )
+    )
+    return (
+        ("port_channel" in searchable or "port-channel" in searchable)
+        and "member" in searchable
+    )
+
+
+def _port_link_peers(current_state, serial, interface):
+    """Every endpoint joined to this port by any captured link, discovered or logical."""
+    local = (str(serial).lower(), str(interface).lower())
+    peers = set()
+    links = list(current_state.get("physical_links", [])) + list(current_state.get("links", []))
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        endpoints = {(str(s).lower(), str(i).lower()) for s, i in _link_endpoints(link)}
+        if local in endpoints:
+            peers |= endpoints - {local}
+    return peers
+
+
+def _assert_existing_link_port(registry, current_state, switch_ref, interface, existing_link):
+    """The port must carry exactly the declared inter-fabric cable and no underlay link."""
+    switches = registry["lab"]["switches"]
+    peer_ref, peer_interface = existing_link["peer_switch_ref"], existing_link["peer_interface"]
+    if switches[switch_ref]["baseline_fabric_ref"] == switches[peer_ref]["baseline_fabric_ref"]:
+        raise OrchestrationError(
+            f"existing link must join two fabrics, not an underlay link: "
+            f"{switch_ref}/{interface} <-> {peer_ref}/{peer_interface}"
+        )
+    wanted = (switches[peer_ref]["serial"].lower(), str(peer_interface).lower())
+    peers = _port_link_peers(current_state, switches[switch_ref]["serial"], interface)
+    if wanted not in peers:
+        raise UnavailableError(
+            f"required existing link is absent in ND: {switch_ref}/{interface} <-> {peer_ref}/{peer_interface}"
+        )
+    if peers - {wanted}:
+        raise UnavailableError(
+            f"reserved interface carries another link besides {peer_ref}/{peer_interface}: {switch_ref}/{interface}"
+        )
+
+
+def _assert_free_interface(registry, current_state, switch_ref, interface, existing_link=None):
+    state = _physical_interface_state(current_state, switch_ref, interface)
+    if state is None:
+        raise OrchestrationError(f"physical interface was not captured: {switch_ref}/{interface}")
+    if state.get("exists", True) is not True:
+        raise UnavailableError(f"required physical interface is missing: {switch_ref}/{interface}")
+    serial = registry["lab"]["switches"][switch_ref]["serial"]
+    if existing_link:
+        _assert_existing_link_port(registry, current_state, switch_ref, interface, existing_link)
+    elif _is_fabric_link(current_state, serial, interface):
+        raise UnavailableError(f"reserved interface is a fabric link: {switch_ref}/{interface}")
+    if _is_port_channel_member(current_state, switch_ref, interface, state):
+        raise UnavailableError(f"reserved interface is a port-channel member: {switch_ref}/{interface}")
+    return state
+
+
+def _is_routed_ethernet(state):
+    policy_values = {
+        str(state.get("policy", "")).lower(),
+        str(state.get("policy_type", "")).lower(),
+    }
+    return any(value == "routedhost" or value.startswith("int_routed_host") for value in policy_values)
+
+
+# ND stamps this trunk-host intent on every untouched front-panel port (live-probed on all
+# lab leaves), so it is the 'free port' state, not user intent. Any other value or extra key is.
+# A port that was reset (interfaceActions/normalize or a per-interface PUT replace, which is how the
+# prerequisite restore returns a routed parent) carries the whole int_trunk_host template with its
+# default values persisted (live ND 4.3, 2026-10-08), so those defaults are the free state as well.
+_DEFAULT_PORT_POLICIES = {"int_trunk_host", "trunkhost"}
+_DEFAULT_PORT_NV = {
+    "admin_state": "true", "allowed_vlans": "none", "bpduguard_enabled": "no",
+    "enable_netflow": "false", "mark_deleted": "false", "mtu": "jumbo",
+    "porttype_fast_enabled": "true", "ptp": "false", "speed": "auto",
+    # Persisted by a reset only; absent on a never-touched port.
+    "bpdufilter_enabled": "no", "cdp_enable": "true", "enable_errdisable_acl": "true",
+    "enable_monitor": "false", "enable_orphan_port": "false", "enable_pfc": "false",
+    "enable_qos": "false", "enable_storm_control": "false", "fec": "auto", "link_type": "auto",
+    "negotiate_auto": "true", "port_duplex_mode": "auto", "storm_control_action": "no",
+    "enablevlanmapping": "false",
+}
+_BOOKKEEPING_NV = {"intf_name", "policy_id", "serial_number", "priority", "fabric_name", "create_update"}
+
+
+def _is_default_free_port(state):
+    policy = str(state.get("policy") or state.get("policy_type") or "").lower()
+    if policy not in _DEFAULT_PORT_POLICIES:
+        return False
+    nv_pairs = {
+        str(key).lower(): str(value).strip().lower()
+        for key, value in (state.get("nv_pairs") or {}).items()
+        if str(value).strip()
+    }
+    if not nv_pairs:
+        return False
+    if set(nv_pairs) - _BOOKKEEPING_NV - set(_DEFAULT_PORT_NV):
+        return False
+    return all(nv_pairs.get(key, wanted) == wanted for key, wanted in _DEFAULT_PORT_NV.items())
+
+
+def _port_channel_members(state):
+    members = state.get("nv_pairs", {}).get("MEMBER_INTERFACES", "")
+    if isinstance(members, list):
+        return [str(item) for item in members if str(item).strip()]
+    return [item.strip() for item in str(members or "").split(",") if item.strip()]
+
+
+
+def _resolve_link_endpoints(registry, spec, label, *, require_distinct_fabrics):
+    """Resolve a declared {src, dst} link spec to serial/interface endpoints from the lab registry."""
+    endpoints = {}
+    for side in ("src", "dst"):
+        endpoint = spec.get(side)
+        if not isinstance(endpoint, dict):
+            raise OrchestrationError(f"{label} is missing its {side} endpoint")
+        switch_ref = endpoint.get("switch_ref")
+        registry_switch = registry["lab"]["switches"].get(switch_ref)
+        if registry_switch is None:
+            raise OrchestrationError(f"{label} references unknown switch: {switch_ref}")
+        interface = endpoint.get("interface")
+        if interface not in registry["lab"]["interface_allowlist"].get(switch_ref, []):
+            raise OrchestrationError(f"undeclared {label} interface: {switch_ref}/{interface}")
+        fabric_ref = registry_switch["baseline_fabric_ref"]
+        endpoints[side] = {
+            "fabric_ref": fabric_ref,
+            "fabric_name": registry["lab"]["fabrics"][fabric_ref]["name"],
+            "switch_ref": switch_ref,
+            "switch_name": endpoint.get("switch_name", switch_ref),
+            "serial": registry_switch["serial"],
+            "interface": interface,
+        }
+    same_fabric = endpoints["src"]["fabric_ref"] == endpoints["dst"]["fabric_ref"]
+    if require_distinct_fabrics and same_fabric:
+        raise OrchestrationError(f"{label} must span two different fabrics")
+    if not require_distinct_fabrics and not same_fabric:
+        raise OrchestrationError(f"{label} must stay inside one fabric")
+    return endpoints["src"], endpoints["dst"]
+
+
+def _flat_scalar_map(value, label):
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or isinstance(item, (dict, list, tuple)) or item is None
+        for key, item in value.items()
+    ):
+        raise OrchestrationError(f"{label} must be a flat map of scalar values")
+    return dict(value)
 
 
 def plan_topology_delta(registry, resolved_execution, current_state):
@@ -305,12 +594,13 @@ def plan_topology_delta(registry, resolved_execution, current_state):
                 raise OrchestrationError(f"undeclared interface: {switch_ref}/{interface}")
             current = current_interfaces.get(interface)
             if current is None:
-                raise OrchestrationError(f"required physical interface is missing: {switch_ref}/{interface}")
+                raise UnavailableError(f"required physical interface is missing: {switch_ref}/{interface}")
             if current.get("admin_state") is not True or current.get("operational_state") not in {None, "up"}:
                 operations.append({
                     "operation": "ensure_interface",
                     "switch_ref": switch_ref,
                     "serial": registry["lab"]["switches"][switch_ref]["serial"],
+                    "fabric_name": registry["lab"]["fabrics"][registry["lab"]["switches"][switch_ref]["baseline_fabric_ref"]]["name"],
                     "interface": interface,
                     "admin_state": True,
                     "operational_state": "when_reported_up",
@@ -320,36 +610,36 @@ def plan_topology_delta(registry, resolved_execution, current_state):
         template = spec.get("template")
         if template not in ALLOWED_LINK_TEMPLATES:
             raise OrchestrationError(f"undeclared inter-fabric link template: {template}")
-        endpoints = {}
-        for side in ("src", "dst"):
-            endpoint = spec.get(side)
-            if not isinstance(endpoint, dict):
-                raise OrchestrationError(f"inter-fabric link {template} is missing its {side} endpoint")
-            switch_ref = endpoint.get("switch_ref")
-            registry_switch = registry["lab"]["switches"].get(switch_ref)
-            if registry_switch is None:
-                raise OrchestrationError(f"inter-fabric link references unknown switch: {switch_ref}")
-            interface = endpoint.get("interface")
-            if interface not in registry["lab"]["interface_allowlist"].get(switch_ref, []):
-                raise OrchestrationError(f"undeclared inter-fabric link interface: {switch_ref}/{interface}")
-            fabric_ref = registry_switch["baseline_fabric_ref"]
-            endpoints[side] = {
-                "fabric_ref": fabric_ref,
-                "fabric_name": registry["lab"]["fabrics"][fabric_ref]["name"],
-                "switch_ref": switch_ref,
-                "switch_name": endpoint.get("switch_name", switch_ref),
-                "serial": registry_switch["serial"],
-                "interface": interface,
-            }
-        if endpoints["src"]["fabric_ref"] == endpoints["dst"]["fabric_ref"]:
-            raise OrchestrationError(f"inter-fabric link {template} must span two different fabrics")
-        if _link_exists(current_state, endpoints["src"], endpoints["dst"], template):
-            continue
+        label = f"inter-fabric link {template}"
+        src_endpoint, dst_endpoint = _resolve_link_endpoints(
+            registry, spec, label, require_distinct_fabrics=True
+        )
+        endpoints = {"src": src_endpoint, "dst": dst_endpoint}
         provisioning = spec.get("provisioning", "api")
-        if provisioning not in {"api", "module_managed"}:
+        if provisioning not in LINK_PROVISIONING_MODES:
             raise OrchestrationError(
                 f"inter-fabric link {template} has unsupported provisioning mode: {provisioning}"
             )
+        policy_type = None
+        template_inputs = {}
+        if provisioning == "nd_manage_links":
+            policy_type = spec.get("policy_type")
+            if policy_type != LINK_POLICY_BY_TEMPLATE[template]:
+                raise OrchestrationError(
+                    f"inter-fabric link {template} must use nd_manage_links policy "
+                    f"{LINK_POLICY_BY_TEMPLATE[template]}, not {policy_type}"
+                )
+            template_inputs = _flat_scalar_map(
+                spec.get("template_inputs", {}), f"inter-fabric link {template} template_inputs"
+            )
+        physical_present = _physical_link_present(current_state, endpoints["src"], endpoints["dst"])
+        if spec.get("requires_physical", True) and not physical_present:
+            raise UnavailableError(
+                f"required physical link is missing: {endpoints['src']['switch_ref']}/{endpoints['src']['interface']} "
+                f"<-> {endpoints['dst']['switch_ref']}/{endpoints['dst']['interface']}; cable these ports for {template}"
+            )
+        if _link_exists(current_state, endpoints["src"], endpoints["dst"], template, policy_type):
+            continue
         operation = {
             "operation": "ensure_link",
             "template": template,
@@ -358,6 +648,13 @@ def plan_topology_delta(registry, resolved_execution, current_state):
             "src": endpoints["src"],
             "dst": endpoints["dst"],
         }
+        if provisioning == "nd_manage_links":
+            operation["policy_type"] = policy_type
+            operation["template_inputs"] = template_inputs
+            # No cable behind the pair: ND stores a planned link, which the restore journal removes again.
+            operation["config_only"] = not _physical_link_present(
+                current_state, endpoints["src"], endpoints["dst"], allow_down=True
+            )
         nvpairs = spec.get("nvpairs")
         if nvpairs is not None:
             if not isinstance(nvpairs, dict) or any(
@@ -371,11 +668,28 @@ def plan_topology_delta(registry, resolved_execution, current_state):
         operations.append(operation)
 
     for pair in profile.get("vpc_pairs", []):
+        if pair.get("required_path") == "module_creates_pair":
+            # The integration target creates the pair itself, so there is nothing to apply here;
+            # the prerequisite is the cabled peer-link ND will pick up (ports admin-up via profile.links).
+            if pair.get("mode") != "physical" or not pair.get("physical_peer_links"):
+                raise OrchestrationError("a module-created vPC pair must declare its physical peer-link")
+            if _pair_present(current_state, pair["fabric_ref"], pair["peer_refs"]):
+                continue
+            for link in pair["physical_peer_links"]:
+                src_endpoint, dst_endpoint = _resolve_link_endpoints(
+                    registry, link, "vPC peer-link", require_distinct_fabrics=False
+                )
+                if not _physical_link_present(current_state, src_endpoint, dst_endpoint, allow_down=True):
+                    raise UnavailableError(
+                        f"required physical vPC peer-link is missing: {src_endpoint['switch_ref']}/{src_endpoint['interface']} "
+                        f"<-> {dst_endpoint['switch_ref']}/{dst_endpoint['interface']}; cable these ports"
+                    )
+            continue
         if pair.get("mode") != "virtual" or pair.get("physical_peer_links"):
             raise OrchestrationError("physical or unresolved vPC prerequisites are prohibited")
         if not _pair_exists(current_state, pair["fabric_ref"], pair["peer_refs"], "virtual"):
             if pair.get("required_path") == "existing_pair_no_create":
-                raise OrchestrationError(
+                raise UnavailableError(
                     f"required virtual vPC pair is absent and this profile forbids creation: "
                     f"{pair['fabric_ref']} {'/'.join(pair['peer_refs'])}"
                 )
@@ -387,12 +701,113 @@ def plan_topology_delta(registry, resolved_execution, current_state):
             })
 
     for resource in profile.get("resources", []):
-        if resource.get("kind") == "allocation_entity_tokens":
+        kind = resource.get("kind")
+        if kind == "verify_free_interfaces":
+            switch_ref = resource["switch_ref"]
+            interfaces = list(resource["interfaces"])
+            for interface in interfaces:
+                _assert_free_interface(registry, current_state, switch_ref, interface)
+            operations.append({
+                "operation": "verify_free_interfaces",
+                "switch_ref": switch_ref,
+                "serial": registry["lab"]["switches"][switch_ref]["serial"],
+                "interfaces": interfaces,
+                "constraints": list(resource["constraints"]),
+            })
+            continue
+        if kind == "verify_logical_interface_namespace":
+            switch_ref = resource["switch_ref"]
+            collisions = []
+            for interface in resource["interfaces"]:
+                state = _logical_interface_state(current_state, switch_ref, interface)
+                if state is None:
+                    raise OrchestrationError(
+                        f"logical interface was not captured: {switch_ref}/{interface}"
+                    )
+                if state.get("exists") is not False:
+                    collisions.append(interface)
+            if collisions:
+                raise OrchestrationError(
+                    f"reserved logical interface namespace is in use on {switch_ref}: "
+                    f"{', '.join(collisions)}"
+                )
+            operations.append({
+                "operation": "verify_logical_interface_namespace",
+                "switch_ref": switch_ref,
+                "serial": registry["lab"]["switches"][switch_ref]["serial"],
+                "interface_type": resource["interface_type"],
+                "interfaces": list(resource["interfaces"]),
+                "expected_state": "absent",
+            })
+            continue
+        if kind == "ensure_routed_parent":
+            switch_ref = resource["switch_ref"]
+            interface = resource["interface"]
+            state = _assert_free_interface(
+                registry, current_state, switch_ref, interface, resource.get("existing_link")
+            )
+            if _is_routed_ethernet(state):
+                continue
+            if (state.get("configured") is True or state.get("policy")) and not _is_default_free_port(state):
+                raise UnavailableError(
+                    f"refusing to replace existing non-routed interface intent: "
+                    f"{switch_ref}/{interface} ({state.get('policy') or state.get('policy_type')})"
+                )
+            switch = registry["lab"]["switches"][switch_ref]
+            fabric_ref = switch["baseline_fabric_ref"]
+            operations.append({
+                "operation": "ensure_routed_parent",
+                "switch_ref": switch_ref,
+                "serial": switch["serial"],
+                "switch_ip": switch["seed_ip"],
+                "fabric_ref": fabric_ref,
+                "fabric_name": registry["lab"]["fabrics"][fabric_ref]["name"],
+                "interface": interface,
+                "desired_policy": resource["desired_policy"],
+            })
+            continue
+        if kind == "ensure_routed_port_channel":
+            switch_ref = resource["switch_ref"]
+            interface = resource["interface"]
+            state = _logical_interface_state(current_state, switch_ref, interface)
+            if state is None:
+                raise OrchestrationError(
+                    f"routed port-channel state was not captured: {switch_ref}/{interface}"
+                )
+            if state.get("exists") is True:
+                policy = str(state.get("policy", ""))
+                members = _port_channel_members(state)
+                if policy != resource["desired_policy"]:
+                    raise OrchestrationError(
+                        f"refusing to replace existing non-routed port-channel intent: "
+                        f"{switch_ref}/{interface} ({policy or 'unknown policy'})"
+                    )
+                if members != list(resource.get("member_interfaces", [])):
+                    raise OrchestrationError(
+                        f"reserved routed port-channel has unexpected members: "
+                        f"{switch_ref}/{interface} ({', '.join(members)})"
+                    )
+                continue
+            switch = registry["lab"]["switches"][switch_ref]
+            fabric_ref = switch["baseline_fabric_ref"]
+            operations.append({
+                "operation": "ensure_routed_port_channel",
+                "switch_ref": switch_ref,
+                "serial": switch["serial"],
+                "switch_ip": switch["seed_ip"],
+                "fabric_ref": fabric_ref,
+                "fabric_name": registry["lab"]["fabrics"][fabric_ref]["name"],
+                "interface": interface,
+                "desired_policy": resource["desired_policy"],
+                "member_interfaces": list(resource.get("member_interfaces", [])),
+            })
+            continue
+        if kind == "allocation_entity_tokens":
             values = resource.get("values", [])
             if not values or any(not isinstance(value, str) or not re.fullmatch(r"Ethernet\d+/\d+", value) for value in values):
                 raise OrchestrationError("allocation entity tokens must be non-empty Ethernet interface identifiers")
             continue
-        if resource.get("kind") == "disposable_fabric_matrix":
+        if kind == "disposable_fabric_matrix":
             fabric_types = resource.get("fabric_types", [])
             if resource.get("namespaced_only") is not True or not fabric_types:
                 raise OrchestrationError("disposable fabric matrix must be namespaced and declare fabric types")
@@ -714,6 +1129,9 @@ def main(argv=None):
             selected = [item for item in args.selected.split(",") if item]
             print(json.dumps(build_phase_schedule(registry, selected, allow_auto_confirm=args.allow_auto_confirm), indent=2, sort_keys=True))
             return 0
+    except UnavailableError as exc:
+        print(f"substrate unavailable: {exc}", file=sys.stderr)
+        return UNAVAILABLE_EXIT_CODE
     except OrchestrationError as exc:
         print(f"orchestration error: {exc}", file=sys.stderr)
         return 1

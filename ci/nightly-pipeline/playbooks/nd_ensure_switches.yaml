@@ -60,6 +60,9 @@
     nd_switch_fail_on_missing: false
     # Brownfield re-add (keep the switch's existing running config) by default.
     nd_switch_preserve_config: true
+    # expected_serial_number exists only on cisco.nd branches that implement it (GitHub develop does not
+    # yet); detect it in the cloned collection so the pre-flight works on whichever ND_GIT_BRANCH runs.
+    nd_switch_expected_serial_supported: "{{ 'expected_serial_number' in (lookup('ansible.builtin.file', playbook_dir ~ '/plugins/modules/nd_manage_switches.py', errors='ignore') | default('', true) | string) }}"
     # Recalculate & deploy after adding a switch. true (default) = config_actions
     # save (recalculate) + deploy, so the added switch AND its fabric peers converge
     # instead of the switch being left a member with un-pushed config. This is the
@@ -260,6 +263,7 @@
             config:
               - seed_ip: "{{ _sw.seed_ip }}"
                 role: "{{ _sw.role }}"
+                expected_serial_number: "{{ _sw.serial if (nd_switch_expected_serial_supported | bool) else omit }}"
                 username: "{{ nd_switch_username | default(switch_username) }}"
                 password: "{{ nd_switch_password | default(switch_password) }}"
                 preserve_config: "{{ nd_switch_preserve_config | bool }}"

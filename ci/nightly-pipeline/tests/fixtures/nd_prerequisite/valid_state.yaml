@@ -3,12 +3,12 @@ fabrics:
   advanced: {name: VXLAN_EVPN_Fabric, type: vxlanIbgp, lifecycle: retained, bfd_enabled: true}
   external: {name: External_Connectivity_Fabric, type: externalConnectivity, lifecycle: retained}
 switches:
-  vxlan_leaf_1: {fabric_ref: advanced, serial: 9PICV0LTD7C, seed_ip: 10.122.84.195, role: leaf, intended_system_mode: normal, sync_status: inSync}
-  vxlan_leaf_2: {fabric_ref: advanced, serial: 9VISBXAWYYB, seed_ip: 10.122.84.196, role: leaf, intended_system_mode: normal, sync_status: inSync}
-  vxlan_spine_1: {fabric_ref: advanced, serial: 9FKMQG17900, seed_ip: 10.122.84.194, role: spine, intended_system_mode: normal, sync_status: inSync}
-  vxlan_border_1: {fabric_ref: advanced, serial: 9FTTP2QGS0H, seed_ip: 10.122.84.88, role: border, intended_system_mode: normal, sync_status: inSync}
-  external_edge_1: {fabric_ref: external, serial: 9V1IZP23KBG, seed_ip: 10.122.84.89, role: edge_router, intended_system_mode: normal, sync_status: inSync}
-  external_edge_2: {fabric_ref: external, serial: 9GRLA6ZC4Z0, seed_ip: 10.122.84.90, role: edge_router, intended_system_mode: maintenance, sync_status: inSync}
+  vxlan_leaf_1: {fabric_ref: advanced, serial: SERIAL00001, seed_ip: 192.0.2.195, role: leaf, intended_system_mode: normal, sync_status: inSync}
+  vxlan_leaf_2: {fabric_ref: advanced, serial: SERIAL00002, seed_ip: 192.0.2.196, role: leaf, intended_system_mode: normal, sync_status: inSync}
+  vxlan_spine_1: {fabric_ref: advanced, serial: SERIAL00003, seed_ip: 192.0.2.194, role: spine, intended_system_mode: normal, sync_status: inSync}
+  vxlan_border_1: {fabric_ref: advanced, serial: SERIAL00004, seed_ip: 192.0.2.88, role: border, intended_system_mode: normal, sync_status: inSync}
+  external_edge_1: {fabric_ref: external, serial: SERIAL00005, seed_ip: 192.0.2.89, role: edge_router, intended_system_mode: normal, sync_status: inSync}
+  external_edge_2: {fabric_ref: external, serial: SERIAL00006, seed_ip: 192.0.2.90, role: edge_router, intended_system_mode: maintenance, sync_status: inSync}
 interfaces:
   vxlan_leaf_1:
     Ethernet1/1: {admin_state: true, operational_state: up}
@@ -20,8 +20,26 @@ interfaces:
     Ethernet1/7: {admin_state: true, operational_state: up}
     Ethernet1/8: {admin_state: true, operational_state: up}
     Ethernet1/9: {admin_state: true, operational_state: up}
-    Ethernet1/10: {admin_state: true, operational_state: up}
+    Ethernet1/10: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/11: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/12: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/13: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
     Ethernet1/20: {admin_state: true, operational_state: up}
+    Ethernet1/31: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/32: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/33: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/34: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/35: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/41: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/42: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/43: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/44: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/45: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/46: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/47: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/48: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/49: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/50: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
   vxlan_leaf_2:
     Ethernet1/1: {admin_state: true, operational_state: up}
     Ethernet1/2: {admin_state: true, operational_state: up}
@@ -40,10 +58,51 @@ interfaces:
     Ethernet1/2: {admin_state: true, operational_state: up}
     Ethernet1/3: {admin_state: true, operational_state: up}
   external_edge_2: {}
+logical_interfaces:
+  vxlan_leaf_1:
+    loopback200: {exists: false, policy: "", nv_pairs: {}}
+    loopback201: {exists: false, policy: "", nv_pairs: {}}
+    loopback202: {exists: false, policy: "", nv_pairs: {}}
+    loopback203: {exists: false, policy: "", nv_pairs: {}}
+    loopback204: {exists: false, policy: "", nv_pairs: {}}
+    loopback205: {exists: false, policy: "", nv_pairs: {}}
+    loopback206: {exists: false, policy: "", nv_pairs: {}}
+    loopback299: {exists: false, policy: "", nv_pairs: {}}
+    vlan333: {exists: false, policy: "", nv_pairs: {}}
+    vlan334: {exists: false, policy: "", nv_pairs: {}}
+    vlan335: {exists: false, policy: "", nv_pairs: {}}
+    vlan336: {exists: false, policy: "", nv_pairs: {}}
+    vlan337: {exists: false, policy: "", nv_pairs: {}}
+    vlan338: {exists: false, policy: "", nv_pairs: {}}
+    vlan500: {exists: false, policy: "", nv_pairs: {}}
+    vlan501: {exists: false, policy: "", nv_pairs: {}}
+    Port-channel10: {exists: false, policy: "", nv_pairs: {}}
+    Port-channel501: {exists: false, policy: "", nv_pairs: {}}
+    Port-channel502: {exists: false, policy: "", nv_pairs: {}}
+    Port-channel503: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.2: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.3: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.4: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.20: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.21: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.22: {exists: false, policy: "", nv_pairs: {}}
+    Ethernet1/1.29: {exists: false, policy: "", nv_pairs: {}}
+    Port-channel10.5: {exists: false, policy: "", nv_pairs: {}}
+    Port-channel10.25: {exists: false, policy: "", nv_pairs: {}}
+interface_details:
+  vxlan_leaf_1: []
+physical_links:
+  - {srcSwitchId: SERIAL00001, srcInterfaceName: Ethernet1/1, dstSwitchId: SERIAL00005, dstInterfaceName: Ethernet1/1, linkType: ethisl}
 vpc_pairs:
   - {fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], mode: virtual, sync_status: inSync, consistent: true}
 links:
-  - {srcSwitchId: 9FTTP2QGS0H, srcInterfaceName: Ethernet1/1, dstSwitchId: 9V1IZP23KBG, dstInterfaceName: Ethernet1/3, templateName: ext_l3_dci_link}
+  # Converged l3out DCI links as the live capture reports them (the manage links API has no templateName; the
+  # policy lives in configData.policyType). Only the first is a real cable; the other two are planned links.
+  - {srcSwitchId: SERIAL00004, srcInterfaceName: Ethernet1/1, dstSwitchId: SERIAL00005, dstInterfaceName: Ethernet1/3, templateName: "", linkType: ethisl, policyType: layer3DciVrfLite, linkPlanned: false, linkPresent: true}
+  - {srcSwitchId: SERIAL00004, srcInterfaceName: Ethernet1/2, dstSwitchId: SERIAL00005, dstInterfaceName: Ethernet1/2, templateName: "", linkType: lan_planned_link, policyType: ebgpVrfLite, linkPlanned: true, linkPresent: false}
+  - {srcSwitchId: SERIAL00004, srcInterfaceName: Ethernet1/4, dstSwitchId: SERIAL00005, dstInterfaceName: Ethernet1/4, templateName: "", linkType: lan_planned_link, policyType: layer2Dci, linkPlanned: true, linkPresent: false}
+  # vPC peer-link candidate between the leaves (cabled).
+  - {srcSwitchId: SERIAL00001, srcInterfaceName: Ethernet1/2, dstSwitchId: SERIAL00002, dstInterfaceName: Ethernet1/1, templateName: "", linkType: ethisl, policyType: "", linkPlanned: false, linkPresent: true}
 resources:
   - {kind: pool, name: L3_VNI, type: ID, state: existing}
 managed_domains:

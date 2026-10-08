@@ -66,7 +66,7 @@
 #   ND_RESET_FABRIC         run reset_fabric.yaml after suite   (default false)
 #   ND_VPC_PAIR_ENABLE      add standalone nd_vpc_pair to the default set (default false)
 #   VPC_PAIR_SWITCH1_SERIAL / VPC_PAIR_SWITCH2_SERIAL / VPC_PAIR_FABRIC_TYPE
-#                           vPC pair members + type (default 9PICV0LTD7C/9VISBXAWYYB/vxlanIbgp)
+#                           vPC pair members + type (default SERIAL00001/SERIAL00002/vxlanIbgp)
 #
 # ND auth defaults to the collection inventory.yaml. No secret is stored here.
 # =============================================================================
@@ -130,12 +130,12 @@ fi
 # nd_interface_* (ND 4.2) role targets. Opt-in via ND_INTERFACE_ENABLE (mirrors the
 # nightly's ND_INTERFACE_ENABLE param, ON in Jenkins). Each needs only per-switch
 # substrate (free ports, NO cabling) on ND_INTERFACE_TEST_SWITCH_IP (default
-# 10.122.84.195 = vxlan_leaf_1); that switch must be in normal (not migration/read-only)
+# 192.0.2.195 = vxlan_leaf_1); that switch must be in normal (not migration/read-only)
 # mode for deploys to land. The two nd_interface_vpc_* targets stay OFF (need a vPC-pair
 # substrate the lab lacks). Enable: ND_INTERFACE_ENABLE=true ./run_all_integ.sh
 # (or run any explicitly, e.g. ./run_all_integ.sh nd_interface_loopback).
 ND_INTERFACE_ENABLE="${ND_INTERFACE_ENABLE:-false}"
-ND_INTERFACE_TEST_SWITCH_IP="${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195}"
+ND_INTERFACE_TEST_SWITCH_IP="${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195}"
 if [ "${ND_INTERFACE_ENABLE}" = "true" ]; then
   DEFAULT_MODULES+=(
     nd_interface_loopback
@@ -161,8 +161,8 @@ ND_VPC_PAIR_ENABLE="${ND_VPC_PAIR_ENABLE:-false}"
 if [ "${ND_VPC_PAIR_ENABLE}" = "true" ]; then
   DEFAULT_MODULES+=(nd_vpc_pair)
 fi
-VPC_PAIR_SWITCH1_SERIAL="${VPC_PAIR_SWITCH1_SERIAL:-9PICV0LTD7C}"   # vxlan_leaf_1
-VPC_PAIR_SWITCH2_SERIAL="${VPC_PAIR_SWITCH2_SERIAL:-9VISBXAWYYB}"   # vxlan_leaf_2
+VPC_PAIR_SWITCH1_SERIAL="${VPC_PAIR_SWITCH1_SERIAL:-SERIAL00001}"   # vxlan_leaf_1
+VPC_PAIR_SWITCH2_SERIAL="${VPC_PAIR_SWITCH2_SERIAL:-SERIAL00002}"   # vxlan_leaf_2
 VPC_PAIR_FABRIC_TYPE="${VPC_PAIR_FABRIC_TYPE:-vxlanIbgp}"
 
 # Parse args: leading nd_* tokens select modules; everything else is passed
@@ -213,13 +213,7 @@ mkdir -p "$LOGDIR"
 _old_umask="$(umask)"; umask 077
 VARS_JSON="$(mktemp "${TMPDIR%/}/nd_runtime_vars.XXXXXX")"
 umask "$_old_umask"
-# This function is invoked indirectly by trap, so ShellCheck cannot see its call site.
-# shellcheck disable=SC2317
-cleanup_vars() {
-  if [ -n "${VARS_JSON:-}" ]; then
-    rm -f "$VARS_JSON" 2>/dev/null || true
-  fi
-}
+cleanup_vars() { [ -n "${VARS_JSON:-}" ] && rm -f "$VARS_JSON" 2>/dev/null || true; }
 trap cleanup_vars EXIT INT TERM
 EXTRA_VARS_FILE_ARGS=()
 if ansible-inventory -i "$INVENTORY" --host "$INVENTORY_HOST" >"$VARS_JSON" 2>/dev/null && [ -s "$VARS_JSON" ]; then
@@ -237,18 +231,19 @@ module_extra_vars() {
     nd_manage_networks)
       printf '%s' "-e ansible_it_fabric=${NETWORK_FABRIC_NAME} -e nd_network_standalone_fabric=${NETWORK_FABRIC_NAME}" ;;
     nd_manage_switches)
-      printf '%s' "-e ansible_switch1=10.122.84.195 -e ansible_switch2=10.122.84.194 -e ansible_switch3=10.122.84.88" ;;
+      printf '%s' "-e ansible_switch1=192.0.2.195 -e ansible_switch2=192.0.2.194 -e ansible_switch3=192.0.2.88" ;;
     nd_manage_l3out)
-      # switch1 = vxlan_border_1 (9FTTP2QGS0H / .88): the VXLAN-side L3Out
-      # endpoint physically cabled to external_edge_1 (9V1IZP23KBG / .89).
-      printf '%s' "-e nd_test_switch1_id=9FTTP2QGS0H -e nd_test_switch1_mgmt_ip=10.122.84.88 -e nd_test_switch2_id=9V1IZP23KBG -e nd_test_switch2_mgmt_ip=10.122.84.89" ;;
+      # switch1 = vxlan_border_1 (SERIAL00004 / .88): the VXLAN-side L3Out
+      # endpoint physically cabled to external_edge_1 (SERIAL00005 / .89).
+      printf '%s' "-e nd_test_switch1_id=SERIAL00004 -e nd_test_switch1_mgmt_ip=192.0.2.88 -e nd_test_switch2_id=SERIAL00005 -e nd_test_switch2_mgmt_ip=192.0.2.89" ;;
     nd_interface_subinterface_managed|nd_interface_subinterface_unmanaged)
-      # Parents must PRE-EXIST: Eth1/3 routed + Port-channel10 (setup never creates them).
-      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195} -e nd_test_ethernet_parent=Ethernet1/3 -e nd_test_port_channel_parent=Port-channel10" ;;
+      # Parents must PRE-EXIST (setup never creates them): routed Eth1/1 (the existing leaf_1<->external_edge_1
+      # cable; Eth1/2-1/3 are underlay, never use them) + Port-channel10. The nightly gets both from the prerequisite lifecycle.
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_ethernet_parent=Ethernet1/1 -e nd_test_port_channel_parent=Port-channel10" ;;
     nd_interface_port_channel_access|nd_interface_port_channel_trunk_host)
-      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13" ;;
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13" ;;
     nd_interface_*)
-      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-10.122.84.195}" ;;
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195}" ;;
     *) printf '%s' "" ;;
   esac
 }
@@ -427,7 +422,6 @@ for m in "${MODULES[@]}"; do
 
   start=$(date +%s)
   # $cap, $VERBOSITY and $MOD_XTRA are intentionally left unquoted (word-split into args).
-  # shellcheck disable=SC2086 # these values intentionally expand into argument lists
   $cap ansible-playbook ${VERBOSITY} -i "$INVENTORY" "$RUN_PLAYBOOK" \
       ${EXTRA_VARS_FILE_ARGS[@]+"${EXTRA_VARS_FILE_ARGS[@]}"} \
       "${RUN_E_ARGS[@]}" \

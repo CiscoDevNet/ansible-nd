@@ -17,17 +17,27 @@ RETAINED = {"VXLAN_EVPN_Fabric", "External_Connectivity_Fabric"}
 PRESERVED = {"VXLAN_EVPN_Fabric_eBGP"}
 PROTECTED = RETAINED | PRESERVED
 ALLOWED_CONFIRMATION = {"confirmed", "pending", "rejected"}
+ALLOWED_REQUIREMENT_STATUS = {"ready", "pending_verification", "unavailable"}
 ALLOWED_EXECUTION_STYLES = {"smoke_playbook", "integration_role", "standalone_integration"}
 ALLOWED_DOMAINS = {
     "fabrics", "switches", "vpc_pairs", "physical_interfaces", "vpc_interfaces",
     "resource_allocations", "policies", "policy_groups", "vrfs", "networks",
     "l3outs", "acls", "prefix_lists", "route_maps", "vrf_lite",
+    "logical_interfaces", "port_channels",
 }
 # Inter-fabric link templates a profile may declare under `interfabric_links`.
-# Mirrors ALLOWED_LINK_TEMPLATES in nd_prerequisite_orchestrator.py.
+# Mirrors ALLOWED_LINK_TEMPLATES / LINK_POLICY_BY_TEMPLATE in nd_prerequisite_orchestrator.py.
 ALLOWED_LINK_TEMPLATES = {
     "ext_l3_dci_link",
+    "ext_fabric_setup",
+    "ext_l2_dci_link",
 }
+LINK_POLICY_BY_TEMPLATE = {
+    "ext_l3_dci_link": "layer3DciVrfLite",
+    "ext_fabric_setup": "ebgpVrfLite",
+    "ext_l2_dci_link": "layer2Dci",
+}
+LINK_PROVISIONING_MODES = {"api", "module_managed", "nd_manage_links"}
 REQUIRED_PROFILE_FIELDS = {
     "profile_id", "phase", "execution_style", "fabrics", "switches", "links",
     "vpc_pairs", "resources", "managed_domains", "runtime_vars", "timeouts",
@@ -44,34 +54,51 @@ CANONICAL_FABRICS = {
     "disposable_external": {"ref": "disposable_external", "name": "ANSIBLE_NIGHTLY_EXTERNAL", "type": "externalConnectivity", "lifecycle": "disposable"},
 }
 CANONICAL_SWITCHES = {
-    "vxlan_leaf_1": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "9PICV0LTD7C", "seed_ip": "10.122.84.195"},
-    "vxlan_leaf_2": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "9VISBXAWYYB", "seed_ip": "10.122.84.196"},
-    "vxlan_spine_1": {"baseline_fabric_ref": "advanced", "baseline_role": "spine", "serial": "9FKMQG17900", "seed_ip": "10.122.84.194"},
-    "vxlan_border_1": {"baseline_fabric_ref": "advanced", "baseline_role": "border", "serial": "9FTTP2QGS0H", "seed_ip": "10.122.84.88"},
-    "external_edge_1": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "9V1IZP23KBG", "seed_ip": "10.122.84.89"},
-    "external_edge_2": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "9GRLA6ZC4Z0", "seed_ip": "10.122.84.90"},
+    "vxlan_leaf_1": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00001", "seed_ip": "192.0.2.195"},
+    "vxlan_leaf_2": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00002", "seed_ip": "192.0.2.196"},
+    "vxlan_spine_1": {"baseline_fabric_ref": "advanced", "baseline_role": "spine", "serial": "SERIAL00003", "seed_ip": "192.0.2.194"},
+    "vxlan_border_1": {"baseline_fabric_ref": "advanced", "baseline_role": "border", "serial": "SERIAL00004", "seed_ip": "192.0.2.88"},
+    "external_edge_1": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "SERIAL00005", "seed_ip": "192.0.2.89"},
+    "external_edge_2": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "SERIAL00006", "seed_ip": "192.0.2.90"},
 }
 CANONICAL_RUNTIME_DEFAULTS = {
     "nd_test_fabric_switches": {
         "VXLAN_EVPN_Fabric": [
-            {"name": "vxlan_leaf_1", "seed_ip": "10.122.84.195", "serial": "9PICV0LTD7C", "role": "leaf"},
-            {"name": "vxlan_leaf_2", "seed_ip": "10.122.84.196", "serial": "9VISBXAWYYB", "role": "leaf"},
-            {"name": "vxlan_spine_1", "seed_ip": "10.122.84.194", "serial": "9FKMQG17900", "role": "spine"},
-            {"name": "vxlan_border_1", "seed_ip": "10.122.84.88", "serial": "9FTTP2QGS0H", "role": "border"},
+            {"name": "vxlan_leaf_1", "seed_ip": "192.0.2.195", "serial": "SERIAL00001", "role": "leaf"},
+            {"name": "vxlan_leaf_2", "seed_ip": "192.0.2.196", "serial": "SERIAL00002", "role": "leaf"},
+            {"name": "vxlan_spine_1", "seed_ip": "192.0.2.194", "serial": "SERIAL00003", "role": "spine"},
+            {"name": "vxlan_border_1", "seed_ip": "192.0.2.88", "serial": "SERIAL00004", "role": "border"},
         ],
         "External_Connectivity_Fabric": [
-            {"name": "external_edge_1", "seed_ip": "10.122.84.89", "serial": "9V1IZP23KBG", "role": "edge_router"},
-            {"name": "external_edge_2", "seed_ip": "10.122.84.90", "serial": "9GRLA6ZC4Z0", "role": "edge_router"},
+            {"name": "external_edge_1", "seed_ip": "192.0.2.89", "serial": "SERIAL00005", "role": "edge_router"},
+            {"name": "external_edge_2", "seed_ip": "192.0.2.90", "serial": "SERIAL00006", "role": "edge_router"},
         ],
     },
 }
 CANONICAL_INTERFACE_ALLOWLIST = {
-    "vxlan_leaf_1": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4"],
-    "vxlan_leaf_2": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4"],
+    "vxlan_leaf_1": [
+        "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
+        "Ethernet1/10", "Ethernet1/11", "Ethernet1/12", "Ethernet1/13",
+        "Ethernet1/31", "Ethernet1/32", "Ethernet1/33", "Ethernet1/34",
+        "Ethernet1/35", "Ethernet1/41", "Ethernet1/42", "Ethernet1/43",
+        "Ethernet1/44", "Ethernet1/45", "Ethernet1/46", "Ethernet1/47",
+        "Ethernet1/48", "Ethernet1/49", "Ethernet1/50",
+    ],
+    "vxlan_leaf_2": [
+        "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
+        "Ethernet1/30", "Ethernet1/31", "Ethernet1/32",
+    ],
     "vxlan_spine_1": [],
-    "vxlan_border_1": ["Ethernet1/1", "Ethernet1/2"],
-    "external_edge_1": ["Ethernet1/2", "Ethernet1/3"],
+    "vxlan_border_1": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/4", "Ethernet1/30", "Ethernet1/31", "Ethernet1/32"],
+    "external_edge_1": ["Ethernet1/2", "Ethernet1/3", "Ethernet1/4"],
     "external_edge_2": [],
+}
+
+LOGICAL_INTERFACE_PATTERNS = {
+    "loopback": re.compile(r"^loopback\d+$", re.I),
+    "svi": re.compile(r"^vlan\d+$", re.I),
+    "port_channel": re.compile(r"^port-channel\d+$", re.I),
+    "subinterface": re.compile(r"^(?:Ethernet\d+/\d+|Port-channel\d+)\.\d+$", re.I),
 }
 
 
@@ -168,6 +195,17 @@ def _profile_auto_confirm_errors(label, profile):
     desired = {key: profile.get(key) for key in ("fabrics", "switches", "links", "vpc_pairs", "resources", "runtime_vars")}
     if _has_unresolved(desired):
         return [f"{label}: auto-confirm blocked by unresolved desired state"]
+    blocked_resources = [
+        resource
+        for resource in profile.get("resources", [])
+        if resource.get("requirement_status") in {"pending_verification", "unavailable"}
+    ]
+    if blocked_resources:
+        return [
+            f"{label}: prerequisite resource {resource.get('kind', 'unknown')} "
+            f"is {resource.get('requirement_status')}"
+            for resource in blocked_resources
+        ]
     return []
 
 
@@ -320,9 +358,120 @@ def validate_registry(registry):
                 errors.append(f"{profile_id}: vPC uses unknown peers")
             if pair.get("mode") == "virtual" and pair.get("physical_peer_links"):
                 errors.append(f"{profile_id}: virtual vPC cannot declare physical peer links")
+            if pair.get("required_path") == "module_creates_pair":
+                if pair.get("mode") != "physical":
+                    errors.append(f"{profile_id}: a module-created vPC pair must be physical")
+                peer_links = pair.get("physical_peer_links")
+                if not isinstance(peer_links, list) or not peer_links:
+                    errors.append(f"{profile_id}: a module-created vPC pair must declare its physical peer-link")
+                    peer_links = []
+                for peer_link in peer_links:
+                    refs = []
+                    for side in ("src", "dst"):
+                        endpoint = peer_link.get(side) if isinstance(peer_link, dict) else None
+                        endpoint = endpoint if isinstance(endpoint, dict) else {}
+                        switch_ref = endpoint.get("switch_ref")
+                        if switch_ref not in pair.get("peer_refs", []):
+                            errors.append(f"{profile_id}: vPC peer-link endpoint is not a pair member: {switch_ref}")
+                        elif endpoint.get("interface") not in allowlist.get(switch_ref, []):
+                            errors.append(f"{profile_id}: vPC peer-link uses an interface outside the allowlist")
+                        refs.append(switch_ref)
+                    if len(refs) == 2 and refs[0] == refs[1]:
+                        errors.append(f"{profile_id}: vPC peer-link must join the two pair members")
+        for resource in profile.get("resources", []):
+            requirement_status = resource.get("requirement_status")
+            if requirement_status is not None and requirement_status not in ALLOWED_REQUIREMENT_STATUS:
+                errors.append(
+                    f"{profile_id}: unsupported resource requirement status {requirement_status}"
+                )
+            kind = resource.get("kind")
+            if kind == "verify_free_interfaces":
+                switch_ref = resource.get("switch_ref")
+                interfaces = resource.get("interfaces", [])
+                if switch_ref not in switches:
+                    errors.append(f"{profile_id}: free-interface check uses unknown switch {switch_ref}")
+                elif not interfaces or len(interfaces) != len(set(interfaces)):
+                    errors.append(f"{profile_id}: free-interface check requires distinct interfaces")
+                elif set(interfaces) - set(allowlist.get(switch_ref, [])):
+                    errors.append(f"{profile_id}: free-interface check uses an interface outside the allowlist")
+                if set(resource.get("constraints", [])) != {
+                    "exists", "not_port_channel_member", "not_fabric_link",
+                }:
+                    errors.append(f"{profile_id}: free-interface constraints are incomplete")
+            elif kind == "verify_logical_interface_namespace":
+                switch_ref = resource.get("switch_ref")
+                interface_type = resource.get("interface_type")
+                interfaces = resource.get("interfaces", [])
+                pattern = LOGICAL_INTERFACE_PATTERNS.get(interface_type)
+                if switch_ref not in switches:
+                    errors.append(f"{profile_id}: logical namespace uses unknown switch {switch_ref}")
+                if pattern is None:
+                    errors.append(f"{profile_id}: unsupported logical interface type {interface_type}")
+                elif (
+                    not interfaces
+                    or len(interfaces) != len({str(name).lower() for name in interfaces})
+                    or any(not isinstance(name, str) or pattern.fullmatch(name) is None for name in interfaces)
+                ):
+                    errors.append(f"{profile_id}: logical namespace contains invalid interfaces")
+                if resource.get("expected_state") != "absent":
+                    errors.append(f"{profile_id}: logical namespace must be reserved as absent")
+            elif kind == "ensure_routed_parent":
+                switch_ref = resource.get("switch_ref")
+                interface = resource.get("interface")
+                if switch_ref not in switches:
+                    errors.append(f"{profile_id}: routed parent uses unknown switch {switch_ref}")
+                elif interface not in allowlist.get(switch_ref, []):
+                    errors.append(f"{profile_id}: routed parent is outside the interface allowlist")
+                if resource.get("desired_policy") != "routedHost":
+                    errors.append(f"{profile_id}: routed parent policy must be routedHost")
+                if set(resource.get("constraints", [])) != {
+                    "exists", "not_port_channel_member", "not_fabric_link",
+                }:
+                    errors.append(f"{profile_id}: routed-parent constraints are incomplete")
+                existing_link = resource.get("existing_link")
+                if existing_link is not None:
+                    peer_ref = existing_link.get("peer_switch_ref") if isinstance(existing_link, dict) else None
+                    peer_interface = existing_link.get("peer_interface") if isinstance(existing_link, dict) else None
+                    if peer_ref not in switches:
+                        errors.append(f"{profile_id}: existing link uses unknown peer switch {peer_ref}")
+                    elif switch_ref in switches and (
+                        switches[peer_ref]["baseline_fabric_ref"] == switches[switch_ref]["baseline_fabric_ref"]
+                    ):
+                        errors.append(f"{profile_id}: existing link must join two different fabrics")
+                    if not isinstance(peer_interface, str) or re.fullmatch(r"Ethernet\d+/\d+", peer_interface) is None:
+                        errors.append(f"{profile_id}: existing link peer interface is invalid")
+            elif kind == "ensure_routed_port_channel":
+                switch_ref = resource.get("switch_ref")
+                interface = resource.get("interface")
+                members = resource.get("member_interfaces")
+                if switch_ref not in switches:
+                    errors.append(f"{profile_id}: routed port-channel uses unknown switch {switch_ref}")
+                if not isinstance(interface, str) or re.fullmatch(r"Port-channel\d+", interface, re.I) is None:
+                    errors.append(f"{profile_id}: routed port-channel name is invalid")
+                if resource.get("desired_policy") != "int_l3_port_channel":
+                    errors.append(f"{profile_id}: routed port-channel policy must be int_l3_port_channel")
+                if not isinstance(members, list):
+                    errors.append(f"{profile_id}: routed port-channel members must be a list")
+                elif switch_ref in switches and set(members) - set(allowlist.get(switch_ref, [])):
+                    errors.append(f"{profile_id}: routed port-channel member is outside the allowlist")
         for spec in profile.get("interfabric_links", []):
             if spec.get("template") not in ALLOWED_LINK_TEMPLATES:
                 errors.append(f"{profile_id}: unsupported inter-fabric link template {spec.get('template')}")
+            provisioning = spec.get("provisioning", "api")
+            if provisioning not in LINK_PROVISIONING_MODES:
+                errors.append(f"{profile_id}: unsupported inter-fabric link provisioning {provisioning}")
+            elif provisioning == "nd_manage_links":
+                if spec.get("policy_type") != LINK_POLICY_BY_TEMPLATE.get(spec.get("template")):
+                    errors.append(
+                        f"{profile_id}: inter-fabric link {spec.get('template')} must use nd_manage_links "
+                        f"policy {LINK_POLICY_BY_TEMPLATE.get(spec.get('template'))}"
+                    )
+                inputs = spec.get("template_inputs", {})
+                if not isinstance(inputs, dict) or any(
+                    not isinstance(key, str) or isinstance(value, (dict, list, tuple)) or value is None
+                    for key, value in inputs.items()
+                ):
+                    errors.append(f"{profile_id}: inter-fabric link template_inputs must be a flat scalar map")
             side_fabric_refs = []
             for side in ("src", "dst"):
                 endpoint = spec.get(side)
@@ -405,7 +554,7 @@ def jenkins_targets(text):
 
     # Literal modules added while the effective list is assembled are not present
     # in any @Field array, so capture them from the assignment as well. The live
-    # Jenkins gate receives the already evaluated list and remains the final
+    # Jenkins gate below receives the already evaluated list and remains the final
     # authority if the Groovy assembly becomes more dynamic in the future.
     appended = re.findall(r"'([A-Za-z0-9_.-]+)'", effective_expression)
     effective = (
@@ -440,12 +589,7 @@ def validate_effective_module_profile_coverage(modules, profiles):
 def validate_playbook_summary(path, profile):
     plays = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8")) or []
     actual = plays[0].get("vars", {}).get("nd_prerequisite") if plays else None
-    wanted = {
-        "profile": profile["profile_id"],
-        "fabric_types": [item["type"] for item in profile["fabrics"]],
-        "switch_count": profile["switches"]["required_count"],
-        "switch_roles": [item["desired_role"] for item in profile["switches"]["members"]],
-    }
+    wanted = {"profile": profile["profile_id"], "fabric_types": [item["type"] for item in profile["fabrics"]], "switch_count": profile["switches"]["required_count"], "switch_roles": [item["desired_role"] for item in profile["switches"]["members"]]}
     return [] if actual == wanted else [f"{path}: nd_prerequisite summary mismatch"]
 
 
@@ -566,19 +710,9 @@ def sanitize_interface_payload(payload, switch_id, admin_state, registry=None):
 def normalized_equal(domain, before, after):
     if domain not in ALLOWED_DOMAINS:
         raise ValidationError(f"unsupported normalized domain: {domain}")
-
     def normalize(value):
-        if isinstance(value, dict):
-            return {
-                key: normalize(item)
-                for key, item in sorted(value.items())
-                if key not in {"createdOn", "lastModified", "status", "metadata", "uuid"}
-            }
-        if isinstance(value, list):
-            return sorted(
-                (normalize(item) for item in value),
-                key=lambda item: json.dumps(item, sort_keys=True),
-            )
+        if isinstance(value, dict): return {key: normalize(item) for key, item in sorted(value.items()) if key not in {"createdOn", "lastModified", "status", "metadata", "uuid"}}
+        if isinstance(value, list): return sorted((normalize(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
         return value
     return normalize(before) == normalize(after)
 

@@ -8,9 +8,9 @@
 # pair). Every task is idempotent (state: deleted) and tolerant (ignore_errors),
 # so an already-clean ND still passes.
 #
-# NOTE: this resets the CONTENTS of the persistent test fabrics (VXLAN_EVPN_Fabric
-# and the MSD fabric msd_p) and deletes the throwaway fabrics; it does NOT delete
-# VXLAN_EVPN_Fabric / External_Connectivity_Fabric or evict their member switches.
+# NOTE: this resets the CONTENTS of the persistent test fabrics
+# (VXLAN_EVPN_Fabric and External_Connectivity_Fabric) and deletes the throwaway
+# fabrics; it does NOT delete the persistent fabrics or evict their switches.
 # Switch-scoped cleanups
 # (policy, vPC pair, vPC host interfaces) iterate over every switch on both
 # fabrics so nothing is missed.
@@ -20,18 +20,18 @@
   vars:
     nd_fabric_name: VXLAN_EVPN_Fabric
     nd_external_fabric_name: External_Connectivity_Fabric
-    # MSD fabric the vrfs/networks integration targets run against; dynamic
-    # leftovers (AKB_NET_*/AKB_VRF_*) accumulate here across builds.
-    nd_msd_fabric_name: msd_p
+    # Optional MSD fabric used by older VRF/network bundles. The current
+    # nightly bundle has no MSD fabric, so skip MSD cleanup when it is absent.
+    nd_msd_fabric_name: ""
     # Each fabric carries ITS OWN switches; switch-scoped cleanups iterate per
     # fabric so the external fabric uses its own switches, not the main pair.
     reset_fabric_switches:
       - fabric: VXLAN_EVPN_Fabric
-        serials: [9PICV0LTD7C, 9VISBXAWYYB, 9FKMQG17900, 9FTTP2QGS0H]
-        ips: [10.122.84.195, 10.122.84.196, 10.122.84.194, 10.122.84.88]
+        serials: [SERIAL00001, SERIAL00002, SERIAL00003, SERIAL00004]
+        ips: [192.0.2.195, 192.0.2.196, 192.0.2.194, 192.0.2.88]
       - fabric: External_Connectivity_Fabric
-        serials: [9V1IZP23KBG, 9GRLA6ZC4Z0]
-        ips: [10.122.84.89, 10.122.84.90]
+        serials: [SERIAL00005, SERIAL00006]
+        ips: [192.0.2.89, 192.0.2.90]
     ebgp_fabric_name: ANSIBLE_NIGHTLY_EBGP
     ibgp_fabric_name: ANSIBLE_NIGHTLY_IBGP
     ai_ebgp_fabric_name: ANSIBLE_NIGHTLY_AI_EBGP
@@ -243,18 +243,17 @@
         config: []
       ignore_errors: true
 
-    # --- MSD fabric (msd_p): the vrfs/networks integration targets run here, so
-    # dynamic leftovers (AKB_NET_*/AKB_VRF_*) pile up build-to-build. Same order:
-    # delete every network first, then every VRF. ---
-    - name: Gather all networks on the MSD fabric (msd_p)
+    # --- Optional MSD fabric: delete networks before VRFs when configured. ---
+    - name: Gather all networks on the optional MSD fabric
       cisco.nd.nd_manage_networks:
         fabric_name: "{{ nd_msd_fabric_name }}"
         state: gathered
         config: []
       register: reset_msd_networks
       ignore_errors: true
+      when: nd_msd_fabric_name | default('') | trim | length > 0
 
-    - name: Delete every network on the MSD fabric (before VRFs)
+    - name: Delete every network on the optional MSD fabric (before VRFs)
       cisco.nd.nd_manage_networks:
         fabric_name: "{{ nd_msd_fabric_name }}"
         state: deleted
@@ -265,13 +264,15 @@
       loop_control:
         label: "{{ nd_msd_fabric_name }} / {{ item.network_name | default(item) }}"
       ignore_errors: true
+      when: nd_msd_fabric_name | default('') | trim | length > 0
 
-    - name: Delete ALL leftover VRFs on the MSD fabric (msd_p)
+    - name: Delete ALL leftover VRFs on the optional MSD fabric
       cisco.nd.nd_manage_vrfs:
         fabric_name: "{{ nd_msd_fabric_name }}"
         state: deleted
         config: []
       ignore_errors: true
+      when: nd_msd_fabric_name | default('') | trim | length > 0
 
     # --- External fabric: its VRF first, then the fabric itself ---
     - name: Delete leftover VRF on the external fabric
@@ -333,6 +334,7 @@
         - "{{ nd_fabric_name }}"
         - "{{ nd_external_fabric_name }}"
         - "{{ nd_msd_fabric_name }}"
+      when: item | default('') | trim | length > 0
       loop_control:
         label: "{{ item }}"
       ignore_errors: true
@@ -345,6 +347,7 @@
         - "{{ nd_fabric_name }}"
         - "{{ nd_external_fabric_name }}"
         - "{{ nd_msd_fabric_name }}"
+      when: item | default('') | trim | length > 0
       loop_control:
         label: "{{ item }}"
       ignore_errors: true

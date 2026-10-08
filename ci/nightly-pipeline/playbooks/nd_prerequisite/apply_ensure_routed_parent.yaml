@@ -1,0 +1,211 @@
+---
+# Temporarily convert one verified-free physical port to routedHost. The
+# pre-change absence of interface intent is journaled before mutation so the
+# runner's forced restore handler can reset it even when the target fails.
+- name: "ensure_routed_parent guard {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.desired_policy == 'routedHost'
+      - _ndp_operation.interface is match('^Ethernet[0-9]+/[0-9]+$')
+      - _ndp_operation.interface in _ndp_registry.lab.interface_allowlist[_ndp_operation.switch_ref]
+    fail_msg: >-
+      Refusing an undeclared routed-parent mutation for
+      {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}.
+  run_once: true
+
+- name: "ensure_routed_parent recapture current intent {{ _ndp_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_operation.serial
+      }}&ifName={{ _ndp_operation.interface | replace('/', '%2F') }}
+    method: get
+  register: _ndp_parent_before
+  no_log: true
+  run_once: true
+
+- name: "ensure_routed_parent normalize the pre-change intent"
+  ansible.builtin.set_fact:
+    _ndp_parent_before_objects: >-
+      {{
+        _ndp_parent_before.current
+        if (_ndp_parent_before.current is not mapping)
+        else (_ndp_parent_before.current.DATA | default(_ndp_parent_before.current.response | default([])))
+      }}
+  run_once: true
+
+# Mirrors _is_default_free_port() in nd_prerequisite_orchestrator.py: ND's default int_trunk_host is free, both
+# the sparse form on a never-touched port and the full template at its defaults that ND persists after a reset.
+- name: "ensure_routed_parent refuse a changed or configured parent"
+  ansible.builtin.assert:
+    that:
+      - _ndp_parent_before_objects | length == 0 or _ndp_parent_before_is_default | bool
+    fail_msg: >-
+      {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }} acquired
+      interface intent after planning. Refusing to overwrite it.
+  vars:
+    _ndp_parent_before_nv: >-
+      {{ ((_ndp_parent_before_objects | first | default({})).interfaces | default([{}]) | first).nvPairs | default({}) }}
+    _ndp_parent_before_extra_nv: >-
+      {{ _ndp_parent_before_nv | dict2items
+         | rejectattr('key', 'in', ['ADMIN_STATE', 'ALLOWED_VLANS', 'BPDUGUARD_ENABLED', 'ENABLE_NETFLOW', 'MARK_DELETED', 'MTU',
+                                    'PORTTYPE_FAST_ENABLED', 'PTP', 'SPEED', 'INTF_NAME', 'POLICY_ID', 'SERIAL_NUMBER',
+                                    'PRIORITY', 'FABRIC_NAME', 'CREATE_UPDATE',
+                                    'BPDUFILTER_ENABLED', 'CDP_ENABLE', 'ENABLE_ERRDISABLE_ACL', 'ENABLE_MONITOR',
+                                    'ENABLE_ORPHAN_PORT', 'ENABLE_PFC', 'ENABLE_QOS', 'ENABLE_STORM_CONTROL', 'FEC',
+                                    'LINK_TYPE', 'NEGOTIATE_AUTO', 'PORT_DUPLEX_MODE', 'STORM_CONTROL_ACTION',
+                                    'enableVlanMapping'])
+         | rejectattr('value', 'in', ['', none]) | list }}
+    _ndp_parent_before_is_default: >-
+      {{
+        _ndp_parent_before_objects | length == 1
+        and ((_ndp_parent_before_objects | first).policy | default('')) == 'int_trunk_host'
+        and _ndp_parent_before_extra_nv | length == 0
+        and (_ndp_parent_before_nv.ADMIN_STATE | default('true') | string | lower) == 'true'
+        and (_ndp_parent_before_nv.ALLOWED_VLANS | default('none') | string | lower) in ['none', '']
+        and (_ndp_parent_before_nv.BPDUGUARD_ENABLED | default('no') | string | lower) == 'no'
+        and (_ndp_parent_before_nv.ENABLE_NETFLOW | default('false') | string | lower) == 'false'
+        and (_ndp_parent_before_nv.MARK_DELETED | default('false') | string | lower) == 'false'
+        and (_ndp_parent_before_nv.MTU | default('jumbo') | string | lower) == 'jumbo'
+        and (_ndp_parent_before_nv.PORTTYPE_FAST_ENABLED | default('true') | string | lower) == 'true'
+        and (_ndp_parent_before_nv.PTP | default('false') | string | lower) == 'false'
+        and (_ndp_parent_before_nv.SPEED | default('Auto') | string | lower) == 'auto'
+        and (_ndp_parent_before_nv.BPDUFILTER_ENABLED | default('no', true) | string | lower) == 'no'
+        and (_ndp_parent_before_nv.CDP_ENABLE | default('true', true) | string | lower) == 'true'
+        and (_ndp_parent_before_nv.ENABLE_ERRDISABLE_ACL | default('true', true) | string | lower) == 'true'
+        and (_ndp_parent_before_nv.ENABLE_MONITOR | default('false', true) | string | lower) == 'false'
+        and (_ndp_parent_before_nv.ENABLE_ORPHAN_PORT | default('false', true) | string | lower) == 'false'
+        and (_ndp_parent_before_nv.ENABLE_PFC | default('false', true) | string | lower) == 'false'
+        and (_ndp_parent_before_nv.ENABLE_QOS | default('false', true) | string | lower) == 'false'
+        and (_ndp_parent_before_nv.ENABLE_STORM_CONTROL | default('false', true) | string | lower) == 'false'
+        and (_ndp_parent_before_nv.FEC | default('auto', true) | string | lower) == 'auto'
+        and (_ndp_parent_before_nv.LINK_TYPE | default('auto', true) | string | lower) == 'auto'
+        and (_ndp_parent_before_nv.NEGOTIATE_AUTO | default('true', true) | string | lower) == 'true'
+        and (_ndp_parent_before_nv.PORT_DUPLEX_MODE | default('auto', true) | string | lower) == 'auto'
+        and (_ndp_parent_before_nv.STORM_CONTROL_ACTION | default('no', true) | string | lower) == 'no'
+        and (_ndp_parent_before_nv.enableVlanMapping | default('false', true) | string | lower) == 'false'
+      }}
+  run_once: true
+
+- name: "ensure_routed_parent append the pre-change snapshot to the restore journal"
+  ansible.builtin.set_fact:
+    _ndp_prerequisite_restore_operations: >-
+      {{ _ndp_prerequisite_restore_operations + [{
+        'action': 'reset_routed_ethernet',
+        'switch_ref': _ndp_operation.switch_ref,
+        'serial': _ndp_operation.serial,
+        'switch_ip': _ndp_operation.switch_ip,
+        'fabric_name': _ndp_operation.fabric_name,
+        'interface': _ndp_operation.interface,
+        'pre_change_intent_exists': false
+      }] }}
+  run_once: true
+
+- name: "ensure_routed_parent persist the restore journal before mutation"
+  ansible.builtin.copy:
+    dest: "{{ _ndp_restore_file }}"
+    content: >-
+      {{ {'schema_version': 1, 'run_id': _ndp_run_id,
+          'execution_id': _ndp_execution_id,
+          'operations': _ndp_prerequisite_restore_operations} | to_nice_yaml }}
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+
+# policy_type only, exactly like the collection's own defaults-only target (routed_34_defaults_only). ND 4.3 rejects an
+# explicit adminState without an mtu (207 "Policy [routedHost] - Validation failed for following fields: [mtu]", live
+# 2026-10-08) but fills in its routedHost defaults (adminState true, mtu 9216) when only the policy type is sent.
+- name: "ensure_routed_parent provision {{ _ndp_operation.interface }} as routedHost"
+  cisco.nd.nd_interface_ethernet_routed:
+    fabric_name: "{{ _ndp_operation.fabric_name }}"
+    config:
+      - switch_ip: "{{ _ndp_operation.switch_ip }}"
+        interface_name: "{{ _ndp_operation.interface }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              policy_type: routedHost
+    config_actions:
+      deploy: true
+    state: merged
+  register: _ndp_parent_create
+  run_once: true
+
+- name: "ensure_routed_parent verify routed intent is visible"
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_operation.serial
+      }}&ifName={{ _ndp_operation.interface | replace('/', '%2F') }}
+    method: get
+  register: _ndp_parent_after
+  retries: 3
+  delay: 5
+  until: >-
+    {{
+      ((_ndp_parent_after.current
+        if (_ndp_parent_after.current is not mapping)
+        else (_ndp_parent_after.current.DATA | default(_ndp_parent_after.current.response | default([]))))
+       | selectattr('policy', 'match', '^int_routed_host') | list | length) == 1
+    }}
+  no_log: true
+  run_once: true
+
+# ND refuses a sub-interface on a parent whose DISCOVERED mode (operData.mode, learned from the switch) is not routed,
+# so wait for it and ask ND to rediscover the switch when it does not show up (see apply_ensure_routed_port_channel.yaml).
+- name: "ensure_routed_parent wait for ND to discover {{ _ndp_operation.interface }} as routed"
+  run_once: true
+  block:
+    - name: "ensure_routed_parent read the discovered mode of {{ _ndp_operation.interface }}"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switches/{{ _ndp_operation.serial }}/interfaces/{{
+            _ndp_operation.interface | replace('/', '%2F') }}
+        method: get
+      register: _ndp_parent_mode
+      retries: 6
+      delay: 10
+      until: "(((_ndp_parent_mode.current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed'"
+      failed_when: false
+      no_log: true
+
+    - name: "ensure_routed_parent record whether ND discovered {{ _ndp_operation.interface }} as routed"
+      ansible.builtin.set_fact:
+        _ndp_parent_routed: "{{ (((_ndp_parent_mode.current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed' }}"
+
+    - name: "ensure_routed_parent rediscover {{ _ndp_operation.switch_ref }} to refresh the discovered mode"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switchActions/rediscover"
+        method: post
+        content:
+          switchIds:
+            - "{{ _ndp_operation.serial }}"
+      failed_when: false
+      no_log: true
+      when: not (_ndp_parent_routed | bool)
+
+    - name: "ensure_routed_parent wait again after the rediscovery"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switches/{{ _ndp_operation.serial }}/interfaces/{{
+            _ndp_operation.interface | replace('/', '%2F') }}
+        method: get
+      register: _ndp_parent_mode_again
+      retries: 24
+      delay: 10
+      until: "(((_ndp_parent_mode_again.current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed'"
+      failed_when: false
+      no_log: true
+      when: not (_ndp_parent_routed | bool)
+
+    - name: "ensure_routed_parent require the discovered mode of {{ _ndp_operation.interface }} to be routed"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_ndp_parent_routed | bool) or
+            ((((_ndp_parent_mode_again | default({})).current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed'
+        fail_msg: >-
+          NDP_ROUTED_PARENT_NOT_DISCOVERED: ND still does not report {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}
+          as routed after the deploy and a rediscovery, so it would refuse the target's sub-interfaces on it.
