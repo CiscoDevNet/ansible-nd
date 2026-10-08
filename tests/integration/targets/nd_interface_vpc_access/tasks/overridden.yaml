@@ -4,15 +4,51 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# After replaced.yaml, vpc100 exists. State overridden with a single new vpc (vpc101) should
-# remove vpc100 and create vpc101 fabric-wide.
+# After replaced.yaml, vpc100 exists. State overridden should remove vpc100 and create vpc101.
+# Because overridden is fabric-wide, preserve every non-test access vPC discovered by a
+# read-only probe so this target is safe on a shared test fabric.
+
+- name: "OVERRIDDEN SETUP: Read the fabric's access vPCs (check mode, nothing is changed)"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_access_overridden }}"
+    state: overridden
+  check_mode: true
+  register: cm_overridden_probe
+
+# `before` items also carry frozen discriminator fields that are not module options, so replay
+# only the identifier and network_os container. The reserved names are owned by this target.
+- name: "OVERRIDDEN SETUP: Collect non-test access vPC bystanders"
+  ansible.builtin.set_fact:
+    vpc_access_bystanders: >-
+      {%- set collected = [] -%}
+      {%- for item in cm_overridden_probe.before
+            if item.interface_name not in ['vpc100', 'vpc101', 'vpc198', 'vpc199', vpc_multi_pair_name] -%}
+      {%- set appended = collected.append({
+            'switch_ip': item.switch_ip,
+            'interface_name': item.interface_name,
+            'config_data': {'network_os': item.config_data.network_os}}) -%}
+      {%- endfor -%}
+      {{ collected }}
+
+- name: "OVERRIDDEN SETUP: Record exact access vPC bystander identities"
+  ansible.builtin.set_fact:
+    vpc_access_bystander_keys: >-
+      {%- set keys = [] -%}
+      {%- for item in vpc_access_bystanders -%}
+      {%- set appended = keys.append(item.switch_ip ~ '/' ~ item.interface_name) -%}
+      {%- endfor -%}
+      {{ keys }}
 
 - name: "OVERRIDDEN: Single source of truth = vpc101 only (check mode)"
   cisco.nd.nd_interface_vpc_access: &override_vpc
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ vpc_access_overridden }}"
+    config: "{{ [vpc_access_overridden] + vpc_access_bystanders }}"
+    config_actions:
+      deploy: true
     state: overridden
   check_mode: true
   register: cm_overridden
@@ -22,16 +58,21 @@
   register: nm_overridden
 
 - name: "OVERRIDDEN: Verify override produced a change"
+  vars:
+    after_keys: >-
+      {%- set keys = [] -%}
+      {%- for item in nm_overridden.after -%}
+      {%- set appended = keys.append(item.switch_ip ~ '/' ~ item.interface_name) -%}
+      {%- endfor -%}
+      {{ keys }}
   ansible.builtin.assert:
     that:
       - cm_overridden is changed
       - nm_overridden is changed
+      - vpc_access_bystander_keys | difference(after_keys) | length == 0
+      - nm_overridden.after | length == 1 + (vpc_access_bystanders | length)
 
-- name: "OVERRIDDEN IDEMPOTENT: Pause for convergence"
-  ansible.builtin.pause:
-    seconds: 30
-
-- name: "OVERRIDDEN IDEMPOTENT: Re-apply (normal mode)"
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply immediately (normal mode)"
   cisco.nd.nd_interface_vpc_access: *override_vpc
   register: nm_overridden_idem
 

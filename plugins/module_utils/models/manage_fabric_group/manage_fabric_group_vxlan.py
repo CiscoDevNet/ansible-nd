@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
@@ -20,6 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     FieldSerializationInfo,
     SecretStr,
+    ValidationInfo,
     field_serializer,
     field_validator,
     model_validator,
@@ -36,6 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import (
     _build_options_from_model,
+    _project_config_to_argument_spec,
     serialize_secret_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
@@ -121,6 +123,17 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     empty_string_means_unset: ClassVar[bool] = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_read_only_security_group_status(cls, data: Any, info: ValidationInfo) -> Any:
+        """Discard ND's read-only security-group status on response parsing."""
+        if not isinstance(data, dict) or (info.context or {}).get("mode") != "response":
+            return data
+        cleaned = dict(data)
+        cleaned.pop("securityGroupStatus", None)
+        cleaned.pop("security_group_status", None)
+        return cleaned
 
     # Fabric Group Type (required for discriminated union)
     type: Literal[FabricGroupTypeEnum.VXLAN] = Field(description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN)
@@ -509,6 +522,12 @@ class FabricGroupVxlanModel(NDBaseModel):
             },
             **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )
+
+    def to_gathered_config(self, **kwargs) -> dict:
+        """Return configuration limited recursively to public Ansible options."""
+        config = self.to_config(**kwargs)
+        options = type(self).get_argument_spec()["config"]["options"]
+        return _project_config_to_argument_spec(config, options)
 
 
 # Export all models for external use

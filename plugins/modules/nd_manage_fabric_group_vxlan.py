@@ -58,12 +58,14 @@ options:
           downstream_l2_vni_range:
             description:
             - Unique Range for L2VNI when downstream VNI is enabled (min 1, max 16777214).
+            - Applies when O(config.management.downstream_vni=true).
             - Should not conflict with any VNI already used in member fabric.
             type: str
             default: "10030000-10049000"
           downstream_l3_vni_range:
             description:
             - Unique Range for L3VNI when downstream VNI is enabled (min 1, max 16777214).
+            - Applies when O(config.management.downstream_vni=true).
             - Should not conflict with any VNI already used in member fabric.
             type: str
             default: "10050000-10059000"
@@ -77,11 +79,13 @@ options:
           vrf_template:
             description:
             - Default overlay VRF template for leafs.
+            - Must match the corresponding value in a fabric before that fabric can join the group.
             type: str
             default: Default_VRF_Universal
           network_template:
             description:
             - Default overlay network template for leafs.
+            - Must match the corresponding value in a fabric before that fabric can join the group.
             type: str
             default: Default_Network_Universal
           vrf_extension_template:
@@ -104,6 +108,7 @@ options:
           default_private_vlan_secondary_network_template:
             description:
             - Default PVLAN secondary network template.
+            - Used when O(config.management.private_vlan=true).
             type: str
             default: Pvlan_Secondary_Network
 
@@ -111,6 +116,7 @@ options:
           anycast_gateway_mac:
             description:
             - Shared anycast gateway MAC address for all VTEPs in xxxx.xxxx.xxxx format.
+            - Must match the corresponding value in a fabric before that fabric can join the group.
             type: str
             default: 2020.0000.00aa
 
@@ -124,6 +130,7 @@ options:
           route_server_collection:
             description:
             - List of Multi-Site Route-Servers.
+            - Used when O(config.management.multisite_overlay_inter_connect_type=routeServer).
             - Each entry requires a route server IP address and BGP ASN.
             type: list
             elements: dict
@@ -131,27 +138,36 @@ options:
               route_server_ip:
                 description:
                 - Route Server IP Address.
+                - Required for each O(config.management.route_server_collection) entry.
+                - Use an IPv4 address when O(config.management.underlay_ipv6=false), or an IPv6 address when
+                  O(config.management.underlay_ipv6=true).
                 type: str
                 required: true
               route_server_asn:
                 description:
                 - Autonomous system number (1-4294967295 or dotted notation).
+                - Required for each O(config.management.route_server_collection) entry.
                 type: str
                 required: true
           route_server_redistribute_direct_route_map:
             description:
             - Redistribute direct on route servers for auto-created Multi-Site overlay IFC links.
-            - Applicable only when deployment method is centralizedToRouteServers.
+            - Applies only when O(config.management.multisite_overlay_inter_connect_type=routeServer).
+            - Changes affect newly auto-created overlay links, not existing links.
             type: bool
             default: false
           route_server_routing_tag:
             description:
             - Routing tag associated with Route Server IP for redistribute direct (0-4294967295).
+            - Used when O(config.management.multisite_overlay_inter_connect_type=routeServer) and
+              O(config.management.route_server_redistribute_direct_route_map=true).
             type: int
             default: 54321
           enable_ms_overlay_ifc_bgp_desc:
             description:
             - Generate BGP neighbor description for auto-created Multi-Site overlay IFC links.
+            - Applies to newly auto-created links when O(config.management.multisite_overlay_inter_connect_type)
+              is C(routeServer) or C(directPeering); changes do not affect existing links.
             type: bool
             default: true
 
@@ -164,16 +180,19 @@ options:
           bgp_send_community:
             description:
             - Send community for auto-created Multi-Site Underlay Inter-Fabric links.
+            - Used for newly auto-created links when O(config.management.auto_multisite_underlay_inter_connect=true).
             type: bool
             default: false
           bgp_log_neighbor_change:
             description:
             - Log neighbor change for auto-created Multi-Site Underlay Inter-Fabric links.
+            - Used for newly auto-created links when O(config.management.auto_multisite_underlay_inter_connect=true).
             type: bool
             default: false
           bgp_bfd:
             description:
             - BFD for auto-created Multi-Site Underlay Inter-Fabric links.
+            - Used for newly auto-created links when O(config.management.auto_multisite_underlay_inter_connect=true).
             type: bool
             default: false
           multisite_delay_restore:
@@ -189,12 +208,15 @@ options:
           multisite_inter_connect_bgp_auth_key_type:
             description:
             - "BGP key encryption type: 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7."
+            - Used when O(config.management.multisite_inter_connect_bgp_authentication=true).
             type: str
             default: 3des
             choices: [ 3des, type6, type7 ]
           multisite_inter_connect_bgp_key:
             description:
             - Encrypted BGP authentication key based on type.
+            - Used when O(config.management.multisite_inter_connect_bgp_authentication=true);
+              its format depends on O(config.management.multisite_inter_connect_bgp_auth_key_type).
             type: str
           multisite_loopback_id:
             description:
@@ -211,31 +233,39 @@ options:
           multisite_loopback_ip_range:
             description:
             - Typically Loopback100 IP Address Range.
+            - IPv4 range used when O(config.management.underlay_ipv6=false).
             type: str
             default: "10.10.0.0/24"
           multisite_underlay_subnet_range:
             description:
             - Address range to assign P2P DCI Links.
+            - IPv4 range used when O(config.management.underlay_ipv6=false).
             type: str
             default: "10.10.1.0/24"
           multisite_underlay_subnet_target_mask:
             description:
             - Target Mask for Subnet Range (8-31).
+            - Applies to O(config.management.multisite_underlay_subnet_range) when
+              O(config.management.underlay_ipv6=false).
             type: int
             default: 30
           multisite_loopback_ipv6_range:
             description:
             - Typically Loopback100 IPv6 Address Range.
+            - Applies when O(config.management.underlay_ipv6=true).
             type: str
             default: "fd00::a10:0/120"
           multisite_underlay_ipv6_subnet_range:
             description:
             - Address range to assign P2P DCI IPv6 Links.
+            - Applies when O(config.management.underlay_ipv6=true).
             type: str
             default: "fd00::a11:0/120"
           multisite_underlay_ipv6_subnet_target_mask:
             description:
             - Target IPv6 Mask for Subnet Range (120-127).
+            - Applies to O(config.management.multisite_underlay_ipv6_subnet_range) when
+              O(config.management.underlay_ipv6=true).
             type: int
             default: 126
 
@@ -250,27 +280,33 @@ options:
           security_group_tag:
             description:
             - Security Group Tag enforcement. If set to C(strict), only security groups enabled child fabrics will be allowed.
+            - Security groups require O(config.management.underlay_ipv6=false) and CLI Overlay Mode
+              on member fabrics.
             type: str
             default: "off"
             choices: [ "off", loose, strict ]
           security_group_tag_prefix:
             description:
             - Prefix to be used when a new security group is created.
+            - Used when O(config.management.security_group_tag) is not C(off).
             type: str
             default: SG_
           security_group_tag_mac_segmentation:
             description:
             - Enable MAC based segmentation for security groups.
+            - Used when O(config.management.security_group_tag) is not C(off).
             type: bool
             default: false
           security_group_tag_id_range:
             description:
             - Security group tag (SGT) identifier range (min 16, max 65535).
+            - Used when O(config.management.security_group_tag) is not C(off).
             type: str
             default: "10000-14000"
           security_group_tag_preprovision:
             description:
             - Generate security groups configuration for non-enforced VRFs.
+            - Used when O(config.management.security_group_tag) is not C(off).
             type: bool
             default: false
 
@@ -278,29 +314,34 @@ options:
           auto_configure_cloud_sec:
             description:
             - Auto Config CloudSec on Border Gateways.
+            - Deployment requires at least two member fabrics with CloudSec-capable border gateways.
             type: bool
             default: false
           cloud_sec_key:
             description:
             - Cisco Type 7 Encrypted Octet String for CloudSec.
+            - Used when O(config.management.auto_configure_cloud_sec=true).
             - Must be exactly 66 hexadecimal characters when O(config.management.cloud_sec_algorithm=AES_128_CMAC)
               or 130 when O(config.management.cloud_sec_algorithm=AES_256_CMAC).
             type: str
           cloud_sec_algorithm:
             description:
             - CloudSec Encryption Algorithm.
+            - Used when O(config.management.auto_configure_cloud_sec=true).
             type: str
             default: AES_128_CMAC
             choices: [ AES_128_CMAC, AES_256_CMAC ]
           cloud_sec_enforcement:
             description:
             - CloudSec enforcement type. If set C(strict), data across site must be encrypted.
+            - Used when O(config.management.auto_configure_cloud_sec=true).
             type: str
             default: strict
             choices: [ strict, loose ]
           cloud_sec_report_timer:
             description:
             - CloudSec Operational Status periodic report timer in minutes (5-60).
+            - Used when O(config.management.auto_configure_cloud_sec=true).
             type: int
             default: 5
 
@@ -312,6 +353,7 @@ options:
           scheduled_backup_time:
             description:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
+            - Applies when O(config.management.scheduled_backup=true).
             type: str
   state:
     description:
@@ -331,6 +373,7 @@ options:
     - Controls save and deploy behavior after fabric group configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -350,6 +393,7 @@ options:
         - Scope of the deploy operation.
         - C(switch) deploys only to affected switches.
         - C(global) deploys to all switches in the fabric group.
+        - Used when O(config_actions.deploy=true).
         type: str
         default: switch
         choices: [ switch, global ]
@@ -364,6 +408,7 @@ notes:
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create a VXLAN fabric group (MSD) using state merged
   cisco.nd.nd_manage_fabric_group_vxlan:
     state: merged
@@ -504,6 +549,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric group validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool

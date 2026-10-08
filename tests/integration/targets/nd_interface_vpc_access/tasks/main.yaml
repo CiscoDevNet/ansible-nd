@@ -56,6 +56,47 @@
     - name: Include multi-pair same-vPC-id tests (issue 356)
       ansible.builtin.include_tasks: multi_pair.yaml
   always:
+    - name: Teardown remove access vPC interfaces from pair 1
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc100
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc101
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc198
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc199
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: "{{ vpc_multi_pair_name }}"
+        config_actions:
+          deploy: true
+        state: deleted
+      register: teardown_vpc_access_pair1
+
+    - name: Teardown remove access multi-pair object from pair 2
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
+            interface_name: "{{ vpc_multi_pair_name }}"
+        config_actions:
+          deploy: true
+        state: deleted
+      register: teardown_vpc_access_pair2
+
+    - name: Teardown verify all access vPC test objects are absent
+      ansible.builtin.assert:
+        that:
+          - >-
+            teardown_vpc_access_pair1.after
+            | selectattr('interface_name', 'in', ['vpc100', 'vpc101', 'vpc198', 'vpc199', vpc_multi_pair_name])
+            | list | length == 0
+          - teardown_vpc_access_pair2.after | selectattr('interface_name', 'equalto', vpc_multi_pair_name) | list | length == 0
+
     - name: Teardown (unpair vPC, cascades to remove any remaining vPC interfaces)
       cisco.nd.nd_manage_vpc_pair:
         output_level: "{{ nd_info.output_level }}"
@@ -64,7 +105,28 @@
           - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
             peer2_switch_id: "{{ test_switch_ip_peer2 }}"
         state: deleted
-      ignore_errors: true
+      when: test_manage_vpc_pairs
+
+    - name: Teardown pause for vPC unpair convergence
+      ansible.builtin.pause:
+        seconds: 30
+      when: test_manage_vpc_pairs
+
+    - name: Teardown verify managed vPC pair is absent
+      cisco.nd.nd_manage_vpc_pair:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+        state: gathered
+      register: teardown_pair_absent
+      when: test_manage_vpc_pairs
+
+    - name: Teardown assert managed vPC pair is absent
+      ansible.builtin.assert:
+        that:
+          - teardown_pair_absent.gathered.vpc_pairs | default([]) | length == 0
       when: test_manage_vpc_pairs
   vars:
     ansible_command_timeout: 300

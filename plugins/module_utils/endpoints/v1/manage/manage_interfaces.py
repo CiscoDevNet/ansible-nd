@@ -21,6 +21,8 @@ in the ND Manage API.
   (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesDeploy` - Deploy interface configurations
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/deploy)
+- `EpManageInterfacesPreview` - Preview interface configurations
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/preview)
 - `EpManageInterfacesNormalize` - Reset physical interface configurations to default
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize)
 - `EpManageInterfacesRemove` - Bulk delete interfaces
@@ -360,6 +362,58 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "deploy")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST
+
+
+class EpManageInterfacesPreview(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Preview interface configurations for switches.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/interfaceActions/preview`
+    - Verb: POST
+    - Body: `{"interfaces": [{"interfaceName": "...", "switchId": "..."}]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesPreview"] = Field(
+        default="EpManageInterfacesPreview", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the preview endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "preview")
 
     @property
     def verb(self) -> HttpVerbEnum:

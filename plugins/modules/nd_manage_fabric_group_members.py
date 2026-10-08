@@ -2,7 +2,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -86,6 +86,7 @@ options:
         - Scope of the deploy operation.
         - C(switch) deploys only to switches that are out of sync.
         - C(global) deploys to all switches in the fabric group.
+        - Used when O(config_actions.deploy=true).
         type: str
         default: switch
         choices: [ switch, global ]

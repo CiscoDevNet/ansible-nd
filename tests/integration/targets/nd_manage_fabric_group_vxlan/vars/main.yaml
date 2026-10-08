@@ -1,8 +1,13 @@
 ---
 
-fg_vxlan_test_merged: "fg_vxlan_test_merged"
-fg_vxlan_test_replaced: "fg_vxlan_test_replaced"
-fg_vxlan_test_deleted: "fg_vxlan_test_deleted"
+fg_vxlan_test_merged: "ndit_{{ nd_fabric_test_run_id }}_fg_merged"
+fg_vxlan_test_replaced: "ndit_{{ nd_fabric_test_run_id }}_fg_replaced"
+fg_vxlan_test_deleted: "ndit_{{ nd_fabric_test_run_id }}_fg_deleted"
+fg_vxlan_secret_check: "ndit_{{ nd_fabric_test_run_id }}_fg_secret"
+fg_vxlan_downstream_check: "ndit_{{ nd_fabric_test_run_id }}_fg_downstream"
+fg_vxlan_invalid: "ndit_{{ nd_fabric_test_run_id }}_fg_invalid"
+fg_vxlan_multi_1: "ndit_{{ nd_fabric_test_run_id }}_fg_multi_1"
+fg_vxlan_multi_2: "ndit_{{ nd_fabric_test_run_id }}_fg_multi_2"
 
 # Common VXLAN Fabric Group (MSD) configuration for all fabric group tests
 fabric_config_fg_vxlan:

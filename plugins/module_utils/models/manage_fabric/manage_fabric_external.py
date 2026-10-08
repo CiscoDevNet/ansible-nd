@@ -21,9 +21,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     PowerRedundancyModeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    BGP_ASN_RE,
     BootstrapSubnetModel,
+    FabricDhcpGatewayAddress,
     NetflowSettingsModel,
+    ScheduledBackupTime,
+    validate_bgp_asn_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
 
@@ -53,6 +55,19 @@ fabric_data = {
 fabric = FabricExternalConnectivityModel(**fabric_data)
 ```
 """
+
+
+class ExternalNetflowSettingsModel(NetflowSettingsModel):
+    """External-only netflow state retained across full replacement.
+
+    ``netflowSamplerCollection`` is writable for External Connectivity
+    fabrics, but is not part of this module's public configuration surface.
+    Preserve a controller-returned collection for replaced/overridden payloads
+    and keep it out of normalized Ansible output.
+    """
+
+    replacement_preserve_fields: ClassVar[set[str]] = {"netflowSamplerCollection"}
+    config_exclude_fields: ClassVar[set[str]] = replacement_preserve_fields
 
 
 class ExternalConnectivityManagementModel(NDNestedModel):
@@ -102,7 +117,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 
     # Core Configuration
-    bgp_asn: str = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
+    bgp_asn: str | None = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]", default=None)
 
     # Name under management section is optional — propagated from FabricExternalConnectivityModel.fabric_name during validation
     name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
@@ -148,11 +163,11 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     day0_plug_and_play: bool = Field(alias="day0PlugAndPlay", description="Enable Plug n Play for Catalyst 9000 switches", default=False)
 
     # DHCP
-    dhcp_end_address: str | None = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
+    dhcp_end_address: FabricDhcpGatewayAddress = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: str | None = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_start_address: FabricDhcpGatewayAddress = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
 
     # DNS
     dns_collection: list[str] = Field(alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses", default_factory=list)
@@ -193,7 +208,9 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     local_dhcp_server: bool = Field(alias="localDhcpServer", description="Automatic IP Assignment For POAP from Local DHCP Server", default=False)
 
     # Management
-    management_gateway: str | None = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
+    management_gateway: FabricDhcpGatewayAddress = Field(
+        alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
+    )
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
@@ -206,8 +223,8 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     mpls_loopback_ip_range: str = Field(alias="mplsLoopbackIpRange", description="MPLS Loopback IP Address Range", default="10.102.0.0/25")
 
     # Netflow Settings
-    netflow_settings: NetflowSettingsModel = Field(
-        alias="netflowSettings", description="Settings associated with netflow", default_factory=NetflowSettingsModel
+    netflow_settings: ExternalNetflowSettingsModel = Field(
+        alias="netflowSettings", description="Settings associated with netflow", default_factory=ExternalNetflowSettingsModel
     )
 
     # NX-API Settings
@@ -245,7 +262,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # Scheduled Backup
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
-    scheduled_backup_time: str | None = Field(
+    scheduled_backup_time: ScheduledBackupTime = Field(
         alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=None
     )
 
@@ -273,7 +290,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str) -> str:
+    def validate_bgp_asn(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -289,9 +306,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
         - `ValueError` - If the value does not match the expected ASN format
         """
-        if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
-        return value
+        return validate_bgp_asn_value(value)
 
 
 class FabricExternalConnectivityModel(FabricBaseModel):

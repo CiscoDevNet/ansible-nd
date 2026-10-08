@@ -17,6 +17,7 @@
     config_actions:
       deploy: true
     state: deleted
+  register: setup_routed_subinterface_delete
   tags: always
 
 - name: "SETUP: Remove test port-channels before state tests"
@@ -35,4 +36,14 @@
     config_actions:
       deploy: true
     state: deleted
+  register: setup_pc_routed_delete
+  tags: always
+
+- name: "SETUP: Verify test routed port-channels are absent"
+  ansible.builtin.assert:
+    that:
+      - >-
+        setup_pc_routed_delete.after
+        | selectattr('interface_name', 'in', ['port-channel520', 'port-channel521', 'port-channel522', 'port-channel523'])
+        | list | length == 0
   tags: always

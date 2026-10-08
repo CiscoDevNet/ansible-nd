@@ -12,21 +12,63 @@
 # must reset Ethernet1/33 to the fabric default, which takes it out of routed
 # mode and out of this module's managed scope, while retaining the NAMED
 # defaults-only Ethernet1/34 (PR #550 review: a named defaults-only interface
-# is explicit intent, not an unused port). Fabric underlay interfaces (system
-# routed policy types) are never part of the managed scope, so this
-# fabric-wide operation cannot touch them - that safety property is pinned by
-# the orchestrator unit tests.
+# is explicit intent, not an unused port). Existing routed interfaces outside
+# this target's four-interface fixture are replayed unchanged. This preserves
+# shared-lab bystanders while still proving that an omitted managed interface
+# is reset. Fabric underlay interfaces (system routed policy types) are never
+# part of the managed scope, so this fabric-wide operation cannot touch them -
+# that safety property is pinned by the orchestrator unit tests.
 
 # --- OVERRIDDEN ---
 
-- name: "OVERRIDDEN: Converge to Ethernet1/31, Ethernet1/32 and defaults-only Ethernet1/34 (check mode)"
-  cisco.nd.nd_interface_ethernet_routed: &override_31_32_34
+- name: "OVERRIDDEN: Discover the current managed routed-interface scope without mutation"
+  cisco.nd.nd_interface_ethernet_routed:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - "{{ routed_31 }}"
       - "{{ routed_32 }}"
       - "{{ routed_34_defaults_only }}"
+    state: overridden
+  check_mode: true
+  register: overridden_scope
+
+- name: "OVERRIDDEN: Initialize the preserved routed-interface bystander list"
+  ansible.builtin.set_fact:
+    overridden_bystanders: []
+
+- name: "OVERRIDDEN: Preserve routed-interface intent outside this target's fixture"
+  ansible.builtin.set_fact:
+    overridden_bystanders: >-
+      {{
+        overridden_bystanders
+        + [
+            {
+              'switch_ip': item.switch_ip,
+              'interface_name': item.interface_name,
+              'config_data': {
+                'network_os': item.config_data.network_os
+              }
+            }
+          ]
+      }}
+  loop: "{{ overridden_scope.before }}"
+  loop_control:
+    label: "{{ item.switch_ip }} {{ item.interface_name }}"
+  when: >-
+    item.switch_ip != test_switch_ip
+    or item.interface_name not in ['Ethernet1/31', 'Ethernet1/32', 'Ethernet1/33', 'Ethernet1/34']
+
+- name: "OVERRIDDEN: Build the complete desired routed-interface scope"
+  ansible.builtin.set_fact:
+    overridden_config: >-
+      {{ overridden_bystanders + [routed_31, routed_32, routed_34_defaults_only] }}
+
+- name: "OVERRIDDEN: Converge to Ethernet1/31, Ethernet1/32 and defaults-only Ethernet1/34 (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &override_31_32_34
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ overridden_config }}"
     state: overridden
   check_mode: true
   register: cm_overridden
@@ -40,10 +82,10 @@
     that:
       - cm_overridden is changed
       - nm_overridden is changed
-      - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/31') | list | length == 1
-      - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/32') | list | length == 1
-      - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/33') | list | length == 0
-      - nm_overridden.after | selectattr('interface_name', 'equalto', 'Ethernet1/34') | list | length == 1
+      - nm_overridden.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/31') | list | length == 1
+      - nm_overridden.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/32') | list | length == 1
+      - nm_overridden.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/33') | list | length == 0
+      - nm_overridden.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/34') | list | length == 1
 
 # --- OVERRIDDEN IDEMPOTENCY ---
 # Ethernet1/33 is now at the fabric default and therefore invisible to this

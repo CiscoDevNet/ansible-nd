@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     FieldSerializationInfo,
     SecretStr,
+    ValidationInfo,
     field_serializer,
     field_validator,
 )
@@ -44,9 +45,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 
 # Re-use shared nested models from the common module
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    BGP_ASN_RE,
     BootstrapSubnetModel,
+    FabricDhcpGatewayAddress,
+    FabricIPv4CIDR,
+    MulticastGroupSubnet,
     NetflowSettingsModel,
+    ScheduledBackupTime,
+    default_site_id_from_bgp_asn,
+    validate_bgp_asn_value,
+    validate_site_id_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel, serialize_secret_value
 
@@ -154,8 +161,12 @@ class VxlanEbgpManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
-    bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
-    site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
+    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].", default=None)
+    site_id: str | None = Field(
+        alias="siteId",
+        description="EVPN Multi-Site ID. Defaults from spine BGP ASN for creation/exact state; omitted merged update preserves existing ID.",
+        default=None,
+    )
     bgp_as_mode: BgpAsModeEnum = Field(
         alias="bgpAsMode",
         description=(
@@ -238,12 +249,20 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Overlay Configuration
     overlay_mode: OverlayModeEnum = Field(
-        alias="overlayMode", description="Overlay Mode. VRF/Network configuration using config-profile or CLI", default=OverlayModeEnum.CLI
+        alias="overlayMode",
+        description="Overlay Mode. VRF/Network configuration using config-profile or CLI",
+        default=OverlayModeEnum.CLI,
+        json_schema_extra={
+            "wire_value_map": {
+                OverlayModeEnum.CLI.value: "cli",
+                OverlayModeEnum.CONFIG_PROFILE.value: "configProfile",
+            }
+        },
     )
     replication_mode: ReplicationModeEnum = Field(
         alias="replicationMode", description="Replication Mode for BUM Traffic", default=ReplicationModeEnum.MULTICAST
     )
-    multicast_group_subnet: str = Field(
+    multicast_group_subnet: MulticastGroupSubnet = Field(
         alias="multicastGroupSubnet",
         description=("Multicast pool prefix between 8 to 30. A multicast group ipv4 from this pool is used for BUM traffic for each overlay network."),
         default="239.1.1.0/25",
@@ -454,9 +473,11 @@ class VxlanEbgpManagementModel(NDNestedModel):
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
         alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: str | None = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
-    dhcp_end_address: str | None = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
-    management_gateway: str | None = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None)
+    dhcp_start_address: FabricDhcpGatewayAddress = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_end_address: FabricDhcpGatewayAddress = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
+    management_gateway: FabricDhcpGatewayAddress = Field(
+        alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
+    )
     management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
@@ -468,7 +489,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False
     )
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
-    scheduled_backup_time: str | None = Field(
+    scheduled_backup_time: ScheduledBackupTime = Field(
         alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=None
     )
 
@@ -486,7 +507,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
         ),
         default=VrfLiteAutoConfigEnum.MANUAL,
     )
-    vrf_lite_subnet_range: str = Field(alias="vrfLiteSubnetRange", description="Address range to assign P2P Interfabric Connections", default="10.33.0.0/16")
+    vrf_lite_subnet_range: FabricIPv4CIDR = Field(
+        alias="vrfLiteSubnetRange", description="Address range to assign P2P Interfabric Connections", default="10.33.0.0/16"
+    )
     vrf_lite_subnet_target_mask: int = Field(alias="vrfLiteSubnetTargetMask", description="VRF Lite Subnet Mask", default=30)
     auto_unique_vrf_lite_ip_prefix: bool = Field(
         alias="autoUniqueVrfLiteIpPrefix",
@@ -809,9 +832,25 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )
 
+    @field_validator("overlay_mode", mode="before")
+    @classmethod
+    def deserialize_overlay_mode(cls, value: object, info: ValidationInfo) -> object:
+        """Translate ND's overlay-mode spelling only while parsing a response."""
+        if (info.context or {}).get("mode") == "response" and value == "configProfile":
+            return OverlayModeEnum.CONFIG_PROFILE.value
+        return value
+
+    @field_serializer("overlay_mode")
+    def serialize_overlay_mode(self, value: OverlayModeEnum | str, info: FieldSerializationInfo) -> str:
+        """Use the ND spelling in payloads and the public spelling elsewhere."""
+        public_value = value.value if isinstance(value, OverlayModeEnum) else value
+        if (info.context or {}).get("mode") == "payload" and public_value == OverlayModeEnum.CONFIG_PROFILE.value:
+            return "configProfile"
+        return public_value
+
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: str) -> str:
+    def validate_bgp_asn(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -821,13 +860,11 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If value does not match the expected ASN format
         """
-        if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
-        return value
+        return validate_bgp_asn_value(value)
 
     @field_validator("site_id")
     @classmethod
-    def validate_site_id(cls, value: str) -> str:
+    def validate_site_id(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -837,14 +874,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If site ID is not numeric or outside valid range
         """
-        if value == "":
-            return value
-        if not value.isdigit():
-            raise ValueError(f"Site ID must be numeric, got: {value}")
-        site_id_int = int(value)
-        if not (1 <= site_id_int <= 281474976710655):
-            raise ValueError(f"Site ID must be between 1 and 281474976710655, got: {site_id_int}")
-        return value
+        return validate_site_id_value(value)
 
     @field_validator("anycast_gateway_mac")
     @classmethod
@@ -892,13 +922,14 @@ class FabricEbgpModel(FabricBaseModel):
     # Core Management Configuration
     management: VxlanEbgpManagementModel | None = Field(description="eBGP VXLAN management configuration", default=None)
 
+    def to_diff_dict(self, **kwargs) -> dict:
+        """Ignore the controller-forced NX-API HTTP value for every eBGP family."""
+        data = super().to_diff_dict(**kwargs)
+        if "management" in data:
+            data["management"].pop("nxapiHttp", None)
+        return data
+
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
         super()._post_validate_consistency()
-        if self.management is not None and self.management.site_id == "":
-            bgp_asn = self.management.bgp_asn
-            if "." in bgp_asn:
-                high, low = bgp_asn.split(".")
-                self.management.site_id = str(int(high) * 65536 + int(low))
-            else:
-                self.management.site_id = bgp_asn
+        default_site_id_from_bgp_asn(self.management)
