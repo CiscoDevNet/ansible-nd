@@ -181,6 +181,7 @@ class VpcPairStateMachine(NDStateMachine):
                     attempts=verify_attempts,
                     retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
                     refresh_errors=refresh_errors,
+                    changed=any(log.get("status") in ("created", "updated", "deleted") for log in self.logs),
                 )
             finally:
                 if state == "deleted":
