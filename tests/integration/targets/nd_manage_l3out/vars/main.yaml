@@ -3,22 +3,24 @@
 #
 # Override these in your inventory or extra-vars to match a real ND 4.1+ testbed.
 
-test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
-test_fabric1_name: "{{ nd_test_fabric1_name | default('DC1-Fabric') }}"
-test_fabric2_name: "{{ nd_test_fabric2_name | default('External-Fabric') }}"
-test_vrf1_name: "{{ nd_test_vrf1_name | default('production') }}"
-test_vrf2_name: "{{ nd_test_vrf2_name | default('external') }}"
+test_fabric_name: "{{ nd_test_fabric_name | default('jeet-fabric-ibgp') }}"
+test_fabric1_name: "{{ nd_test_fabric1_name | default('jeet-fabric-ibgp') }}"
+test_fabric2_name: "{{ nd_test_fabric2_name | default('jeet-fabric-ext') }}"
+test_vrf1_name: "{{ nd_test_vrf1_name | default('vrf1') }}"
+test_vrf2_name: "{{ nd_test_vrf2_name | default('vrf1') }}"
 test_tenant1_name: "{{ nd_test_tenant1_name | default(omit) }}"
 test_tenant2_name: "{{ nd_test_tenant2_name | default(omit) }}"
-test_switch1_id: "{{ nd_test_switch1_id | default('FDO12345678') }}"
-test_switch2_id: "{{ nd_test_switch2_id | default('FDO87654321') }}"
+test_switch1_id: "{{ nd_test_switch1_id | default('9LJHKH3VF1S') }}"
+test_switch2_id: "{{ nd_test_switch2_id | default('9W5HXHTY88P') }}"
 # Management IP variants for testing IP-based switch_id resolution
-test_switch1_mgmt_ip: "{{ nd_test_switch1_mgmt_ip | default('10.1.1.11') }}"
-test_switch2_mgmt_ip: "{{ nd_test_switch2_mgmt_ip | default('10.1.1.12') }}"
+test_switch1_mgmt_ip: "{{ nd_test_switch1_mgmt_ip | default('192.168.10.122') }}"
+test_switch2_mgmt_ip: "{{ nd_test_switch2_mgmt_ip | default('192.168.10.124') }}"
 test_switch1_interface: "{{ nd_test_switch1_interface | default('Ethernet1/1') }}"
-test_switch2_interface: "{{ nd_test_switch2_interface | default('Ethernet1/1') }}"
-test_switch1_subif: "{{ nd_test_switch1_subif | default('Ethernet1/2') }}"
+test_switch2_interface: "{{ nd_test_switch2_interface | default('Ethernet1/2') }}"
+test_switch1_subif: "{{ nd_test_switch1_subif | default('Ethernet1/1') }}"
 test_switch2_subif: "{{ nd_test_switch2_subif | default('Ethernet1/2') }}"
+test_subinterface_vlan_id: "{{ nd_test_subinterface_vlan_id | default(100) | int }}"
+test_dci_link_ready: "{{ nd_test_dci_link_ready | default(false) | bool }}"
 
 # L3Out names used across tests
 test_l3out_bgp_name: ansible-test-l3out-bgp
@@ -61,6 +63,11 @@ l3out_bgp:
         ipv4_peering_details:
           ipv4_route_map_in: rm-in
           ipv4_route_map_out: rm-out
+      fabric2_details:
+        advertise_default_route: true
+        ipv4_peering_details:
+          ipv4_route_map_in: rm-in
+          ipv4_route_map_out: rm-out
 
 l3out_bgp_updated:
   name: "{{ test_l3out_bgp_name }}"
@@ -97,6 +104,11 @@ l3out_bgp_updated:
         ipv4_peering_details:
           ipv4_route_map_in: rm-in
           ipv4_route_map_out: rm-out
+      fabric2_details:
+        advertise_default_route: true
+        ipv4_peering_details:
+          ipv4_route_map_in: rm-in
+          ipv4_route_map_out: rm-out
 
 l3out_static:
   name: "{{ test_l3out_static_name }}"
@@ -114,12 +126,12 @@ l3out_static:
         ipv4_mask_length: 24
         switch1_details:
           switch_id: "{{ test_switch1_id }}"
-          interface_name: "{{ test_switch1_subif }}"
+          interface_name: "{{ test_switch1_subif }}.{{ test_subinterface_vlan_id }}"
           interface_ipv4_address: 192.168.100.1
           interface_description: "Link to external network"
         switch2_details:
           switch_id: "{{ test_switch2_id }}"
-          interface_name: "{{ test_switch2_subif }}"
+          interface_name: "{{ test_switch2_subif }}.{{ test_subinterface_vlan_id }}"
           interface_ipv4_address: 192.168.100.2
           interface_description: "Link from DC1"
   routing_details:
