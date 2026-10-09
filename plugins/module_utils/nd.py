@@ -125,9 +125,10 @@ def write_file(module, dest, content):
 
 
 class NDModule(object):
-    def __init__(self, module):
+    def __init__(self, module, accept_multistatus=False):
         self.module = module
         self.params = module.params
+        self._accept_multistatus = accept_multistatus
         self.result = dict(changed=False)
         self.headers = {"Content-Type": "application/json"}
 
@@ -227,7 +228,8 @@ class NDModule(object):
                 self.result["changed"] = True
 
         # 200: OK, 201: Created, 202: Accepted, 204: No Content
-        if self.status in (200, 201, 202, 204):
+        # 207: Multi-Status is returned without item parsing when explicitly accepted.
+        if self.status in (200, 201, 202, 204) or (self._accept_multistatus and self.status == 207):
             if output_format == "raw":
                 return info.get("raw")
             return info.get("body")
