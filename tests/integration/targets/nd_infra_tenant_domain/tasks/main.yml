@@ -1,0 +1,222 @@
+# Test code for the ND nd_infra_tenant_domain module
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+# Pre-requisite: Create tenants for tenant domain tests
+- name: Ensure prerequisite tenants exist
+  cisco.nd.nd_infra_tenant:
+    <<: *nd_info
+    config:
+      - name: ansible_td_tenant_1
+      - name: ansible_td_tenant_2
+      - name: ansible_td_tenant_3
+    state: merged
+
+- name: Ensure tenant domains do not exist before test starts
+  cisco.nd.nd_infra_tenant_domain: &clean_all_tenant_domains
+    <<: *nd_info
+    config:
+      - name: ansible_tenant_domain
+      - name: ansible_tenant_domain_2
+      - name: ansible_tenant_domain_3
+    state: deleted
+
+
+# --- MERGED STATE TESTS ---
+
+# MERGED STATE TESTS: CREATE
+- name: Create tenant domains with full and minimum configuration (merged state - check mode)
+  cisco.nd.nd_infra_tenant_domain: &create_td_merged_state
+    <<: *nd_info
+    config:
+      - name: ansible_tenant_domain
+        tenant_names:
+          - ansible_td_tenant_1
+          - ansible_td_tenant_2
+        description: Tenant domain managed by Ansible
+      - name: ansible_tenant_domain_2
+        tenant_names:
+          - ansible_td_tenant_1
+    state: merged
+  check_mode: true
+  register: cm_merged_create_tenant_domains
+
+- name: Create tenant domains with full and minimum configuration (merged state - normal mode)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *create_td_merged_state
+  register: nm_merged_create_tenant_domains
+
+- name: Create tenant domains again (merged state - idempotency)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *create_td_merged_state
+  register: nm_merged_create_tenant_domains_again
+
+- name: Asserts for tenant domains merged state creation tasks
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_tenant_domains is changed
+      - nm_merged_create_tenant_domains is changed
+      - nm_merged_create_tenant_domains_again is not changed
+      - nm_merged_create_tenant_domains.proposed.0.name == "ansible_tenant_domain"
+      - nm_merged_create_tenant_domains.proposed.0.tenant_names | length == 2
+      - nm_merged_create_tenant_domains.proposed.0.description == "Tenant domain managed by Ansible"
+      - nm_merged_create_tenant_domains.proposed.1.name == "ansible_tenant_domain_2"
+      - nm_merged_create_tenant_domains.proposed.1.tenant_names | length == 1
+
+# MERGED STATE TESTS: UPDATE
+- name: Update ansible_tenant_domain membership (merged state - check mode)
+  cisco.nd.nd_infra_tenant_domain: &update_td_merged_state
+    <<: *nd_info
+    config:
+      - name: ansible_tenant_domain
+        tenant_names:
+          - ansible_td_tenant_1
+          - ansible_td_tenant_2
+          - ansible_td_tenant_3
+        description: Updated tenant domain description
+    state: merged
+  check_mode: true
+  register: cm_merged_update_tenant_domain
+
+- name: Update ansible_tenant_domain membership (merged state - normal mode)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *update_td_merged_state
+  register: nm_merged_update_tenant_domain
+
+- name: Update ansible_tenant_domain membership again (merged state - idempotency)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *update_td_merged_state
+  register: nm_merged_update_tenant_domain_again
+
+- name: Asserts for tenant domains merged state update tasks
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_tenant_domain is changed
+      - nm_merged_update_tenant_domain is changed
+      - nm_merged_update_tenant_domain_again is not changed
+      - nm_merged_update_tenant_domain.proposed.0.name == "ansible_tenant_domain"
+      - nm_merged_update_tenant_domain.proposed.0.tenant_names | length == 3
+      - nm_merged_update_tenant_domain.proposed.0.description == "Updated tenant domain description"
+
+
+# --- REPLACED STATE TESTS ---
+
+- name: Replace tenant domain configuration (replaced state - check mode)
+  cisco.nd.nd_infra_tenant_domain: &replace_td_state
+    <<: *nd_info
+    config:
+      - name: ansible_tenant_domain
+        tenant_names:
+          - ansible_td_tenant_3
+        description: Replaced tenant domain
+    state: replaced
+  check_mode: true
+  register: cm_replaced_tenant_domain
+
+- name: Replace tenant domain configuration (replaced state - normal mode)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *replace_td_state
+  register: nm_replaced_tenant_domain
+
+- name: Replace tenant domain configuration again (replaced state - idempotency)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *replace_td_state
+  register: nm_replaced_tenant_domain_again
+
+- name: Asserts for tenant domains replaced state tasks
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_tenant_domain is changed
+      - nm_replaced_tenant_domain is changed
+      - nm_replaced_tenant_domain_again is not changed
+      - nm_replaced_tenant_domain.proposed.0.name == "ansible_tenant_domain"
+      - nm_replaced_tenant_domain.proposed.0.tenant_names | length == 1
+
+
+# --- OVERRIDDEN STATE TESTS ---
+
+- name: Override all tenant domains (overridden state - check mode)
+  cisco.nd.nd_infra_tenant_domain: &override_td_state
+    <<: *nd_info
+    config:
+      - name: ansible_tenant_domain_3
+        tenant_names:
+          - ansible_td_tenant_1
+        description: Only domain after override
+    state: overridden
+  check_mode: true
+  register: cm_overridden_tenant_domain
+
+- name: Override all tenant domains (overridden state - normal mode)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *override_td_state
+  register: nm_overridden_tenant_domain
+
+- name: Override all tenant domains again (overridden state - idempotency)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *override_td_state
+  register: nm_overridden_tenant_domain_again
+
+- name: Asserts for tenant domains overridden state tasks
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_tenant_domain is changed
+      - nm_overridden_tenant_domain is changed
+      - nm_overridden_tenant_domain_again is not changed
+      - nm_overridden_tenant_domain.proposed.0.name == "ansible_tenant_domain_3"
+
+
+# --- DELETED STATE TESTS ---
+
+- name: Delete tenant domains (deleted state - check mode)
+  cisco.nd.nd_infra_tenant_domain: &delete_td_state
+    <<: *nd_info
+    config:
+      - name: ansible_tenant_domain_3
+    state: deleted
+  check_mode: true
+  register: cm_deleted_tenant_domain
+
+- name: Delete tenant domains (deleted state - normal mode)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *delete_td_state
+  register: nm_deleted_tenant_domain
+
+- name: Delete tenant domains again (deleted state - idempotency)
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *delete_td_state
+  register: nm_deleted_tenant_domain_again
+
+- name: Asserts for tenant domains deleted state tasks
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_tenant_domain is changed
+      - nm_deleted_tenant_domain is changed
+      - nm_deleted_tenant_domain_again is not changed
+
+
+# --- CLEANUP ---
+
+- name: Ensure all test tenant domains are cleaned up
+  cisco.nd.nd_infra_tenant_domain:
+    <<: *clean_all_tenant_domains
+
+- name: Ensure all prerequisite tenants are cleaned up
+  cisco.nd.nd_infra_tenant:
+    <<: *nd_info
+    config:
+      - name: ansible_td_tenant_1
+      - name: ansible_td_tenant_2
+      - name: ansible_td_tenant_3
+    state: deleted
