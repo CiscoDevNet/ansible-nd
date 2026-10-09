@@ -1,0 +1,90 @@
+---
+# Nightly integration playbook for cisco.nd.nd_interface_vpc_access.
+# Self-contained: creates a prerequisite vPC pair, creates the access vPC host
+# interface, then deletes both (nothing is left behind). Set vpc_switch_ip to a
+# vPC-paired switch; otherwise the tasks are skipped (nightly stays green).
+- name: cisco.nd nightly - nd_interface_vpc_access
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_interface_vpc_access
+      fabric_types: [vxlanIbgp]
+      switch_count: 2
+      switch_roles: [leaf, leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    vpc_if_name: vpc100
+    vpc_access_vlan: 10
+    vpc_po_id: 100
+    vpc_switch_ip: 192.0.2.195        # <-- set to a vPC-paired switch to enable
+    vpc_peer1_switch_id: SERIAL00001
+    vpc_peer2_switch_id: SERIAL00002
+    vpc_peer1_members: [Ethernet1/3]
+    vpc_peer2_members: [Ethernet1/3]
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Note when vpc_switch_ip is not set
+      ansible.builtin.debug:
+        msg: "Set vpc_switch_ip (a vPC-paired switch) to exercise nd_interface_vpc_access. Skipping."
+      when: vpc_switch_ip is not defined
+
+    # --- Prerequisite: a vPC pair must exist for the vPC host interface ---
+    - name: Pre-clean the access vPC host interface (ignore if absent)
+      cisco.nd.nd_interface_vpc_access:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - switch_ip: "{{ vpc_switch_ip }}"
+            interface_name: "{{ vpc_if_name }}"
+      ignore_errors: true
+      when: vpc_switch_ip is defined
+
+    - name: Create the prerequisite vPC pair
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - peer1_switch_id: "{{ vpc_peer1_switch_id }}"
+            peer2_switch_id: "{{ vpc_peer2_switch_id }}"
+            use_virtual_peer_link: true
+      when: vpc_switch_ip is defined
+
+    - name: Create an access vPC host interface
+      cisco.nd.nd_interface_vpc_access:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - switch_ip: "{{ vpc_switch_ip }}"
+            interface_name: "{{ vpc_if_name }}"
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: "{{ vpc_access_vlan }}"
+                  peer1_port_channel_id: "{{ vpc_po_id }}"
+                  peer1_member_ports: "{{ vpc_peer1_members | default([]) }}"
+                  peer2_port_channel_id: "{{ vpc_po_id }}"
+                  peer2_member_ports: "{{ vpc_peer2_members | default([]) }}"
+                  port_channel_mode: active
+      when: vpc_switch_ip is defined
+
+    - name: Delete the access vPC host interface
+      cisco.nd.nd_interface_vpc_access:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - switch_ip: "{{ vpc_switch_ip }}"
+            interface_name: "{{ vpc_if_name }}"
+      when: vpc_switch_ip is defined
+
+    - name: Delete the prerequisite vPC pair
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - peer1_switch_id: "{{ vpc_peer1_switch_id }}"
+            peer2_switch_id: "{{ vpc_peer2_switch_id }}"
+      when: vpc_switch_ip is defined

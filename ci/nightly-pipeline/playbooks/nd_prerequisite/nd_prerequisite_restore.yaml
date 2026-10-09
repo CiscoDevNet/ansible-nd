@@ -1,0 +1,35 @@
+---
+# Restore only interface prerequisites created by this execution. The journal is
+# persisted before each mutation and retained after restore for recovery/audit.
+- name: Announce prerequisite interface restore journal
+  ansible.builtin.debug:
+    msg: >-
+      Restoring {{ _ndp_prerequisite_restore_operations | default([]) | length }}
+      prerequisite interface change(s) from {{ _ndp_restore_file }}.
+  run_once: true
+
+- name: Restore prerequisite interface changes in reverse order
+  ansible.builtin.include_tasks: restore_interface_operation.yaml
+  loop: "{{ _ndp_prerequisite_restore_operations | default([]) | reverse | list }}"
+  loop_control:
+    loop_var: _ndp_restore_operation
+    label: "{{ _ndp_restore_operation.action }} {{ _ndp_restore_operation.interface }}"
+  run_once: true
+
+- name: Record successful prerequisite interface restore
+  ansible.builtin.copy:
+    dest: "{{ _ndp_state_dir }}/interface-restore-complete.yaml"
+    content: >-
+      {{ {'schema_version': 1, 'run_id': _ndp_run_id,
+          'execution_id': _ndp_execution_id,
+          'restored_operations': _ndp_prerequisite_restore_operations | default([])} | to_nice_yaml }}
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: _ndp_prerequisite_restore_operations | default([]) | length > 0
+
+- name: Disarm prerequisite interface restore after successful verification
+  ansible.builtin.set_fact:
+    _ndp_prerequisite_restore_operations: []
+  run_once: true

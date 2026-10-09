@@ -1,0 +1,828 @@
+---
+schema_version: 2
+
+runtime_defaults:
+  nd_test_fabric_switches:
+    VXLAN_EVPN_Fabric:
+      - {name: vxlan_leaf_1, seed_ip: 192.0.2.195, serial: SERIAL00001, role: leaf}
+      - {name: vxlan_leaf_2, seed_ip: 192.0.2.196, serial: SERIAL00002, role: leaf}
+      - {name: vxlan_spine_1, seed_ip: 192.0.2.194, serial: SERIAL00003, role: spine}
+      - {name: vxlan_border_1, seed_ip: 192.0.2.88, serial: SERIAL00004, role: border}
+    External_Connectivity_Fabric:
+      - {name: external_edge_1, seed_ip: 192.0.2.89, serial: SERIAL00005, role: edge_router}
+      - {name: external_edge_2, seed_ip: 192.0.2.90, serial: SERIAL00006, role: edge_router}
+
+defaults:
+  normal_timeouts: &normal_timeouts {poll_seconds: 15, retries: 20, max_consecutive_api_errors: 3}
+  disruptive_timeouts: &disruptive_timeouts {poll_seconds: 15, retries: 40, max_consecutive_api_errors: 3}
+  restore: &restore {target: verified_phase_snapshot, job: verified_job_snapshot}
+  pending_confirmation: &pending
+    status: pending
+    owner: ""
+    evidence: ""
+    reasons: [owner confirmation has not yet been recorded]
+  profile: &profile
+    links: []
+    vpc_pairs: []
+    resources: []
+    interfabric_links: []
+    # managed_domains + runtime_vars are per-profile only; defining them here too makes
+    # every `<<: *profile` override a YAML duplicate key ("Using last defined value only").
+    timeouts: *normal_timeouts
+    restore: *restore
+    confirmation: *pending
+
+lab:
+  fabrics:
+    advanced: &advanced {ref: advanced, name: VXLAN_EVPN_Fabric, type: vxlanIbgp, lifecycle: retained}
+    network_ebgp: &network_ebgp {ref: network_ebgp, name: VXLAN_EVPN_Fabric_eBGP, type: vxlanEbgp, lifecycle: preserved}
+    external: &external {ref: external, name: External_Connectivity_Fabric, type: externalConnectivity, lifecycle: retained}
+    disposable_ibgp: &disposable_ibgp {ref: disposable_ibgp, name: ANSIBLE_NIGHTLY_IBGP, type: vxlanIbgp, lifecycle: disposable}
+    disposable_ebgp: &disposable_ebgp {ref: disposable_ebgp, name: ANSIBLE_NIGHTLY_EBGP, type: vxlanEbgp, lifecycle: disposable}
+    disposable_ai_ibgp: &disposable_ai_ibgp {ref: disposable_ai_ibgp, name: ANSIBLE_NIGHTLY_AI_IBGP, type: aimlVxlanIbgp, lifecycle: disposable}
+    disposable_ai_ebgp: &disposable_ai_ebgp {ref: disposable_ai_ebgp, name: ANSIBLE_NIGHTLY_AI_EBGP, type: aimlVxlanEbgp, lifecycle: disposable}
+    disposable_external: &disposable_external {ref: disposable_external, name: ANSIBLE_NIGHTLY_EXTERNAL, type: externalConnectivity, lifecycle: disposable}
+  retained_fabric_names: [VXLAN_EVPN_Fabric, External_Connectivity_Fabric]
+  preserved_fabric_names: [VXLAN_EVPN_Fabric_eBGP]
+  switches:
+    vxlan_leaf_1: {baseline_fabric_ref: advanced, baseline_role: leaf, serial: SERIAL00001, seed_ip: 192.0.2.195}
+    vxlan_leaf_2: {baseline_fabric_ref: advanced, baseline_role: leaf, serial: SERIAL00002, seed_ip: 192.0.2.196}
+    vxlan_spine_1: {baseline_fabric_ref: advanced, baseline_role: spine, serial: SERIAL00003, seed_ip: 192.0.2.194}
+    vxlan_border_1: {baseline_fabric_ref: advanced, baseline_role: border, serial: SERIAL00004, seed_ip: 192.0.2.88}
+    external_edge_1: {baseline_fabric_ref: external, baseline_role: edge_router, serial: SERIAL00005, seed_ip: 192.0.2.89}
+    external_edge_2: {baseline_fabric_ref: external, baseline_role: edge_router, serial: SERIAL00006, seed_ip: 192.0.2.90}
+  interface_allowlist:
+    vxlan_leaf_1: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13, Ethernet1/31, Ethernet1/32, Ethernet1/33, Ethernet1/34, Ethernet1/35, Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48, Ethernet1/49, Ethernet1/50]
+    vxlan_leaf_2: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/30, Ethernet1/31, Ethernet1/32]
+    vxlan_spine_1: []
+    vxlan_border_1: [Ethernet1/1, Ethernet1/2, Ethernet1/4, Ethernet1/30, Ethernet1/31, Ethernet1/32]
+    external_edge_1: [Ethernet1/2, Ethernet1/3, Ethernet1/4]
+    external_edge_2: []
+
+phase_order: &phase_order
+  [controller_disposable, retained_no_switch, advanced_leaf, vpc_pair_isolated,
+   advanced_virtual_vpc, border_external, borrowed_switch, terminal_switch, final_restore]
+phases:
+  controller_disposable: {ordinal: 1, topology: controller_only}
+  retained_no_switch: {ordinal: 2, topology: retained_fabrics_only}
+  advanced_leaf: {ordinal: 3, topology: advanced_two_leaf}
+  vpc_pair_isolated: {ordinal: 4, topology: advanced_two_leaf_isolated}
+  advanced_virtual_vpc: {ordinal: 5, topology: advanced_two_leaf_virtual_vpc}
+  border_external: {ordinal: 6, topology: advanced_border_external_edge}
+  borrowed_switch: {ordinal: 7, topology: external_edge_1_borrowed_to_advanced}
+  terminal_switch: {ordinal: 8, topology: advanced_leaf_spine_border}
+  final_restore: {ordinal: 9, topology: captured_job_baseline}
+
+topology_templates:
+  no_switches: &no_switches {required_count: 0, members: []}
+  adv1_leaf: &adv1_leaf {required_count: 1, members: [{ref: vxlan_leaf_1, desired_fabric_ref: advanced, desired_role: leaf}]}
+  adv1_border: &adv1_border {required_count: 1, members: [{ref: vxlan_border_1, desired_fabric_ref: advanced, desired_role: border}]}
+  # nd_manage_links runs its numbered lifecycle between these two switches of the shared fabric. Live probe
+  # 2026-10-07: both Normal/inSync, Ethernet1/30-32 exist on each as ND-default trunk-host ports with no link.
+  links_pair: &links_pair {required_count: 2, members: [{ref: vxlan_leaf_2, desired_fabric_ref: advanced, desired_role: leaf}, {ref: vxlan_border_1, desired_fabric_ref: advanced, desired_role: border}]}
+  advanced_leaves: &advanced_leaves {required_count: 2, members: [{ref: vxlan_leaf_1, desired_fabric_ref: advanced, desired_role: leaf}, {ref: vxlan_leaf_2, desired_fabric_ref: advanced, desired_role: leaf}]}
+  advanced_preserve: &advanced_preserve {required_count: 2, members: [{ref: vxlan_leaf_1, desired_fabric_ref: advanced, desired_role: preserve}, {ref: vxlan_leaf_2, desired_fabric_ref: advanced, desired_role: preserve}]}
+  # L3Out host: vxlan_border_1 (baseline role 'border') hosts the L3Out. It is now physically
+  # cabled to external_edge_1 (probe-confirmed: border_1 Eth1/1 routed, up/up <-> edge_1 Eth1/3),
+  # so the ext_l3_dci_link VRF-Lite handoff runs on a real border<->edge cable. desired_role is
+  # 'border' == its baseline role, so nd_manage_l3out (verify-only for switch topology --
+  # managed_domains has no 'switches') requests NO role change and passes NDP_TOPOLOGY_PREFLIGHT.
+  # vxlan_leaf_1 stays a plain leaf (used by resource_manager/links/vpc) and is NOT part of the
+  # L3Out. (Supersedes the earlier leaf_1-as-border-leaf workaround from when border_1 was uncabled;
+  # build #26 proved a plain leaf is rejected: "not a supported role for BGP L3Out".)
+  border_edges: &border_edges
+    required_count: 3
+    members: [{ref: vxlan_border_1, desired_fabric_ref: advanced, desired_role: border}, {ref: external_edge_1, desired_fabric_ref: external, desired_role: edge_router}, {ref: external_edge_2, desired_fabric_ref: external, desired_role: edge_router}]
+  advanced_policy_group: &advanced_policy_group
+    required_count: 3
+    members: [{ref: vxlan_leaf_1, desired_fabric_ref: advanced, desired_role: preserve}, {ref: vxlan_leaf_2, desired_fabric_ref: advanced, desired_role: preserve}, {ref: vxlan_spine_1, desired_fabric_ref: advanced, desired_role: preserve}]
+  advanced_switches: &advanced_switches
+    required_count: 3
+    members: [{ref: vxlan_leaf_1, desired_fabric_ref: advanced, desired_role: leaf}, {ref: vxlan_spine_1, desired_fabric_ref: advanced, desired_role: spine}, {ref: vxlan_border_1, desired_fabric_ref: advanced, desired_role: border}]
+  advanced_all: &advanced_all
+    required_count: 4
+    members: [{ref: vxlan_leaf_1, desired_fabric_ref: advanced, desired_role: leaf}, {ref: vxlan_leaf_2, desired_fabric_ref: advanced, desired_role: leaf}, {ref: vxlan_spine_1, desired_fabric_ref: advanced, desired_role: spine}, {ref: vxlan_border_1, desired_fabric_ref: advanced, desired_role: border}]
+  vpc_snapshot: &vpc_snapshot {required_count: 0, members: [], snapshot_switch_refs: [vxlan_leaf_1, vxlan_leaf_2, vxlan_spine_1, vxlan_border_1, external_edge_1, external_edge_2]}
+  access_links: &access_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
+  trunk_links: &trunk_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
+  l3out_smoke_links: &l3out_smoke_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
+  # Only the cabled border_1<->edge_1 pair needs admin/oper readiness. The sub-interface and SVI links are
+  # config-only (planned) ND link objects, so their ports are deliberately NOT listed here.
+  l3out_links: &l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
+  dedicated_l3out_links: &dedicated_l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1, Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/2, Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
+  network_link: &network_link [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/4], admin_state: true, operational_state: when_reported_up}]
+  # Inter-fabric DCI links nd_manage_l3out needs but does NOT create itself (module docs: "the user must
+  # manage links separately"). Live-probed on ND 4.3: ND validates ONE LINK TEMPLATE PER CONNECTIVITY TYPE and a
+  # missing one fails the create with 207 "No links exist between the given fabrics for this type. Please
+  # create links with <template> template". This is a CONFIG requirement, not cabling: cisco.nd.nd_manage_links
+  # also accepts config-only (planned) links on uncabled ports, so the lab's single border_1<->edge_1 cable
+  # is enough and no extra connection is needed.
+  #   routed       -> ext_l3_dci_link  (policy layer3DciVrfLite) on the existing cable Eth1/1 <-> Eth1/3
+  #   subInterface -> ext_fabric_setup (policy ebgpVrfLite)       parent Eth1/2 on both ends (nd_test_switch*_subif;
+  #                                                               the runner overlay appends the dot1q id: Ethernet1/2.100)
+  #   svi          -> ext_l2_dci_link  (policy layer2Dci)         trunk Eth1/4 on both ends (runner SVI overlay)
+  # requires_physical=false links are created as planned links and removed again by the restore journal.
+  l3out_dci_links: &l3out_dci_links
+    - template: ext_l3_dci_link
+      policy_type: layer3DciVrfLite
+      provisioning: nd_manage_links
+      requires_physical: true
+      src: {switch_ref: vxlan_border_1, interface: Ethernet1/1}
+      dst: {switch_ref: external_edge_1, interface: Ethernet1/3}
+      template_inputs: {}
+    - template: ext_fabric_setup
+      policy_type: ebgpVrfLite
+      provisioning: nd_manage_links
+      requires_physical: false
+      src: {switch_ref: vxlan_border_1, interface: Ethernet1/2}
+      dst: {switch_ref: external_edge_1, interface: Ethernet1/2}
+      template_inputs: {src_ebgp_asn: "1234", dst_ebgp_asn: "567", src_ip_address_mask: 10.33.1.1/30, dst_ip_address: 10.33.1.2, link_mtu: 9216}
+    - template: ext_l2_dci_link
+      policy_type: layer2Dci
+      provisioning: nd_manage_links
+      requires_physical: false
+      src: {switch_ref: vxlan_border_1, interface: Ethernet1/4}
+      dst: {switch_ref: external_edge_1, interface: Ethernet1/4}
+      template_inputs: {trunk_allowed_vlans: "100,200,300", native_vlan: 1, port_type_fast: true, mtu_type: jumbo, speed: auto, bpdu_guard: default}
+  virtual_vpc: &virtual_vpc [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: virtual, physical_peer_links: []}]
+  # The leaf pair over the cabled leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link (ND 4.3 rejects a virtual peer-link on the
+  # N9K-C9300v leaves). The pair is formed by the runner around the vPC interface targets; the planner only needs the cable.
+  vpc_peer_links: &vpc_peer_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}]
+  physical_leaf_vpc: &physical_leaf_vpc [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: physical, required_path: module_creates_pair, physical_peer_links: [{src: {switch_ref: vxlan_leaf_1, interface: Ethernet1/2}, dst: {switch_ref: vxlan_leaf_2, interface: Ethernet1/1}}]}]
+
+profiles:
+  smoke.nd_manage_acl:
+    <<: *profile
+    profile_id: smoke.nd_manage_acl
+    phase: retained_no_switch
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [acls]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, nd_acl_name: ACL_ANSIBLE_NIGHTLY}
+  smoke.nd_manage_prefix_list:
+    <<: *profile
+    profile_id: smoke.nd_manage_prefix_list
+    phase: retained_no_switch
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [prefix_lists]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, nd_pl_name: PL_ANSIBLE_NIGHTLY}
+  smoke.nd_manage_route_map:
+    <<: *profile
+    profile_id: smoke.nd_manage_route_map
+    phase: retained_no_switch
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [route_maps]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, nd_rm_name: RM_ANSIBLE_NIGHTLY}
+  smoke.nd_manage_vrfs:
+    <<: *profile
+    profile_id: smoke.nd_manage_vrfs
+    phase: retained_no_switch
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [vrfs]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, nd_vrf_name: ANSIBLE_NIGHTLY_VRF, nd_vrf_id: 51901, nd_vrf_vlan: 2250}
+  smoke.nd_manage_networks:
+    <<: *profile
+    profile_id: smoke.nd_manage_networks
+    phase: retained_no_switch
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [networks]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, nd_net_name: ANSIBLE_NIGHTLY_NET, nd_net_id: 51901, nd_net_vlan: 2301}
+  smoke.nd_manage_policy:
+    <<: *profile
+    profile_id: smoke.nd_manage_policy
+    phase: advanced_leaf
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [policies]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, nd_policy_template: switch_freeform, switch1: SERIAL00001}
+  smoke.nd_manage_policy_group:
+    <<: *profile
+    profile_id: smoke.nd_manage_policy_group
+    phase: advanced_leaf
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    managed_domains: [policy_groups]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, pg_switch_ids: [SERIAL00001, SERIAL00002]}
+  smoke.nd_manage_switches:
+    <<: *profile
+    profile_id: smoke.nd_manage_switches
+    phase: advanced_leaf
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *advanced_preserve
+    managed_domains: [switches]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric}
+  smoke.nd_manage_vpc_pair:
+    <<: *profile
+    profile_id: smoke.nd_manage_vpc_pair
+    phase: vpc_pair_isolated
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    vpc_pairs: *virtual_vpc
+    managed_domains: [vpc_pairs]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vpc_peer1_switch_id: SERIAL00001, vpc_peer2_switch_id: SERIAL00002}
+    timeouts: *disruptive_timeouts
+  smoke.nd_interface_vpc_access:
+    <<: *profile
+    profile_id: smoke.nd_interface_vpc_access
+    phase: advanced_virtual_vpc
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    links: *access_links
+    vpc_pairs: *virtual_vpc
+    managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vpc_switch_ip: 192.0.2.195, vpc_peer1_switch_id: SERIAL00001, vpc_peer2_switch_id: SERIAL00002, vpc_peer1_members: [Ethernet1/3], vpc_peer2_members: [Ethernet1/3]}
+    timeouts: *disruptive_timeouts
+  smoke.nd_interface_vpc_trunk_host:
+    <<: *profile
+    profile_id: smoke.nd_interface_vpc_trunk_host
+    phase: advanced_virtual_vpc
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    links: *trunk_links
+    vpc_pairs: *virtual_vpc
+    managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vpc_switch_ip: 192.0.2.195, vpc_peer1_switch_id: SERIAL00001, vpc_peer2_switch_id: SERIAL00002, vpc_peer1_members: [Ethernet1/3], vpc_peer2_members: [Ethernet1/3]}
+    timeouts: *disruptive_timeouts
+  smoke.nd_manage_vrf_lite:
+    <<: *profile
+    profile_id: smoke.nd_manage_vrf_lite
+    phase: border_external
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_border
+    links: *network_link
+    managed_domains: [vrfs, vrf_lite, physical_interfaces]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vl_vrf_name: TENANT_A, vl_vlan_id: 500, vl_switch_ip: 192.0.2.195, vl_interface: Ethernet1/4}
+  smoke.nd_manage_l3out:
+    <<: *profile
+    profile_id: smoke.nd_manage_l3out
+    phase: border_external
+    execution_style: smoke_playbook
+    fabrics: [*advanced, *external]
+    switches: *border_edges
+    links: *l3out_smoke_links
+    interfabric_links: *l3out_dci_links
+    managed_domains: [l3outs, vrfs, physical_interfaces]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric}
+  smoke.nd_manage_resource_manager:
+    <<: *profile
+    profile_id: smoke.nd_manage_resource_manager
+    phase: retained_no_switch
+    execution_style: smoke_playbook
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources: [{kind: pool, name: L3_VNI, type: ID, state: existing}]
+    managed_domains: [resource_allocations]
+    runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, rm_pool_name: L3_VNI, rm_pool_type: ID}
+  smoke.nd_manage_fabric_ibgp_vxlan:
+    <<: *profile
+    profile_id: smoke.nd_manage_fabric_ibgp_vxlan
+    phase: controller_disposable
+    execution_style: smoke_playbook
+    fabrics: [*disposable_ibgp]
+    switches: *no_switches
+    managed_domains: [fabrics]
+    runtime_vars: {nd_ibgp_fabric_name: ANSIBLE_NIGHTLY_IBGP}
+  smoke.nd_manage_fabric_ebgp_vxlan:
+    <<: *profile
+    profile_id: smoke.nd_manage_fabric_ebgp_vxlan
+    phase: controller_disposable
+    execution_style: smoke_playbook
+    fabrics: [*disposable_ebgp]
+    switches: *no_switches
+    managed_domains: [fabrics]
+    runtime_vars: {nd_ebgp_fabric_name: ANSIBLE_NIGHTLY_EBGP}
+  smoke.nd_manage_fabric_ai_ibgp_vxlan:
+    <<: *profile
+    profile_id: smoke.nd_manage_fabric_ai_ibgp_vxlan
+    phase: controller_disposable
+    execution_style: smoke_playbook
+    fabrics: [*disposable_ai_ibgp]
+    switches: *no_switches
+    managed_domains: [fabrics]
+    runtime_vars: {nd_ai_ibgp_fabric_name: ANSIBLE_NIGHTLY_AI_IBGP}
+  smoke.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *profile
+    profile_id: smoke.nd_manage_fabric_ai_ebgp_vxlan
+    phase: controller_disposable
+    execution_style: smoke_playbook
+    fabrics: [*disposable_ai_ebgp]
+    switches: *no_switches
+    managed_domains: [fabrics]
+    runtime_vars: {nd_ai_ebgp_fabric_name: ANSIBLE_NIGHTLY_AI_EBGP}
+  smoke.nd_manage_fabric_external:
+    <<: *profile
+    profile_id: smoke.nd_manage_fabric_external
+    phase: controller_disposable
+    execution_style: smoke_playbook
+    fabrics: [*disposable_external]
+    switches: *no_switches
+    managed_domains: [fabrics]
+    runtime_vars: {nd_ext_fabric_name: ANSIBLE_NIGHTLY_EXTERNAL, nd_ext_bgp_asn: "65099"}
+
+  integration.nd_manage_policy:
+    <<: *profile
+    profile_id: integration.nd_manage_policy
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    managed_domains: [policies]
+    runtime_vars: {fabric_name: VXLAN_EVPN_Fabric, switch_serial_1: SERIAL00001, switch_serial_2: SERIAL00002}
+  integration.nd_manage_policy_group:
+    <<: *profile
+    profile_id: integration.nd_manage_policy_group
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *advanced_policy_group
+    bfd_required: true
+    managed_domains: [policy_groups]
+    runtime_vars: {fabric_name: VXLAN_EVPN_Fabric, switch_serial_1: SERIAL00001, switch_serial_2: SERIAL00002, switch_serial_3: SERIAL00003}
+  integration.nd_manage_vrfs:
+    <<: *profile
+    profile_id: integration.nd_manage_vrfs
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources: [{kind: allocation_range, name: test_vrf, id_start: 9008800, vlan_start: 2100, state: reserved_for_test}]
+    managed_domains: [vrfs]
+    runtime_vars: {nd_vrf_test_topology: standalone, ansible_it_fabric: VXLAN_EVPN_Fabric, ansible_switch1: 192.0.2.195}
+  integration.nd_manage_networks:
+    <<: *profile
+    profile_id: integration.nd_manage_networks
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    links: *network_link
+    resources: [{kind: allocation_range, name: test_network, id_start: 901000, vlan_start: 3100, state: reserved_for_test}]
+    managed_domains: [networks]
+    runtime_vars: {nd_network_test_topology: standalone, ansible_it_fabric: VXLAN_EVPN_Fabric, ansible_switch1: 192.0.2.195, ansible_network_interface1: Ethernet1/4}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm single leaf vxlan_leaf_1 and Ethernet1/4 network link match the runtime_vars; network id/VLAN allocation range declared 901000/3100 from target defaults nd_network_base_id/nd_network_base_vlan - confirm reserved for the nightly]}
+  integration.nd_manage_route_map:
+    <<: *profile
+    profile_id: integration.nd_manage_route_map
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [route_maps]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm single switch vxlan_leaf_1 as leaf in VXLAN_EVPN_Fabric; owner table names switch_1]}
+  integration.nd_manage_acl:
+    <<: *profile
+    profile_id: integration.nd_manage_acl
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [acls]
+    runtime_vars: {acl_test_fabric: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm single switch vxlan_leaf_1 as leaf in VXLAN_EVPN_Fabric; owner table names switch_1]}
+  integration.nd_manage_prefix_list:
+    <<: *profile
+    profile_id: integration.nd_manage_prefix_list
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    managed_domains: [prefix_lists]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm single switch vxlan_leaf_1 as leaf in VXLAN_EVPN_Fabric; owner table names switch_1]}
+  integration.nd_manage_community_list:
+    <<: *profile
+    profile_id: integration.nd_manage_community_list
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *no_switches
+    managed_domains: [community_lists]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the fabric-scoped community lists are created and removed in VXLAN_EVPN_Fabric; the optional tenant and overridden-state coverage stays off]}
+  integration.nd_manage_extended_community_list:
+    <<: *profile
+    profile_id: integration.nd_manage_extended_community_list
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *no_switches
+    managed_domains: [extended_community_lists]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the fabric-scoped extended community lists are created and removed in VXLAN_EVPN_Fabric; the optional tenant coverage stays off]}
+  integration.nd_manage_fabric_group_vxlan:
+    <<: *profile
+    profile_id: integration.nd_manage_fabric_group_vxlan
+    phase: controller_disposable
+    execution_style: integration_role
+    fabrics: []
+    switches: *no_switches
+    resources:
+      - kind: target_owned_fabric_groups
+        requirement_status: ready
+        names: [fg_vxlan_test_merged, fg_vxlan_test_replaced, fg_vxlan_test_deleted, fg_vxlan_override_keep, fg_vxlan_override_prune, fg_vxlan_secret_check, fg_vxlan_downstream_check, fg_vxlan_invalid, multi_fg_1, multi_fg_2]
+        lifecycle: target_managed
+    managed_domains: [fabrics]
+    runtime_vars: {}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [target creates and deletes its namespaced fabric groups; no pre-existing fabric or physical switch is required]}
+  integration.nd_manage_fabric_group_members:
+    <<: *profile
+    profile_id: integration.nd_manage_fabric_group_members
+    phase: controller_disposable
+    execution_style: integration_role
+    fabrics: []
+    switches: *no_switches
+    resources:
+      - kind: target_owned_fabric_group_membership_fixture
+        requirement_status: ready
+        group_name: ansible_test_fabric_group
+        member_fabrics:
+          - {name: ansible_member_fabric_1, bgp_asn: "65101"}
+          - {name: ansible_member_fabric_2, bgp_asn: "65102"}
+          - {name: ansible_member_fabric_3, bgp_asn: "65103"}
+        anycast_gateway_mac: "2020.0000.00cc"
+        lifecycle: target_managed
+    managed_domains: [fabrics]
+    runtime_vars: {}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [target creates the fabric group and three iBGP member fabrics with distinct ASNs and a shared anycast MAC, then removes them; no physical switch is required]}
+  integration.nd_interface_loopback:
+    <<: *profile
+    profile_id: integration.nd_interface_loopback
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_logical_interface_namespace
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface_type: loopback
+        interfaces: [loopback200, loopback201, loopback202, loopback203, loopback204, loopback205, loopback206, loopback299]
+        expected_state: absent
+    managed_domains: [logical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve Loopback200-206 and Loopback299 on vxlan_leaf_1 and fail before target cleanup if any already exists]}
+  integration.nd_interface_svi:
+    <<: *profile
+    profile_id: integration.nd_interface_svi
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_logical_interface_namespace
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface_type: svi
+        interfaces: [vlan333, vlan334, vlan335, vlan336, vlan337, vlan338, vlan500, vlan501]
+        expected_state: absent
+    managed_domains: [logical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve VLAN333-338 and VLAN500-501 on vxlan_leaf_1 and fail before target cleanup if any SVI already exists]}
+  integration.nd_interface_ethernet_access:
+    <<: *profile
+    profile_id: integration.nd_interface_ethernet_access
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48, Ethernet1/49, Ethernet1/50]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+    managed_domains: [physical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve Ethernet1/41-50 on vxlan_leaf_1 and verify each port exists and is neither a fabric link nor a port-channel member]}
+  integration.nd_interface_ethernet_trunk_host:
+    <<: *profile
+    profile_id: integration.nd_interface_ethernet_trunk_host
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+    managed_domains: [physical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve Ethernet1/41-48 on vxlan_leaf_1 and verify each port exists and is neither a fabric link nor a port-channel member]}
+  integration.nd_interface_ethernet_routed:
+    <<: *profile
+    profile_id: integration.nd_interface_ethernet_routed
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/31, Ethernet1/32, Ethernet1/33, Ethernet1/34]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+    managed_domains: [physical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve Ethernet1/31-34 on vxlan_leaf_1 for routed-interface lifecycle tests; optional IOS-XE coverage remains disabled unless nd_test_xe_switch_ip is supplied]}
+  integration.nd_interface_port_channel_access:
+    <<: *profile
+    profile_id: integration.nd_interface_port_channel_access
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_logical_interface_namespace
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface_type: port_channel
+        interfaces: [Port-channel501, Port-channel502, Port-channel503]
+        expected_state: absent
+    managed_domains: [physical_interfaces, port_channels]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_pc_member_a: Ethernet1/10, nd_test_pc_member_b: Ethernet1/11, nd_test_pc_member_c: Ethernet1/12, nd_test_pc_member_d: Ethernet1/13}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve free Ethernet1/10-13 members and unused Port-channel501-503 namespace on vxlan_leaf_1]}
+  integration.nd_interface_port_channel_trunk_host:
+    <<: *profile
+    profile_id: integration.nd_interface_port_channel_trunk_host
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_logical_interface_namespace
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface_type: port_channel
+        interfaces: [Port-channel501, Port-channel502, Port-channel503]
+        expected_state: absent
+    managed_domains: [physical_interfaces, port_channels]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_pc_member_a: Ethernet1/10, nd_test_pc_member_b: Ethernet1/11, nd_test_pc_member_c: Ethernet1/12, nd_test_pc_member_d: Ethernet1/13}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve free Ethernet1/10-13 members and unused Port-channel501-503 namespace on vxlan_leaf_1]}
+  integration.nd_interface_subinterface_managed:
+    <<: *profile
+    profile_id: integration.nd_interface_subinterface_managed
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: ensure_routed_parent
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        # Rides the existing inter-fabric cable vxlan_leaf_1 Eth1/1 <-> external_edge_1 Eth1/1 (probe-confirmed
+        # up/up, ND-default trunk-host intent, used by no other target; underlay is Eth1/2-1/3, never touched).
+        # The planner reports the module unavailable, with these exact ports, if the cable is not in ND.
+        interface: Ethernet1/1
+        existing_link: {peer_switch_ref: external_edge_1, peer_interface: Ethernet1/1}
+        desired_policy: routedHost
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: ensure_routed_port_channel
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface: Port-channel10
+        desired_policy: int_l3_port_channel
+        member_interfaces: []
+      - kind: verify_logical_interface_namespace
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface_type: subinterface
+        interfaces: [Ethernet1/1.2, Ethernet1/1.3, Ethernet1/1.4, Port-channel10.5]
+        expected_state: absent
+    managed_domains: [physical_interfaces, port_channels, logical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_ethernet_parent: Ethernet1/1, nd_test_port_channel_parent: Port-channel10}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [verify the existing leaf_1 Ethernet1/1 <-> external_edge_1 Ethernet1/1 cable and temporarily provision it as the routed parent plus an isolated Port-channel10 parent; persist their pre-change state and restore it after the target even when the test fails]}
+  integration.nd_interface_subinterface_unmanaged:
+    <<: *profile
+    profile_id: integration.nd_interface_subinterface_unmanaged
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *adv1_leaf
+    resources:
+      - kind: ensure_routed_parent
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        # Same existing inter-fabric cable as integration.nd_interface_subinterface_managed (the two run one after the other).
+        interface: Ethernet1/1
+        existing_link: {peer_switch_ref: external_edge_1, peer_interface: Ethernet1/1}
+        desired_policy: routedHost
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: ensure_routed_port_channel
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface: Port-channel10
+        desired_policy: int_l3_port_channel
+        member_interfaces: []
+      - kind: verify_logical_interface_namespace
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interface_type: subinterface
+        interfaces: [Ethernet1/1.20, Ethernet1/1.21, Ethernet1/1.22, Ethernet1/1.29, Port-channel10.25]
+        expected_state: absent
+    managed_domains: [physical_interfaces, port_channels, logical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_ethernet_parent: Ethernet1/1, nd_test_port_channel_parent: Port-channel10}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [verify the existing leaf_1 Ethernet1/1 <-> external_edge_1 Ethernet1/1 cable and temporarily provision it as the routed parent plus an isolated Port-channel10 parent; persist their pre-change state and restore it after the target even when the test fails]}
+  integration.nd_manage_links:
+    <<: *profile
+    profile_id: integration.nd_manage_links
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *links_pair
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_2
+        interfaces: [Ethernet1/30, Ethernet1/31, Ethernet1/32]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_border_1
+        interfaces: [Ethernet1/30, Ethernet1/31, Ethernet1/32]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+    managed_domains: [physical_interfaces]
+    runtime_vars: {nd_test_fabric_numbered: VXLAN_EVPN_Fabric, nd_test_switch_a: vxlan_leaf_2, nd_test_switch_b: vxlan_border_1}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [the numbered-link target hard-codes Ethernet1/30-32 on both ends, so reserve those ports on vxlan_leaf_2 and vxlan_border_1 and verify each exists and is neither a fabric link nor a port-channel member]}
+  integration.nd_manage_tor:
+    <<: *profile
+    profile_id: integration.nd_manage_tor
+    phase: vpc_pair_isolated
+    execution_style: integration_role
+    fabrics: []
+    switches: *no_switches
+    resources:
+      - kind: dedicated_tor_topology
+        requirement_status: unavailable
+        fabric_name: ansible_tor_test_fabric
+        required_switch_count: 7
+        roles: [standalone_tor, standalone_leaf, vpc_tor, vpc_tor_peer, vpc_leaf, vpc_leaf_peer, second_standalone_tor]
+        required_vpc_pairs: [tor_pair, leaf_pair]
+        requires_physical: true
+    managed_domains: [vpc_pairs, physical_interfaces]
+    runtime_vars: {}
+    timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: [the registered nightly lab has only six switches and no verified supported ToR and leaf vPC pairs; keep ND_TOR_ENABLED=false in the Jenkinsfile until a seventh switch and the two physical pairings are available]}
+  integration.nd_manage_l3out:
+    <<: *profile
+    profile_id: integration.nd_manage_l3out
+    phase: border_external
+    execution_style: integration_role
+    fabrics: [*advanced, *external]
+    switches: *border_edges
+    links: *l3out_links
+    interfabric_links: *l3out_dci_links
+    bfd_required: true
+    managed_domains: [l3outs, vrfs, physical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_fabric1_name: VXLAN_EVPN_Fabric, nd_test_fabric2_name: External_Connectivity_Fabric, nd_test_switch1_id: SERIAL00004, nd_test_switch2_id: SERIAL00005, nd_test_switch1_mgmt_ip: 192.0.2.88, nd_test_switch2_mgmt_ip: 192.0.2.89, nd_test_switch1_interface: Ethernet1/1, nd_test_switch2_interface: Ethernet1/3, nd_test_switch1_subif: Ethernet1/2, nd_test_switch2_subif: Ethernet1/2}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm routed and subinterface wiring, confirm prerequisite VRF lifecycle, confirm route-map names and lifecycle]}
+  integration.nd_interface_vpc_access:
+    <<: *profile
+    profile_id: integration.nd_interface_vpc_access
+    phase: advanced_virtual_vpc
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    links: *vpc_peer_links
+    vpc_pairs: *physical_leaf_vpc
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_2
+        interfaces: [Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+    managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_access_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_peer1_ip: 192.0.2.195, nd_test_vpc_peer2_ip: 192.0.2.196, nd_test_manage_vpc_pairs: false}
+    timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the runner-formed physical leaf pair over the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link and free member ports Ethernet1/5-1/7 and Ethernet1/10 on both leaves; the multi-pair scenario additionally needs a second vPC pair in the fabric]}
+  integration.nd_interface_vpc_trunk_host:
+    <<: *profile
+    profile_id: integration.nd_interface_vpc_trunk_host
+    phase: advanced_virtual_vpc
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *advanced_leaves
+    links: *vpc_peer_links
+    vpc_pairs: *physical_leaf_vpc
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/8, Ethernet1/9, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_2
+        interfaces: [Ethernet1/8, Ethernet1/9, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+    managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_trunk_host_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_peer1_ip: 192.0.2.195, nd_test_vpc_peer2_ip: 192.0.2.196, nd_test_manage_vpc_pairs: false}
+    timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the runner-formed physical leaf pair over the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link and free member ports Ethernet1/8-1/10 on both leaves; the multi-pair scenario additionally needs a second vPC pair in the fabric]}
+  integration.nd_manage_switches:
+    <<: *profile
+    profile_id: integration.nd_manage_switches
+    phase: advanced_leaf
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *advanced_switches
+    managed_domains: [fabrics, switches]
+    runtime_vars: {ansible_it_fabric: VXLAN_EVPN_Fabric, ansible_switch1: 192.0.2.195, ansible_switch2: 192.0.2.194, ansible_switch3: 192.0.2.88, save: true, deploy: true, config_actions_type: switch}
+  integration.nd_manage_fabric:
+    <<: *profile
+    profile_id: integration.nd_manage_fabric
+    phase: controller_disposable
+    execution_style: integration_role
+    fabrics: []
+    switches: *no_switches
+    resources: [{kind: disposable_fabric_matrix, namespaced_only: true, fabric_types: [vxlanIbgp, vxlanEbgp, externalConnectivity, aimlVxlanIbgp, aimlVxlanEbgp]}]
+    managed_domains: [fabrics]
+    runtime_vars: {}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm zero prerequisite fabrics and exact target-created disposable fabric matrix]}
+  integration.nd_resource_manager:
+    <<: *profile
+    profile_id: integration.nd_resource_manager
+    phase: advanced_virtual_vpc
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *advanced_all
+    # ND 4.3 rejects a virtual peer-link on N9K-C9300v ("doesn't support Virtual Fabric Peering") but recommends
+    # the physical pair leaf_1<->leaf_2 over the cabled Eth1/2 <-> Eth1/1. The target creates the pair itself
+    # (tasks/vpc_pair_once.yaml, use_virtual_peer_link=false), so the prerequisite is only that peer-link: its
+    # ports are admin-upped through `links` below and the planner SKIPs with the exact ports when it is not cabled.
+    links: [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}]
+    vpc_pairs: [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: physical, required_path: module_creates_pair, physical_peer_links: [{src: {switch_ref: vxlan_leaf_1, interface: Ethernet1/2}, dst: {switch_ref: vxlan_leaf_2, interface: Ethernet1/1}}]}]
+    resources: [{kind: allocation_entity_tokens, values: [Ethernet1/2, Ethernet1/3, Ethernet1/10], physical_links: false}]
+    managed_domains: [resource_allocations, vpc_pairs]
+    runtime_vars: {ansible_it_fabric: VXLAN_EVPN_Fabric, ansible_switch1: 192.0.2.195, ansible_switch2: 192.0.2.196, ansible_sno_1: SERIAL00001, ansible_sno_2: SERIAL00002, intf_1_2: Ethernet1/2, intf_1_3: Ethernet1/3, intf_1_10: Ethernet1/10}
+    timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the module-created physical vPC pair over the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link, confirm interface strings are allocation entity tokens not links]}
+  integration.nd_vpc_pair:
+    <<: *profile
+    profile_id: integration.nd_vpc_pair
+    phase: vpc_pair_isolated
+    execution_style: standalone_integration
+    fabrics: [*advanced, *external]
+    switches: *vpc_snapshot
+    managed_domains: [vpc_pairs]
+    runtime_vars: {}
+    timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: [confirm pair mode per fabric, confirm external peers and roles, confirm physical peer-link interfaces when physical]}
+
+profile_executions:
+  integration.nd_vpc_pair:
+    - execution_id: integration.nd_vpc_pair.advanced
+      fabric_ref: advanced
+      switch_refs: [vxlan_leaf_1, vxlan_leaf_2]
+      desired_roles: [leaf, leaf]
+      pair_mode: physical
+      physical_peer_links: []
+      # LIVE CHECK 2026-09 (read-only REST): isVpcFabricPeeringSupported=false on both
+      # leaf_1 (SERIAL00001) and leaf_2 (SERIAL00002) -> virtual peer-link is UNSUPPORTED on
+      # these N9K-C9300v switches, so pair_mode must be physical. No leaf_1<->leaf_2 peer-link
+      # exists today => PREREQUISITE NOT MET until a physical peer-link is cabled.
+      confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: [live check - virtual peering unsupported (isVpcFabricPeeringSupported=false), physical peer-link required, none present; recommend cabling leaf_1 Eth1/3+1/4 <-> leaf_2 Eth1/3+1/4 then record physical_peer_links]}
+    - execution_id: integration.nd_vpc_pair.external
+      fabric_ref: external
+      switch_refs: [external_edge_1, external_edge_2]
+      desired_roles: [edge_router, edge_router]
+      pair_mode: physical
+      physical_peer_links: []
+      # LIVE CHECK 2026-09 (read-only REST): isVpcFabricPeeringSupported=false on both
+      # edge_1 (SERIAL00005) and edge_2 (SERIAL00006) -> virtual peer-link UNSUPPORTED, so
+      # pair_mode must be physical. No edge_1<->edge_2 peer-link exists today =>
+      # PREREQUISITE NOT MET until a physical peer-link is cabled.
+      confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: [live check - virtual peering unsupported (isVpcFabricPeeringSupported=false), physical peer-link required, none present; recommend cabling edge_1 Eth1/2+1/3 <-> edge_2 Eth1/2+1/3 then record physical_peer_links]}

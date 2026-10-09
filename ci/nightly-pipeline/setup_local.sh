@@ -1,0 +1,148 @@
+#!/bin/bash
+# =============================================================================
+# setup_local.sh — Run the ND nightly pipeline natively on macOS (NO Docker).
+#
+# Reproduces the environment built by nd_pipeline/Dockerfile_nd and the
+# Jenkinsfile stages "Set environment" / "Clone Repository" / "Install
+# version-specific Dependencies", but on the local machine and sourcing the
+# config/playbooks from this workspace instead of Consul (which needs VPN).
+#
+# Safe to re-run (idempotent). Layout matches the Jenkinsfile env vars so the
+# same ansible-playbook commands work locally.
+#
+#   BASE_DIRECTORY        = $HOME/ansible
+#   COLLECTIONS_DIRECTORY = $HOME/ansible/collections/ansible_collections/cisco/nd
+#   venv                  = $HOME/ansible/venv
+# =============================================================================
+set -euo pipefail
+
+BASE_DIRECTORY="$HOME/ansible"
+COLL_DIR="$BASE_DIRECTORY/collections/ansible_collections/cisco"
+COLLECTIONS_DIRECTORY="$COLL_DIR/nd"
+VENV="$BASE_DIRECTORY/venv"
+ND_GIT_BRANCH="develop"
+REPO_URL="https://github.com/CiscoDevNet/ansible-nd.git"
+
+# Source of the files the pipeline normally pulls from Consul (this workspace).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONSUL_SRC="$SCRIPT_DIR/consul"
+PLAYBOOKS_SRC="$SCRIPT_DIR/playbooks"
+RUNNER_SRC="$SCRIPT_DIR/tests/run_integration_module.yaml"
+
+# Active smoke playbooks (mirrors PLAYBOOK_FILES in the Jenkinsfile).
+SMOKE_PLAYBOOKS=(nd_manage_prefix_list.yaml nd_manage_vrfs.yaml nd_manage_networks.yaml)
+
+echo "==> 1/7  Create directory layout"
+mkdir -p "$COLL_DIR" "$BASE_DIRECTORY/playbooks"
+
+echo "==> 2/7  Create Python venv ($VENV)"
+if [ ! -x "$VENV/bin/python" ]; then
+    if command -v python3.12 >/dev/null 2>&1; then PY=python3.12; else PY=python3; fi
+    "$PY" -m venv "$VENV"
+fi
+"$VENV/bin/python" --version
+
+echo "==> 3/7  Install Python dependencies (mirrors Dockerfile_nd)"
+"$VENV/bin/python" -m pip install --upgrade --quiet pip setuptools wheel
+# Core runtime deps required to run the cisco.nd playbooks.
+"$VENV/bin/pip" install --quiet \
+    ansible \
+    requests \
+    requests_toolbelt \
+    jsonpath-ng \
+    lxml \
+    pydantic==2.12.5
+# Lint/test tooling (the pipeline's lint stage uses ansible-lint + yamllint).
+"$VENV/bin/pip" install --quiet \
+    ansible-lint \
+    yamllint \
+    black==24.3.0 \
+    flake8 \
+    pexpect \
+    pytest-xdist || echo "   (warning) optional tooling install had a problem — non-fatal"
+# coverage==4.5.4 is an old pin that may lack a py3.12/macOS wheel; best effort.
+"$VENV/bin/pip" install --quiet coverage==4.5.4 \
+    || echo "   (warning) coverage==4.5.4 unavailable on this platform — non-fatal"
+
+echo "==> 4/7  Clone cisco.nd collection (branch: $ND_GIT_BRANCH)"
+if [ -d "$COLLECTIONS_DIRECTORY/.git" ]; then
+    git -C "$COLLECTIONS_DIRECTORY" fetch --depth 1 origin "$ND_GIT_BRANCH"
+    git -C "$COLLECTIONS_DIRECTORY" checkout -q "$ND_GIT_BRANCH"
+    git -C "$COLLECTIONS_DIRECTORY" reset --hard -q "origin/$ND_GIT_BRANCH"
+else
+    rmdir "$COLLECTIONS_DIRECTORY" 2>/dev/null || true
+    git clone --branch "$ND_GIT_BRANCH" --single-branch --depth 1 "$REPO_URL" "$COLLECTIONS_DIRECTORY"
+fi
+
+echo "==> 5/7  Install ansible collection dependency (ansible.netcommon)"
+"$VENV/bin/ansible-galaxy" collection install 'ansible.netcommon:>=2.6.1' \
+    -p "$BASE_DIRECTORY/collections"
+
+echo "==> 6/7  Stage config + playbooks (normally from Consul) into the collection"
+cp "$CONSUL_SRC/requirements.txt"  "$COLLECTIONS_DIRECTORY/requirements.txt"
+cp "$CONSUL_SRC/requirements.yaml" "$COLLECTIONS_DIRECTORY/requirements.yaml"
+cp "$CONSUL_SRC/inventory.yaml"    "$COLLECTIONS_DIRECTORY/inventory.yaml"
+cp "$CONSUL_SRC/reset_fabric.yaml" "$COLLECTIONS_DIRECTORY/reset_fabric.yaml"
+chmod 600 "$COLLECTIONS_DIRECTORY/inventory.yaml"
+cp "$RUNNER_SRC" "$COLLECTIONS_DIRECTORY/run_integration_module.yaml"
+for pb in "${SMOKE_PLAYBOOKS[@]}"; do
+    cp "$PLAYBOOKS_SRC/$pb" "$COLLECTIONS_DIRECTORY/$pb"
+done
+# Optional prerequisite framework (only used when ND_PREREQUISITE_* is enabled).
+[ -d "$PLAYBOOKS_SRC/nd_prerequisite" ] && cp -R "$PLAYBOOKS_SRC/nd_prerequisite" "$COLLECTIONS_DIRECTORY/"
+
+echo "==> 7/7  Write local ansible.cfg (jenkins_home paths -> local paths)"
+# macOS-only: Ansible forks a task worker and the Objective-C runtime aborts the
+# child ("A worker was found in a dead state"). Harmless on the Jenkins/Docker
+# Linux agent, so the pipeline never sets these. Bake them into the venv's
+# activate so every documented run command is protected. Idempotent.
+if [ -f "$VENV/bin/activate" ] && ! grep -q OBJC_DISABLE_INITIALIZE_FORK_SAFETY "$VENV/bin/activate"; then
+    cat >> "$VENV/bin/activate" <<'ACT'
+
+# --- macOS fork-safety (added by setup_local.sh) ---
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+export no_proxy='*'
+ACT
+fi
+
+cat > "$COLLECTIONS_DIRECTORY/ansible.cfg" <<EOF
+# Local (non-Docker) ansible.cfg for the cisco.nd nightly pipeline.
+# Generated by setup_local.sh — jenkins_home paths rewritten to this machine.
+[defaults]
+host_key_checking = False
+collections_path = $BASE_DIRECTORY/collections
+collections_on_ansible_version_mismatch = ignore
+roles_path = $COLLECTIONS_DIRECTORY/tests/integration/targets
+callbacks_enabled = profile_tasks
+deprecation_warnings = False
+stdout_callback = ansible.builtin.default
+callback_result_format = yaml
+
+[persistent_connection]
+connect_timeout = 100000000
+command_timeout = 100000000
+EOF
+
+cat <<EOF
+
+============================================================================
+✅ Local setup complete.
+
+Activate + go to the collection (activate now also sets the macOS
+fork-safety vars OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES and no_proxy='*'):
+    source "$VENV/bin/activate"
+    cd "$COLLECTIONS_DIRECTORY"
+
+Run a smoke playbook (needs Cisco VPN to reach the lab 192.0.2.117):
+    ansible-playbook -i inventory.yaml nd_manage_vrfs.yaml
+
+Run one integration module:
+    ansible-playbook -i inventory.yaml run_integration_module.yaml -e test_module=nd_manage_policy
+
+Reset the fabric:
+    ansible-playbook -i inventory.yaml reset_fabric.yaml
+
+Lint the collection (no VPN needed):
+    ansible-lint --profile=production
+============================================================================
+EOF

@@ -1,0 +1,20 @@
+---
+# create_disposable_fabric: safety-checked placeholder. Full fabric creation
+# needs the complete management block (ASN, IP ranges) that the planner does not
+# carry; the sibling nd_manage_fabric_* module playbook owns that creation. Here
+# we only assert the name is safely namespaced so nothing outside ANSIBLE_NIGHTLY_
+# can ever be created from the prerequisite path.
+- name: "create_disposable_fabric guard {{ _ndp_operation.name }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.name is match('^ANSIBLE_NIGHTLY_')
+      - _ndp_operation.name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+    fail_msg: "Refusing to create a non-namespaced fabric: {{ _ndp_operation.name }}"
+  run_once: true
+
+- name: "create_disposable_fabric deferred to the {{ _ndp_operation.fabric_type }} module playbook"
+  ansible.builtin.debug:
+    msg: >-
+      Disposable fabric {{ _ndp_operation.name }} ({{ _ndp_operation.fabric_type }})
+      is created with full parameters by {{ _ndp_fabric_module_by_type[_ndp_operation.fabric_type] }}.
+  run_once: true

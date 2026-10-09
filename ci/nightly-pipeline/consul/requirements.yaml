@@ -1,0 +1,10 @@
+---
+# Ansible collection dependencies for the cisco.nd nightly pipeline.
+#
+# The collection under test (cisco.nd) is provided by the git clone that the
+# pipeline performs into the collections directory, so it is intentionally NOT
+# listed here (to avoid overwriting the checkout with a Galaxy release).
+# Only the runtime dependency is installed via galaxy.
+collections:
+  - name: ansible.netcommon
+    version: ">=2.6.1"

@@ -1,0 +1,48 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_acl.
+# Self-contained: creates a fabric-level IPv4 ACL, then deletes it. This module
+# has no gathered state, so create + delete provide the coverage.
+- name: cisco.nd nightly - nd_manage_acl
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_acl
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    nd_acl_name: ACL_ANSIBLE_NIGHTLY
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Create an IPv4 ACL
+      cisco.nd.nd_manage_acl:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - name: "{{ nd_acl_name }}"
+            type: ipv4
+            description: cisco.nd nightly test ACL
+            entries:
+              - sequence_number: 10
+                action: permit
+                protocol: tcp
+                src: 10.0.0.0/8
+                dst: any
+                dst_port_action: equal_to
+                dst_port: 443
+              - sequence_number: 20
+                action: deny
+                protocol: ip
+                src: any
+                dst: any
+
+    - name: Delete the test ACL
+      cisco.nd.nd_manage_acl:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: "{{ nd_acl_name }}"

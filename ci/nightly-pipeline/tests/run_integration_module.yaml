@@ -1,0 +1,897 @@
+---
+# =============================================================================
+# Single-module integration-test runner for the cisco.nd collection.
+#
+# Runs the FULL integration suite (every test-case file, testcase='*') for ONE
+# module, selected via the extra var `test_module`. The Jenkins pipeline loops
+# over INTEGRATION_MODULES and invokes this playbook ONCE PER MODULE, so each
+# module produces its OWN PLAY RECAP (ok / failed / skipped) and its OWN
+# duration -- one failing module never hides another's results.
+#
+# HOW IT WORKS
+#   Every integration target (tests/integration/targets/<module>) is a role
+#   whose tasks/main.yaml discovers tests/<testcase>.yaml. With testcase='*' it
+#   runs the entire suite for that module; each test file self-cleans via the
+#   target's tasks/cleanup.yaml. A pre-clean and an always-cleanup keep the
+#   fabric baseline clean regardless of pass/fail.
+#
+# PREREQUISITES
+#   1. roles_path must include the collection's integration targets, e.g.
+#        .../cisco/nd/tests/integration/targets   (set in consul/ansible.cfg).
+#   2. Supply the standard integration vars (fabric_name, switch_serial_1..3)
+#      via Jenkins extra vars or edit the vars below.
+#   3. Inventory must define the `nd` group/host (reuse ../consul/inventory.yaml).
+#
+# RUN
+#   ansible-playbook -i inventory.yaml run_integration_module.yaml -e test_module=nd_manage_policy
+# =============================================================================
+
+- name: "cisco.nd - integration suite for {{ test_module }}"
+  hosts: nd
+  gather_facts: false
+  force_handlers: true
+  vars_files:
+    - "{{ playbook_dir }}/integration_config.yml"
+  vars:
+    nd_prerequisite:
+      profile: "integration.{{ test_module }}"
+    nd_prerequisite_assets_dir: "{{ playbook_dir }}"
+    nd_prerequisite_wrapper_path: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_wrapper.yaml"
+    testcase: "*"                      # every test-case file in the target
+    # Select compatible upstream test directories for network/VRF roles.
+    # Keep MSD and MCFG absent from this list unless their fixtures exist.
+    test_groups: [standalone]
+    # Consumed by the integration tests (Jenkins supplies module-specific overrides via -e):
+    fabric_name: VXLAN_EVPN_Fabric
+    # Device credentials are injected only by Jenkins for the test process. They
+    # are intentionally separate from the ND controller credentials in inventory.
+    switch_username: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME') }}"
+    switch_password: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD') }}"
+    # ansible-test normally defines this; alias it here since this harness bypasses ansible-test.
+    ansible_it_fabric: "{{ fabric_name }}"
+    ansible_switch1: 192.0.2.195
+    ansible_switch2: 192.0.2.196
+    ansible_sno_1: SERIAL00001
+    ansible_sno_2: SERIAL00002
+    intf_1_2: Ethernet1/2
+    intf_1_3: Ethernet1/3
+    intf_1_10: Ethernet1/10
+    ansible_network_interface1: Ethernet1/4
+    acl_test_fabric: "{{ fabric_name }}"
+    nd_test_fabric_name: "{{ fabric_name }}"
+    nd_test_fabric1_name: "{{ fabric_name }}"
+    nd_test_fabric2_name: External_Connectivity_Fabric
+    # nd_manage_links inputs. The registry profile integration.nd_manage_links publishes the live-verified
+    # defaults (VXLAN_EVPN_Fabric, vxlan_leaf_2, vxlan_border_1); Jenkins may override them only with -e
+    # values that the planner has also verified. Empty here so nothing unverified can ever be assumed.
+    nd_test_fabric_numbered: "{{ lookup('env', 'ND_LINKS_FABRIC') | default('', true) }}"
+    nd_test_switch_a: "{{ lookup('env', 'ND_LINKS_SWITCH_A') | default('', true) }}"
+    nd_test_switch_b: "{{ lookup('env', 'ND_LINKS_SWITCH_B') | default('', true) }}"
+    nd_test_switch_a_ip: "{{ lookup('env', 'ND_LINKS_SWITCH_A_IP') | default('') }}"
+    nd_test_switch_b_ip: "{{ lookup('env', 'ND_LINKS_SWITCH_B_IP') | default('') }}"
+    # Dedicated seven-switch topology for nd_manage_tor. The order is fixed by
+    # ND_TOR_SWITCH_SERIALS in Jenkins and mirrors the upstream target variables.
+    test_tor_fabric_name: "{{ lookup('env', 'ND_TOR_FABRIC') | default('ansible_tor_test_fabric', true) }}"
+    test_tor_switch_serial: "{{ lookup('env', 'ND_TOR_SWITCH_SERIAL') | default('') }}"
+    test_leaf_switch_serial: "{{ lookup('env', 'ND_LEAF_SWITCH_SERIAL') | default('') }}"
+    test_vpc_tor_switch_serial: "{{ lookup('env', 'ND_VPC_TOR_SWITCH_SERIAL') | default('') }}"
+    test_vpc_tor_peer_serial: "{{ lookup('env', 'ND_VPC_TOR_PEER_SERIAL') | default('') }}"
+    test_vpc_leaf_switch_serial: "{{ lookup('env', 'ND_VPC_LEAF_SWITCH_SERIAL') | default('') }}"
+    test_vpc_leaf_peer_serial: "{{ lookup('env', 'ND_VPC_LEAF_PEER_SERIAL') | default('') }}"
+    test_tor2_switch_serial: "{{ lookup('env', 'ND_TOR2_SWITCH_SERIAL') | default('') }}"
+    # switch1 = vxlan_border_1 (SERIAL00004 / .88, role border): cabled to external_edge_1
+    # (border_1 Eth1/1 routed <-> edge_1 Eth1/3, probe-confirmed up/up) for the ext_l3_dci_link.
+    # Jenkins/run_all_integ.sh pass the same pair via -e; this default keeps a bare manual run
+    # on the cabled border endpoint too. (Was leaf_1 while border_1 was uncabled -- build #26
+    # proved a plain leaf is rejected: "not a supported role for BGP L3Out".)
+    nd_test_switch1_id: SERIAL00004
+    nd_test_switch2_id: SERIAL00005
+    nd_test_switch1_mgmt_ip: 192.0.2.88
+    nd_test_switch2_mgmt_ip: 192.0.2.89
+    nd_test_switch1_interface: Ethernet1/1
+    nd_test_switch2_interface: Ethernet1/3
+    nd_test_switch1_subif: Ethernet1/2
+    nd_test_switch2_subif: Ethernet1/2
+    nd_network_test_topology: standalone
+    nd_vrf_test_topology: standalone
+    # Fabric VRF VLAN range is 2000-2299; the collection default nd_vrf_base_vlan=2800
+    # makes every generated VRF VLAN (base+1..base+42) out of range -> deterministic
+    # create failure. Pin in-range (yields 2101-2142, clear of smoke 2250 / l3out 2290-2291).
+    nd_vrf_base_vlan: 2100
+    
+    ansible_msd_parent_fabric: ""
+    ansible_msd_child_fabric: ""
+    ansible_msd_switch1: ""
+    ansible_mcfg_parent_fabric: ""
+    ansible_mcfg_child_fabric: ""
+    ansible_mcfg_switch1: ""
+    switch_serial_1: SERIAL00001
+    switch_serial_2: SERIAL00002
+    # switch_serial_3 MUST be in VXLAN_EVPN_Fabric. SERIAL00005 is external_edge_1
+    # (External_Connectivity_Fabric) -> nd_manage_policy_group TC13 400 "Invalid switchId(s)".
+    switch_serial_3: SERIAL00003   # vxlan_spine_1 (in-fabric); matches profiles L298
+    save: true
+    deploy: true
+    config_actions_type: switch
+  pre_tasks:
+    # =====================================================================
+    # NDP_TOPOLOGY_PREFLIGHT
+    # Greppable required-vs-present topology banner. In ANY build log, search
+    # for  NDP_TOPOLOGY_PREFLIGHT  to jump straight to this module's contract:
+    #   REQUIRED = switches/roles/fabrics THIS module needs, read live from
+    #              nd_prerequisite_profiles.yaml (profiles.<id>.switches and,
+    #              when present, profile_executions.<id>).
+    #   PRESENT  = switches/roles/fabrics the declared inventory provides
+    #              (integration_config.yml -> nd_test_fabric_switches).
+    # Any count / membership / role / fabric drift fails fast with the token
+    #   NDP_TOPOLOGY_PREFLIGHT_FAIL ;  a clean run prints NDP_TOPOLOGY_PREFLIGHT_OK.
+    # =====================================================================
+    - name: "NDP_TOPOLOGY_PREFLIGHT [{{ test_module }}] load registry contract"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/nd_prerequisite_profiles.yaml"
+        name: _ndp_reg
+
+    - name: "NDP_TOPOLOGY_PREFLIGHT [{{ test_module }}] resolve required + present"
+      ansible.builtin.set_fact:
+        _ndp_profile_id: "integration.{{ test_module }}"
+        _ndp_required_count: "{{ _ndp_reg.profiles['integration.' ~ test_module].switches.required_count }}"
+        _ndp_required_members: "{{ _ndp_reg.profiles['integration.' ~ test_module].switches.members }}"
+        _ndp_executions: "{{ (_ndp_reg.profile_executions | default({}))['integration.' ~ test_module] | default([]) }}"
+        _ndp_present_names: "{{ (nd_test_fabric_switches.VXLAN_EVPN_Fabric + nd_test_fabric_switches.External_Connectivity_Fabric) | map(attribute='name') | list }}"
+        _ndp_present_role_by_name: "{{ (nd_test_fabric_switches.VXLAN_EVPN_Fabric + nd_test_fabric_switches.External_Connectivity_Fabric) | items2dict(key_name='name', value_name='role') }}"
+        _ndp_fabric_refs: "{{ _ndp_reg.lab.fabrics | list }}"
+      when: ('integration.' ~ test_module) in _ndp_reg.profiles
+
+    - name: "NDP_TOPOLOGY_PREFLIGHT [{{ test_module }}] required-vs-present banner"
+      ansible.builtin.debug:
+        msg: |-
+          ==================== NDP_TOPOLOGY_PREFLIGHT :: {{ _ndp_profile_id }} ====================
+          REQUIRED  (profiles.{{ _ndp_profile_id }}.switches; required_count={{ _ndp_required_count }})
+          {% for m in _ndp_required_members %}
+            - {{ m.ref }}  role={{ m.desired_role }}  fabric={{ _ndp_reg.lab.fabrics[m.desired_fabric_ref].name }} ({{ m.desired_fabric_ref }})
+          {% else %}
+            - (module declares no required switch members)
+          {% endfor %}
+          {% if _ndp_executions | length > 0 %}
+          REQUIRED-EXECUTIONS  (profile_executions.{{ _ndp_profile_id }})
+          {% for ex in _ndp_executions %}
+            - {{ ex.execution_id }}  fabric={{ ex.fabric_ref }}  switches={{ ex.switch_refs }}  roles={{ ex.desired_roles }}
+          {% endfor %}
+          {% endif %}
+          PRESENT   (integration_config.yml -> nd_test_fabric_switches)
+          {% for fab, members in nd_test_fabric_switches.items() %}
+            {{ fab }}:
+          {% for s in members %}
+              - {{ s.name }}  role={{ s.role }}  serial={{ s.serial }}  seed_ip={{ s.seed_ip }}
+          {% endfor %}
+          {% endfor %}
+          ==================== NDP_TOPOLOGY_PREFLIGHT :: end {{ _ndp_profile_id }} ====================
+      when: ('integration.' ~ test_module) in _ndp_reg.profiles
+
+    - name: "NDP_TOPOLOGY_PREFLIGHT [{{ test_module }}] fail fast on drift"
+      ansible.builtin.assert:
+        that:
+          - _ndp_required_count | int == (_ndp_required_members | length)
+          - (_ndp_required_members | map(attribute='ref') | list | difference(_ndp_present_names)) | length == 0
+          - (_ndp_required_members | map(attribute='desired_fabric_ref') | unique | difference(_ndp_fabric_refs)) | length == 0
+          - >-
+            (_ndp_required_members | rejectattr('desired_role', 'equalto', 'preserve')
+             | selectattr('ref', 'in', _ndp_present_role_by_name)
+             | map(attribute='ref') | map('extract', _ndp_present_role_by_name) | list)
+            ==
+            (_ndp_required_members | rejectattr('desired_role', 'equalto', 'preserve')
+             | selectattr('ref', 'in', _ndp_present_role_by_name)
+             | map(attribute='desired_role') | list)
+        fail_msg: >-
+          NDP_TOPOLOGY_PREFLIGHT_FAIL [{{ test_module }}]: the required switch contract no longer matches
+          the declared topology. required_count={{ _ndp_required_count }}
+          required={{ _ndp_required_members }} present_names={{ _ndp_present_names }}
+          present_roles={{ _ndp_present_role_by_name }}.
+        success_msg: "NDP_TOPOLOGY_PREFLIGHT_OK [{{ test_module }}]: required contract satisfied by declared topology."
+      when: ('integration.' ~ test_module) in _ndp_reg.profiles
+
+    - name: "[{{ test_module }}] validate canonical fabric membership"
+      ansible.builtin.assert:
+        that:
+          - nd_test_fabric_switches.VXLAN_EVPN_Fabric | length == 4
+          - nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='name') | list == ['vxlan_leaf_1', 'vxlan_leaf_2', 'vxlan_spine_1', 'vxlan_border_1']
+          - nd_test_fabric_switches.External_Connectivity_Fabric | length == 2
+          - nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='name') | list == ['external_edge_1', 'external_edge_2']
+        fail_msg: "integration_config.yml does not match the canonical four-switch primary and two-switch external topology."
+
+    - name: "[{{ test_module }}] validate dedicated seven-switch ToR topology"
+      ansible.builtin.assert:
+        that:
+          - test_tor_fabric_name | length > 0
+          - test_tor_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+          - _nd_tor_serials | reject('equalto', '') | list | length == 7
+          - _nd_tor_serials | unique | list | length == 7
+        fail_msg: >-
+          nd_manage_tor requires seven distinct serials in a dedicated fabric:
+          standalone ToR/leaf, a ToR vPC pair, a leaf vPC pair, and a second
+          standalone ToR. The current six-switch shared lab cannot satisfy it.
+      vars:
+        _nd_tor_serials:
+          - "{{ test_tor_switch_serial }}"
+          - "{{ test_leaf_switch_serial }}"
+          - "{{ test_vpc_tor_switch_serial }}"
+          - "{{ test_vpc_tor_peer_serial }}"
+          - "{{ test_vpc_leaf_switch_serial }}"
+          - "{{ test_vpc_leaf_peer_serial }}"
+          - "{{ test_tor2_switch_serial }}"
+      when: test_module == 'nd_manage_tor'
+
+    # Positional switch variables are consumed by older role test cases. Keep
+    # them tied to the primary fabric so an old Consul runner cannot accidentally
+    # pass external_edge_1 (SERIAL00005) as switch_serial_3 and produce an ND
+    # "Invalid switchId" response from a primary-fabric policy-group request.
+    - name: "[{{ test_module }}] validate positional switches belong to the primary fabric"
+      ansible.builtin.assert:
+        that:
+          - switch_serial_1 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='serial') | list)
+          - switch_serial_2 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='serial') | list)
+          - switch_serial_3 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='serial') | list)
+          - switch_serial_1 not in (nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list)
+          - switch_serial_2 not in (nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list)
+          - switch_serial_3 not in (nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list)
+        fail_msg: >-
+          NDP_SWITCH_MAPPING_FAIL [{{ test_module }}]: positional switch_serial_1..3 must resolve to
+          switches in VXLAN_EVPN_Fabric. Got [{{ switch_serial_1 }}, {{ switch_serial_2 }}, {{ switch_serial_3 }}].
+          External_Connectivity_Fabric contains [{{ nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list }}].
+
+    - name: "[{{ test_module }}] validate prerequisite-only mode"
+      ansible.builtin.assert:
+        that:
+          - not (nd_prerequisite_only | default(false) | bool) or (nd_prerequisite_enable | default(false) | bool)
+        fail_msg: "nd_prerequisite_only requires nd_prerequisite_enable=true."
+
+    - name: "[{{ test_module }}] prepare and verify declared prerequisites"
+      when: nd_prerequisite_enable | default(false) | bool
+      block:
+        - name: "[{{ test_module }}] run prerequisite preparation lifecycle"
+          ansible.builtin.import_tasks: "{{ nd_prerequisite_wrapper_path }}"
+      rescue:
+        - name: "[{{ test_module }}] restore any prerequisite interfaces after preparation failure"
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"
+          when: _ndp_prerequisite_restore_operations | default([]) | length > 0
+
+        - name: "[{{ test_module }}] fail after prerequisite recovery"
+          ansible.builtin.fail:
+            msg: >-
+              Prerequisite preparation failed and its journaled interface changes
+              were restored: {{ ansible_failed_result.msg | default(ansible_failed_result) }}
+
+  tasks:
+    # Handler notifications emitted from pre_tasks are flushed before normal
+    # tasks. Arm the restore here so force_handlers runs it only after the target
+    # and its cleanup, including when a later task fails.
+    - name: "[{{ test_module }}] arm forced prerequisite restore handler"
+      ansible.builtin.debug:
+        msg: >-
+          Armed restore for {{ _ndp_prerequisite_restore_operations | default([]) | length }}
+          prerequisite interface change(s); journal={{ _ndp_restore_file | default('not-created') }}.
+      changed_when: _ndp_prerequisite_restore_operations | default([]) | length > 0
+      notify: Restore prerequisite interface changes
+      when: nd_prerequisite_enable | default(false) | bool
+
+    - name: "[{{ test_module }}] validate required topology facts"
+      ansible.builtin.assert:
+        that:
+          - ansible_it_fabric | length > 0
+          - ansible_switch1 | length > 0
+          - ansible_switch2 | length > 0
+          - (test_module != 'nd_manage_switches') or (ansible_switch3 | length > 0)
+          - (test_module != 'nd_manage_switches') or (save | bool and deploy | bool and config_actions_type == 'switch')
+          # Integration target dir is nd_resource_manager (module is nd_manage_resource_manager); test_module carries the target name.
+          - (test_module not in ['nd_resource_manager', 'nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']) or (ansible_sno_1 | length > 0 and ansible_sno_2 | length > 0)
+          - (test_module != 'nd_resource_manager') or (intf_1_2 | length > 0 and intf_1_3 | length > 0 and intf_1_10 | length > 0)
+          - (test_module != 'nd_manage_route_map') or (nd_test_fabric_name | length > 0)
+          - (test_module != 'nd_manage_acl') or (acl_test_fabric | length > 0)
+          - (test_module != 'nd_manage_l3out') or (nd_test_fabric1_name | length > 0 and nd_test_fabric2_name | length > 0)
+          # nd_manage_links: both switches must be members of the chosen fabric in the canonical roster, and any
+          # override must equal what the planner verified (profile runtime_vars) when prerequisites are enabled.
+          - (test_module != 'nd_manage_links') or (nd_test_fabric_numbered | length > 0 and nd_test_fabric_numbered in nd_test_fabric_switches)
+          - (test_module != 'nd_manage_links') or (nd_test_switch_a | length > 0 and nd_test_switch_b | length > 0 and nd_test_switch_a != nd_test_switch_b)
+          - (test_module != 'nd_manage_links') or (nd_test_switch_a in (nd_test_fabric_switches[nd_test_fabric_numbered] | default([]) | map(attribute='name') | list) and nd_test_switch_b in (nd_test_fabric_switches[nd_test_fabric_numbered] | default([]) | map(attribute='name') | list))
+          - (test_module != 'nd_manage_links') or ((nd_test_switch_a_ip | length == 0 and nd_test_switch_b_ip | length == 0) or (nd_test_switch_a_ip | length > 0 and nd_test_switch_b_ip | length > 0 and nd_test_switch_a_ip != nd_test_switch_b_ip))
+          - (test_module != 'nd_manage_links') or (_ndp_result is not defined) or (nd_test_fabric_numbered == _ndp_result.runtime_vars.nd_test_fabric_numbered and nd_test_switch_a == _ndp_result.runtime_vars.nd_test_switch_a and nd_test_switch_b == _ndp_result.runtime_vars.nd_test_switch_b)
+          # nd_interface_subinterface_*: with prerequisites enabled the parent must equal the planner-verified one, so a
+          # stale -e (e.g. an old job still passing Ethernet1/35) cannot run the test on a port nobody prepared.
+          - (test_module not in ['nd_interface_subinterface_managed', 'nd_interface_subinterface_unmanaged']) or (_ndp_result is not defined) or (nd_test_ethernet_parent | default('') == _ndp_result.runtime_vars.nd_test_ethernet_parent)
+          - switch_serial_1 != switch_serial_2
+          - switch_serial_2 != switch_serial_3
+          - switch_serial_1 != switch_serial_3
+        fail_msg: >-
+          {{ test_module }} requires a complete, distinct integration topology.
+          Run the prerequisite preparation lifecycle before retrying this module.
+          For nd_manage_links the fabric/switch inputs must be roster members and, with prerequisites
+          enabled, equal to the profile-verified values (leave ND_LINKS_* blank to use them).
+          For nd_interface_subinterface_* a non-blank nd_test_ethernet_parent must equal the profile-verified
+          parent (do not pass -e nd_test_ethernet_parent to use it; got '{{ nd_test_ethernet_parent | default('unset') }}').
+
+    # -------------------------------------------------------------------------
+    # Not every target has tasks/cleanup.yaml, and include_role + tasks_from on
+    # a missing file raises an error that ignore_errors does NOT suppress (it
+    # aborts the play before RUN). Stat-guard the pre/post clean. stat runs on
+    # localhost because the play host `nd` is a network device with no local FS.
+    #
+    # Lifecycle file NAMES VARY across targets (setup.yaml/prepare.yaml,
+    # cleanup.yaml/teardown.yaml). Probe a candidate list and resolve the FIRST
+    # match per phase so setup -> main -> cleanup is honored uniformly.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] discover optional setup/cleanup task files (names vary)"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/{{ item }}"
+      register: _ndp_lifecycle_probe
+      loop:
+        - setup.yaml
+        - setup.yml
+        - prepare.yaml
+        - prepare.yml
+        - cleanup.yaml
+        - cleanup.yml
+        - teardown.yaml
+        - teardown.yml
+      delegate_to: localhost
+      when: not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] resolve first-matching setup + cleanup files"
+      ansible.builtin.set_fact:
+        _ndp_setup_file: "{{ _ndp_lifecycle_probe.results | selectattr('stat.exists') | map(attribute='item') | select('match', '^(setup|prepare)[.]') | list | first | default('') }}"
+        _ndp_cleanup_file: "{{ _ndp_lifecycle_probe.results | selectattr('stat.exists') | map(attribute='item') | select('match', '^(cleanup|teardown)[.]') | list | first | default('') }}"
+      when: not (nd_prerequisite_only | default(false) | bool)
+
+    # A target "owns" its setup when main.yaml or any test-case already imports
+    # it (most do). Only an UNWIRED setup file is run by the harness below, so
+    # setup is never double-run for targets that already sequence it themselves.
+    - name: "[{{ test_module }}] find files that already import the setup file"
+      ansible.builtin.find:
+        paths:
+          - "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks"
+          - "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tests"
+        patterns:
+          - "*.yaml"
+          - "*.yml"
+        contains: ".*(import_tasks|include_tasks|tasks_from|include_role|import_role).*{{ _ndp_setup_file | regex_escape }}.*"
+        recurse: true
+      register: _ndp_setup_importers
+      failed_when: false
+      delegate_to: localhost
+      when:
+        - not (nd_prerequisite_only | default(false) | bool)
+        - _ndp_setup_file | default('') | length > 0
+
+    # -------------------------------------------------------------------------
+    # SETUP: best-effort pre-clean of stale objects for this module, so a prior
+    # aborted run cannot leak state into this one. Skipped when no cleanup file.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] SETUP - pre-clean stale objects (best effort)"
+      ansible.builtin.include_role:
+        name: "{{ test_module }}"
+        tasks_from: "{{ _ndp_cleanup_file }}"
+      ignore_errors: true
+      when:
+        - not (nd_prerequisite_only | default(false) | bool)
+        - _ndp_cleanup_file | default('') | length > 0
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_manage_vrfs only): the collection's setup "Delete All VRFs"
+    # cannot delete a VRF while a network references it (AKB_NET_* -> AKB_VRF_*).
+    # Delete every network on the target fabric first. Same gather-then-delete
+    # pattern as reset_fabric.yaml, scoped here so it also holds mid-version.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] SETUP - gather networks before VRF delete"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config: []
+      register: vrf_preclean_networks
+      ignore_errors: true
+      when: test_module == 'nd_manage_vrfs' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - delete networks before VRF delete"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        config:
+          - network_name: "{{ item.network_name }}"
+            is_l2only: "{{ item.is_l2only | default(omit) }}"
+      loop: "{{ vrf_preclean_networks.gathered | default(vrf_preclean_networks.current) | default(vrf_preclean_networks.response) | default([]) }}"
+      loop_control:
+        label: "{{ fabric_name }} / {{ item.network_name | default(item) }}"
+      ignore_errors: true
+      when: test_module == 'nd_manage_vrfs' and not (nd_prerequisite_only | default(false) | bool)
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_manage_l3out only): the collection's l3out setup.yaml deletes
+    # stale L3Outs but never CREATES the VRFs its merged.yaml references
+    # (test_vrf1_name 'production' on fabric1, test_vrf2_name 'external' on
+    # fabric2). On ND 4.2.1 the L3Out create then 207s "VRF production not found
+    # in fabric VXLAN_EVPN_Fabric" (build #30). Pre-create the VRFs here. The
+    # nd_manage_vrfs MODULE is broken on 4.2.1 (bgpPasswordKeyType), so use raw
+    # REST. A duplicate create is allowed, but the GET checks below are the
+    # authoritative gate: the L3Out module is not started unless each required
+    # VRF is present on its declared fabric.
+    - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric1"
+      cisco.nd.nd_rest:
+        method: post
+        path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
+        content:
+          vrfs:
+            - vrfType: vxlanIbgp
+              fabricName: "{{ nd_test_fabric1_name }}"
+              vrfName: "{{ nd_test_vrf1_name | default('production') }}"
+              vrfId: "{{ nd_test_vrf1_id | default(58900) }}"
+              vlanId: "{{ nd_test_vrf1_vlan | default(2290) }}"
+      register: l3out_vrf1_precreate
+      # ND may return a duplicate-object error when the prerequisite already
+      # exists. The GET + assert below decides whether the prerequisite is valid.
+      failed_when: false
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric2"
+      cisco.nd.nd_rest:
+        method: post
+        path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
+        content:
+          vrfs:
+            - vrfType: externalConnectivity
+              fabricName: "{{ nd_test_fabric2_name }}"
+              vrfName: "{{ nd_test_vrf2_name | default('external') }}"
+              vrfId: "{{ nd_test_vrf2_id | default(58901) }}"
+              vlanId: "{{ nd_test_vrf2_vlan | default(2291) }}"
+      register: l3out_vrf2_precreate
+      failed_when: false
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric1"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
+      register: l3out_vrf1_live
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric2"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
+      register: l3out_vrf2_live
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - fail closed if L3Out VRFs are missing"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (nd_test_vrf1_name | default('production')) in
+            (l3out_vrf1_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
+          - >-
+            (nd_test_vrf2_name | default('external')) in
+            (l3out_vrf2_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
+        fail_msg: >-
+          NDP_L3OUT_VRF_PREREQUISITE_FAIL: required VRFs were not confirmed before
+          nd_manage_l3out. Expected
+          {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
+          {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
+          Check the raw VRF POST response and controller permissions.
+        success_msg: >-
+          NDP_L3OUT_VRF_PREREQUISITE_OK: confirmed
+          {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
+          {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_manage_l3out only): ND 4.3 refuses several inputs of the upstream l3out vars, so layer a
+    # lab overlay on them (set_fact outranks the role's vars/main.yaml; nothing in the collection is edited):
+    #   * BGP with configured_fabrics=both needs routing_details.bgp.fabric2_details.local_asn
+    #     ("Fabric is set to be configured, but routing details are not provided") -> the fabric2 BGP ASN
+    #   * an SVI link must name the PHYSICAL trunk port of the ext_l2_dci_link (Vlan200 -> "No appropriate
+    #     link found"), taken from the registry's ext_l2_dci_link spec, and advertise_host_routes cannot
+    #     be combined with a custom outbound route map
+    #   * the route maps the vars reference must exist in fabric1 ("Route map rm-in not found in fabric")
+    # Subinterface names carry their dot1q suffix through the registry runtime vars (Ethernet1/2.100).
+    - name: "[{{ test_module }}] SETUP - ND 4.3 lab overlay for the l3out test vars"
+      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - load the target's own l3out vars so the overlay can build on them"
+          ansible.builtin.include_vars:
+            file: "{{ playbook_dir }}/tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+
+        - name: "[{{ test_module }}] SETUP - read the fabric2 BGP ASN and the SVI trunk link from the registry"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}"
+          register: _ndp_l3out_fabric2
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - resolve overlay inputs"
+          ansible.builtin.set_fact:
+            _ndp_l3out_fabric2_asn: "{{ (_ndp_l3out_fabric2.current.management.bgpAsn | default('')) | string }}"
+            _ndp_l3out_svi_link: >-
+              {{ _ndp_reg.profiles['integration.nd_manage_l3out'].interfabric_links
+                 | selectattr('template', 'equalto', 'ext_l2_dci_link') | list | first }}
+            # Only routing_details is serialised: the vars' tenant keys resolve to Ansible's omit sentinel, which to_json rejects.
+            _ndp_l3out_route_maps: >-
+              {{ [l3out_bgp.routing_details, l3out_bgp_updated.routing_details, l3out_svi.routing_details] | to_json
+                 | regex_findall('"ipv[46]_route_map_(?:in|out)": ?"([^"]+)"') | unique | list }}
+
+        - name: "[{{ test_module }}] SETUP - require a fabric2 BGP ASN"
+          ansible.builtin.assert:
+            that:
+              - _ndp_l3out_fabric2_asn | length > 0
+            fail_msg: "NDP_L3OUT_OVERLAY_FAIL: {{ nd_test_fabric2_name }} reports no management.bgpAsn."
+
+        - name: "[{{ test_module }}] SETUP - overlay the BGP/SVI/replaced test vars"
+          ansible.builtin.set_fact:
+            l3out_bgp: "{{ l3out_bgp | combine(_ndp_l3out_f2_overlay, recursive=True) }}"
+            l3out_bgp_updated: "{{ l3out_bgp_updated | combine(_ndp_l3out_f2_overlay, recursive=True) }}"
+            l3out_svi: >-
+              {{ l3out_svi | combine(_ndp_l3out_f2_overlay, recursive=True)
+                 | combine(_ndp_l3out_svi_overlay, recursive=True) }}
+            # The upstream replaced case turns the static L3Out into a routed BGP one; ND 4.3 answers 400
+            # "Changing the routing protocol of an L3Out is not supported", so replace it with a changed
+            # static configuration instead (the case only asserts changed + idempotent).
+            # The sub-interface names need their dot1q id ("Subinterface name should contain dot1q ID"). The
+            # nd_test_*_subif extra vars come from the Jenkins inventory file and outrank any fact, so the
+            # suffix is applied to the l3out_static dict itself (never to those variables).
+            l3out_static: "{{ _ndp_l3out_static_overlaid }}"
+            l3out_static_replaced: "{{ _ndp_l3out_static_overlaid | combine(_ndp_l3out_static_replaced_overlay, recursive=True) }}"
+          vars:
+            _ndp_l3out_static_link0: "{{ l3out_static.connectivity_details.links[0] }}"
+            _ndp_l3out_subif1: >-
+              {{ test_switch1_subif if (test_switch1_subif | string is search('[.][0-9]+$'))
+                 else (test_switch1_subif ~ '.' ~ _ndp_l3out_static_link0.vlan_id) }}
+            _ndp_l3out_subif2: >-
+              {{ test_switch2_subif if (test_switch2_subif | string is search('[.][0-9]+$'))
+                 else (test_switch2_subif ~ '.' ~ _ndp_l3out_static_link0.vlan_id) }}
+            _ndp_l3out_static_overlaid: >-
+              {{ l3out_static | combine({'connectivity_details': {'links': [
+                   _ndp_l3out_static_link0 | combine({
+                     'switch1_details': {'interface_name': _ndp_l3out_subif1},
+                     'switch2_details': {'interface_name': _ndp_l3out_subif2}}, recursive=True)]}}, recursive=True) }}
+            _ndp_l3out_f2_overlay:
+              routing_details: {bgp: {fabric2_details: {local_asn: "{{ _ndp_l3out_fabric2_asn }}"}}}
+            _ndp_l3out_svi_overlay:
+              connectivity_details:
+                links:
+                  - "{{ l3out_svi.connectivity_details.links[0] | combine({
+                       'switch1_details': {'interface_name': _ndp_l3out_svi_link.src.interface},
+                       'switch2_details': {'interface_name': _ndp_l3out_svi_link.dst.interface}}, recursive=True) }}"
+              routing_details: {bgp: {fabric1_details: {advertise_host_routes: false}}}
+            _ndp_l3out_static_replaced_overlay:
+              connectivity_details:
+                links:
+                  - "{{ _ndp_l3out_static_overlaid.connectivity_details.links[0] | combine({'mtu': 9216}) }}"
+              routing_details:
+                static:
+                  fabric1_static_routes:
+                    - "{{ l3out_static.routing_details.static.fabric1_static_routes[0] | combine({'route_preference': 5}) }}"
+
+        - name: "[{{ test_module }}] SETUP - list the route maps already in {{ nd_test_fabric1_name }}"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/routeMaps"
+          register: _ndp_l3out_route_maps_live
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - create only the missing route maps (existing ones are never modified)"
+          ansible.builtin.set_fact:
+            _ndp_l3out_route_maps_created: >-
+              {{ _ndp_l3out_route_maps | difference(
+                   (_ndp_l3out_route_maps_live.current.routeMaps | default(_ndp_l3out_route_maps_live.current.items | default([])))
+                   | map(attribute='name') | list) }}
+
+        - name: "[{{ test_module }}] SETUP - create the route maps the l3out vars reference"
+          cisco.nd.nd_manage_route_map:
+            fabric_name: "{{ nd_test_fabric1_name }}"
+            config: >-
+              {{ _ndp_l3out_route_maps_created
+                 | map('community.general.dict_kv', 'name') | list
+                 | map('combine', {'entries': [{'sequence_number': 10, 'action': 'permit',
+                                                 'rule_entries': [{'rule_type': 'setLocalPreference', 'value': 100}]}]})
+                 | list }}
+            state: merged
+          when: _ndp_l3out_route_maps_created | length > 0
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_interface_subinterface_managed only): ND 4.3 refuses a sub-interface create whose policy sets
+    # adminState without an mtu (207 "Policy [subinterface] - Validation failed for following fields: [mtu]";
+    # live 2026-10-08), and the upstream vars give only subif_eth_2 an mtu. Layer ND's own default (9216, the
+    # value subif_eth_2 already uses) on the other creates. set_fact outranks the role's vars/main.yaml, so
+    # nothing in the collection is edited. The sub-interface names resolve from the verified parent facts.
+    - name: "[{{ test_module }}] SETUP - ND 4.3 mtu overlay for the sub-interface create vars"
+      when: test_module == 'nd_interface_subinterface_managed' and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - load the target's own sub-interface vars so the overlay can build on them"
+          ansible.builtin.include_vars:
+            file: "{{ playbook_dir }}/tests/integration/targets/nd_interface_subinterface_managed/vars/main.yaml"
+
+        - name: "[{{ test_module }}] SETUP - overlay an mtu on the sub-interface create vars"
+          ansible.builtin.set_fact:
+            subif_eth_3: "{{ subif_eth_3 | combine(_ndp_subif_mtu_overlay, recursive=True) }}"
+            subif_eth_4: "{{ subif_eth_4 | combine(_ndp_subif_mtu_overlay, recursive=True) }}"
+            subif_pc_5: "{{ subif_pc_5 | combine(_ndp_subif_mtu_overlay, recursive=True) }}"
+          vars:
+            _ndp_subif_mtu_overlay:
+              config_data: {network_os: {policy: {mtu: 9216}}}
+
+        # The replaced/overridden cases carry their configs inline (no var to overlay), and ND 4.3 answers their
+        # PUTs with 400 "Validation failed for following fields: [mtu]" for the same reason, so give those
+        # policy blocks the same mtu in the target's own task files (the run's checkout, never committed).
+        - name: "[{{ test_module }}] SETUP - give the inline replaced/overridden sub-interface configs an mtu"
+          ansible.builtin.replace:
+            path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/{{ item }}"
+            regexp: '^([ ]+)admin_state: true[ ]*\n(?![ ]+mtu:)'
+            replace: '\1admin_state: true\n\1mtu: 9216\n'
+          loop:
+            - replaced.yaml
+            - overridden.yaml
+          delegate_to: localhost
+
+    # -------------------------------------------------------------------------
+    # SETUP (community lists only): the develop targets set module_defaults `timeout: 300` for modules whose
+    # argument spec has no such option, so every task fails "Unsupported parameters ... timeout" (live 2026-10-09).
+    # Drop that defaults block from the run's own checkout of the target (never committed).
+    - name: "[{{ test_module }}] SETUP - drop the unsupported timeout module default from the target"
+      ansible.builtin.replace:
+        path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/main.yaml"
+        regexp: '^  module_defaults:\n    cisco[.]nd[.]{{ test_module }}:\n      timeout: [0-9]+\n?'
+        replace: ''
+      delegate_to: localhost
+      when:
+        - test_module in ['nd_manage_community_list', 'nd_manage_extended_community_list']
+        - not (nd_prerequisite_only | default(false) | bool)
+
+    # -------------------------------------------------------------------------
+    # SETUP (vPC interface targets): their own setup only builds a VIRTUAL-peer-link pair with vpc_pair_details, which
+    # ND 4.3 rejects on the N9K-C9300v leaves and on a vxlanIbgp fabric. Form the PHYSICAL pair over the cabled
+    # leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link here and hand it to the target as pre-existing substrate
+    # (nd_test_manage_vpc_pairs=false: its setup/teardown then leave the pair alone). The CLEANUP unpairs what this run
+    # created because the destructive nd_manage_switches module runs later in the same job. The target's multi-pair
+    # scenario still needs a second pair in the fabric and reports that itself.
+    - name: "[{{ test_module }}] SETUP - standing physical vPC pair for the vPC interface target"
+      when: test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host'] and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_vpcif_pairs_before
+
+        - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
+          ansible.builtin.set_fact:
+            _ndp_vpcif_pair_preexisting: >-
+              {{ ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                 | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+                 | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                 or ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                 | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+                 | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
+
+        - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+          register: _ndp_vpcif_peer_link
+          retries: 12
+          delay: 15
+          until: >-
+            {{ (_ndp_vpcif_peer_link.current.links | default([]))
+               | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+               | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+          failed_when: false
+          no_log: true
+          when: not (_ndp_vpcif_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - create the physical vPC pair"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: merged
+            config_actions: {save: true, deploy: true, type: switch}
+            config:
+              - peer1_switch_id: "{{ ansible_sno_1 }}"
+                peer2_switch_id: "{{ ansible_sno_2 }}"
+                use_virtual_peer_link: false
+          when: not (_ndp_vpcif_pair_preexisting | bool)
+
+        # Same convergence pause the targets' own setup uses after forming a pair.
+        - name: "[{{ test_module }}] SETUP - pause for pair-establishment convergence"
+          ansible.builtin.pause:
+            seconds: 30
+          when: not (_ndp_vpcif_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the pair is formed"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_vpcif_pairs_after
+
+        - name: "[{{ test_module }}] SETUP - require the leaf pair before the target starts"
+          ansible.builtin.assert:
+            that: >-
+              ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
+              | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+              | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+              | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+              or ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
+              | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+              | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+              | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+            fail_msg: >-
+              The physical vPC pair {{ ansible_sno_1 }}/{{ ansible_sno_2 }} does not exist in {{ ansible_it_fabric }} after the
+              runner formed it; the vPC interface target needs it as substrate.
+
+        - name: "[{{ test_module }}] SETUP - hand the pair to the target as pre-existing lab substrate"
+          ansible.builtin.set_fact:
+            nd_test_manage_vpc_pairs: false
+            nd_test_vpc_peer1_ip: "{{ ansible_switch1 }}"
+            nd_test_vpc_peer2_ip: "{{ ansible_switch2 }}"
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_resource_manager only): the target forms a PHYSICAL vPC pair itself (ND 4.3 rejects a virtual
+    # peer-link on N9K-C9300v). Before it starts, remember whether the pair already existed and give ND time to
+    # report the leaf peer-link as present (the prerequisite admin-ups its two ports just before this).
+    - name: "[{{ test_module }}] SETUP - vPC pair and peer-link readiness"
+      when: test_module == 'nd_resource_manager' and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_rm_pairs_before
+
+        - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
+          ansible.builtin.set_fact:
+            _ndp_rm_pair_preexisting: >-
+              {{ ((_ndp_rm_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_rm_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                 | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+                 | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                 or ((_ndp_rm_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_rm_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                 | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+                 | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
+
+        - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+          register: _ndp_rm_peer_link
+          retries: 12
+          delay: 15
+          until: >-
+            {{ (_ndp_rm_peer_link.current.links | default([]))
+               | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+               | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+          failed_when: false
+          no_log: true
+          when: not (_ndp_rm_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - peer-link readiness verdict"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_RM_PEER_LINK {{ 'present' if ((_ndp_rm_peer_link.current.links | default([]))
+              | selectattr('linkPresent', 'equalto', true) | list | length > 0) else 'NOT reported present by ND (the target may fail creating the pair)' }}
+              (pair pre-existing: {{ _ndp_rm_pair_preexisting }}).
+          when: not (_ndp_rm_pair_preexisting | bool)
+
+    # -------------------------------------------------------------------------
+    # SETUP: run the target's own setup/prepare file FIRST, but only when the
+    # target does not already wire it (main.yaml or a test-case importing it).
+    # Best-effort so a setup expecting main.yaml-scoped facts cannot abort the
+    # suite; idempotent pre-clean semantics make an extra up-front run safe.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] SETUP - run target setup/prepare first (names vary)"
+      ansible.builtin.include_role:
+        name: "{{ test_module }}"
+        tasks_from: "{{ _ndp_setup_file }}"
+      ignore_errors: true
+      when:
+        - not (nd_prerequisite_only | default(false) | bool)
+        - _ndp_setup_file | default('') | length > 0
+        - (_ndp_setup_importers.matched | default(0)) | int == 0
+
+    # -------------------------------------------------------------------------
+    # RUN: the module's full suite. A failure here fails the PLAY (so the recap
+    # reports failed>0), while the always-cleanup still resets the fabric.
+    # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] RUN full integration suite (all test cases)"
+      block:
+        - name: "[{{ test_module }}] validate selected test groups"
+          ansible.builtin.assert:
+            that:
+              - test_groups == ['standalone']
+              - nd_network_test_topology == 'standalone'
+              - nd_vrf_test_topology == 'standalone'
+            fail_msg: "Only standalone network and VRF integration tests are enabled."
+          when: test_module in ['nd_manage_networks', 'nd_manage_vrfs']
+
+        - name: "[{{ test_module }}] include selected network/VRF groups"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+          vars:
+            testcase: "*"
+            nd_network_test_topology: "{{ test_group }}"
+            nd_vrf_test_topology: "{{ test_group }}"
+          loop: "{{ test_groups }}"
+          loop_control:
+            loop_var: test_group
+          when: test_module in ['nd_manage_networks', 'nd_manage_vrfs']
+
+        - name: "[{{ test_module }}] include collection target (all configured cases)"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+          when: test_module not in ['nd_manage_networks', 'nd_manage_vrfs']
+      when: not (nd_prerequisite_only | default(false) | bool)
+      always:
+        - name: "[{{ test_module }}] CLEANUP - post-clean (required)"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+            tasks_from: "{{ _ndp_cleanup_file }}"
+          when:
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_cleanup_file | default('') | length > 0
+
+        # A failed l3out run can leave its test L3Outs behind; ND refuses to delete the planned links or route
+        # maps they reference, so remove them first (best effort, never masks the test result).
+        - name: "[{{ test_module }}] CLEANUP - remove leftover test L3Outs and the route maps this run created"
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+          block:
+            - name: "[{{ test_module }}] CLEANUP - delete leftover test L3Outs"
+              cisco.nd.nd_manage_l3out:
+                fabric_name: "{{ nd_test_fabric_name }}"
+                state: deleted
+                config:
+                  - name: "{{ test_l3out_bgp_name | default('ansible-test-l3out-bgp') }}"
+                  - name: "{{ test_l3out_static_name | default('ansible-test-l3out-static') }}"
+                  - name: "{{ test_l3out_svi_name | default('ansible-test-l3out-svi') }}"
+              ignore_errors: true
+
+            - name: "[{{ test_module }}] CLEANUP - delete the route maps created for this run"
+              cisco.nd.nd_manage_route_map:
+                fabric_name: "{{ nd_test_fabric1_name }}"
+                config: "{{ _ndp_l3out_route_maps_created | map('community.general.dict_kv', 'name') | list }}"
+                state: deleted
+              ignore_errors: true
+              when: _ndp_l3out_route_maps_created | default([]) | length > 0
+
+        # The target leaves the pair it created ("create once"); the destructive nd_manage_switches module runs
+        # later in the same job and ND refuses to remove switches that are still paired, so unpair what this
+        # run created. A pair that already existed is never touched.
+        - name: "[{{ test_module }}] CLEANUP - unpair the vPC pair this run created"
+          when:
+            - test_module == 'nd_resource_manager'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_rm_pair_preexisting is defined
+            - not (_ndp_rm_pair_preexisting | bool)
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: deleted
+            config:
+              - peer1_switch_id: "{{ ansible_sno_1 }}"
+                peer2_switch_id: "{{ ansible_sno_2 }}"
+            config_actions: {save: true, deploy: true, type: switch}
+          ignore_errors: true
+
+        # Same reason for the vPC interface targets: the runner formed the pair, so the runner removes it (a pair that
+        # already existed is never touched).
+        - name: "[{{ test_module }}] CLEANUP - unpair the vPC pair the runner formed for the vPC interface target"
+          when:
+            - test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_vpcif_pair_preexisting is defined
+            - not (_ndp_vpcif_pair_preexisting | bool)
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: deleted
+            config:
+              - peer1_switch_id: "{{ ansible_sno_1 }}"
+                peer2_switch_id: "{{ ansible_sno_2 }}"
+            config_actions: {save: true, deploy: true, type: switch}
+          ignore_errors: true
+  handlers:
+    - name: Restore prerequisite interface changes
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"

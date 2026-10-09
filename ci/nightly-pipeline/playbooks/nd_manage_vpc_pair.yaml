@@ -1,0 +1,51 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_vpc_pair.
+# File name kept as nd_vpc_pair.yaml to match the pipeline's PLAYBOOK_FILES.
+# Gather is always safe. Set peer1_switch_id / peer2_switch_id (serial numbers
+# or switch management IPs) to exercise create + delete on a lab vPC pair;
+# otherwise those tasks are skipped and the nightly stays green.
+- name: cisco.nd nightly - nd_manage_vpc_pair
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_vpc_pair
+      fabric_types: [vxlanIbgp]
+      switch_count: 2
+      switch_roles: [leaf, leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    peer1_switch_id: SERIAL00001   # <-- set to enable create/delete
+    peer2_switch_id: SERIAL00002
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Gather all vPC pairs
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: gathered
+      register: nd_vpc_pairs
+
+    - name: Create a vPC pair (virtual peer-link)
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - peer1_switch_id: "{{ peer1_switch_id }}"
+            peer2_switch_id: "{{ peer2_switch_id }}"
+            use_virtual_peer_link: true
+      when:
+        - peer1_switch_id is defined
+        - peer2_switch_id is defined
+
+    - name: Delete the vPC pair
+      cisco.nd.nd_manage_vpc_pair:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - peer1_switch_id: "{{ peer1_switch_id }}"
+            peer2_switch_id: "{{ peer2_switch_id }}"
+      when:
+        - peer1_switch_id is defined
+        - peer2_switch_id is defined
