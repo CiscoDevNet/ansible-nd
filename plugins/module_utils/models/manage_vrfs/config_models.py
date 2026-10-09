@@ -681,15 +681,6 @@ class VrfConfigModel(NDBaseModel):
         default=True,
         description="Deploy VRF attachment changes for this VRF",
     )
-    deploy_type: str = Field(
-        default="switch",
-        alias="deployType",
-        description=(
-            "Deploy scope for pending VRF attachment changes. Use 'switch' "
-            "to deploy only affected switches, or 'vrf' to deploy the VRF "
-            "across all pending switches."
-        ),
-    )
     attach: list[VrfAttachmentConfigModel] | None = Field(
         default=None,
         description="Switch attachment entries for this VRF",
@@ -712,16 +703,6 @@ class VrfConfigModel(NDBaseModel):
         v = str(v).strip()
         if v not in VrfType.choices():
             raise ValueError(f"vrf_type must be one of {VrfType.choices()}, got: {v}")
-        return v
-
-    @field_validator("deploy_type", mode="before")
-    @classmethod
-    def _validate_deploy_type(cls, v: str | None) -> str:
-        if v is None:
-            return "switch"
-        v = str(v).strip()
-        if v not in ("switch", "vrf"):
-            raise ValueError("deploy_type must be one of ['switch', 'vrf']")
         return v
 
     @field_validator("vrf_template_config", mode="before")
@@ -1145,15 +1126,6 @@ class VrfParentConfigModel(NDBaseModel):
         default=True,
         description=("Deploy parent VRF attachment changes once after all child fabric " "tasks complete"),
     )
-    deploy_type: str = Field(
-        default="switch",
-        alias="deployType",
-        description=(
-            "Deploy scope for parent VRF attachment changes. Use 'switch' "
-            "to deploy only affected switches, or 'vrf' to deploy the VRF "
-            "across all pending switches."
-        ),
-    )
     attach: list[VrfAttachmentConfigModel] | None = Field(
         default=None,
         description="Parent-level switch attachment entries for this VRF",
@@ -1176,16 +1148,6 @@ class VrfParentConfigModel(NDBaseModel):
         v = str(v).strip()
         if v not in VrfType.choices():
             raise ValueError(f"vrf_type must be one of {VrfType.choices()}, got: {v}")
-        return v
-
-    @field_validator("deploy_type", mode="before")
-    @classmethod
-    def _validate_deploy_type(cls, v: str | None) -> str:
-        if v is None:
-            return "switch"
-        v = str(v).strip()
-        if v not in ("switch", "vrf"):
-            raise ValueError("deploy_type must be one of ['switch', 'vrf']")
         return v
 
     @field_validator("vrf_template_config", mode="before")

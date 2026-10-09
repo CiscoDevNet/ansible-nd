@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import patch
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
     NetworkConfigModel,
     NetworkParentConfigModel,
@@ -633,7 +634,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert "net_name" in spec
     assert "net_id" in spec
     assert "gw_ip_subnet" in spec
-    assert spec["deploy_type"]["choices"] == ["switch", "network"]
+    assert "deploy_type" not in spec
     assert "network_id" not in child_spec
     assert "vlan_id" not in child_spec
     assert "vlan_name" not in child_spec
@@ -1014,7 +1015,6 @@ def test_attachment_only_network_config_does_not_generate_definition_defaults():
                 "arp_suppression": False,
                 "mtu": 9216,
                 "deploy": True,
-                "deploy_type": "switch",
                 "attach": [
                     {
                         "ip_address": "192.0.2.11",
@@ -1087,7 +1087,6 @@ def test_parse_config_preserves_attachment_only_shape_before_transform():
                 }
             ],
             "deploy": True,
-            "deploy_type": "switch",
         }
     ]
 
@@ -1773,17 +1772,15 @@ def test_module_level_query_is_normalized_to_gathered():
     assert "deploy_type" not in module_args["config"][0]
 
 
-def test_network_deploy_type_network_builds_network_level_payload():
-    model = NetworkConfigModel.from_config(
-        {
-            "network_name": "BLUE_NET",
-            "is_l2only": True,
-            "deploy_type": "network",
-        }
+def test_network_resource_config_action_builds_network_level_payload():
+    actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    payloads = NetworkAttachmentManager.build_deploy_payloads(
+        [{"network_name": "BLUE_NET"}],
+        {"BLUE_NET": {"FDO123"}},
+        actions=actions,
     )
 
-    assert model.to_config()["deploy_type"] == "network"
-    assert NetworkAttachmentManager.build_deploy_payloads([model.to_config()], {"BLUE_NET": {"FDO123"}}) == [{"networkNames": ["BLUE_NET"]}]
+    assert payloads == [{"networkNames": ["BLUE_NET"]}]
 
 
 def test_transform_l2_network_payload_uses_manage_schema_shape():
