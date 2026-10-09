@@ -2160,7 +2160,7 @@ def runNDFCVersionTests(ndfcConfig) {
 /**
  * Enforced switch-membership pre-flight. Before the module suite runs it confirms
  * every canonical fabric switch is present in ND and, for any that are missing,
- * adds them (additive, preserve_config) then recalculates & deploys the fabric,
+ * adds them (ND erases and reloads each switch first) then recalculates & deploys the fabric,
  * and finally REQUIRES the full 4+2 topology to be confirmed present. A failure
  * FAILS the build so the suite never starts on a broken topology. Audit-only (no
  * mutation) during a prerequisite-only run.

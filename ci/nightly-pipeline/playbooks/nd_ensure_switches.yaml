@@ -58,12 +58,7 @@
     # mandatory full-roster confirmation gate below is what fails the run, regardless
     # of this flag.
     nd_switch_fail_on_missing: false
-    # How a missing switch is onboarded. auto (default) = per fabric type: a Data Center VXLAN iBGP fabric is added
-    # GREENFIELD (preserve_config false) and every other type keeps the module's own default (External must preserve,
-    # eBGP/Campus/Routed must not). A BROWNFIELD add (preserve_config true) lands each VXLAN iBGP switch in Migration
-    # mode, which only a Recalculate & Deploy can leave, but nd_manage_switches waits for Normal BEFORE it deploys, so it
-    # sits in that wait for ~3 hours (live-proven on ND 4.3: Normal -> Migration within a minute, never back). Set true or
-    # false to force one value for every fabric.
+    # auto = wipe: ND erases and reloads each switch as it adds it; only External must preserve. A preserve add hangs in Migration mode.
     nd_switch_preserve_config: auto
     # expected_serial_number exists only on cisco.nd branches that implement it (GitHub develop does not
     # yet); detect it in the cloned collection so the pre-flight works on whichever ND_GIT_BRANCH runs.
@@ -270,10 +265,12 @@
                      {'preserve_config': (nd_switch_preserve_config | bool)}
                        if ((nd_switch_preserve_config | string | lower) in ['true', 'false'])
                      else ({'preserve_config': false}
-                       if (((_p.current | default({})).get('management', {})).get('type', '') | string | lower) == 'vxlanibgp'
+                       if (_t | length > 0 and _t not in ['external', 'externalconnectivity'])
                        else {})
                    )
                  }) }}
+          vars:
+            _t: "{{ ((_p.current | default({})).get('management', {})).get('type', '') | string | lower }}"
           loop: "{{ nd_fabric_type_probe.results }}"
           loop_control:
             loop_var: _p
@@ -302,14 +299,7 @@
             label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
           no_log: true
 
-        # Add every missing switch of a fabric in ONE call and RECALCULATE & DEPLOY once. state: merged
-        # adds the switches to fabric membership (the durable fix for "ND Error 400:
-        # Switch id <serial> not found"); config_actions.save recalculates and
-        # config_actions.deploy deploys, so the switches AND their fabric peers converge.
-        # One call per fabric lets greenfield reloads run in parallel instead of one after
-        # the other. This is an ENFORCED restore, not a best-effort self-heal: there is
-        # deliberately no ignore_errors, so a switch that will not onboard or deploy
-        # fails the play right here rather than letting the suite start half-restored.
+        # One call per fabric runs the wipe-and-reload of every switch in parallel; no ignore_errors on purpose (enforced restore).
         - name: Add each fabric's missing switches in one call, then recalculate and deploy
           cisco.nd.nd_manage_switches:
             fabric: "{{ _req.key }}"
@@ -656,7 +646,6 @@
                 role: "{{ _sw.expected }}"
                 username: "{{ nd_switch_username | default(switch_username) }}"
                 password: "{{ nd_switch_password | default(switch_password) }}"
-                preserve_config: true
           loop: "{{ nd_role_drift | default([]) }}"
           loop_control:
             loop_var: _sw

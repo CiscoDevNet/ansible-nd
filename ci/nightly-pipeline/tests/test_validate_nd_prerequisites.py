@@ -725,22 +725,28 @@ def test_switch_credentials_are_separate_and_runtime_bound():
     assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD')" in fallback_inventory
 
 
-def test_switch_self_heal_adds_vxlan_ibgp_greenfield_in_one_call_per_fabric():
+def test_switch_adds_wipe_the_switch_except_on_external_fabrics():
     text = (ROOT / "playbooks/nd_ensure_switches.yaml").read_text()
     play = yaml.safe_load(text)[0]
-    # A brownfield add parks every VXLAN iBGP switch in Migration mode and nd_manage_switches then waits for Normal
-    # before it deploys (live ND 4.3: ~3 hours), so iBGP is added greenfield and every other type keeps the module default.
+    # A preserve_config add parks VXLAN iBGP switches in Migration mode and nd_manage_switches then waits for Normal before
+    # it deploys (live ND 4.3: ~3 hours), so every fabric type that accepts false is wiped; External must preserve.
     assert play["vars"]["nd_switch_preserve_config"] == "auto"
     assert "{'preserve_config': false}" in text
-    assert "== 'vxlanibgp'" in text
+    assert "not in ['external', 'externalconnectivity']" in text
     onboard = next(task for task in play["tasks"] if task.get("name", "").startswith("Onboard the missing switches"))
     adds = [task for task in onboard["block"] if "cisco.nd.nd_manage_switches" in task]
     assert len(adds) == 1
     assert adds[0]["loop"] == "{{ nd_add_requests | dict2items }}"
     assert adds[0]["cisco.nd.nd_manage_switches"]["config"] == "{{ _req.value }}"
     assert 'preserve_config: "{{ nd_switch_preserve_config | bool }}"' not in text
-    # Role correction touches a switch that is already a member, so any value valid for every fabric type will do.
-    assert "preserve_config: true" in text
+    # Role correction touches a switch that is already a member, so the module derives a valid value per fabric type.
+    confirm = next(task for task in play["tasks"] if task.get("name", "").startswith("Confirm the full canonical roster"))
+    role_heal = next(task for task in confirm["block"] if task.get("name", "").startswith("Correct role drift"))
+    assert "preserve_config" not in role_heal["cisco.nd.nd_manage_switches"]["config"][0]
+    for name in ("apply_ensure_switch_membership.yaml", "apply_membership_move.yaml"):
+        prerequisite = (ROOT / "playbooks/nd_prerequisite" / name).read_text()
+        assert "not in ['', 'external', 'externalconnectivity']" in prerequisite
+        assert "preserve_config: true" not in prerequisite
 
 
 def test_integration_config_declares_complete_canonical_fabric_membership():

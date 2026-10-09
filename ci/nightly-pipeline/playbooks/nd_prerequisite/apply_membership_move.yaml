@@ -23,6 +23,6 @@
         role: "{{ _ndp_operation.desired_role }}"
         username: "{{ nd_switch_username | default(omit) }}"
         password: "{{ nd_switch_password | default(omit) }}"
-        preserve_config: "{{ false if ((_ndp_fabric_type_by_ref[_ndp_operation.destination_fabric_ref] | default('')) | lower) == 'vxlanibgp' else omit }}"
+        preserve_config: "{{ false if (_ndp_fabric_type_by_ref[_ndp_operation.destination_fabric_ref] | default('') | lower) not in ['', 'external', 'externalconnectivity'] else omit }}"
   run_once: true
   no_log: true
