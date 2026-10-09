@@ -325,6 +325,7 @@ class FabricExternalConnectivityModel(FabricBaseModel):
     """
 
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.EXTERNAL_CONNECTIVITY
+    supports_gathered_filtering: ClassVar[bool] = True
 
     # Core Management Configuration
     management: ExternalConnectivityManagementModel | None = Field(description="External Connectivity management configuration", default=None)

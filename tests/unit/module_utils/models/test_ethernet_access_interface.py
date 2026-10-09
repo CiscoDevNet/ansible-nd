@@ -377,7 +377,16 @@ def test_ethernet_access_interface_00235(value, should_raise):
         ("mtu", MtuEnum),
         ("storm_control_action", StormControlActionEnum),
     ],
-    ids=["speed", "duplex_mode", "fec", "bpdu_guard", "bpdu_filter", "link_type", "mtu", "storm_control_action"],
+    ids=[
+        "speed",
+        "duplex_mode",
+        "fec",
+        "bpdu_guard",
+        "bpdu_filter",
+        "link_type",
+        "mtu",
+        "storm_control_action",
+    ],
 )
 def test_ethernet_access_interface_00240(field, enum_cls):
     """
@@ -1330,7 +1339,8 @@ def test_ethernet_access_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - `network_os_type` is exposed (optional, default `nx-os`) and `policy_type` is exposed (optional, derived from `network_os_type`)
+    - `network_os_type` is exposed without an argument-spec default and `policy_type` is exposed (optional, derived from
+      `network_os_type`); the model supplies the backward-compatible `nx-os` default for configuration states
     - mode is not exposed (hardcoded by the model)
 
     ## Classes and Methods
@@ -1345,7 +1355,13 @@ def test_ethernet_access_interface_01100():
     assert "switch_ip" in spec["config"]["options"]
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["state"]["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
     assert spec["state"]["default"] == "merged"
 
     # interface_type and mode are hardcoded in the Pydantic model and intentionally absent from the user-facing
@@ -1356,7 +1372,7 @@ def test_ethernet_access_interface_01100():
     assert "mode" not in config_data_spec
     network_os_spec = config_data_spec["network_os"]["options"]
     assert network_os_spec["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
-    assert network_os_spec["network_os_type"]["default"] == "nx-os"
+    assert "default" not in network_os_spec["network_os_type"]
     assert network_os_spec["network_os_type"].get("required") is not True
     policy_spec = network_os_spec["policy"]["options"]
     assert policy_spec["policy_type"]["choices"] == ["accessHost", "iosXeAccess"]
@@ -1453,6 +1469,22 @@ def test_ethernet_access_interface_01200():
     assert explicit.policy_type == "iosXeAccess"
 
 
+def test_ethernet_access_interface_02000():
+    """
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Test
+
+    - config required is False
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.get_argument_spec()
+    """
+    spec = EthernetAccessInterfaceModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+
+
 def test_ethernet_access_interface_01210():
     """
     # Summary
@@ -1540,6 +1572,47 @@ def test_ethernet_access_interface_01220(field, value, should_raise):
             assert instance.mtu == int(value)
 
 
+def test_ethernet_access_interface_02010():
+    """
+    Verify gathered filters may omit both identifiers (``switch_ip``, ``interface_names``).
+
+    ## Test
+
+    - switch_ip required is False
+    - interface_names required is False
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.get_argument_spec()
+    """
+    config_options = EthernetAccessInterfaceModel.get_argument_spec()["config"]["options"]
+    assert config_options["switch_ip"].get("required", False) is False
+    assert config_options["interface_names"].get("required", False) is False
+
+
+def test_ethernet_access_interface_02020():
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``EthernetAccessInterfaceModel``
+    and ``False`` on the base ``NDBaseModel``.
+
+    ## Test
+
+    - NDBaseModel.supports_gathered_filtering is False
+    - EthernetAccessInterfaceModel.supports_gathered_filtering is True
+
+    ## Classes and Methods
+
+    - NDBaseModel.supports_gathered_filtering
+    - EthernetAccessInterfaceModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert EthernetAccessInterfaceModel.supports_gathered_filtering is True
+
+
 def test_ethernet_access_interface_01230():
     """
     # Summary
@@ -1578,6 +1651,27 @@ def test_ethernet_access_interface_01230():
     assert omitted.to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "iosXeAccess"
 
 
+def test_ethernet_access_interface_02030():
+    """
+    Verify ``gathered_filter_properties`` contains the expected 4 properties.
+
+    ## Test
+
+    - gathered_filter_properties tuple has exactly 4 entries
+    - Each entry matches the expected dot-path
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.gathered_filter_properties
+    """
+    assert EthernetAccessInterfaceModel.gathered_filter_properties == (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.access_vlan",
+    )
+
+
 def test_ethernet_access_interface_01240():
     """
     # Summary
@@ -1611,6 +1705,31 @@ def test_ethernet_access_interface_01240():
     assert EthernetAccessInterfaceModel(**base).policy_type is None
 
 
+def test_ethernet_access_interface_02040():
+    """
+    Verify ``normalize_gathered_filter`` normalizes abbreviated interface names
+    to the canonical ``Ethernet`` prefix.
+
+    ## Test
+
+    - ``eth1/1`` normalizes to ``Ethernet1/1``
+    - ``e1/2`` normalizes to ``Ethernet1/2``
+    - ``ETHERNET1/3`` normalizes to ``Ethernet1/3``
+    - ``Ethernet1/4`` is idempotent
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": "eth1/1"}) == {"interface_name": "Ethernet1/1"}
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": "e1/2"}) == {"interface_name": "Ethernet1/2"}
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": "ETHERNET1/3"}) == {"interface_name": "Ethernet1/3"}
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": "Ethernet1/4"}) == {"interface_name": "Ethernet1/4"}
+
+
 def test_ethernet_access_interface_01250():
     """
     # Summary
@@ -1637,6 +1756,30 @@ def test_ethernet_access_interface_01250():
         )
 
 
+def test_ethernet_access_interface_02050():
+    """
+    Verify ``normalize_gathered_filter`` passes through filters without ``interface_name``
+    unchanged.
+
+    ## Test
+
+    - Filter with only switch_ip is returned unchanged
+    - Filter with only policy fields is returned unchanged
+    - Empty filter is returned unchanged
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"switch_ip": "10.1.1.1"}) == {"switch_ip": "10.1.1.1"}
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"config_data": {"network_os": {"policy": {"access_vlan": 100}}}}) == {
+        "config_data": {"network_os": {"policy": {"access_vlan": 100}}}
+    }
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({}) == {}
+
+
 def test_ethernet_access_interface_01260():
     """
     # Summary
@@ -1661,6 +1804,28 @@ def test_ethernet_access_interface_01260():
     assert isinstance(instance.config_data.network_os.policy, XeEthernetAccessPolicyModel)
     policy = instance.to_config()["config_data"]["network_os"]["policy"]
     assert policy == {"policy_type": "iosXeAccess", "admin_state": True, "access_vlan": 20, "description": "cat host", "mtu": 1500, "speed": "auto"}
+
+
+def test_ethernet_access_interface_02060():
+    """
+    Verify ``normalize_gathered_filter`` handles edge cases for ``interface_name``:
+    ``None``, empty string, and non-string values.
+
+    ## Test
+
+    - interface_name=None is passed through
+    - interface_name="" is passed through
+    - interface_name=123 is passed through
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": None}) == {"interface_name": None}
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": ""}) == {"interface_name": ""}
+
+    assert EthernetAccessInterfaceModel.normalize_gathered_filter({"interface_name": 123}) == {"interface_name": 123}
 
 
 def test_ethernet_access_interface_01270():
@@ -1816,3 +1981,40 @@ def test_ethernet_access_interface_01310():
         }
     )
     assert unset.to_payload()["configData"]["networkOS"]["policy"] == {"policyType": "accessHost", "accessVlan": 20}
+
+
+def test_ethernet_access_interface_02070():
+    """
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has the correct base terms and field map on the access orchestrator.
+
+    ## Test
+
+    - supports_gathered_server_filtering is True
+    - gathered_lucene_spec.base_terms limits the query to Ethernet interfaces without excluding IOS-XE access policies
+    - gathered_lucene_spec.field_map maps interface_name to interfaceName
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceOrchestrator.supports_gathered_server_filtering
+    - EthernetAccessInterfaceOrchestrator.gathered_lucene_spec
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
+
+    assert EthernetAccessInterfaceOrchestrator.supports_gathered_server_filtering is True
+
+    spec = EthernetAccessInterfaceOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert spec.base_terms == (("interfaceType", "ethernet"),)
+    assert spec.field_map == {("interface_name",): "interfaceName"}
+
+
+def test_ethernet_access_interface_02080():
+    """Verify gathered output uses the module's plural interface_names field."""
+    instance = EthernetAccessInterfaceModel(switch_ip="192.168.1.1", interface_name="Ethernet1/1")
+
+    gathered = instance.to_gathered_config()
+
+    assert gathered["switch_ip"] == "192.168.1.1"
+    assert gathered["interface_names"] == ["Ethernet1/1"]
+    assert "interface_name" not in gathered
