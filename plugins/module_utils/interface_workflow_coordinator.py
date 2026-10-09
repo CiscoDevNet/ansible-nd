@@ -813,7 +813,7 @@ class InterfaceWorkflowCoordinator:
             return False
         if InterfaceStateSnapshot.policy_type(primary_raw) != InterfaceStateSnapshot.policy_type(peer_raw):
             return False
-        return InterfaceWorkflowPlanner._vpc_record_fingerprint(primary_raw) == InterfaceWorkflowPlanner._vpc_record_fingerprint(peer_raw)
+        return InterfaceWorkflowPlanner._vpc_records_match(primary_id, primary_raw, peer_id, peer_raw)
 
     def _observed_target_after(self, resource, fallback) -> tuple[list[dict[str, Any]], bool]:
         """Return target state and vPC pair-verification from the cached reconciled snapshot."""
@@ -865,8 +865,8 @@ class InterfaceWorkflowCoordinator:
                         coherent = False
                         break
             if coherent:
-                fingerprints = [InterfaceWorkflowPlanner._vpc_record_fingerprint(raw) for raw in records.values()]
-                coherent = all(fingerprint == fingerprints[0] for fingerprint in fingerprints[1:])
+                first_id, second_id = scope
+                coherent = InterfaceWorkflowPlanner._vpc_records_match(first_id, records[first_id], second_id, records[second_id])
             pair_verified = pair_verified and coherent
             selected_id = preferred_by_key.get(key)
             if selected_id not in records:

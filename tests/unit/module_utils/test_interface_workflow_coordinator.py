@@ -1145,6 +1145,27 @@ def test_observed_vpc_target_requires_both_consistent_peer_records():
     assert coordinator._vpc_target_is_pair_consistent(resource_plan, desired, primary)
 
 
+def test_observed_vpc_target_accepts_reciprocal_peer_descriptions():
+    """ND 4.3.1 echoes peer1/peer2 descriptions from each reporting switch's perspective."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["vpc_access"]
+    desired = SimpleNamespace(switch_ip="192.0.2.1", interface_name="vpc10")
+    resource_plan = SimpleNamespace(
+        adapter=adapter,
+        orchestrator=SimpleNamespace(
+            fabric_context=FakeFabricContext(),
+            _peer_serial_cache={"SERIAL1": "SERIAL2", "SERIAL2": "SERIAL1"},
+        ),
+    )
+    primary = _raw_vpc("vpc10", "SERIAL2")
+    peer = _raw_vpc("vpc10", "SERIAL1")
+    primary["configData"]["networkOS"]["policy"].update({"peer1PortChannelDescription": "first", "peer2PortChannelDescription": "second"})
+    peer["configData"]["networkOS"]["policy"].update({"peer1PortChannelDescription": "second", "peer2PortChannelDescription": "first"})
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=False))
+    coordinator._snapshot = ProjectionSnapshot([("SERIAL1", "vpc10", primary), ("SERIAL2", "vpc10", peer)])
+
+    assert coordinator._vpc_target_is_pair_consistent(resource_plan, desired, primary)
+
+
 @pytest.mark.parametrize(
     ("primary_peer_id", "peer_peer_id"),
     [

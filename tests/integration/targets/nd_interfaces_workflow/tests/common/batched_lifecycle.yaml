@@ -114,12 +114,22 @@
           - nd_iw_batch_create_preview.resources | selectattr('proposed', 'defined') | list | length == nd_iw_active_cases | length
           - not nd_iw_module_check_mode or nd_iw_batch_create_preview.planned_changed
 
+    - name: Independently count every raw inventory page before the live create
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_collect_inventory.yaml"
+      vars:
+        nd_iw_raw_target_switch_ids: "{{ nd_iw_batch_create_preview.target_switch_ids }}"
+
+    - name: Preserve the independent expected GET count for the shared-snapshot assertion
+      ansible.builtin.set_fact:
+        nd_iw_batch_preview_expected_inventory_pages: "{{ nd_iw_raw_total_inventory_pages }}"
+
     - name: Verify shared inventory reads tolerate pagination and avoid family refetches
       ansible.builtin.assert:
         that:
           - nd_iw_batch_create_preview.request_stats.switches == nd_iw_batch_create_preview.target_switch_ids | length
           - nd_iw_batch_create_preview.request_stats.interface_inventory_gets == nd_iw_batch_create_preview.request_stats.interface_inventory_pages
-          - nd_iw_batch_create_preview.request_stats.interface_inventory_gets >= nd_iw_batch_create_preview.request_stats.switches
+          - nd_iw_batch_create_preview.request_stats.interface_inventory_gets == nd_iw_batch_preview_expected_inventory_pages | int
+          - nd_iw_raw_page_counts | length == nd_iw_batch_create_preview.request_stats.switches
           - nd_iw_batch_create_preview.request_stats.interface_inventory_cache_hits >= nd_iw_active_cases | length
           - nd_iw_batch_create_preview.request_stats.interface_inventory_cache_hits > 0
           - >-
@@ -148,6 +158,8 @@
           - nd_iw_batch_create.execution.deployments_sent == 0
           - nd_iw_batch_create.resources | length == nd_iw_active_cases | length
           - nd_iw_batch_create.resources | selectattr('after_verified', 'equalto', false) | list | length == nd_iw_active_cases | length
+          - nd_iw_batch_create.request_stats.interface_inventory_gets == nd_iw_batch_preview_expected_inventory_pages | int
+          - nd_iw_batch_create.request_stats.interface_inventory_pages == nd_iw_batch_create.request_stats.interface_inventory_gets
           - nd_iw_batch_create.request_stats.interface_inventory_refreshes == 0
           - nd_iw_batch_create.request_stats.interface_inventory_dirty_refetches == 0
       when: not nd_iw_module_check_mode

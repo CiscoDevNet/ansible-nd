@@ -743,7 +743,7 @@ nd_iw_property_matrix:
               # to the bare host value required by NDFC; the int_loopback template appends /128.
               # ipv6: "{{ nd_iw_active_resources.loopback.primary_ipv6 }}"
               vrf: "{{ nd_iw_active_resources.references.vrf }}"
-              route_map_tag: "{{ nd_iw_active_resources.references.route_map_tag }}"
+              # TODO(#583): Re-enable when the standalone loopback model sends the ND integer wire type.
               description: IW loopback maximal
               extra_config: no ip redirects
     alternate:
@@ -758,7 +758,7 @@ nd_iw_property_matrix:
               ip: "{{ nd_iw_active_resources.loopback.alternate_ipv4 }}"
               # ipv6: "{{ nd_iw_active_resources.loopback.alternate_ipv6 }}"
               vrf: "{{ nd_iw_active_resources.references.vrf }}"
-              route_map_tag: "902"
+              # TODO(#583): Re-enable when the standalone loopback model sends the ND integer wire type.
               description: IW loopback alternate
               extra_config: no ipv6 redirects
     replacement:
@@ -814,7 +814,7 @@ nd_iw_property_matrix:
       - config_data.network_os.policy.ip
       # - config_data.network_os.policy.ipv6  # Disabled with the loopback IPv6 TODO above.
       - config_data.network_os.policy.vrf
-      - config_data.network_os.policy.route_map_tag
+      # - config_data.network_os.policy.route_map_tag  # TODO(#583): ND 4.3.1 rejects the current string wire type.
       - config_data.network_os.policy.description
       - config_data.network_os.policy.extra_config
 

@@ -18,8 +18,8 @@ description:
   V(merged), V(replaced), and V(deleted). V(overridden) continues to report its complete authoritative family scope.
 - Each O(resources[].config) uses the authoritative input contract and validation logic of the standalone module selected by
   O(resources[].type).
-- Check mode returns the complete multi-family plan, aggregate diff, conflicts, prospective deployment-only targets, and request
-  statistics without sending mutation or deployment requests.
+- Check mode returns the complete multi-family plan, per-resource operation changes, prospective deployment-only targets, and request
+  statistics without sending mutation or deployment requests. Validation conflicts are returned on failure.
 - Normal mode executes the complete validated plan in dependency-safe order and consolidates deferred remove and deploy actions.
   Successful mutations return projected intended state by default; O(verify.enabled=true) refetches affected switches to report observed
   controller state. The module can also deploy previously staged intent for explicitly requested interfaces when the current workflow
@@ -134,6 +134,16 @@ options:
           forces reconciliation even when this option is V(false).
         type: bool
         default: false
+  output_level:
+    description:
+    - Controls the workflow's nested result detail; it does not add standalone-module top-level C(current), C(previous), or C(sent) keys.
+    - V(normal) returns target-scoped C(resources[].before) and C(resources[].after) with the operation ledger.
+    - V(info) also returns C(resources[].proposed).
+    - V(debug) also returns C(resources[].family_before) and C(resources[].family_after). Raw REST/debug payload keys from the common
+      module fragment are not emitted by this workflow result.
+    type: str
+    choices: [debug, info, normal]
+    default: normal
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -223,6 +233,9 @@ notes:
   host-shaped model used internally for planning.
 - Successful output intentionally omits duplicate top-level snapshots and task-input echoes. C(request_stats) contains interface and
   fabric-link read, cache, refresh, overlay, and vPC metrics; C(execution) exclusively owns mutation and deployment write counters.
+- Workflow differences are reported under C(resources[].operations[].changes), not a top-level C(diff) key. The common connection
+  documentation applies, but its standalone-module C(current), C(previous), C(sent), and raw REST debug-key descriptions do not describe
+  this workflow's return shape.
 - At O(output_level=debug), C(resources[].family_before) and C(resources[].family_after) expose the complete selected-family collections
   used for diagnostics. Result projection is in-memory and sends no additional controller GET requests.
 - The dependency scheduler prefers deletes and deferred normalize/reset operations, then transitions, updates, and creates. Exact
@@ -441,15 +454,15 @@ planned_changed:
   description:
   - Whether the validated aggregate plan contains at least one interface mutation.
   - Remains V(false) for deployment-only execution.
-  returned: always
+  returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
   type: bool
 mutation_count:
   description: Total number of planned creates, updates, transitions, physical resets, and logical deletes across resource groups.
-  returned: always
+  returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
   type: int
 target_switch_ids:
   description: De-duplicated switch serial numbers loaded into the shared interface snapshot.
-  returned: always
+  returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
   type: list
   elements: str
 resources:
@@ -457,7 +470,7 @@ resources:
   - Ordered per-resource-group results. Repeated interface types remain separate through C(resource_index).
   - Controller-injected vPC C(peer_switch_id) routing metadata is omitted from public C(before), C(after), C(family_before),
     C(family_after), and operation C(changes), while remaining present in mutation payloads.
-  returned: always
+  returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
   type: list
   elements: dict
   contains:
@@ -614,7 +627,7 @@ resources:
 request_stats:
   description: Shared configured-interface inventory, lazy transition/delete and fabric-link safety inventory, vPC context, cache,
     refresh, and overlay counters for this execution. Write counters are reported only under C(execution).
-  returned: always
+  returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
   type: dict
   contains:
     switches:
@@ -671,7 +684,7 @@ request_stats:
       type: int
 execution:
   description: Execution status and write counters.
-  returned: always
+  returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
   type: dict
   contains:
     status:
@@ -710,6 +723,7 @@ msg:
 """
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     require_pydantic,
 )
@@ -773,6 +787,7 @@ def main():
     """Run the public aggregate workflow module."""
     module = AnsibleModule(argument_spec=interface_workflow_argument_spec(), supports_check_mode=True)
     require_pydantic(module)
+    setup_logging(module)
     try:
         module.exit_json(**InterfaceWorkflowCoordinator(module=module).run())
     except InterfaceWorkflowExecutionFailed as exc:

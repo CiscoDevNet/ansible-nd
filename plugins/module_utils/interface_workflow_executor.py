@@ -755,6 +755,34 @@ class InterfaceWorkflowExecutor:
             return False
         return True
 
+    def _prepare_vpc_deploy_context(self, plan: InterfaceWorkflowPlan, targets: tuple[Target, ...]) -> None:
+        """Let each vPC source prove its pair/child preview before consolidated deployment.
+
+        Mutation execution defers every source orchestrator's deploy flag, so
+        its ordinary create/update path does not queue this preview. The
+        consolidated target cannot infer an omitted peer's generated children
+        from a generic preview; the vPC source has the authoritative pair
+        context and must establish that scope itself.
+        """
+
+        for resource in plan.resources:
+            if resource.adapter.ownership_domain != "vpc":
+                continue
+            models = (
+                *resource.proposed,
+                *resource.operations.deletes,
+                *resource.operations.updates,
+                *resource.operations.creates,
+                *(transition.desired for transition in resource.transitions),
+            )
+            resource_keys = {resource.orchestrator._normalized_interface_pair(*self._model_target(resource, model)) for model in models}
+            selected = [pair for pair in targets if resource.orchestrator._normalized_interface_pair(*pair) in resource_keys]
+            if not selected:
+                continue
+            for interface_name, switch_id in selected:
+                resource.orchestrator._queue_preview_derived_discovery(interface_name, switch_id)
+            resource.orchestrator._discover_pending_preview_derived_identities(selected)
+
     def _deploy_pending(
         self,
         plan: InterfaceWorkflowPlan,
@@ -779,10 +807,18 @@ class InterfaceWorkflowExecutor:
         }
         if not targets or not self.deploy:
             return True
-        target = plan.resources[0].orchestrator
+        # A vPC orchestrator expands every verification pair to its peer.
+        # Use an ordinary orchestrator for a mixed-family request so only the
+        # vPC parents proven by their sources receive that expansion.
+        target = next((resource.orchestrator for resource in plan.resources if resource.adapter.ownership_domain != "vpc"), plan.resources[0].orchestrator)
         target.deploy = True
         markers = self._request_markers(target.rest_send)
         try:
+            self._prepare_vpc_deploy_context(plan, targets)
+            if isinstance(target, NDBaseInterfaceOrchestrator):
+                for source in self._all_orchestrators(plan):
+                    if isinstance(source, NDBaseInterfaceOrchestrator):
+                        target.absorb_deploy_context_from(source)
             target.deploy_targets(targets)
         except Exception as exc:  # pylint: disable=broad-except
             error = f"Consolidated interface deployment failed: {exc}"
@@ -800,7 +836,7 @@ class InterfaceWorkflowExecutor:
             self._errors.append(error)
             return False
         response, result = self._fresh_current(target.rest_send, markers)
-        if response.get("RETURN_CODE") == 207:
+        if response.get("RETURN_CODE") == 207 and set(getattr(target, "verified_deploy_targets", ())) != set(targets):
             error = "Consolidated interface deployment failed: HTTP 207 response did not report exact success for every requested interface."
             outcomes = self._classify_response(targets, response, result, error)
             for entry in self._deployment["targets"]:

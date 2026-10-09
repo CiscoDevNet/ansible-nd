@@ -368,6 +368,18 @@ class NormalReturn207DeployFakeOrchestrator(FakeOrchestrator):
         )
 
 
+class PreviewVerified207DeployFakeOrchestrator(NormalReturn207DeployFakeOrchestrator):
+    """Model the shared deploy path's exact post-207 preview verification."""
+
+    def deploy_targets(self, targets):
+        super().deploy_targets(targets)
+        self._verified_deploy_targets = tuple(dict.fromkeys(targets))
+
+    @property
+    def verified_deploy_targets(self):
+        return self._verified_deploy_targets
+
+
 class MixedSwitch207DeployFakeOrchestrator(FakeOrchestrator):
     """Fail deployment with per-switch outcomes rather than per-interface outcomes."""
 
@@ -977,6 +989,39 @@ def test_deployment_only_execution_sends_one_exact_target_without_mutation_or_re
     assert events == [
         ("validate", "only"),
         ("deploy", "only", (("loopback1", "SERIAL1"),)),
+    ]
+
+
+def test_consolidated_deploy_previews_only_selected_vpc_parent_targets():
+    """VPC create/delete and no-diff replay retain pair-aware preview context."""
+
+    class ScopedFakeVpcOrchestrator(FakeOrchestrator):
+        @staticmethod
+        def _normalized_interface_pair(interface_name, switch_id):
+            return interface_name.casefold(), switch_id
+
+        def _queue_preview_derived_discovery(self, interface_name, switch_id):
+            self.events.append(("queue_vpc_preview", interface_name, switch_id))
+
+        def _discover_pending_preview_derived_identities(self, pairs):
+            self.events.append(("discover_vpc_children", tuple(pairs)))
+
+    events = []
+    orchestrator = ScopedFakeVpcOrchestrator("vpc", events)
+    resource_plan = resource(0, orchestrator, deletes=[FakeModel("vpc952")])
+    resource_plan.adapter.ownership_domain = "vpc"
+    resource_plan.proposed = FakeCollection([FakeModel("vpc951")])
+    executor = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True)
+
+    executor._prepare_vpc_deploy_context(
+        plan(resource_plan),
+        (("vpc951", "SERIAL1"), ("vpc952", "SERIAL1"), ("Ethernet1/41", "SERIAL1")),
+    )
+
+    assert events == [
+        ("queue_vpc_preview", "vpc951", "SERIAL1"),
+        ("queue_vpc_preview", "vpc952", "SERIAL1"),
+        ("discover_vpc_children", (("vpc951", "SERIAL1"), ("vpc952", "SERIAL1"))),
     ]
 
 
@@ -1741,6 +1786,20 @@ def test_normal_return_207_deploy_omitting_target_fails_end_to_end():
         "loopback2": "failed",
     }
     assert result.errors == ("Consolidated interface deployment failed: HTTP 207 response did not report exact success for every requested interface.",)
+
+
+def test_preview_verified_207_deploy_is_not_rejected_by_second_raw_response_check():
+    """The executor accepts exact proof returned by the shared deploy path."""
+
+    events = []
+    orchestrator = PreviewVerified207DeployFakeOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.deployment["status"] == "succeeded"
+    assert {entry["status"] for entry in result.deployment["targets"]} == {"succeeded"}
 
 
 def test_deploy_switch_scoped_207_outcomes_fan_out_to_every_requested_interface():

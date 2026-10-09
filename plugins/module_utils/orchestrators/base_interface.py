@@ -168,6 +168,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         self._switch_interfaces_cache_revisions: dict[str, int] = {}
         self._deploy_derived_identities: dict[tuple[str, str], set[tuple[str, str]]] = {}
         self._pending_preview_derived_discovery: set[tuple[str, str]] = set()
+        self._absorbed_preview_scoped_child_switches: dict[tuple[str, str], set[str]] = {}
+        self._last_verified_deploy_targets: tuple[tuple[str, str], ...] = ()
         if self.interface_state_snapshot is not None and self.interface_state_snapshot.fabric_name != self.fabric_name:
             raise ValueError(
                 f"Injected InterfaceStateSnapshot fabric {self.interface_state_snapshot.fabric_name} does not match "
@@ -1236,6 +1238,28 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         removed = set(targets)
         self._pending_deploys = [target for target in self._pending_deploys if target not in removed]
 
+    def absorb_deploy_context_from(self, source: NDBaseInterfaceOrchestrator) -> None:
+        """Share exact derived identities and proven vPC pair scopes for a consolidated deploy."""
+
+        if source is self:
+            return
+        for parent, children in source._deploy_derived_identities.items():
+            self._deploy_derived_identities.setdefault(parent, set()).update(children)
+        self._pending_preview_derived_discovery.update(source._pending_preview_derived_discovery)
+        for parent, switch_ids in source._preview_scoped_deploy_child_switches().items():
+            self._absorbed_preview_scoped_child_switches.setdefault(parent, set()).update(switch_ids)
+
+    def _preview_scoped_deploy_child_switches(self) -> dict[tuple[str, str], set[str]]:
+        """Return only peer scopes already proven by a vPC parent preview."""
+
+        return self._absorbed_preview_scoped_child_switches
+
+    @property
+    def verified_deploy_targets(self) -> tuple[tuple[str, str], ...]:
+        """Targets proven by this orchestrator's last completed deploy request."""
+
+        return self._last_verified_deploy_targets
+
     def deploy_targets(self, targets: Sequence[tuple[str, str]]) -> ResponseType | None:
         """
         Deploy exactly the supplied targets in one request without consulting or replacing this orchestrator's pending queue.
@@ -1243,13 +1267,19 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         The aggregate workflow uses this after consolidating queues from multiple families. It is safe on a partial-failure path
         because callers can pass only targets backed by exact controller-success evidence.
         """
+        self._last_verified_deploy_targets = ()
         if not self.deploy:
             return None
         requested = list(dict.fromkeys(targets))
         if not requested:
             return None
         try:
-            return self._deploy_interfaces(requested)
+            result = self._deploy_interfaces(requested)
+            # _deploy_interfaces has already required exact 207 success or an
+            # exact zero-pending preview. Preserve that proof for a workflow
+            # whose final REST response may now be the preview, not the deploy.
+            self._last_verified_deploy_targets = tuple(requested)
+            return result
         except Exception as e:
             raise RuntimeError(f"Bulk deploy failed for interfaces {requested}: {e}") from e
 
@@ -1408,12 +1438,21 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     def _preview_verification_pairs(self, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
         """Return identities whose preview convergence proves the submitted deployment.
 
-        Ordinary interfaces map one-to-one to the submitted list. Pair-aware
-        orchestrators override this hook when preview expands one submitted
-        resource to additional switch-scoped rows.
+        Ordinary interfaces map one-to-one. A consolidated workflow may have
+        absorbed an exact vPC parent/peer scope from a source orchestrator;
+        verify both parent copies for that parent only. Pair-aware standalone
+        orchestrators may override this hook with their own peer cache.
         """
 
-        return list(pairs)
+        expanded: list[tuple[str, str]] = []
+        scopes = self._preview_scoped_deploy_child_switches()
+        for interface_name, switch_id in pairs:
+            parent = self._normalized_interface_pair(interface_name, switch_id)
+            peer_switch_ids = scopes.get(parent, set()) if parent is not None else set()
+            for pair in ((interface_name, switch_id), *((interface_name, peer_id) for peer_id in sorted(peer_switch_ids) if peer_id != switch_id)):
+                if pair not in expanded:
+                    expanded.append(pair)
+        return expanded
 
     @staticmethod
     def _normalized_interface_pair(interface_name: object, switch_id: object) -> tuple[str, str] | None:
@@ -1446,15 +1485,19 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         pair: tuple[str, str],
         submitted_pairs: list[tuple[str, str]],
     ) -> bool:
-        """Return whether an unregistered child may fall back to strict post-deploy preview.
+        """Require strict post-deploy preview for a canonical child of a proven vPC pair.
 
-        Ordinary interfaces require every derived result identity to be proven
-        before deployment. Pair-aware orchestrators may override this only for
-        controller behavior where a structurally exact pre-deploy preview omits
-        one peer's generated children. Returning true never accepts the deploy
-        response by itself; it forces exact post-deploy preview verification.
+        Ordinary interfaces have no such scope. A workflow deploy orchestrator
+        can absorb one from a vPC resource, but the 207 child row is never
+        accepted as success without exact post-deploy convergence.
         """
 
+        if not self._is_canonical_deploy_child_name(pair[0]):
+            return False
+        for interface_name, switch_id in submitted_pairs:
+            parent = self._normalized_interface_pair(interface_name, switch_id)
+            if parent is not None and pair[1] in self._preview_scoped_deploy_child_switches().get(parent, set()):
+                return True
         return False
 
     def _classify_deploy_results(self, result: ResponseType, pairs: list[tuple[str, str]]) -> tuple[bool, str | None]:

@@ -197,6 +197,16 @@ def test_port_channel_deploy_results_allow_derived_members_only_via_preview() ->
     assert ("loopback99", "UNRELATED") not in instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")])
 
 
+def test_deferred_port_channel_deploy_retains_exact_member_context() -> None:
+    """A workflow stages the parent before it consolidates the deploy."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance._prepare_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
+
+    assert instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")]) == {("ethernet1/1", "FDO11111AAA")}
+
+
 def test_port_channel_deploy_context_includes_exact_operational_member_after_staged_removal() -> None:
     """A later deploy can prove a member still on the switch after intent cleared it."""
 

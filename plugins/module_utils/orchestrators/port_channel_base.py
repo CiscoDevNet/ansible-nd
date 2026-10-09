@@ -176,10 +176,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         raise NotImplementedError("Subclasses must implement _managed_policy_types()")
 
     def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
-        """Register this port-channel's intent and exact operational members."""
+        """Retain exact members even when a workflow defers the eventual deploy."""
 
-        if not self.deploy:
-            return
         derived = [(member_name, switch_id) for member_name in self._proposed_members(model_instance)]
         match = _XE_PORT_CHANNEL_NAME_RE.match(model_instance.interface_name.lower())
         if match:

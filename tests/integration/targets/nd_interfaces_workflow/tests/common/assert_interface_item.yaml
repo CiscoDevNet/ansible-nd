@@ -26,12 +26,21 @@
 - name: Verify {{ nd_iw_expected_interface_name }} and its supplied property subset
   vars:
     nd_iw_observed_interface_item: "{{ nd_iw_matching_after_items | first | default({}) }}"
-    nd_iw_expected_config_data: >-
+    nd_iw_proposed_config_data: >-
       {{
-        (nd_iw_matching_proposed_items | first).config_data
-        if nd_iw_matching_proposed_items | length == 1
-        else nd_iw_expected_config_item.config_data | default({})
+        nd_iw_expected_config_item.config_data | default({})
+        if nd_iw_assert_input_only | default(false) | bool
+        else ((nd_iw_matching_proposed_items | first).config_data
+              if nd_iw_matching_proposed_items | length == 1
+              else nd_iw_expected_config_item.config_data | default({}))
       }}
+    nd_iw_expected_config_data: >-
+      {{ nd_iw_proposed_config_data
+         | combine({'network_os': nd_iw_proposed_config_data.network_os
+                    | combine({'policy': nd_iw_proposed_config_data.network_os.policy
+                               | dict2items
+                               | rejectattr('key', 'equalto', 'policy_type')
+                               | items2dict})}) }}
   ansible.builtin.assert:
     that:
       - nd_iw_matching_after_items | length == 1
@@ -43,3 +52,5 @@
     fail_msg: >-
       Planned or reconciled {{ nd_iw_assert_resource_result.type }} state did not contain the expected
       {{ nd_iw_expected_config_item.switch_ip }}/{{ nd_iw_expected_interface_name }} property subset.
+      Expected: {{ nd_iw_expected_config_data | to_json }}.
+      Observed: {{ nd_iw_observed_interface_item.config_data | default({}) | to_json }}.

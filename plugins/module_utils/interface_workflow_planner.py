@@ -599,13 +599,13 @@ class InterfaceWorkflowPlanner:
         return {"switchVirtualInterface": "svi"}.get(value, value)
 
     @staticmethod
-    def _vpc_record_fingerprint(current: Mapping[str, Any]) -> Any:
-        """Return pair-comparable configured vPC state for one controller echo.
+    def _vpc_record_fingerprint(current: Mapping[str, Any], local_switch_id: str | None = None, peer_switch_id: str | None = None) -> Any:
+        """Return configured vPC state, optionally binding peer fields to physical switch IDs.
 
-        ND echoes one vPC interface from both peers with the same configData; only the record's switchId and policy
-        peerSwitchId orientation changes. peer1 and peer2 fields retain the configured payload's meaning in both echoes,
-        so they must not be rebound to the switch that supplied an echo. Member-port spelling and ordering are
-        presentation differences and are normalized before comparison.
+        Some ND echoes preserve the original peer1/peer2 orientation; ND 4.3.1 can instead
+        echo peer1 as the reporting switch and peer2 as its peer. Both forms are compared
+        explicitly by ``_vpc_records_match``. Member-port spelling and ordering are only
+        presentation differences.
         """
 
         def scrub(value: Any) -> Any:
@@ -618,6 +618,9 @@ class InterfaceWorkflowPlanner:
                     normalized_item = scrub(item)
                     if key.endswith("MemberPorts") and isinstance(item, list) and all(isinstance(member, str) for member in item):
                         normalized_item = tuple(sorted(member.strip().lower() for member in item))
+                    if local_switch_id and peer_switch_id and key.startswith(("peer1", "peer2")) and len(key) > 5 and key[5].isupper():
+                        bound_switch_id = local_switch_id if key.startswith("peer1") else peer_switch_id
+                        key = f"peer:{bound_switch_id}:{key[5:]}"
                     normalized[key] = normalized_item
                 return normalized
             if isinstance(value, list):
@@ -625,6 +628,13 @@ class InterfaceWorkflowPlanner:
             return value
 
         return scrub(deepcopy(current.get("configData") or {}))
+
+    @classmethod
+    def _vpc_records_match(cls, primary_id: str, primary: Mapping[str, Any], peer_id: str, peer: Mapping[str, Any]) -> bool:
+        """Accept identical echoes or a verified reciprocal local/remote peer-field echo."""
+        if cls._vpc_record_fingerprint(primary) == cls._vpc_record_fingerprint(peer):
+            return True
+        return cls._vpc_record_fingerprint(primary, primary_id, peer_id) == cls._vpc_record_fingerprint(peer, peer_id, primary_id)
 
     def _current_records(
         self,
@@ -663,8 +673,8 @@ class InterfaceWorkflowPlanner:
 
         interface_types = {current.get("interfaceType") for _switch_id, current in present}
         policy_types = {InterfaceStateSnapshot.policy_type(current) for _switch_id, current in present}
-        fingerprints = [self._vpc_record_fingerprint(current) for _switch_id, current in present]
-        if len(interface_types) != 1 or len(policy_types) != 1 or fingerprints[0] != fingerprints[1]:
+        pair_matches = self._vpc_records_match(present[0][0], present[0][1], present[1][0], present[1][1])
+        if len(interface_types) != 1 or len(policy_types) != 1 or not pair_matches:
             raise InterfaceWorkflowValidationError(
                 f"{label} has inconsistent vPC pair records: interfaceType={sorted(str(value) for value in interface_types)}, "
                 f"policyType={sorted(str(value) for value in policy_types)}, or configured policy data differs between peers."

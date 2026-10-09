@@ -17,7 +17,7 @@
     that:
       - nd_iw_snapshot_stats.switches == nd_iw_batch_create_preview.target_switch_ids | unique | list | length
       - nd_iw_snapshot_stats.interface_inventory_pages == nd_iw_snapshot_stats.interface_inventory_gets
-      - nd_iw_snapshot_stats.interface_inventory_gets >= nd_iw_snapshot_stats.switches
+      - nd_iw_snapshot_stats.interface_inventory_gets == nd_iw_batch_preview_expected_inventory_pages | int
       - nd_iw_snapshot_stats.interface_inventory_cache_hits >= nd_iw_active_cases | length
       - nd_iw_snapshot_stats.interface_inventory_cache_hits > 0
       - nd_iw_snapshot_stats.interface_inventory_refreshes == 0

@@ -1217,6 +1217,7 @@ def test_vpc_pending_preview_allows_omitted_peer_children_only_with_post_preview
 
     assert processed == {("vpc501", "FDO11111AAA")}
     assert instance._preview_scoped_child_switches == {("vpc501", "FDO11111AAA"): {"FDO11111AAA", "FDO22222BBB"}}
+    assert instance._preview_scoped_deploy_child_switches() == {("vpc501", "FDO11111AAA"): {"FDO11111AAA", "FDO22222BBB"}}
     allowed = instance._allowed_derived_deploy_pairs([("vpc501", "FDO11111AAA")])
     assert allowed == {("ethernet1/41", "FDO11111AAA")}
 

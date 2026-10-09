@@ -131,7 +131,20 @@ class InterfaceStateSnapshot:
             if returned_switch_id is not None and (not isinstance(returned_switch_id, str) or not returned_switch_id):
                 raise ValueError(f"switchId must be a non-empty string, received {returned_switch_id!r}")
             if returned_switch_id is not None and returned_switch_id != switch_id:
-                raise _InterfaceSwitchIdentityMismatch(f"switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
+                config_data = interface.get("configData")
+                # ND 4.3.1 can include an operational vPC echo owned by the
+                # primary peer in the secondary peer's switch-scoped inventory.
+                # It has no policy intent and must not become secondary state.
+                is_peer_vpc_echo = (
+                    str(interface.get("interfaceType") or "").lower() == "vpc"
+                    and isinstance(config_data, dict)
+                    and config_data.get("mode") == "unknown"
+                    and not config_data.get("networkOS")
+                    and returned_switch_id in self.fabric_context.switch_map_by_id
+                )
+                if not is_peer_vpc_echo:
+                    raise _InterfaceSwitchIdentityMismatch(f"switchId {returned_switch_id!r} does not match requested switch {switch_id!r}")
+                return returned_switch_id, interface_name.lower()
             return switch_id, interface_name.lower()
 
         interfaces = self._paginator.collect(
@@ -140,7 +153,7 @@ class InterfaceStateSnapshot:
             context=f"interface inventory for switch '{switch_id}'",
             require_collection_wrapper=True,
         )
-        return {interface["interfaceName"].lower(): deepcopy(interface) for interface in interfaces}
+        return {interface["interfaceName"].lower(): deepcopy(interface) for interface in interfaces if interface.get("switchId") in (None, switch_id)}
 
     def _fetch_interface_summary_switch(self, switch_id: str) -> dict[str, dict]:
         """Fetch every summary page and select the requested switch afterwards."""

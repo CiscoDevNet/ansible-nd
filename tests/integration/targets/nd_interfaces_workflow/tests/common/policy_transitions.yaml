@@ -276,14 +276,16 @@
           register: nd_iw_transition_delete_apply
           delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
 
-        - name: Verify both physical deletes shared one normalize request
+        - name: Verify both physical deletes shared one normalize group
           ansible.builtin.assert:
             that:
               - nd_iw_transition_delete_apply is changed
               - nd_iw_transition_delete_apply.planned_changed
               - nd_iw_transition_delete_apply.mutation_count == 2
               - nd_iw_transition_delete_apply.execution.status == 'staged'
-              - nd_iw_transition_delete_apply.execution.mutations_sent == 1
+              # ND 4.3.1 can reject the first normalize body with an empty
+              # description and accept the one permitted no-description retry.
+              - nd_iw_transition_delete_apply.execution.mutations_sent in [1, 2]
               - nd_iw_transition_delete_apply.execution.deployments_sent == 0
               - >-
                 nd_iw_transition_delete_apply.resources
@@ -298,6 +300,12 @@
                 | selectattr("status", "equalto", "succeeded")
                 | list
                 | length == 2
+            fail_msg: >-
+              Expected two successful resets through one consolidated normalize group
+              (at most one ND empty-description retry); observed
+              {{ nd_iw_transition_delete_apply.execution.mutations_sent | default('unknown') }}
+              wire mutation requests and
+              {{ nd_iw_transition_delete_apply.resources | map(attribute='operations') | flatten | list | to_json }}.
 
         - name: Independently verify transitioned intent was reset
           ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_verify_inventory.yaml"

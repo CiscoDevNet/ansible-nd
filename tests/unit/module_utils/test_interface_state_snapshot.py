@@ -607,6 +607,62 @@ def test_paginated_fetch_metadata_continues_after_short_page() -> None:
     assert snapshot.request_stats["interface_inventory_pages"] == 2
 
 
+def test_raw_inventory_filters_known_peer_vpc_operational_echo_after_all_pages() -> None:
+    """A peer's policy-free vPC echo counts for pagination but is not local intent."""
+    own_first = _interface("Ethernet1/1", "ethernet", "accessHost")
+    own_last = _interface("loopback10", "loopback", "loopback")
+    echo_first = {
+        "interfaceName": "vPC951",
+        "switchId": "SERIAL2",
+        "interfaceType": "vpc",
+        "configData": {"mode": "unknown"},
+    }
+    echo_last = {
+        "interfaceName": "vPC961",
+        "switchId": "SERIAL2",
+        "interfaceType": "vpc",
+        "configData": {"mode": "unknown"},
+    }
+    recorder = _RequestRecorder(
+        [
+            {"interfaces": [own_first, echo_first], "meta": {"counts": {"total": 4, "remaining": 2}}},
+            {"interfaces": [own_last, echo_last], "meta": {"counts": {"total": 4, "remaining": 0}}},
+        ]
+    )
+    snapshot = _snapshot(recorder, page_size=2)
+
+    loaded = snapshot.load_switch("SERIAL1")
+
+    assert set(loaded) == {"ethernet1/1", "loopback10"}
+    assert set(snapshot.interfaces_by_identity) == {("SERIAL1", "ethernet1/1"), ("SERIAL1", "loopback10")}
+    assert snapshot.request_stats["interface_inventory_pages"] == 2
+    assert len(recorder.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "foreign_row",
+    [
+        {"interfaceName": "Ethernet1/2", "switchId": "SERIAL2", "interfaceType": "ethernet", "configData": {"mode": "unknown"}},
+        {
+            "interfaceName": "vPC951",
+            "switchId": "SERIAL2",
+            "interfaceType": "vpc",
+            "configData": {"mode": "managed", "networkOS": {"policy": {"policyType": "accessVpcHost"}}},
+        },
+        {"interfaceName": "vPC951", "switchId": "SERIAL3", "interfaceType": "vpc", "configData": {"mode": "unknown"}},
+    ],
+)
+def test_raw_inventory_rejects_foreign_non_echo_rows_without_publishing_cache(foreign_row: dict) -> None:
+    recorder = _RequestRecorder([{"interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost"), foreign_row]}])
+    snapshot = _snapshot(recorder)
+
+    with pytest.raises(RuntimeError, match=r"inventory.*invalid identity.*does not match requested switch"):
+        snapshot.load_switch("SERIAL1")
+
+    assert snapshot.cached_switch("SERIAL1") is None
+    assert snapshot.interfaces_by_identity == {}
+
+
 def test_paginated_fetch_page_two_failure_does_not_publish_partial_cache() -> None:
     recorder = _RequestRecorder(
         [

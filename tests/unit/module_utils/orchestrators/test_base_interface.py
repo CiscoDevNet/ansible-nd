@@ -1259,6 +1259,50 @@ def test_deploy_207_accepts_only_registered_derived_identity_for_preview() -> No
     assert instance._classify_deploy_results(result, [("port-channel501", "FDO12345ABC")]) == (False, None)
 
 
+def test_consolidated_deploy_absorbs_only_registered_child_context() -> None:
+    """A workflow may deploy a port-channel through another family's orchestrator."""
+
+    source = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    target = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    source._register_deploy_derived_identities("port-channel501", "FDO12345ABC", [("Ethernet1/1", "FDO12345ABC")])
+    source._queue_preview_derived_discovery("port-channel501", "FDO12345ABC")
+
+    target.absorb_deploy_context_from(source)
+
+    assert target._allowed_derived_deploy_pairs([("port-channel501", "FDO12345ABC")]) == {("ethernet1/1", "FDO12345ABC")}
+    assert ("port-channel501", "FDO12345ABC") in target._pending_preview_derived_discovery
+    assert target._allowed_derived_deploy_pairs([("port-channel999", "FDO12345ABC")]) == set()
+
+
+def test_consolidated_deploy_absorbs_proven_vpc_peer_scope_and_verifies_both_parents() -> None:
+    """A non-vPC deploy target must not reject a proven peer child or verify one side only."""
+
+    source = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    target = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    source._absorbed_preview_scoped_child_switches[("vpc951", "FDO11111AAA")] = {"FDO11111AAA", "FDO22222BBB"}
+    pairs = [("Ethernet1/41", "FDO11111AAA"), ("vpc951", "FDO11111AAA")]
+
+    target.absorb_deploy_context_from(source)
+
+    assert target._preview_verification_pairs(pairs) == [
+        ("Ethernet1/41", "FDO11111AAA"),
+        ("vpc951", "FDO11111AAA"),
+        ("vpc951", "FDO22222BBB"),
+    ]
+    result = {
+        "results": [
+            {"interfaceName": "Ethernet1/41", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "vpc951", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "Ethernet1/5", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "port-channel951", "switchId": "FDO22222BBB", "status": "success"},
+        ]
+    }
+    assert target._classify_deploy_results(result, pairs) == (False, None)
+
+    result["results"][-1]["switchId"] = "FDO33333CCC"
+    assert "unexpected identity" in target._classify_deploy_results(result, pairs)[1]
+
+
 def test_pending_parent_preview_registers_only_inventory_backed_ethernet_children() -> None:
     """Pending CLI proves an exact stale child without trusting unrelated headers."""
 
@@ -1400,6 +1444,7 @@ def test_deploy_207_incomplete_results_require_exact_converged_preview(
     assert rest_send.response_count == 2
     assert rest_send.path.endswith("/interfaceActions/preview")
     assert instance._pending_deploys == []
+    assert instance.verified_deploy_targets == (("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD"))
 
 
 @pytest.mark.parametrize(
@@ -1466,6 +1511,7 @@ def test_deploy_207_contradictory_results_fail_without_preview(deploy_data, erro
     with pytest.raises(RuntimeError, match=error):
         instance.deploy_pending()
 
+    assert instance.verified_deploy_targets == ()
     assert rest_send.response_count == 1
     assert rest_send.path.endswith("/interfaceActions/deploy")
     assert instance._pending_deploys == [

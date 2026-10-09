@@ -8,7 +8,6 @@
     nd_iw_raw_expected_policy_keys: []
     nd_iw_raw_expected_fingerprint_keys: []
     nd_iw_raw_switch_id_by_ip: {}
-    nd_iw_raw_interfaces: []
     nd_iw_raw_observed_policy_keys: []
     nd_iw_raw_observed_fingerprint_keys: []
     nd_iw_raw_policy_type_by_family:
@@ -138,40 +137,10 @@
     label: "{{ item.0.type }}"
   when: item.1.config_data.network_os.policy.description is defined
 
-- name: Read raw interface inventory once per targeted switch
-  cisco.nd.nd_rest:
-    path: >-
-      /api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name | urlencode
-      }}/switches/{{ item | urlencode }}/interfaces?max=500&offset=0
-    method: get
-  register: nd_iw_raw_inventory
-  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
-  loop: "{{ nd_iw_raw_workflow_result.target_switch_ids }}"
-  loop_control:
-    label: "{{ item }}"
-
-- name: Verify every raw interface inventory response
-  ansible.builtin.assert:
-    that:
-      - item.status | int == 200
-      - item.current.interfaces is sequence
-    fail_msg: >-
-      Independent raw verification could not read interface inventory for switch {{ item.item }}.
-  loop: "{{ nd_iw_raw_inventory.results }}"
-  loop_control:
-    label: "{{ item.item }}"
-
-- name: Combine raw controller interface records
-  ansible.builtin.set_fact:
-    nd_iw_raw_interfaces: >-
-      {{ nd_iw_raw_interfaces
-         + (item.current.interfaces
-            | default([])
-            | map('combine', {'nd_iw_raw_switch_id': item.item})
-            | list) }}
-  loop: "{{ nd_iw_raw_inventory.results }}"
-  loop_control:
-    label: "{{ item.item }}"
+- name: Independently collect complete raw inventories for targeted switches
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_collect_inventory.yaml"
+  vars:
+    nd_iw_raw_target_switch_ids: "{{ nd_iw_raw_workflow_result.target_switch_ids }}"
 
 - name: Build independently observed policy and description signatures
   vars:

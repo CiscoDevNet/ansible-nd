@@ -1419,6 +1419,42 @@ def test_vpc_deleted_is_policy_independent_and_pair_consistent(resource_type: st
     assert plan.request_stats["interface_summary_gets"] == 2
 
 
+def test_vpc_deleted_accepts_reciprocal_peer_fields_on_nd_431() -> None:
+    """ND may echo peer1 as local on each switch rather than preserving payload orientation."""
+    primary = _wire_interface(
+        "vpc10",
+        "vpc",
+        "accessVpcHost",
+        peerSwitchId="SERIAL2",
+        peer1PortChannelDescription="first",
+        peer2PortChannelDescription="second",
+        peer1MemberPorts=["Ethernet1/5"],
+        peer2MemberPorts=["Ethernet1/6"],
+    )
+    peer = _wire_interface(
+        "vpc10",
+        "vpc",
+        "accessVpcHost",
+        peerSwitchId="SERIAL1",
+        peer1PortChannelDescription="second",
+        peer2PortChannelDescription="first",
+        peer1MemberPorts=["Ethernet1/6"],
+        peer2MemberPorts=["Ethernet1/5"],
+    )
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [primary]}, {"interfaces": [peer]}],
+        summary_responses={
+            "SERIAL1": {"interfaces": [_summary_row(primary, "SERIAL1")]},
+            "SERIAL2": {"interfaces": [_summary_row(peer, "SERIAL2")]},
+        },
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
+    )
+
+    plan = planner.plan([{"type": "vpc_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc10"}]}])
+
+    assert len(plan.resources[0].operations.deletes) == 1
+
+
 def test_vpc_transition_rejects_a_record_missing_on_one_peer() -> None:
     """A one-sided vPC record fails before summary lookup or mutation planning."""
     current = _wire_interface("vpc10", "vpc", "foreignVpcPolicy")

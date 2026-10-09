@@ -35,11 +35,14 @@ Historical ten-family measurements on one fabric, before `ethernet_routed` joine
 These are reference measurements, not timeouts. An all-twelve run performs additional routed-interface planning and lifecycle requests,
 so replace these figures after collecting a comparable run. Controller load, latency, and selected families can change runtime. The role
 is guarded with `run_once`, and selected fabrics run serially to protect the shared lab.
+
 ### Scale and request-count invariants
 
 The target treats request counts as part of the module contract:
 
 - Configured-interface inventory is shared by every resource group and fetched per targeted switch and page, never per family or interface.
+- The independent verifier reads every raw inventory page, including pages after the first 500 records, before asserting presence or
+  deletion. It calculates the expected number of inventory GETs from those raw pages and requires the workflow's GET count to match.
 - Any additional transition/delete safety inventory is shared for the whole workflow rather than repeated for each candidate.
 - Intended vPC-pair inventory is fetched once per deterministic page for the fabric. The resulting authoritative peer map is shared by
   every vPC resource group, so access and trunk groups do not repeat per-primary peer-lookup GETs.
@@ -48,7 +51,8 @@ The target treats request counts as part of the module contract:
 - Unconfigured default `trunkHost` ports continue through the established bulk-create path, so ordinary access-port provisioning remains
   one bulk request per switch rather than one PUT per interface.
 - Compatible physical resets, logical removals, and deployments remain consolidated. The live Ethernet delete scenario asserts that two
-  opposite-family deletes on one switch share one normalize request and send no deployment when deployment is disabled.
+  opposite-family deletes on one switch share one logical normalize group and send no deployment when deployment is disabled. ND 4.3.1
+  can reject the first normalize body with an empty `description`; the existing one-time no-description retry then makes two wire requests.
 - An exact `deploy: true` replay after an earlier `deploy: false` mutation can deploy already-staged intent with zero new interface
   mutations. Candidate selection reuses the fabric switch rows already fetched for identity resolution, adds no GET, and sends all
   qualifying explicitly requested identities in one de-duplicated deployment POST.
@@ -196,6 +200,11 @@ Use `nd_iw_selected_families` to restrict a run. A family is active only when it
 
 The checked-in mappings currently declare no unsupported families. Add an exclusion only after collecting controller evidence, and keep it as a subset of `candidate_families`; preflight rejects unknown or inconsistent names. Live setup and cleanup send only active, declared-supported resource types.
 
+Known standalone limitations still apply to this aggregate target. On ND 4.3.1, do not count string-valued loopback
+`route_map_tag` ([#583](https://github.com/CiscoDevNet/ansible-nd/issues/583)) or direct new `mplsLoopback` creation
+([#595](https://github.com/CiscoDevNet/ansible-nd/issues/595)) as passing live cases. The tested NX-OS qualification can select
+the other eleven families while those specific loopback cases remain follow-up; this is not a claim that loopback is unsupported.
+
 ## Lab prerequisites
 
 Before selecting a family, reserve controller-visible resources that will not collide with other tests:
@@ -215,6 +224,8 @@ scheduler orders parent creation or update before child work and child deletion 
 structurally incompatible, access, or trunk parents and rejects a parent mutation while an undeleted child remains.
 
 Optional live packs are gated by `nd_iw_optional_prerequisites`, a mapping of prerequisite name to boolean. Set a prerequisite true only after verifying the referenced object or hardware capability in that fabric. Check-profile previews prove model normalization and zero-write planning, but they do not prove that a named NetFlow or QoS object exists. Object existence remains a live prerequisite.
+The managed-subinterface optional preview includes its routed Ethernet parent in the same check-mode workflow, so the result does not
+depend on a parent left behind by an earlier live test.
 
 Configured loopback cases use the standalone module's discriminated union: `network_os_type` is required and `policy_type` must be one
 of the three managed NX-OS policies (`loopback`, `ipfmLoopback`, `mplsLoopback`) or six managed IOS-XE policies (`iosXeLoopback`,

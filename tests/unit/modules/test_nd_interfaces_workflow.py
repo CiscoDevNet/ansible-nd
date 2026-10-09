@@ -83,6 +83,7 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
     assert "\n  verify:" in nd_interfaces_workflow.DOCUMENTATION
     assert "after_verified" in nd_interfaces_workflow.DOCUMENTATION
     assert "from_policy_type" in nd_interfaces_workflow.RETURN
+    assert "not a top-level C(diff)" in nd_interfaces_workflow.DOCUMENTATION
 
 
 def test_documentation_examples_and_return_are_valid_yaml():
@@ -90,6 +91,17 @@ def test_documentation_examples_and_return_are_valid_yaml():
     assert yaml.safe_load(nd_interfaces_workflow.DOCUMENTATION)["module"] == "nd_interfaces_workflow"
     assert isinstance(yaml.safe_load(nd_interfaces_workflow.EXAMPLES), list)
     assert "resources" in yaml.safe_load(nd_interfaces_workflow.RETURN)
+
+
+def test_return_contract_marks_plan_keys_conditional_and_documents_nested_output():
+    documentation = yaml.safe_load(nd_interfaces_workflow.DOCUMENTATION)
+    result = yaml.safe_load(nd_interfaces_workflow.RETURN)
+    for key in ("planned_changed", "mutation_count", "target_switch_ids", "resources", "request_stats", "execution"):
+        assert "omitted when planning fails before producing a plan" in result[key]["returned"]
+    assert result["changed"]["returned"] == "always"
+    assert result["conflicts"]["returned"] == "on conflict"
+    assert "resources[].family_before" in " ".join(documentation["options"]["output_level"]["description"])
+    assert "C(current)" in " ".join(documentation["options"]["output_level"]["description"])
 
 
 def test_ethernet_routed_union_and_reset_contract_is_explicit_in_documentation():
@@ -153,9 +165,13 @@ def test_main_requires_pydantic_then_runs_coordinator_and_exits():
     def fake_require_pydantic(module):
         events.append(("require_pydantic", module))
 
+    def fake_setup_logging(module):
+        events.append(("setup_logging", module))
+
     with (
         patch.object(nd_interfaces_workflow, "AnsibleModule", FakeAnsibleModule),
         patch.object(nd_interfaces_workflow, "require_pydantic", fake_require_pydantic),
+        patch.object(nd_interfaces_workflow, "setup_logging", fake_setup_logging),
         patch.object(nd_interfaces_workflow, "InterfaceWorkflowCoordinator", FakeCoordinator),
     ):
         nd_interfaces_workflow.main()
@@ -163,6 +179,7 @@ def test_main_requires_pydantic_then_runs_coordinator_and_exits():
     assert [event[0] for event in events] == [
         "AnsibleModule",
         "require_pydantic",
+        "setup_logging",
         "InterfaceWorkflowCoordinator",
         "run",
         "exit_json",
@@ -206,6 +223,7 @@ def test_main_preserves_structured_execution_failure():
     with (
         patch.object(nd_interfaces_workflow, "AnsibleModule", FakeAnsibleModule),
         patch.object(nd_interfaces_workflow, "require_pydantic", lambda _module: None),
+        patch.object(nd_interfaces_workflow, "setup_logging", lambda _module: None),
         patch.object(nd_interfaces_workflow, "InterfaceWorkflowCoordinator", FakeCoordinator),
     ):
         nd_interfaces_workflow.main()

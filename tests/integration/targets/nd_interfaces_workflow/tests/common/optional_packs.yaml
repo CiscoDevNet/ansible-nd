@@ -4,12 +4,21 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Preview controller-object-dependent property packs for {{ nd_iw_current_case.family }}
+  vars:
+    nd_iw_optional_parent_resources: >-
+      {{
+        [{'type': 'ethernet_routed', 'state': 'merged',
+          'config': nd_iw_property_matrix.ethernet_routed.minimal}]
+        if nd_iw_current_case.family == 'subinterface_managed' else []
+      }}
   cisco.nd.nd_interfaces_workflow:
     fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
-    resources:
-      - type: "{{ nd_iw_current_case.family }}"
-        state: merged
-        config: "{{ item.config }}"
+    # A check-mode child preview cannot rely on the routed parent having been
+    # created by earlier live tasks. Stage the parent in the same plan.
+    resources: >-
+      {{ nd_iw_optional_parent_resources
+         + [{'type': nd_iw_current_case.family, 'state': 'merged',
+             'config': item.config}] }}
     config_actions:
       deploy: true
     output_level: info
@@ -22,12 +31,14 @@
     label: "{{ item.name }}"
 
 - name: Verify optional property packs validate and never write
+  vars:
+    nd_iw_optional_child_result: "{{ item.resources | last }}"
   ansible.builtin.assert:
     that:
       - not (item.failed | default(false) | bool)
-      - item.resources | length == 1
-      - item.resources[0].proposed is defined
-      - item.resources[0].proposed | length >= item.item.config | length
+      - item.resources | length == (2 if nd_iw_current_case.family == 'subinterface_managed' else 1)
+      - nd_iw_optional_child_result.proposed is defined
+      - nd_iw_optional_child_result.proposed | length >= item.item.config | length
       - item.execution.status == 'check_mode'
       - item.execution.mutations_sent == 0
       - item.execution.deployments_sent == 0
@@ -43,8 +54,8 @@
   vars:
     nd_iw_optional_result: "{{ item.0 }}"
     nd_iw_expected_config_item: "{{ item.1 }}"
-    nd_iw_assert_resource_result: "{{ item.0.resources[0] }}"
-    nd_iw_assert_observed_items: "{{ item.0.resources[0].proposed }}"
+    nd_iw_assert_resource_result: "{{ item.0.resources | last }}"
+    nd_iw_assert_observed_items: "{{ (item.0.resources | last).proposed }}"
   loop: "{{ nd_iw_optional_pack_previews.results | default([]) | subelements('item.config') }}"
   loop_control:
     label: >-

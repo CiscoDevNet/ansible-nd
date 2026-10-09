@@ -166,6 +166,14 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 self._preview_scoped_child_switches[parent] = switch_ids
         return processed
 
+    def _preview_scoped_deploy_child_switches(self) -> dict[tuple[str, str], set[str]]:
+        """Expose exact parent/peer preview scopes to a consolidated deploy."""
+
+        scopes = {parent: set(switch_ids) for parent, switch_ids in super()._preview_scoped_deploy_child_switches().items()}
+        for parent, switch_ids in self._preview_scoped_child_switches.items():
+            scopes.setdefault(parent, set()).update(switch_ids)
+        return scopes
+
     def _preview_scoped_unregistered_child_requires_verification(
         self,
         pair: tuple[str, str],
@@ -173,13 +181,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     ) -> bool:
         """Force post-deploy preview for canonical children on an exact vPC pair."""
 
-        if not self._is_canonical_deploy_child_name(pair[0]):
-            return False
-        for interface_name, switch_id in submitted_pairs:
-            parent = self._normalized_interface_pair(interface_name, switch_id)
-            if parent is not None and pair[1] in self._preview_scoped_child_switches.get(parent, set()):
-                return True
-        return False
+        return super()._preview_scoped_unregistered_child_requires_verification(pair, submitted_pairs)
 
     def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
         """Validate both peers and member ownership without capability API calls."""
