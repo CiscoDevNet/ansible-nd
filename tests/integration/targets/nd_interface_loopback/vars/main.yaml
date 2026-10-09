@@ -112,3 +112,55 @@ xe_loopback_206:
         policy_type: csrLoopback
         admin_state: true
         ip: "10.100.206.1"
+
+# mplsLoopback configs (issue #595). Loopback IDs 207 and 208 are reserved for tasks/mpls.yaml.
+loopback_207_mpls:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: loopback207
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: mplsLoopback
+        admin_state: true
+        ip: "10.101.0.207"
+        description: "Ansible integration test mpls loopback207"
+        dci_routing_protocol: isis
+        dci_routing_tag: MPLS_UNDERLAY
+
+# Omits admin_state and the dci_* options on purpose: the create must apply the documented defaults.
+loopback_208_mpls:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: loopback208
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: mplsLoopback
+        ip: "10.101.0.208"
+        description: "Ansible integration test mpls loopback208"
+
+loopback_207_mpls_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: loopback207
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: mplsLoopback
+        admin_state: true
+        ip: "10.101.0.207"
+        description: "Ansible integration test mpls loopback207 replaced"
+        dci_routing_protocol: isis
+        dci_routing_tag: MPLS_UNDERLAY
+
+loopback_207_mpls_empty_tag:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: loopback207
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: mplsLoopback
+        ip: "10.101.0.207"
+        dci_routing_tag: ""

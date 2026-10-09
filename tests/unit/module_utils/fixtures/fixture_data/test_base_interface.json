@@ -1052,5 +1052,48 @@
             "code": 500,
             "message": "inventory unavailable"
         }
+    },
+    "test_base_interface_01200a": {
+        "TEST_NOTES": [
+            "_send_bulk_create_group success: all-success 207; the outcome lists every name and nothing is queued"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "loopback10",
+                    "status": "success"
+                },
+                {
+                    "name": "loopback20",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_base_interface_01210a": {
+        "TEST_NOTES": [
+            "_send_bulk_create_group mixed 207: loopback10 success, loopback20 failed; the outcome carries the error and nothing is queued"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "loopback10",
+                    "status": "success"
+                },
+                {
+                    "name": "loopback20",
+                    "status": "failed",
+                    "message": "Invalid interface loopback20"
+                }
+            ]
+        }
     }
 }
