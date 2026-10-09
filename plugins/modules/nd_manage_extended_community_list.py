@@ -34,17 +34,20 @@ options:
   config:
     description:
     - The list of extended community lists to configure.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Optional for O(state=gathered), where it may be omitted to gather all extended community lists.
     type: list
     elements: dict
-    required: True
+    required: false
     suboptions:
       name:
         description:
         - The name of the extended community list.
         - Allowed characters are C([a-zA-Z0-9~_-]).
         - Maximum length is 115 characters (63 for the default tenant).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       type:
         description:
         - The type of extended community list.
@@ -53,6 +56,7 @@ options:
           as route targets, router MACs, site-of-origin, or generic extended
           community values.
         - C(expanded) - matches extended communities using a regular expression.
+        - Optional filter for O(state=gathered).
         type: str
         choices: [ standard, expanded ]
       tenant_name:
@@ -155,9 +159,12 @@ options:
       configuration will be deleted. Use with caution.
     - Use O(state=deleted) to remove the extended community lists specified in
       the configuration.
+    - Use O(state=gathered) to read extended community list configurations from Nexus Dashboard without making changes.
+      Omit O(config) to gather all extended community lists, or provide O(config) to return matching extended community lists.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -313,7 +320,7 @@ after:
       - "65000:200"
 diff:
   description: The per-extended-community-list difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -327,7 +334,7 @@ diff:
       - "65000:200"
 proposed:
   description: The extended community list configuration proposed before reconciliation with existing state.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -339,6 +346,13 @@ proposed:
       action: permit
       route_target_collection:
       - "65000:200"
+gathered:
+  description:
+  - Extended community lists matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)
@@ -358,15 +372,11 @@ import logging
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
-    ExtendedCommunityListModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_extended_community_list import (
-    ManageExtendedCommunityListOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_extended_community_list import ManageExtendedCommunityListOrchestrator
 
 
 def main():
@@ -376,6 +386,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)

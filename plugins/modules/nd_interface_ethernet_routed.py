@@ -19,7 +19,7 @@ version_added: "2.0.0"
 short_description: Manage routed-mode (L3) ethernet interfaces on Cisco Nexus Dashboard
 description:
 - Manage routed-mode (L3) ethernet interfaces on Cisco Nexus Dashboard.
-- It supports configuring, updating, and resetting routed ethernet interfaces on switches within a fabric.
+- It supports gathering, configuring, updating, and resetting routed ethernet interfaces on switches within a fabric.
 - Physical ethernet interfaces always exist on the switch; configuring one with this module changes its mode to
   C(routed) and applies the requested policy.
 - Existing C(l3PoMember) and C(iosXeL3PoMember) interfaces can be updated with O(state=merged) without changing their
@@ -38,9 +38,12 @@ options:
     - Each item specifies the target switch and interface configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced),
+      O(state=overridden), and O(state=deleted).
+    - Omit this option or use an empty list for O(state=gathered).
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
@@ -261,9 +264,15 @@ options:
       C(trunkHost) policy, taking them out of routed mode; IOS-XE interfaces reset to a default routed
       configuration with all policy fields cleared. An explicitly named C(l3PoMember) or C(iosXeL3PoMember) is
       rejected because reset would change its port-channel membership.
+    - Use O(state=gathered) to read configured C(routedHost) and
+      C(iosXeRoutedHost) ethernet interfaces in the fabric without making changes.
+      Unconfigured interfaces carrying only their routed policy template defaults
+      are excluded, consistent with this module's existing managed-scope behavior.
+      O(config) must be omitted or empty. Gathered filtering is not supported.
+      Results are returned under C(gathered) in reusable configuration format.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -461,6 +470,12 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Gather all configured module-managed routed ethernet interfaces
+  cisco.nd.nd_interface_ethernet_routed:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_routed_interfaces
 """
 
 RETURN = r"""
@@ -535,13 +550,13 @@ diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
   - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -556,6 +571,28 @@ proposed:
           policy_type: routedHost
           ip: 10.99.99.5
           prefix: 30
+gathered:
+  description:
+  - Configured C(routedHost) and C(iosXeRoutedHost) ethernet interfaces
+    discovered from Nexus Dashboard.
+  - Unconfigured interfaces carrying only routed policy template defaults
+    are excluded.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: Ethernet1/7
+    config_data:
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: routedHost
+          admin_state: true
+          ip: 10.99.99.1
+          prefix: 30
+          description: L3 uplink to WAN edge
 logs:
   description:
   - Reserved for internal diagnostic log messages collected during the run.
@@ -606,10 +643,23 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_ethernet_routed")
+
+    config_items = module.params.get("config") or []
+
+    if module.params["state"] == "gathered" and config_items:
+        module.fail_json(
+            msg=("config is not supported when state is gathered because this module " "currently supports gather-all only; omit config or use an empty list.")
+        )
 
     nd_state_machine = None
 
@@ -636,7 +686,7 @@ def main():
         module_log.debug("manage_state end")
 
         # Execute all queued bulk operations
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     EthernetRoutedPolicyTypeEnum,
@@ -113,6 +114,13 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
     model_class: ClassVar[type[NDBaseModel]] = EthernetRoutedInterfaceModel
     MEMBER_FAMILY: ClassVar[str] = "routed"
 
+    # Routed gathered is gather-all only. This specification supplies the fixed
+    # endpoint scope required by the shared paginated query path. No Ansible
+    # configuration property is mapped to a controller filter.
+    supports_gathered_server_filtering: ClassVar[bool] = False
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("interfaceType", "ethernet"),),
+    )
     # TODO(4.2.1) capable-switches-empty-for-ethernet-on-vxlan
     # Deliberate opt-OUT of the capability preflight (both ClassVars ""): the unpublished capableSwitches
     # endpoint returns an empty switches[] for EVERY ethernet mode (trunk, access, routed) on a VXLAN fabric —
@@ -222,17 +230,28 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
            `deleted` run would re-reset it and report a change. NX-OS keeps it in scope there because the NX reset target
            is the `trunkHost` template, a real mode flip away from a defaults-only `routedHost`.
 
+        For `state: gathered`, use the shared bounded and paginated interface query across every switch in the fabric.
+        Routed gathered remains gather-all only: caller-supplied gathered filters are discarded and the shared query
+        receives an empty list, producing only the fixed `interfaceType:ethernet` expression from `gathered_lucene_spec`.
+
+        For management states, preserve the existing management query path, switch scoping, interface cache, IOS-XE
+        overridden protection, and default-interface handling.
+
         ## Raises
 
         ### RuntimeError
 
         - Propagated from `EthernetBaseOrchestrator.query_all` on query failure.
         """
-        result = super().query_all(model_instance=model_instance, **kwargs)
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+        kwargs.pop("gathered_filters", None)
+        if state == "gathered":
+            result = super().query_all(model_instance=model_instance, gathered_filters=[], **kwargs)
+        else:
+            result = super().query_all(model_instance=model_instance, **kwargs)
         if not isinstance(result, list):
             return result
         named = self._named_interfaces()
-        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
 
         def in_scope(iface: dict) -> bool:
             if not self._is_unconfigured_default(iface):

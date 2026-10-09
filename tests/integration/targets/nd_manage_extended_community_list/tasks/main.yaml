@@ -30,6 +30,9 @@
     - name: Run merged state tests
       ansible.builtin.include_tasks: merged.yaml
 
+    - name: Run gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run tenant identity tests
       ansible.builtin.include_tasks: tenant_identity.yaml
       when:

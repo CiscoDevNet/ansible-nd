@@ -21,6 +21,10 @@ from pydantic import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import (
     FabricGroupVxlanModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 
 MASK = "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 # ND enforces exact CloudSec key lengths per algorithm: 66 hex for AES_128_CMAC, 130 for AES_256_CMAC.
@@ -309,6 +313,55 @@ def test_manage_fabric_group_vxlan_00340():
     model = _model({"multisite_inter_connect_bgp_key": ""})
     assert model.management.multisite_inter_connect_bgp_key is None
     assert "multisiteInterConnectBgpKey" not in model.to_payload()["management"]
+
+
+def test_manage_fabric_group_vxlan_00350():
+    """Verify gathered is supported while config remains optional at model level."""
+    argument_spec = FabricGroupVxlanModel.get_argument_spec()
+
+    assert argument_spec["state"]["choices"] == [
+        "merged",
+        "replaced",
+        "deleted",
+        "overridden",
+        "gathered",
+    ]
+    assert argument_spec["config"]["required"] is False
+
+
+def test_manage_fabric_group_vxlan_00360():
+    """Verify gathered output retains secret keys while masking their values."""
+    bgp_secret = "0123456789abcdef"
+    cloud_sec_secret = VALID_CS_KEY_128
+    response = {
+        "name": "MSD1",
+        "category": "fabricGroup",
+        "management": {
+            "type": "vxlan",
+            "multisiteInterConnectBgpKey": bgp_secret,
+            "cloudSecKey": cloud_sec_secret,
+        },
+    }
+    collection = NDConfigCollection.from_api_response(
+        response_data=[response],
+        model_class=FabricGroupVxlanModel,
+    )
+    output = NDOutput(output_level="normal", state="gathered")
+    output.assign(
+        after=collection,
+        gathered_spec=FabricGroupVxlanModel.get_argument_spec()["config"]["options"],
+    )
+
+    result = output.format()
+    management = result["gathered"][0]["management"]
+
+    assert result["changed"] is False
+    assert result["before"] == []
+    assert result["after"] == []
+    assert management["multisite_inter_connect_bgp_key"] == MASK
+    assert management["cloud_sec_key"] == MASK
+    assert bgp_secret not in repr(result)
+    assert cloud_sec_secret not in repr(result)
 
 
 def test_manage_fabric_group_vxlan_00400():

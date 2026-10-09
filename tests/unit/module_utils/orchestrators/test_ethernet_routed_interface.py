@@ -27,6 +27,8 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
@@ -488,6 +490,257 @@ def test_ethernet_routed_orchestrator_00400() -> None:
     assert kept == {("Ethernet1/7", "routedHost"), ("GigabitEthernet3", "iosXeRoutedHost")}
     switch_ips = {iface["interfaceName"]: iface["switchIp"] for iface in result}
     assert switch_ips == {"Ethernet1/7": "192.168.1.1", "GigabitEthernet3": "192.168.1.2"}
+
+
+def test_ethernet_routed_orchestrator_00405() -> None:
+    """
+    # Summary
+
+    Verify `state: gathered` queries every switch without user configuration while preserving the routed module's
+    managed-policy and unconfigured-default scope filters.
+
+    ## Test
+
+    - Gathered filtering remains disabled at both model and orchestrator levels
+    - The gathered Lucene specification contains only the fixed ethernet base term
+    - Gathered state has no `config` from which to derive a switch scope
+    - Both fabric switches are queried
+    - Configured `routedHost` and `iosXeRoutedHost` interfaces are retained with `switchIp` injected
+    - System routed policy types, other interface types, and defaults-only routed interfaces remain excluded
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.query_all()
+    - EthernetBaseOrchestrator.query_all()
+    - EthernetBaseOrchestrator._query_all_for_gathered()
+    - NDBaseInterfaceOrchestrator._build_gathered_query_plan()
+    - NDBaseInterfaceOrchestrator._query_interfaces_with_lucene()
+    """
+    assert EthernetRoutedInterfaceModel.supports_gathered_filtering is False
+    assert EthernetRoutedInterfaceOrchestrator.supports_gathered_server_filtering is False
+    assert EthernetRoutedInterfaceOrchestrator.gathered_lucene_spec.base_terms == (("interfaceType", "ethernet"),)
+    assert dict(EthernetRoutedInterfaceOrchestrator.gathered_lucene_spec.field_map) == {}
+
+    def responses():
+        yield responses_ethernet_routed("test_query_all_routed_00400a")
+        yield responses_ethernet_routed("test_query_all_routed_00400b")
+        yield responses_ethernet_routed("test_query_all_routed_00400c")
+        yield responses_ethernet_routed("test_query_all_routed_00400d")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": "gathered"},
+        )
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+
+    kept = {
+        (
+            iface["interfaceName"],
+            iface["configData"]["networkOS"]["policy"]["policyType"],
+        )
+        for iface in result
+    }
+    assert kept == {
+        ("Ethernet1/7", "routedHost"),
+        ("GigabitEthernet3", "iosXeRoutedHost"),
+    }
+
+    switch_ips = {iface["interfaceName"]: iface["switchIp"] for iface in result}
+    assert switch_ips == {
+        "Ethernet1/7": "192.168.1.1",
+        "GigabitEthernet3": "192.168.1.2",
+    }
+
+
+def test_ethernet_routed_orchestrator_00406(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify routed gathered enters the shared paginated interface query, advances
+    its offset, and returns managed routed interfaces from every page.
+
+    ## Test
+
+    - Configure one fabric switch for gathered state
+    - The first page reports one remaining interface
+    - The second page reports no remaining interfaces
+    - Both pages use the fixed `interfaceType:ethernet` expression
+    - `max` remains 500 and `offset` advances by the first page length
+    - Both configured routed interfaces are returned
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.query_all()
+    - EthernetBaseOrchestrator.query_all()
+    - EthernetBaseOrchestrator._query_all_for_gathered()
+    - NDBaseInterfaceOrchestrator._query_interfaces_with_lucene()
+    """
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(
+        ResponseGenerator(responses()),
+        params={"state": "gathered"},
+    )
+    orchestrator._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={
+            "192.168.1.1": "FDO11111AAA",
+        },
+    )
+
+    pages = iter(
+        [
+            {
+                "interfaces": [
+                    {
+                        "interfaceName": "Ethernet1/7",
+                        "interfaceType": "ethernet",
+                        "configData": {
+                            "mode": "routed",
+                            "networkOS": {
+                                "networkOSType": "nx-os",
+                                "policy": {
+                                    "policyType": "routedHost",
+                                    "ip": "10.99.99.1",
+                                    "prefix": 30,
+                                },
+                            },
+                        },
+                    },
+                ],
+                "meta": {
+                    "counts": {
+                        "remaining": 1,
+                    },
+                },
+            },
+            {
+                "interfaces": [
+                    {
+                        "interfaceName": "Ethernet1/8",
+                        "interfaceType": "ethernet",
+                        "configData": {
+                            "mode": "routed",
+                            "networkOS": {
+                                "networkOSType": "nx-os",
+                                "policy": {
+                                    "policyType": "routedHost",
+                                    "ip": "10.99.99.5",
+                                    "prefix": 30,
+                                },
+                            },
+                        },
+                    },
+                ],
+                "meta": {
+                    "counts": {
+                        "remaining": 0,
+                    },
+                },
+            },
+        ]
+    )
+    requested_paths: list[str] = []
+
+    monkeypatch.setattr(
+        EthernetRoutedInterfaceOrchestrator,
+        "validate_prerequisites",
+        lambda self: None,
+    )
+
+    def fake_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return next(pages)
+
+    monkeypatch.setattr(
+        EthernetRoutedInterfaceOrchestrator,
+        "_request",
+        fake_request,
+    )
+
+    result = orchestrator.query_all()
+
+    assert [iface["interfaceName"] for iface in result] == [
+        "Ethernet1/7",
+        "Ethernet1/8",
+    ]
+    assert {iface["switchIp"] for iface in result} == {
+        "192.168.1.1",
+    }
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?filter=interfaceType:ethernet&max=500&offset=0",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces?filter=interfaceType:ethernet&max=500&offset=1",
+    ]
+
+
+def test_ethernet_routed_orchestrator_00407(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify routed gathered applies the shared fabric-wide request limit before
+    issuing interface inventory requests.
+
+    ## Test
+
+    - Model a fabric containing 301 switches
+    - Gather-all requires at least one query per switch
+    - The shared maximum is 300 logical switch queries
+    - `query_all` fails before making an interface API request
+
+    ## Classes and Methods
+
+    - EthernetRoutedInterfaceOrchestrator.query_all()
+    - EthernetBaseOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._build_gathered_query_plan()
+    - NDBaseInterfaceOrchestrator._enforce_gathered_query_limits()
+    """
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(
+        ResponseGenerator(responses()),
+        params={"state": "gathered"},
+    )
+
+    switch_map = {f"10.0.{index // 250}.{index % 250 + 1}": f"SERIAL-{index}" for index in range(301)}
+    orchestrator._fabric_context = SimpleNamespace(
+        fabric_name="large_fabric",
+        switch_map=switch_map,
+    )
+
+    requested_paths: list[str] = []
+
+    monkeypatch.setattr(
+        EthernetRoutedInterfaceOrchestrator,
+        "validate_prerequisites",
+        lambda self: None,
+    )
+
+    def unexpected_request(self, path, verb, **kwargs):
+        requested_paths.append(path)
+        return {}
+
+    monkeypatch.setattr(
+        EthernetRoutedInterfaceOrchestrator,
+        "_request",
+        unexpected_request,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="301 switch requests, exceeding the supported limit of 300",
+    ):
+        orchestrator.query_all()
+
+    assert requested_paths == []
 
 
 def test_ethernet_routed_orchestrator_00410() -> None:

@@ -57,7 +57,8 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
@@ -224,10 +225,11 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         A Catalyst switch list also carries discovered SVI records with `policy: null` (e.g. `Vlan1`) or no `configData`; those are
         skipped rather than raised on.
 
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
+        The query is fabric-wide for `state: overridden` and `state: gathered`.
+        Other states are limited to switches named in the user configuration.
 
-        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
+        Runs `validate_prerequisites` on first call to ensure the fabric exists
+        and the requested operation is permitted.
 
         Each returned interface dict is enriched with a `switch_ip` field so that `SviInterfaceModel` can be constructed
         with the composite identifier `(switch_ip, interface_name)`.
@@ -237,14 +239,18 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_policy_types = self._managed_policy_types()
         try:
             self.validate_prerequisites()
             all_svis = []
-            for switch_ip, switch_id in self._switches_to_query().items():
+            if self.rest_send.params.get("state") == "gathered":
+                switches_to_query = self.fabric_context.switch_map
+            else:
+                switches_to_query = self._switches_to_query()
+            for switch_ip, switch_id in switches_to_query.items():
                 interfaces = list(self._switch_interfaces(switch_id).values())
                 svis = [iface for iface in interfaces if iface.get("interfaceType") == "svi"]
                 managed = [iface for iface in svis if self._policy_type_of(iface) in managed_policy_types]

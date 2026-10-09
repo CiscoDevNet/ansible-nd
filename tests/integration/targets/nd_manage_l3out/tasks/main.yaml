@@ -42,6 +42,9 @@
     - name: Run nd_manage_l3out merged state tests
       ansible.builtin.include_tasks: merged.yaml
 
+    - name: Run nd_manage_l3out gathered state tests
+      ansible.builtin.include_tasks: gathered.yaml
+
     - name: Run nd_manage_l3out replaced state tests
       ansible.builtin.include_tasks: replaced.yaml
 

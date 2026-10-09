@@ -4,7 +4,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# Called from main.yaml before the merged/replaced/overridden/deleted state
+# Called from main.yaml before the merged/gathered/replaced/overridden/deleted state
 # blocks. Ensures no test SVIs exist on the target switch before the state
 # tests run. The DEBUG task surfaces the cleanup result for triage.
 
