@@ -1,0 +1,2 @@
+bugfixes:
+  - nd_rest - Accept HTTP 207 Multi-Status responses and return their payload in jsondata for caller-defined outcome handling (https://github.com/CiscoDevNet/ansible-nd/issues/396).
