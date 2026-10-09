@@ -37,7 +37,7 @@ EXPECTED_INTEGRATION = {
     "nd_interface_loopback", "nd_interface_svi", "nd_interface_ethernet_access",
     "nd_interface_ethernet_trunk_host", "nd_interface_port_channel_access",
     "nd_interface_port_channel_trunk_host", "nd_interface_subinterface_managed",
-    "nd_interface_subinterface_unmanaged",
+    "nd_interface_subinterface_unmanaged", "nd_manage_community_list", "nd_manage_extended_community_list",
 }
 EXPECTED_SMOKE = {
     "nd_manage_acl", "nd_manage_prefix_list", "nd_manage_route_map", "nd_manage_vrfs", "nd_manage_networks",
@@ -371,6 +371,8 @@ def test_jenkins_target_parser_ignores_commented_entries():
         "nd_manage_fabric_group_vxlan",
         "nd_manage_fabric_group_members",
         "nd_manage_tor",
+        "nd_manage_community_list",
+        "nd_manage_extended_community_list",
     } <= set(targets["INTEGRATION_MODULES"])
     assert targets["INTERFACE_INTEGRATION_MODULES"] == [
         "nd_interface_loopback",
@@ -382,6 +384,8 @@ def test_jenkins_target_parser_ignores_commented_entries():
         "nd_interface_port_channel_trunk_host",
         "nd_interface_subinterface_managed",
         "nd_interface_subinterface_unmanaged",
+        "nd_interface_vpc_access",
+        "nd_interface_vpc_trunk_host",
     ]
     assert {
         *targets["INTEGRATION_MODULES"],
@@ -413,6 +417,42 @@ def test_jenkins_always_runs_nd_vpc_pair_and_never_skips_it():
     assert "NDP_MODULE_SKIPPED" not in standalone
     assert "running the module anyway" in standalone
     assert '"${TARGET_PLAYBOOK}"' in standalone
+
+
+def test_runner_drops_the_unsupported_timeout_default_for_community_list_targets():
+    runner = (ROOT / "tests/run_integration_module.yaml").read_text()
+    assert "drop the unsupported timeout module default from the target" in runner
+    assert "test_module in ['nd_manage_community_list', 'nd_manage_extended_community_list']" in runner
+    for module in ("nd_manage_community_list", "nd_manage_extended_community_list"):
+        assert f"integration.{module}" in (ROOT / "tests/nd_prerequisite_profiles.yaml").read_text()
+
+
+def test_vpc_interface_targets_use_the_runner_formed_physical_pair(registry):
+    runner = (ROOT / "tests/run_integration_module.yaml").read_text()
+    # The targets' own setup builds a virtual-peer-link pair that ND 4.3 rejects on this fabric, so the runner forms the
+    # physical pair first, hands it over as pre-existing substrate and removes only a pair that it created itself.
+    assert runner.count("test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']") >= 2
+    assert "use_virtual_peer_link: false" in runner
+    assert "nd_test_manage_vpc_pairs: false" in runner
+    assert "_ndp_vpcif_pair_preexisting is defined" in runner
+    allowlist = registry["lab"]["interface_allowlist"]
+    for module in ("nd_interface_vpc_access", "nd_interface_vpc_trunk_host"):
+        profile = registry["profiles"][f"integration.{module}"]
+        (pair,) = profile["vpc_pairs"]
+        assert pair["mode"] == "physical"
+        assert pair["required_path"] == "module_creates_pair"
+        assert pair["physical_peer_links"]
+        assert profile["runtime_vars"]["nd_test_manage_vpc_pairs"] is False
+        # Member ports are verified free on BOTH leaves, and every reserved port is on the lab allowlist.
+        reserved = {
+            resource["switch_ref"]: set(resource["interfaces"])
+            for resource in profile["resources"]
+            if resource["kind"] == "verify_free_interfaces"
+        }
+        assert set(reserved) == {"vxlan_leaf_1", "vxlan_leaf_2"}
+        assert reserved["vxlan_leaf_1"] == reserved["vxlan_leaf_2"]
+        for switch_ref, interfaces in reserved.items():
+            assert interfaces <= set(allowlist[switch_ref])
 
 
 def test_effective_module_profile_coverage_reports_all_missing_profiles_once():

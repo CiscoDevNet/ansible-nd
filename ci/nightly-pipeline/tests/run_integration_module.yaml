@@ -283,7 +283,7 @@
           - (test_module != 'nd_manage_switches') or (ansible_switch3 | length > 0)
           - (test_module != 'nd_manage_switches') or (save | bool and deploy | bool and config_actions_type == 'switch')
           # Integration target dir is nd_resource_manager (module is nd_manage_resource_manager); test_module carries the target name.
-          - (test_module != 'nd_resource_manager') or (ansible_sno_1 | length > 0 and ansible_sno_2 | length > 0)
+          - (test_module not in ['nd_resource_manager', 'nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']) or (ansible_sno_1 | length > 0 and ansible_sno_2 | length > 0)
           - (test_module != 'nd_resource_manager') or (intf_1_2 | length > 0 and intf_1_3 | length > 0 and intf_1_10 | length > 0)
           - (test_module != 'nd_manage_route_map') or (nd_test_fabric_name | length > 0)
           - (test_module != 'nd_manage_acl') or (acl_test_fabric | length > 0)
@@ -628,6 +628,108 @@
           delegate_to: localhost
 
     # -------------------------------------------------------------------------
+    # SETUP (community lists only): the develop targets set module_defaults `timeout: 300` for modules whose
+    # argument spec has no such option, so every task fails "Unsupported parameters ... timeout" (live 2026-10-09).
+    # Drop that defaults block from the run's own checkout of the target (never committed).
+    - name: "[{{ test_module }}] SETUP - drop the unsupported timeout module default from the target"
+      ansible.builtin.replace:
+        path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/main.yaml"
+        regexp: '^  module_defaults:\n    cisco[.]nd[.]{{ test_module }}:\n      timeout: [0-9]+\n?'
+        replace: ''
+      delegate_to: localhost
+      when:
+        - test_module in ['nd_manage_community_list', 'nd_manage_extended_community_list']
+        - not (nd_prerequisite_only | default(false) | bool)
+
+    # -------------------------------------------------------------------------
+    # SETUP (vPC interface targets): their own setup only builds a VIRTUAL-peer-link pair with vpc_pair_details, which
+    # ND 4.3 rejects on the N9K-C9300v leaves and on a vxlanIbgp fabric. Form the PHYSICAL pair over the cabled
+    # leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link here and hand it to the target as pre-existing substrate
+    # (nd_test_manage_vpc_pairs=false: its setup/teardown then leave the pair alone). The CLEANUP unpairs what this run
+    # created because the destructive nd_manage_switches module runs later in the same job. The target's multi-pair
+    # scenario still needs a second pair in the fabric and reports that itself.
+    - name: "[{{ test_module }}] SETUP - standing physical vPC pair for the vPC interface target"
+      when: test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host'] and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_vpcif_pairs_before
+
+        - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
+          ansible.builtin.set_fact:
+            _ndp_vpcif_pair_preexisting: >-
+              {{ ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                 | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+                 | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                 or ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                 | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+                 | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
+
+        - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+          register: _ndp_vpcif_peer_link
+          retries: 12
+          delay: 15
+          until: >-
+            {{ (_ndp_vpcif_peer_link.current.links | default([]))
+               | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+               | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+          failed_when: false
+          no_log: true
+          when: not (_ndp_vpcif_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - create the physical vPC pair"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: merged
+            config_actions: {save: true, deploy: true, type: switch}
+            config:
+              - peer1_switch_id: "{{ ansible_sno_1 }}"
+                peer2_switch_id: "{{ ansible_sno_2 }}"
+                use_virtual_peer_link: false
+          when: not (_ndp_vpcif_pair_preexisting | bool)
+
+        # Same convergence pause the targets' own setup uses after forming a pair.
+        - name: "[{{ test_module }}] SETUP - pause for pair-establishment convergence"
+          ansible.builtin.pause:
+            seconds: 30
+          when: not (_ndp_vpcif_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the pair is formed"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_vpcif_pairs_after
+
+        - name: "[{{ test_module }}] SETUP - require the leaf pair before the target starts"
+          ansible.builtin.assert:
+            that: >-
+              ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
+              | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+              | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+              | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+              or ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
+              | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+              | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+              | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+            fail_msg: >-
+              The physical vPC pair {{ ansible_sno_1 }}/{{ ansible_sno_2 }} does not exist in {{ ansible_it_fabric }} after the
+              runner formed it; the vPC interface target needs it as substrate.
+
+        - name: "[{{ test_module }}] SETUP - hand the pair to the target as pre-existing lab substrate"
+          ansible.builtin.set_fact:
+            nd_test_manage_vpc_pairs: false
+            nd_test_vpc_peer1_ip: "{{ ansible_switch1 }}"
+            nd_test_vpc_peer2_ip: "{{ ansible_switch2 }}"
+
+    # -------------------------------------------------------------------------
     # SETUP (nd_resource_manager only): the target forms a PHYSICAL vPC pair itself (ND 4.3 rejects a virtual
     # peer-link on N9K-C9300v). Before it starts, remember whether the pair already existed and give ND time to
     # report the leaf peer-link as present (the prerequisite admin-ups its two ports just before this).
@@ -765,6 +867,23 @@
             - not (nd_prerequisite_only | default(false) | bool)
             - _ndp_rm_pair_preexisting is defined
             - not (_ndp_rm_pair_preexisting | bool)
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: deleted
+            config:
+              - peer1_switch_id: "{{ ansible_sno_1 }}"
+                peer2_switch_id: "{{ ansible_sno_2 }}"
+            config_actions: {save: true, deploy: true, type: switch}
+          ignore_errors: true
+
+        # Same reason for the vPC interface targets: the runner formed the pair, so the runner removes it (a pair that
+        # already existed is never touched).
+        - name: "[{{ test_module }}] CLEANUP - unpair the vPC pair the runner formed for the vPC interface target"
+          when:
+            - test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_vpcif_pair_preexisting is defined
+            - not (_ndp_vpcif_pair_preexisting | bool)
           cisco.nd.nd_manage_vpc_pair:
             fabric_name: "{{ ansible_it_fabric }}"
             state: deleted

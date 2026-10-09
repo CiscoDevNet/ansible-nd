@@ -43,8 +43,8 @@ def PLAYBOOK_FILES = [
     // 'nd_manage_l3out.yaml',
     // 'nd_interface_vpc_access.yaml',
     // 'nd_interface_vpc_trunk_host.yaml'
-    // NOTE: community_list / extended_community_list have no standalone module
-    // in this build, so no playbook exists for them yet.
+    // NOTE: community_list / extended_community_list run as integration targets (INTEGRATION_MODULES);
+    // they have no smoke playbook.
 ]
 
 // Integration-test modules. Each runs as its OWN ansible-playbook invocation
@@ -65,6 +65,8 @@ def INTEGRATION_MODULES = [
     'nd_manage_route_map',
     'nd_manage_prefix_list',
     'nd_manage_acl',
+    'nd_manage_community_list',
+    'nd_manage_extended_community_list',
     'nd_manage_l3out',
     'nd_manage_vrfs',
     'nd_manage_networks',
@@ -78,11 +80,9 @@ def INTEGRATION_MODULES = [
     // without being affected by the switch-membership lifecycle.
     'nd_manage_tor',
     // nd_manage_vpc_pair coverage lives in standalone target nd_vpc_pair, which runs against the
-    // fixed lab pairs in VPC_PAIR_EXECUTIONS. The two nd_interface_vpc_* targets also
-    // require a vPC pair in SETUP and remain disabled on this fabric.
+    // fixed lab pairs in VPC_PAIR_EXECUTIONS. The two nd_interface_vpc_* targets run from
+    // INTERFACE_INTEGRATION_MODULES (the runner forms the physical leaf pair around them).
     // 'nd_manage_vpc_pair',
-    // 'nd_interface_vpc_access',
-    // 'nd_interface_vpc_trunk_host',
     // nd_manage_switches is part of the nightly suite. Its device credentials are
     // validated before any module runs, and the canonical fabric roster is restored
     // after the switch lifecycle even if the test fails.
@@ -128,7 +128,7 @@ def ND_TOR_SWITCH_SERIALS = []
 // overrides each needs). These targets always run (non-optional): they are appended to
 // the run AND the result parser unconditionally, so the lab must keep the nd_interface_*
 // substrate provisioned or the tests fail on a missing test-output file.
-// Per-target prerequisites (NO cabling for any of the nine below):
+// Per-target prerequisites (NO cabling for any of the first nine below):
 //   - loopback / svi                 : logical only; need just the target switch present.
 //   - ethernet_access / trunk_host   : need free physical ports Eth1/41-1/50 on the switch
 //                                      (must exist + NOT be port-channel members).
@@ -140,11 +140,14 @@ def ND_TOR_SWITCH_SERIALS = []
 //                                      creates a temporary routed Eth1/1 + memberless L3 Port-channel10
 //                                      parent when absent, journals them, and restores the pre-test
 //                                      state after target cleanup.
-// The two nd_interface_vpc_* targets stay COMMENTED: their setup creates a vPC pair via
-// nd_manage_vpc_pair (virtual peer-link, so no physical peer-link cable), plus the
-// multi-pair case needs a SECOND vPC pair. The nightly VXLAN_EVPN_Fabric (vxlanIbgp)
-// REJECTS vpc_pair_details (actions.py), so the pair cannot form here. Re-enable once a
-// supported vPC substrate exists (peer IPs via nd_test_vpc_peer1_ip/peer2_ip + pair2).
+//   - vpc_access / vpc_trunk_host    : need the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link cable and free member
+//                                      ports on BOTH leaves (Eth1/5-1/7 + 1/10 access, Eth1/8-1/10 trunk-host). The
+//                                      runner forms the PHYSICAL leaf pair around the target (the target's own
+//                                      virtual-peer-link pair is rejected by ND 4.3 on this fabric) and unpairs it
+//                                      afterwards. The targets' multi-pair scenario additionally needs a SECOND
+//                                      reciprocal vPC pair (nd_test_vpc_pair2_peer*_ip) and Eth1/10 free on all four
+//                                      leaves; while the lab has one pair that scenario fails with its own
+//                                      precondition message after the other states have run.
 @Field
 def INTERFACE_INTEGRATION_MODULES = [
     'nd_interface_loopback',
@@ -156,8 +159,8 @@ def INTERFACE_INTEGRATION_MODULES = [
     'nd_interface_port_channel_trunk_host',
     'nd_interface_subinterface_managed',
     'nd_interface_subinterface_unmanaged',
-    // 'nd_interface_vpc_access',      // needs a vPC-pair substrate (see note above)
-    // 'nd_interface_vpc_trunk_host',  // needs a vPC-pair substrate (see note above)
+    'nd_interface_vpc_access',
+    'nd_interface_vpc_trunk_host',
 ]
 
 // Required Python version for the virtual environment

@@ -96,14 +96,16 @@ RESET_PLAYBOOK="${RESET_PLAYBOOK:-reset_fabric.yaml}"
 
 # Default module set = the nightly's INTEGRATION_MODULES, in topology-impact order
 # (role-neutral config first; fabric/membership-changing modules LAST). Comment a
-# line to drop it. vpc_pair is opt-in via ND_VPC_PAIR_ENABLE (below); interface_vpc_*
-# stay off (all three need a vPC peer-link substrate the lab lacks today).
+# line to drop it. vpc_pair is opt-in via ND_VPC_PAIR_ENABLE (below); the two
+# nd_interface_vpc_* targets belong to the ND_INTERFACE_ENABLE set (below).
 DEFAULT_MODULES=(
   nd_manage_policy
   nd_manage_policy_group
   nd_manage_route_map
   nd_manage_prefix_list
   nd_manage_acl
+  nd_manage_community_list
+  nd_manage_extended_community_list
   nd_manage_l3out
   nd_manage_vrfs
   nd_manage_networks
@@ -111,8 +113,6 @@ DEFAULT_MODULES=(
   nd_manage_switches
   nd_resource_manager
   # nd_vpc_pair is standalone (not a role) -> opt-in via ND_VPC_PAIR_ENABLE=true (below)
-  # nd_interface_vpc_access     # needs a vPC pair in SETUP
-  # nd_interface_vpc_trunk_host # needs a vPC pair in SETUP
 )
 
 # nd_manage_links (ND 4.2) is opt-in: its numbered test assumes a dedicated fabric
@@ -131,8 +131,10 @@ fi
 # nightly's ND_INTERFACE_ENABLE param, ON in Jenkins). Each needs only per-switch
 # substrate (free ports, NO cabling) on ND_INTERFACE_TEST_SWITCH_IP (default
 # 192.0.2.195 = vxlan_leaf_1); that switch must be in normal (not migration/read-only)
-# mode for deploys to land. The two nd_interface_vpc_* targets stay OFF (need a vPC-pair
-# substrate the lab lacks). Enable: ND_INTERFACE_ENABLE=true ./run_all_integ.sh
+# mode for deploys to land. The two nd_interface_vpc_* targets additionally need the
+# leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link cable and free member ports on BOTH leaves; the
+# runner (run_integration_module.yaml) forms the physical leaf pair around them. Enable:
+# ND_INTERFACE_ENABLE=true ./run_all_integ.sh
 # (or run any explicitly, e.g. ./run_all_integ.sh nd_interface_loopback).
 ND_INTERFACE_ENABLE="${ND_INTERFACE_ENABLE:-false}"
 ND_INTERFACE_TEST_SWITCH_IP="${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195}"
@@ -147,6 +149,8 @@ if [ "${ND_INTERFACE_ENABLE}" = "true" ]; then
     nd_interface_port_channel_trunk_host
     nd_interface_subinterface_managed
     nd_interface_subinterface_unmanaged
+    nd_interface_vpc_access
+    nd_interface_vpc_trunk_host
   )
 fi
 

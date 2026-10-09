@@ -22,7 +22,7 @@ ALLOWED_EXECUTION_STYLES = {"smoke_playbook", "integration_role", "standalone_in
 ALLOWED_DOMAINS = {
     "fabrics", "switches", "vpc_pairs", "physical_interfaces", "vpc_interfaces",
     "resource_allocations", "policies", "policy_groups", "vrfs", "networks",
-    "l3outs", "acls", "prefix_lists", "route_maps", "vrf_lite",
+    "l3outs", "acls", "prefix_lists", "route_maps", "community_lists", "extended_community_lists", "vrf_lite",
     "logical_interfaces", "port_channels",
 }
 # Inter-fabric link templates a profile may declare under `interfabric_links`.
@@ -78,6 +78,7 @@ CANONICAL_RUNTIME_DEFAULTS = {
 CANONICAL_INTERFACE_ALLOWLIST = {
     "vxlan_leaf_1": [
         "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
+        "Ethernet1/5", "Ethernet1/6", "Ethernet1/7", "Ethernet1/8", "Ethernet1/9",
         "Ethernet1/10", "Ethernet1/11", "Ethernet1/12", "Ethernet1/13",
         "Ethernet1/31", "Ethernet1/32", "Ethernet1/33", "Ethernet1/34",
         "Ethernet1/35", "Ethernet1/41", "Ethernet1/42", "Ethernet1/43",
@@ -86,7 +87,8 @@ CANONICAL_INTERFACE_ALLOWLIST = {
     ],
     "vxlan_leaf_2": [
         "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
-        "Ethernet1/30", "Ethernet1/31", "Ethernet1/32",
+        "Ethernet1/5", "Ethernet1/6", "Ethernet1/7", "Ethernet1/8", "Ethernet1/9",
+        "Ethernet1/10", "Ethernet1/30", "Ethernet1/31", "Ethernet1/32",
     ],
     "vxlan_spine_1": [],
     "vxlan_border_1": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/4", "Ethernet1/30", "Ethernet1/31", "Ethernet1/32"],

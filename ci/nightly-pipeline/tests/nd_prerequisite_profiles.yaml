@@ -52,8 +52,8 @@ lab:
     external_edge_1: {baseline_fabric_ref: external, baseline_role: edge_router, serial: SERIAL00005, seed_ip: 192.0.2.89}
     external_edge_2: {baseline_fabric_ref: external, baseline_role: edge_router, serial: SERIAL00006, seed_ip: 192.0.2.90}
   interface_allowlist:
-    vxlan_leaf_1: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13, Ethernet1/31, Ethernet1/32, Ethernet1/33, Ethernet1/34, Ethernet1/35, Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48, Ethernet1/49, Ethernet1/50]
-    vxlan_leaf_2: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/30, Ethernet1/31, Ethernet1/32]
+    vxlan_leaf_1: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13, Ethernet1/31, Ethernet1/32, Ethernet1/33, Ethernet1/34, Ethernet1/35, Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48, Ethernet1/49, Ethernet1/50]
+    vxlan_leaf_2: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/30, Ethernet1/31, Ethernet1/32]
     vxlan_spine_1: []
     vxlan_border_1: [Ethernet1/1, Ethernet1/2, Ethernet1/4, Ethernet1/30, Ethernet1/31, Ethernet1/32]
     external_edge_1: [Ethernet1/2, Ethernet1/3, Ethernet1/4]
@@ -145,6 +145,10 @@ topology_templates:
       dst: {switch_ref: external_edge_1, interface: Ethernet1/4}
       template_inputs: {trunk_allowed_vlans: "100,200,300", native_vlan: 1, port_type_fast: true, mtu_type: jumbo, speed: auto, bpdu_guard: default}
   virtual_vpc: &virtual_vpc [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: virtual, physical_peer_links: []}]
+  # The leaf pair over the cabled leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link (ND 4.3 rejects a virtual peer-link on the
+  # N9K-C9300v leaves). The pair is formed by the runner around the vPC interface targets; the planner only needs the cable.
+  vpc_peer_links: &vpc_peer_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}]
+  physical_leaf_vpc: &physical_leaf_vpc [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: physical, required_path: module_creates_pair, physical_peer_links: [{src: {switch_ref: vxlan_leaf_1, interface: Ethernet1/2}, dst: {switch_ref: vxlan_leaf_2, interface: Ethernet1/1}}]}]
 
 profiles:
   smoke.nd_manage_acl:
@@ -402,6 +406,26 @@ profiles:
     managed_domains: [prefix_lists]
     runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
     confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm single switch vxlan_leaf_1 as leaf in VXLAN_EVPN_Fabric; owner table names switch_1]}
+  integration.nd_manage_community_list:
+    <<: *profile
+    profile_id: integration.nd_manage_community_list
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *no_switches
+    managed_domains: [community_lists]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the fabric-scoped community lists are created and removed in VXLAN_EVPN_Fabric; the optional tenant and overridden-state coverage stays off]}
+  integration.nd_manage_extended_community_list:
+    <<: *profile
+    profile_id: integration.nd_manage_extended_community_list
+    phase: retained_no_switch
+    execution_style: integration_role
+    fabrics: [*advanced]
+    switches: *no_switches
+    managed_domains: [extended_community_lists]
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the fabric-scoped extended community lists are created and removed in VXLAN_EVPN_Fabric; the optional tenant coverage stays off]}
   integration.nd_manage_fabric_group_vxlan:
     <<: *profile
     profile_id: integration.nd_manage_fabric_group_vxlan
@@ -687,11 +711,23 @@ profiles:
     execution_style: integration_role
     fabrics: [*advanced]
     switches: *advanced_leaves
-    links: *access_links
-    vpc_pairs: *virtual_vpc
+    links: *vpc_peer_links
+    vpc_pairs: *physical_leaf_vpc
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_2
+        interfaces: [Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
     managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
-    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_access_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_peer1_ip: 192.0.2.195, nd_test_vpc_peer2_ip: 192.0.2.196}
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_access_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_peer1_ip: 192.0.2.195, nd_test_vpc_peer2_ip: 192.0.2.196, nd_test_manage_vpc_pairs: false}
     timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the runner-formed physical leaf pair over the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link and free member ports Ethernet1/5-1/7 and Ethernet1/10 on both leaves; the multi-pair scenario additionally needs a second vPC pair in the fabric]}
   integration.nd_interface_vpc_trunk_host:
     <<: *profile
     profile_id: integration.nd_interface_vpc_trunk_host
@@ -699,11 +735,23 @@ profiles:
     execution_style: integration_role
     fabrics: [*advanced]
     switches: *advanced_leaves
-    links: *trunk_links
-    vpc_pairs: *virtual_vpc
+    links: *vpc_peer_links
+    vpc_pairs: *physical_leaf_vpc
+    resources:
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_1
+        interfaces: [Ethernet1/8, Ethernet1/9, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
+      - kind: verify_free_interfaces
+        requirement_status: ready
+        switch_ref: vxlan_leaf_2
+        interfaces: [Ethernet1/8, Ethernet1/9, Ethernet1/10]
+        constraints: [exists, not_port_channel_member, not_fabric_link]
     managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
-    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_trunk_host_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_peer1_ip: 192.0.2.195, nd_test_vpc_peer2_ip: 192.0.2.196}
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_trunk_host_fabric_name: VXLAN_EVPN_Fabric, nd_test_vpc_peer1_ip: 192.0.2.195, nd_test_vpc_peer2_ip: 192.0.2.196, nd_test_manage_vpc_pairs: false}
     timeouts: *disruptive_timeouts
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm the runner-formed physical leaf pair over the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link and free member ports Ethernet1/8-1/10 on both leaves; the multi-pair scenario additionally needs a second vPC pair in the fabric]}
   integration.nd_manage_switches:
     <<: *profile
     profile_id: integration.nd_manage_switches

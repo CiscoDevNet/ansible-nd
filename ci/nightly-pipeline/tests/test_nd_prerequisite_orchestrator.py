@@ -579,6 +579,48 @@ def test_resource_manager_runs_on_a_cabled_physical_peer_link_and_recovers_shut_
     assert plan_topology_delta(confirmed, resolved, physical_pair) == []
 
 
+@pytest.mark.parametrize("module", ["nd_interface_vpc_access", "nd_interface_vpc_trunk_host"])
+def test_vpc_interface_targets_need_the_cabled_peer_link_and_free_member_ports_on_both_leaves(registry, valid_state, module):
+    confirmed = confirm(registry, f"integration.{module}")
+    resolved = resolve_execution(confirmed, f"integration.{module}")
+    no_pair = copy.deepcopy(valid_state)
+    no_pair["vpc_pairs"] = []
+    # The runner forms the physical pair itself, so a cabled peer-link plus free member ports needs no apply work
+    # beyond the read-only member-port verification on each leaf.
+    operations = plan_topology_delta(confirmed, resolved, no_pair)
+    assert [(op["operation"], op["switch_ref"]) for op in operations] == [
+        ("verify_free_interfaces", "vxlan_leaf_1"),
+        ("verify_free_interfaces", "vxlan_leaf_2"),
+    ]
+    assert not any(op["operation"] == "ensure_virtual_vpc" for op in operations)
+
+    # Both peer-link ports administratively shut: admin-up them first, then verify the member ports.
+    shut = copy.deepcopy(no_pair)
+    for switch_ref, interface in (("vxlan_leaf_1", "Ethernet1/2"), ("vxlan_leaf_2", "Ethernet1/1")):
+        shut["interfaces"][switch_ref][interface] = {"admin_state": False, "operational_state": "down"}
+    for item in shut["links"]:
+        if item["srcSwitchId"] == "SERIAL00001" and item["dstSwitchId"] == "SERIAL00002":
+            item["linkPresent"] = False
+    assert [op["operation"] for op in plan_topology_delta(confirmed, resolved, shut)] == [
+        "ensure_interface", "ensure_interface", "verify_free_interfaces", "verify_free_interfaces",
+    ]
+
+    # No leaf_1 <-> leaf_2 cable: the module is reported unavailable with the ports to cable.
+    uncabled = copy.deepcopy(no_pair)
+    uncabled["links"] = [
+        item for item in uncabled["links"]
+        if not (item["srcSwitchId"] == "SERIAL00001" and item["dstSwitchId"] == "SERIAL00002")
+    ]
+    with pytest.raises(UnavailableError, match=r"required physical vPC peer-link is missing: vxlan_leaf_1/Ethernet1/2 <-> vxlan_leaf_2/Ethernet1/1"):
+        plan_topology_delta(confirmed, resolved, uncabled)
+
+    # A reserved member port that does not exist on the second leaf is reported before anything runs.
+    missing_port = copy.deepcopy(no_pair)
+    missing_port["interfaces"]["vxlan_leaf_2"]["Ethernet1/10"] = {"exists": False}
+    with pytest.raises(UnavailableError, match="required physical interface is missing: vxlan_leaf_2/Ethernet1/10"):
+        plan_topology_delta(confirmed, resolved, missing_port)
+
+
 def test_l3out_needs_one_cable_and_plans_config_only_links_for_the_other_types(registry, valid_state):
     confirmed = confirm(registry, "integration.nd_manage_l3out")
     resolved = resolve_execution(confirmed, "integration.nd_manage_l3out")
@@ -662,11 +704,11 @@ def test_delta_creates_only_namespaced_disposable_fabric(registry, valid_state):
 
 
 def test_delta_enforces_link_allowlist_virtual_vpc_and_resources(registry, valid_state):
-    confirmed = confirm(registry, "integration.nd_interface_vpc_access")
+    confirmed = confirm(registry, "smoke.nd_interface_vpc_access")
     state = copy.deepcopy(valid_state)
     state["interfaces"]["vxlan_leaf_1"]["Ethernet1/3"]["admin_state"] = False
     state["vpc_pairs"] = []
-    resolved = resolve_execution(confirmed, "integration.nd_interface_vpc_access")
+    resolved = resolve_execution(confirmed, "smoke.nd_interface_vpc_access")
     operations = plan_topology_delta(confirmed, resolved, state)
     assert any(item["operation"] == "ensure_interface" and item["switch_ref"] == "vxlan_leaf_1" for item in operations)
     vpc = [item for item in operations if item["operation"] == "ensure_virtual_vpc"]
