@@ -14,7 +14,7 @@
     target_fabric: "{{ nd_network_mcfg_parent_fabric }}"
     nd_network_mcfg_delete_seed:
       - network_name: ansible-nd-net-mcfg-deleted
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 271 }}"
         vlan_id: "{{ nd_network_base_vlan + 271 }}"
         vlan_name: ansible_nd_net_mcfg_deleted
@@ -23,7 +23,7 @@
           - fabric_name: "{{ nd_network_mcfg_child_fabric }}"
     nd_network_mcfg_delete_request:
       - network_name: ansible-nd-net-mcfg-deleted
-        is_l2only: true
+        layer: layer2
   delegate_to: localhost
   tags:
     - mcfg

@@ -82,11 +82,6 @@ class PreProvisionSwitchModel(NDBaseModel):
     )
 
     # --- bootstrapBase fields (optional) ---
-    image_policy: str | None = Field(
-        default=None,
-        alias="imagePolicy",
-        description="Image policy associated with the switch during pre-provision",
-    )
     switch_role: SwitchRole | None = Field(
         default=None,
         alias="switchRole",

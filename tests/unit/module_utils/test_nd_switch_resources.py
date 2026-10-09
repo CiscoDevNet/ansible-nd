@@ -309,10 +309,13 @@ def _bootstrap_entry(serial="POAP1", hostname="api-host"):
         "serialNumber": serial,
         "model": "N9K-C93180YC-EX",
         "softwareVersion": "10.3(1)",
+        "softwareImage": "nxos64-cs.10.3.1.F.bin",
         "hostname": hostname,
         "gatewayIpMask": "192.0.2.1/24",
         "fingerPrint": "fingerprint",
         "publicKey": "public-key",
+        "dhcpBootstrapIp": "192.0.2.50",
+        "seedSwitch": False,
         "switchRole": "spine",
         "data": {"models": ["N9K-C93180YC-EX"], "gatewayIpMask": "192.0.2.1/24"},
     }
@@ -1212,10 +1215,25 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     fabric_ops = RecordingFabricOps()
     handler = POAPHandler(ctx, fabric_ops, RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
 
-    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+    handler.handle(
+        [
+            _cfg(
+                "192.0.2.10",
+                poap={
+                    "serial_number": "POAP1",
+                    "hostname": "user-host",
+                    "software_image": "nxos64-cs.10.6.4.M.bin",
+                },
+            )
+        ]
+    )
     assert ctx.results.metadata[-1]["action"] == "bootstrap"
     assert ctx.results.diffs[-1]["switches"][0]["hostname"] == "api-host"
     assert ctx.results.diffs[-1]["switches"][0]["switchRole"] == "spine"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareImage"] == "nxos64-cs.10.6.4.M.bin"
+    assert ctx.results.diffs[-1]["switches"][0]["dhcpBootstrapIp"] == "192.0.2.50"
+    assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
+    assert "reAdd" not in ctx.results.diffs[-1]["switches"][0]
     assert fabric_ops.post_add_calls[-1].context == "bootstrap"
 
     preprov_cfg = _cfg(
@@ -1231,6 +1249,9 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     handler.handle([preprov_cfg])
     assert ctx.results.metadata[-1]["action"] == "preprovision"
     assert ctx.results.diffs[-1]["switches"][0]["serialNumber"] == "PRE1"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
+    assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
 
     swap_cfg = _cfg(
         "192.0.2.30",
@@ -1248,6 +1269,18 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     swap_handler.handle([swap_cfg], [_sw("192.0.2.30", "OLD1")])
     assert cache.refreshes == 1
     assert [entry["action"] for entry in swap_handler.ctx.results.metadata] == ["swap_serial", "bootstrap"]
+
+
+def test_poap_handler_omits_software_image_when_not_requested():
+    """POAP import sends softwareImage only when the playbook selects one."""
+    bootstrap = _bootstrap_entry("POAP1")
+    ctx = _ctx(results=Results())
+    handler = POAPHandler(ctx, RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
+
+    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
 
 
 def test_poap_handler_requires_bootstrap_identity_fields():
@@ -1334,10 +1367,11 @@ def test_rma_handler_requires_bootstrap_identity_fields():
 def test_rma_handler_full_success_and_ready_finalize_failures():
     """RMA success submits provision, waits for replacement, saves credentials, and finalizes."""
     old_switch = _sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="maintenance", hostname="old-host")
-    cfg = _cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1", "image_policy": "gold"}])
+    cfg = _cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])
     fabric_ops = RecordingFabricOps()
     wait = RecordingWait()
-    ctx = _ctx(results=Results())
+    nd = FakeND()
+    ctx = _ctx(nd=nd, results=Results())
     handler = RMAHandler(ctx, fabric_ops, wait, StaticBootstrapCache({"NEW1": _bootstrap_entry("NEW1")}))
 
     handler.handle([cfg], [old_switch])
@@ -1345,6 +1379,9 @@ def test_rma_handler_full_success_and_ready_finalize_failures():
     assert ctx.results.metadata[0]["action"] == "rma"
     assert ctx.results.diffs[0]["old_switch_id"] == "OLD1"
     assert ctx.results.diffs[0]["new_switch_id"] == "NEW1"
+    assert "oldSwitchId" not in nd.calls[0]["data"]
+    assert "imagePolicy" not in nd.calls[0]["data"]
+    assert nd.calls[0]["data"]["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
     assert wait.rma_calls == [["NEW1"]]
     assert fabric_ops.saved_credentials == [[("NEW1", cfg)]]
     assert fabric_ops.finalized == [["NEW1"]]
@@ -1599,6 +1636,50 @@ def test_exit_json_gathered_allows_read_side_platform_values():
     assert final["gathered"][0]["seed_ip"] == "192.0.2.10"
     assert final["gathered"][0]["platform_type"] == "sonic"
     assert final["gathered"][0]["password"] == "<password>"
+
+
+@pytest.mark.parametrize("output_level,verbosity", [("normal", 0), ("debug", 0), ("normal", 2), ("normal", 3)])
+def test_exit_json_filters_api_details_and_preserves_switch_output(output_level, verbosity):
+    resource = _resource(state="merged", check_mode=True, existing=[_sw("192.0.2.10", "SERIAL1")], output_level=output_level)
+    resource.module._verbosity = verbosity
+    cfg = _cfg("192.0.2.11")
+    resource.proposed_cfgs = [cfg]
+    resource._plan = _empty_plan(to_add=[cfg])
+    for level in (2, 3, 4):
+        resource.results.action = "query"
+        resource.results.operation_type = OperationType.QUERY
+        resource.results.path_current = f"/api/v1/test/{level}"
+        resource.results.verb_current = HttpVerbEnum.GET
+        resource.results.verbosity_level_current = level
+        resource.results.payload_current = {"level": level}
+        resource.results.response_current = {"level": level}
+        resource.results.result_current = {"success": True, "changed": False}
+        resource.results.diff_current = {"level": level}
+        resource.results.register_api_call()
+
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is True
+    assert final["before"][0]["seed_ip"] == "192.0.2.10"
+    assert final["after"][1]["seed_ip"] == "192.0.2.11"
+    assert final["diff"][0]["_action"] == "added"
+    for key in ("path", "verb", "payload", "response", "result", "metadata", "verbosity_level"):
+        assert key not in final
+    effective_verbosity = max(verbosity, 3) if output_level == "debug" else verbosity
+    if effective_verbosity < 2:
+        assert not any(key.startswith("api_") for key in final)
+    else:
+        levels = [level for level in (2, 3, 4) if level <= effective_verbosity]
+        assert final["api_paths"] == [f"/api/v1/test/{level}" for level in levels]
+        assert len(final["api_verbs"]) == len(levels)
+        if effective_verbosity == 2:
+            assert "api_payload" not in final
+        else:
+            assert final["api_payload"] == [{"level": level} for level in levels]
+            assert [response["level"] for response in final["api_response"]] == levels
+            assert [diff["level"] for diff in final["api_diff"]] == levels
+            assert len(final["api_result"]) == len(final["api_metadata"]) == len(levels)
 
 
 def test_exit_json_check_mode_uses_synthetic_before_after_diff():

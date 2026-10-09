@@ -20,15 +20,15 @@
       - ndnetmsdstgomit
     target_network_delete_config:
       - network_name: ndnetmsdstgcreate
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetmsdstgadd
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetmsdstgremove
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetmsdstgdetach
-        is_l2only: true
+        layer: layer2
       - network_name: ndnetmsdstgomit
-        is_l2only: true
+        layer: layer2
     nd_network_msd_staged_primary_attach_block: >-
       {{
         [
@@ -95,7 +95,7 @@
   ansible.builtin.set_fact:
     nd_network_msd_staged_seed:
       - network_name: ndnetmsdstgadd
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 280 }}"
         vlan_id: "{{ nd_network_base_vlan + 280 }}"
         vlan_name: ndnetmsdstgadd_vlan
@@ -104,7 +104,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ndnetmsdstgremove
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 281 }}"
         vlan_id: "{{ nd_network_base_vlan + 281 }}"
         vlan_name: ndnetmsdstgremove_vlan
@@ -113,7 +113,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ndnetmsdstgdetach
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 284 }}"
         vlan_id: "{{ nd_network_base_vlan + 284 }}"
         vlan_name: ndnetmsdstgdetach_vlan
@@ -122,7 +122,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ndnetmsdstgomit
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 282 }}"
         vlan_id: "{{ nd_network_base_vlan + 282 }}"
         vlan_name: ndnetmsdstgomit_vlan
@@ -132,7 +132,7 @@
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_staged_create_config:
       - network_name: ndnetmsdstgcreate
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 283 }}"
         vlan_id: "{{ nd_network_base_vlan + 283 }}"
         vlan_name: ndnetmsdstgcreate_vlan
@@ -142,7 +142,7 @@
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_staged_config:
       - network_name: ndnetmsdstgcreate
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 283 }}"
         vlan_id: "{{ nd_network_base_vlan + 283 }}"
         vlan_name: ndnetmsdstgcreate_vlan
@@ -151,7 +151,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ndnetmsdstgadd
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 280 }}"
         vlan_id: "{{ nd_network_base_vlan + 280 }}"
         vlan_name: ndnetmsdstgadd_vlan
@@ -160,7 +160,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ndnetmsdstgremove
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 281 }}"
         vlan_id: "{{ nd_network_base_vlan + 281 }}"
         vlan_name: ndnetmsdstgremove_vlan
@@ -169,7 +169,7 @@
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ndnetmsdstgdetach
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 284 }}"
         vlan_id: "{{ nd_network_base_vlan + 284 }}"
         vlan_name: ndnetmsdstgdetach_vlan

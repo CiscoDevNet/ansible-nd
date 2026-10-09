@@ -29,6 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     OperationStatus,
     VlanNetworkType,
     VlanPoolDomainType,
+    public_vlan_network_type,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
@@ -109,7 +110,6 @@ class DefaultL2FabricDataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     stretch: str | None = Field(default=None, description="Stretch border gateway list name")
-    enable_ir: bool | None = Field(default=False, alias="enableIr")
     multicast_group: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
 
@@ -123,23 +123,26 @@ class DefaultL2DataModel(NDNestedModel):
     """Default L2 network data."""
 
     identifiers: ClassVar[list[str]] = []
+
     vlan_name: str | None = Field(default=None, alias="vlanName", description="VLAN name")
-    rt_auto: bool | None = Field(default=None, alias="rtAuto", description="Enable automatic route-target")
-    x_connect: bool | None = Field(default=None, alias="xConnect", description="Enable xConnect")
-    fabric_data: DefaultL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
+    x_connect: bool | None = Field(default=False, alias="xConnect", description="Enable xConnect")
+    fabric_data: DefaultL2FabricDataModel | None = Field(default=None, alias="fabricData")
 
 
 class VxlanL3FabricDataModel(NDNestedModel):
     """VXLAN L3 fabric-specific data."""
 
     identifiers: ClassVar[list[str]] = []
+
     dhcp_servers: list[DhcpServerModel | dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
-    gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
-    ipv4_trm: bool | None = Field(default=None, alias="ipv4Trm")
-    ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    gateway_on_border: bool | None = Field(default=False, alias="gatewayOnBorder")
+    ipv4_trm: bool | None = Field(default=False, alias="ipv4Trm")
+    ipv6_trm: bool | None = Field(default=False, alias="ipv6Trm")
 
     @field_validator("igmp_version", mode="before")
     @classmethod
@@ -155,7 +158,9 @@ class DefaultL3FabricDataModel(NDNestedModel):
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion", ge=1, le=3)
     netflow: bool | None = Field(default=False, description="Enable netflow")
-    gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    gateway_on_border: bool | None = Field(default=False, alias="gatewayOnBorder")
 
     @field_validator("igmp_version", mode="before")
     @classmethod
@@ -175,7 +180,7 @@ class DefaultL3DataModel(NDNestedModel):
     mtu: int | None = Field(default=9216, ge=68, le=9216)
     arp_suppression: bool | None = Field(default=False, alias="arpSuppression")
     routing_tag: int | None = Field(default=None, alias="routingTag")
-    fabric_data: VxlanL3FabricDataModel | DefaultL3FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
+    fabric_data: VxlanL3FabricDataModel | None = Field(default=None, alias="fabricData")
 
     @field_validator("gateway_ipv4_address", mode="before")
     @classmethod
@@ -206,6 +211,22 @@ class DefaultL3DataModel(NDNestedModel):
     def validate_mtu(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_mtu(v)
 
+    def to_layer2_payload(self, **kwargs) -> dict[str, Any]:
+        """
+        # Summary
+
+        Export VLAN NetFlow settings without Layer-3-only properties.
+
+        ## Raises
+
+        None
+        """
+        if self.fabric_data is None:
+            return {}
+        fabric_data = self.fabric_data.to_payload(**kwargs)
+        applicable = {key: fabric_data[key] for key in ("netflow", "l2NetflowMonitor") if key in fabric_data}
+        return {"fabricData": applicable} if applicable else {}
+
 
 class ClassicOrRoutedL2FabricDataModel(NDNestedModel):
     """Fabric-specific configuration for classic/routed L2 data."""
@@ -219,7 +240,7 @@ class ClassicOrRoutedL2DataModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     vlan_name: str | None = Field(default=None, alias="vlanName")
-    fabric_data: ClassicOrRoutedL2FabricDataModel | dict[str, Any] | None = Field(default=None, alias="fabricData")
+    fabric_data: ClassicOrRoutedL2FabricDataModel | None = Field(default=None, alias="fabricData")
 
 
 class ClassicOrRoutedL3DataModel(NDNestedModel):
@@ -242,7 +263,6 @@ class ClassicOrRoutedL3DataModel(NDNestedModel):
     ospf_authentication_key: str | None = Field(default=None, alias="ospfAuthenticationKey")
     ospf_passive_interface: bool | None = Field(default=True, alias="ospfPassiveInterface")
     ospfv3_passive_interface: bool | None = Field(default=True, alias="ospfv3PassiveInterface")
-    netflow_sampler: str | None = Field(default=None, alias="netflowSampler")
     gateway_ipv4_address: str | None = Field(default=None, alias="gatewayIpv4Address")
     active_primary_interface_ipv4: str | None = Field(default=None, alias="activePrimaryInterfaceIpv4")
     standby_backup_interface_ipv4: str | None = Field(default=None, alias="standbyBackupInterfaceIpv4")
@@ -261,8 +281,8 @@ class ClassicOrRoutedL3DataModel(NDNestedModel):
     virtual_mac_address: str | None = Field(default=None, alias="virtualMacAddress")
     vrrp_group: bool | None = Field(default=True, alias="vrrpGroup")
     netflow: bool | None = Field(default=False)
-    l2_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
-    l3_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
+    vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
+    interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
 
     @field_validator(
         "gateway_ipv4_address",
@@ -317,6 +337,7 @@ class NetworkCommonModel(NDBaseModel):
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set[str]] = {"network_status"}
     payload_exclude_fields: ClassVar[set[str]] = {"network_status"}
+    reverse_diff_exclude: ClassVar[set[str]] = {"displayName", "primaryNetworkName", "normalNetworkName"}
 
     fabric_name: str | None = Field(default=None, alias="fabricName")
     network_name: str = Field(default=..., alias="networkName", max_length=128)
@@ -324,18 +345,12 @@ class NetworkCommonModel(NDBaseModel):
     display_name: str | None = Field(default=None, alias="displayName")
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId", ge=2, le=4094)
-    tenant_name: str | None = Field(default=None, alias="tenantName", max_length=63)
-    layer: NetworkLayer | None = Field(default=None)
+    layer: NetworkLayer | None = Field(default=None, alias="networkMode")
 
     @field_validator("network_name", mode="before")
     @classmethod
     def validate_network_name(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_network_name(v)
-
-    @field_validator("tenant_name", mode="before")
-    @classmethod
-    def validate_tenant_name(cls, v: str | None) -> str | None:
-        return NetworkValidators.validate_tenant_name(v)
 
     @field_validator("vlan_id", mode="before")
     @classmethod
@@ -347,7 +362,7 @@ class NetworkBaseModel(NetworkCommonModel):
     """Generic model for components/schemas/networkBase discriminator payloads."""
 
     network_type: NetworkType | str | None = Field(default=None, alias="networkType")
-    vlan_network_type: VlanNetworkType | str | None = Field(default=None, alias="vlanNetworkType")
+    vlan_network_type: VlanNetworkType | str | None = Field(default=VlanNetworkType.NORMAL, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
     primary_network_name: str | None = Field(default=None, alias="primaryNetworkName")
     normal_network_id: int | None = Field(default=None, alias="normalNetworkId")
@@ -360,8 +375,28 @@ class NetworkBaseModel(NetworkCommonModel):
     member_fabric_network_info: list[MemberFabricNetworkInfoModel] | None = Field(default=None, alias="memberFabricNetworkInfo")
     network_template_name: str | None = Field(default=None, alias="networkTemplateName")
     network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
+    service_network_template_name: str | None = Field(default=None, alias="serviceNetworkTemplateName")
     network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     interface_group_names: list[str] | None = Field(default=None, alias="interfaceGroupNames")
+
+    @classmethod
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "NetworkBaseModel":
+        """
+        # Summary
+
+        Construct the concrete Network model selected by the prepared configuration's Network type.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If the configuration does not satisfy the selected Network schema.
+        """
+        if cls is NetworkBaseModel:
+            model_cls = _NETWORK_MODEL_BY_TYPE.get(ansible_config.get("network_type") or ansible_config.get("networkType"))
+            if model_cls is not None:
+                return model_cls.from_config(ansible_config, **kwargs)
+        return super().from_config(ansible_config, **kwargs)
 
     @field_validator("network_id", "primary_network_id", "normal_network_id", mode="before")
     @classmethod
@@ -369,49 +404,266 @@ class NetworkBaseModel(NetworkCommonModel):
         return NetworkValidators.validate_network_id(v)
 
     @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for gathered-output pruning."""
+        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
+            network_parent_argument_spec,
+        )
+
+        return dict(config=dict(type="list", elements="dict", options=network_parent_argument_spec()))
+
+    def to_config(self, **kwargs) -> dict[str, Any]:
+        data = super().to_config(**kwargs)
+        if "vlan_network_type" in data:
+            data["vlan_network_type"] = public_vlan_network_type(data["vlan_network_type"])
+        return data
+
+    def to_gathered_config(self, **kwargs) -> dict[str, Any]:
+        """Return a replay-safe public config shape for gathered output."""
+        data = self.to_config(**kwargs)
+        l2_data = data.pop("l2_data", None)
+        l3_data = data.pop("l3_data", None)
+        for key in (
+            "fabric_name",
+            "network_status",
+            "aci_data",
+            "service_data",
+            "member_fabric_network_info",
+            "normal_network_id",
+            "normal_network_name",
+            "primary_network_name",
+            "network_type",
+            "interface_group_names",
+        ):
+            data.pop(key, None)
+
+        self._flatten_l2_data(data, l2_data)
+        if self.vlan_network_type in (VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value, VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value):
+            for key in (
+                "vrf_name",
+                "x_connect",
+                "ds_vni",
+                "network_template_name",
+                "network_extension_template_name",
+                "service_network_template_name",
+                "network_template_config",
+            ):
+                data.pop(key, None)
+        elif self.layer == NetworkLayer.LAYER2.value and isinstance(self.l3_data, DefaultL3DataModel):
+            applicable = self.l3_data.to_layer2_payload(exclude_unset=True)
+            self._flatten_l3_data(data, applicable)
+        elif self.layer != NetworkLayer.LAYER2.value or self.network_type == NetworkType.USER_DEFINED.value:
+            self._flatten_l3_data(data, l3_data)
+        return data
+
+    @classmethod
+    def _flatten_l2_data(cls, data: dict[str, Any], l2_data: Any) -> None:
+        l2 = cls._nested_config(l2_data)
+        if not l2:
+            return
+        cls._copy_if_present(data, l2, "vlan_name", "vlan_name", "vlanName")
+        cls._copy_if_present(data, l2, "x_connect", "x_connect", "xConnect")
+        fabric_data = cls._nested_config(l2.get("fabric_data") or l2.get("fabricData"))
+        cls._copy_if_present(data, fabric_data, "multicast_group_address", "multicast_group", "multicastGroup")
+        cls._copy_if_present(data, fabric_data, "ds_vni", "ds_vni", "dsVni")
+
+    @classmethod
+    def _flatten_l3_data(cls, data: dict[str, Any], l3_data: Any) -> None:
+        l3 = cls._nested_config(l3_data)
+        if not l3:
+            return
+        for target, *source in (
+            ("gateway_ipv4_address", "gateway_ipv4_address", "gatewayIpv4Address"),
+            ("gateway_ipv6_address", "gateway_ipv6_address", "gatewayIpv6Address"),
+            ("secondary_gateway_ipv4_collection", "secondary_gateway_ipv4_collection", "secondaryGatewayIpv4Collection"),
+            ("secondary_gateway_ipv6_collection", "secondary_gateway_ipv6_collection", "secondaryGatewayIpv6Collection"),
+            ("vlan_intf_desc", "vlan_interface_description", "vlanInterfaceDescription"),
+            ("mtu", "mtu"),
+            ("arp_suppression", "arp_suppression", "arpSuppression"),
+            ("routing_tag", "routing_tag", "routingTag"),
+        ):
+            cls._copy_if_present(data, l3, target, *source)
+
+        fabric_data = cls._nested_config(l3.get("fabric_data") or l3.get("fabricData"))
+        for target, *source in (
+            ("dhcp_servers", "dhcp_servers", "dhcpServers"),
+            ("loopback_id", "loopback_id", "loopbackId"),
+            ("igmp_version", "igmp_version", "igmpVersion"),
+            ("netflow_enable", "netflow"),
+            ("vlan_netflow_monitor", "vlan_netflow_monitor", "l2NetflowMonitor"),
+            ("interface_netflow_monitor", "interface_netflow_monitor", "l3NetflowMonitor"),
+            ("gateway_on_border", "gateway_on_border", "gatewayOnBorder"),
+            ("trm_enable", "ipv4_trm", "ipv4Trm"),
+            ("ipv6_trm", "ipv6_trm", "ipv6Trm"),
+        ):
+            cls._copy_if_present(data, fabric_data, target, *source)
+
+    @staticmethod
+    def _nested_config(value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if hasattr(value, "to_config"):
+            return value.to_config()
+        if isinstance(value, dict):
+            return dict(value)
+        return {}
+
+    @staticmethod
+    def _copy_if_present(target: dict[str, Any], source: dict[str, Any], target_key: str, *source_keys: str) -> None:
+        for source_key in source_keys:
+            if source_key in source and source[source_key] is not None:
+                target[target_key] = source[source_key]
+                return
+
+    @classmethod
     def from_response(cls, response: dict[str, Any], **kwargs) -> "NetworkBaseModel":
+        """
+        # Summary
+
+        Select the concrete Network schema and normalize controller-only response fields.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If the response does not satisfy the selected Network schema.
+        """
+        if cls is NetworkBaseModel:
+            model_cls = _NETWORK_MODEL_BY_TYPE.get(response.get("networkType") or response.get("network_type"))
+            if model_cls is not None:
+                return model_cls.from_response(response, **kwargs)
         normalized = dict(response)
         if "layer" not in normalized and "networkMode" in normalized:
             normalized["layer"] = normalized["networkMode"]
         l2_data = normalized.get("l2Data")
-        if isinstance(l2_data, dict) and "rtAuto" not in l2_data and "disableRtAuto" in l2_data:
+        if isinstance(l2_data, dict):
             l2_data = dict(l2_data)
-            l2_data["rtAuto"] = not l2_data["disableRtAuto"]
+            l2_data.pop("disableRtAuto", None)
+            fabric_data = l2_data.get("fabricData")
+            if isinstance(fabric_data, dict):
+                fabric_data = dict(fabric_data)
+                fabric_data.pop("enableIr", None)
+                l2_data["fabricData"] = fabric_data
             normalized["l2Data"] = l2_data
+        if (
+            normalized.get("layer") == NetworkLayer.LAYER2.value
+            and normalized.get("vlanNetworkType") == VlanNetworkType.PRIVATE_PRIMARY.value
+            and cls._is_layer2_default_l3_data(normalized.get("l3Data"))
+        ):
+            normalized.pop("l3Data", None)
         return super().from_response(normalized, **kwargs)
+
+    @staticmethod
+    def _is_layer2_default_l3_data(l3_data: Any) -> bool:
+        """
+        # Summary
+
+        Return True when an L2 network readback contains only controller-supplied L3 defaults.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(l3_data, dict):
+            return False
+        defaults = dict(l3_data)
+        fabric_data = defaults.pop("fabricData", None)
+        if isinstance(fabric_data, dict):
+            fabric_defaults = dict(fabric_data)
+            for key in ("gatewayOnBorder", "ipv4Trm", "ipv6Trm", "netflow"):
+                if fabric_defaults.get(key) is False:
+                    fabric_defaults.pop(key)
+            for key in ("dhcpServers", "loopbackId", "igmpVersion", "l2NetflowMonitor", "l3NetflowMonitor"):
+                if fabric_defaults.get(key) in (None, "", [], {}):
+                    fabric_defaults.pop(key, None)
+            if fabric_defaults:
+                return False
+        elif fabric_data not in (None, "", [], {}):
+            return False
+
+        for key, value in {
+            "arpSuppression": False,
+            "mtu": 9216,
+        }.items():
+            if defaults.get(key) == value:
+                defaults.pop(key)
+        for key in (
+            "gatewayIpv4Address",
+            "gatewayIpv6Address",
+            "secondaryGatewayIpv4Collection",
+            "secondaryGatewayIpv6Collection",
+            "vlanInterfaceDescription",
+            "routingTag",
+        ):
+            if defaults.get(key) in (None, "", [], {}):
+                defaults.pop(key, None)
+        return not defaults
 
 
 class VxlanNetworkModel(NetworkBaseModel):
     """VXLAN network model."""
 
     network_type: Literal[NetworkType.VXLAN] = Field(default=NetworkType.VXLAN, alias="networkType")
+    l2_data: DefaultL2DataModel | None = Field(default=None, alias="l2Data")
+    l3_data: DefaultL3DataModel | None = Field(default=None, alias="l3Data")
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """
+        # Summary
+
+        Compare only mode-applicable VXLAN data without changing payloads or sparse input intent.
+
+        Plain Layer 2 retains VLAN NetFlow settings but ignores Layer-3-only readback.
+        ND omits cleared DHCP and secondary gateway collections from GET responses. Full comparison
+        exports represent them as empty lists; sparse proposed exports retain only supplied fields.
+
+        ## Raises
+
+        None
+        """
+        data = super().to_diff_dict(**kwargs)
+        if self.layer == NetworkLayer.LAYER2.value:
+            l3_data = self.l3_data.to_layer2_payload(exclude_unset=kwargs.get("exclude_unset", False)) if self.l3_data is not None else {}
+            if not kwargs.get("exclude_unset", False):
+                l3_data.setdefault("fabricData", {}).setdefault("netflow", False)
+            if l3_data:
+                data["l3Data"] = l3_data
+            else:
+                data.pop("l3Data", None)
+            return data
+        if not kwargs.get("exclude_unset", False):
+            l3_data = data.setdefault("l3Data", {})
+            l3_data.setdefault("secondaryGatewayIpv4Collection", [])
+            l3_data.setdefault("secondaryGatewayIpv6Collection", [])
+            l3_data.setdefault("fabricData", {}).setdefault("dhcpServers", [])
+        return data
 
 
-class VxlanIbgpNetworkModel(NetworkBaseModel):
+class VxlanIbgpNetworkModel(VxlanNetworkModel):
     """VXLAN iBGP network model."""
 
     network_type: Literal[NetworkType.VXLAN_IBGP] = Field(default=NetworkType.VXLAN_IBGP, alias="networkType")
 
 
-class VxlanEbgpNetworkModel(NetworkBaseModel):
+class VxlanEbgpNetworkModel(VxlanNetworkModel):
     """VXLAN eBGP network model."""
 
     network_type: Literal[NetworkType.VXLAN_EBGP] = Field(default=NetworkType.VXLAN_EBGP, alias="networkType")
 
 
-class VxlanCampusNetworkModel(NetworkBaseModel):
+class VxlanCampusNetworkModel(VxlanNetworkModel):
     """VXLAN campus network model."""
 
     network_type: Literal[NetworkType.VXLAN_CAMPUS] = Field(default=NetworkType.VXLAN_CAMPUS, alias="networkType")
 
 
-class AimlVxlanIbgpNetworkModel(NetworkBaseModel):
+class AimlVxlanIbgpNetworkModel(VxlanNetworkModel):
     """AIML VXLAN iBGP network model."""
 
     network_type: Literal[NetworkType.AIML_VXLAN_IBGP] = Field(default=NetworkType.AIML_VXLAN_IBGP, alias="networkType")
 
 
-class AimlVxlanEbgpNetworkModel(NetworkBaseModel):
+class AimlVxlanEbgpNetworkModel(VxlanNetworkModel):
     """AIML VXLAN eBGP network model."""
 
     network_type: Literal[NetworkType.AIML_VXLAN_EBGP] = Field(default=NetworkType.AIML_VXLAN_EBGP, alias="networkType")
@@ -422,6 +674,8 @@ class RoutedNetworkModel(NetworkBaseModel):
 
     network_type: Literal[NetworkType.ROUTED] = Field(default=NetworkType.ROUTED, alias="networkType")
     layer: ClassicNetworkLayer | None = Field(default=None)
+    l2_data: ClassicOrRoutedL2DataModel | None = Field(default=None, alias="l2Data")
+    l3_data: ClassicOrRoutedL3DataModel | None = Field(default=None, alias="l3Data")
 
 
 class AimlRoutedNetworkModel(RoutedNetworkModel):
@@ -440,6 +694,8 @@ class CustomNetworkModel(NetworkBaseModel):
     """User-defined/custom network model."""
 
     network_type: Literal[NetworkType.USER_DEFINED] = Field(default=NetworkType.USER_DEFINED, alias="networkType")
+    l2_data: dict[str, Any] | None = Field(default=None, alias="l2Data")
+    l3_data: dict[str, Any] | None = Field(default=None, alias="l3Data")
 
 
 class VxlanAciNetworkModel(NetworkBaseModel):
@@ -465,6 +721,20 @@ class VxlanExternalNetworkModel(NetworkBaseModel):
     """VXLAN external network model."""
 
     network_type: Literal[NetworkType.VXLAN_EXTERNAL] = Field(default=NetworkType.VXLAN_EXTERNAL, alias="networkType")
+
+
+_NETWORK_MODEL_BY_TYPE = {
+    NetworkType.VXLAN.value: VxlanNetworkModel,
+    NetworkType.VXLAN_IBGP.value: VxlanIbgpNetworkModel,
+    NetworkType.VXLAN_EBGP.value: VxlanEbgpNetworkModel,
+    NetworkType.VXLAN_CAMPUS.value: VxlanCampusNetworkModel,
+    NetworkType.AIML_VXLAN_IBGP.value: AimlVxlanIbgpNetworkModel,
+    NetworkType.AIML_VXLAN_EBGP.value: AimlVxlanEbgpNetworkModel,
+    NetworkType.ROUTED.value: RoutedNetworkModel,
+    NetworkType.AIML_ROUTED.value: AimlRoutedNetworkModel,
+    NetworkType.CLASSIC_LAN_ENHANCED.value: ClassicLanEnhancedNetworkModel,
+    NetworkType.USER_DEFINED.value: CustomNetworkModel,
+}
 
 
 class NetworkCreateRequestModel(NDBaseModel):

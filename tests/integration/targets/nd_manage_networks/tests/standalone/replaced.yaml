@@ -14,23 +14,20 @@
       - ansible-nd-net-replaced
     target_network_delete_config:
       - network_name: ansible-nd-net-replaced
-        is_l2only: true
+        layer: layer2
     nd_network_replace_base:
       - network_name: ansible-nd-net-replaced
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 3 }}"
         vlan_id: "{{ nd_network_base_vlan + 3 }}"
         vlan_name: ansible_nd_net_replaced_base
-        enable_ir: false
         deploy: false
     nd_network_replace_config:
       - network_name: ansible-nd-net-replaced
-        is_l2only: true
+        layer: layer2
         network_id: "{{ nd_network_base_id + 3 }}"
         vlan_id: "{{ nd_network_base_vlan + 3 }}"
         vlan_name: ansible_nd_net_replaced_updated
-        rt_auto: true
-        enable_ir: false
         deploy: false
   delegate_to: localhost
   tags: replaced

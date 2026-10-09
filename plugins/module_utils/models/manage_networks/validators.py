@@ -7,8 +7,6 @@
 """Common validators for network-related fields."""
 
 from __future__ import annotations
-
-import re
 from ipaddress import ip_address, ip_network
 
 
@@ -130,20 +128,6 @@ class NetworkValidators:
             return None
         if len(v) > 128:
             raise ValueError(f"Network name must not exceed 128 characters: {v}")
-        return v
-
-    @staticmethod
-    def validate_tenant_name(v: str | None) -> str | None:
-        """Validate tenant name format and length."""
-        if v is None:
-            return None
-        v = str(v).strip()
-        if not v:
-            return None
-        if len(v) > 63:
-            raise ValueError(f"Tenant name must not exceed 63 characters: {v}")
-        if not re.match(r"^[A-Za-z0-9_-]+$", v):
-            raise ValueError(f"Tenant name must contain only letters, digits, underscores, or hyphens: {v}")
         return v
 
     @staticmethod
