@@ -496,6 +496,193 @@
       tags: [test_fg_validation]
 
     #############################################################################
+    # TEST 8: STATE GATHERED - Read-only gather-all behavior
+    #############################################################################
+    - name: "TEST 8a: Gather all VXLAN fabric groups"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+      register: fg_gathered_result
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8a: Verify gathered result"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_result is not failed
+          - fg_gathered_result is not changed
+          - fg_gathered_result.before == []
+          - fg_gathered_result.after == []
+          - fg_gathered_result.gathered is defined
+          - fg_gathered_result.gathered is sequence
+          - fg_gathered_result.gathered | length > 0
+          - fg_vxlan_test_merged in (fg_gathered_result.gathered | map(attribute='fabric_name') | list)
+          - fg_gathered_result.diff is not defined
+          - fg_gathered_result.proposed is not defined
+        fail_msg: "Gathered state did not return the expected read-only result"
+        success_msg: "Gathered state returned VXLAN fabric groups without changes"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8b: Gather with explicit empty config"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+        config: []
+      register: fg_gathered_empty_config
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8b: Verify empty config is equivalent to omitted config"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_empty_config is not failed
+          - fg_gathered_empty_config is not changed
+          - fg_gathered_empty_config.before == []
+          - fg_gathered_empty_config.after == []
+          - >-
+            (fg_gathered_empty_config.gathered | sort(attribute='fabric_name'))
+            ==
+            (fg_gathered_result.gathered | sort(attribute='fabric_name'))
+        fail_msg: "Explicit empty config produced a different gathered result"
+        success_msg: "Explicit empty config is equivalent to omitted config"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8c: Gather all VXLAN fabric groups in check mode"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+      check_mode: true
+      register: fg_gathered_check_mode
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8c: Verify check-mode gathered result"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_check_mode is not failed
+          - fg_gathered_check_mode is not changed
+          - fg_gathered_check_mode.before == []
+          - fg_gathered_check_mode.after == []
+          - fg_gathered_check_mode.diff is not defined
+          - fg_gathered_check_mode.proposed is not defined
+          - >-
+            (fg_gathered_check_mode.gathered | sort(attribute='fabric_name'))
+            ==
+            (fg_gathered_result.gathered | sort(attribute='fabric_name'))
+        fail_msg: "Check mode produced a different gathered result"
+        success_msg: "Check mode and normal mode gathered results are identical"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8d: Reject filtering config with gathered state"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+        config:
+          - fabric_name: "{{ fg_vxlan_test_merged }}"
+      register: fg_gathered_with_config
+      ignore_errors: true
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8d: Verify gathered rejects filtering config"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_with_config is failed
+          - "'currently supports gather-all only' in fg_gathered_with_config.msg"
+        fail_msg: "Gathered state unexpectedly accepted filtering config"
+        success_msg: "Gathered state correctly rejected filtering config"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8e: Gather with explicitly disabled config actions"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+        config_actions:
+          save: false
+          deploy: false
+      register: fg_gathered_actions_disabled
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8e: Verify disabled config actions are accepted"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_actions_disabled is not failed
+          - fg_gathered_actions_disabled is not changed
+          - >-
+            (fg_gathered_actions_disabled.gathered | sort(attribute='fabric_name'))
+            ==
+            (fg_gathered_result.gathered | sort(attribute='fabric_name'))
+        fail_msg: "Gathered state rejected explicitly disabled config actions"
+        success_msg: "Gathered state accepts explicitly disabled config actions"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8f: Reject save during gathered state"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+        config_actions:
+          save: true
+      register: fg_gathered_save_enabled
+      ignore_errors: true
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8f: Verify save is rejected"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_save_enabled is failed
+          - >-
+            "config_actions.save/config_actions.deploy are not allowed"
+            in fg_gathered_save_enabled.msg
+        fail_msg: "Gathered state unexpectedly accepted config_actions.save=true"
+        success_msg: "Gathered state correctly rejected config_actions.save=true"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8g: Reject deploy during gathered state"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: gathered
+        config_actions:
+          save: true
+          deploy: true
+      register: fg_gathered_deploy_enabled
+      ignore_errors: true
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8g: Verify deploy is rejected"
+      ansible.builtin.assert:
+        that:
+          - fg_gathered_deploy_enabled is failed
+          - >-
+            "config_actions.save/config_actions.deploy are not allowed"
+            in fg_gathered_deploy_enabled.msg
+        fail_msg: "Gathered state unexpectedly accepted config_actions.deploy=true"
+        success_msg: "Gathered state correctly rejected config_actions.deploy=true"
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8h: Verify write states reject missing config"
+      cisco.nd.nd_manage_fabric_group_vxlan:
+        <<: *nd_info
+        state: "{{ item }}"
+      loop:
+        - merged
+        - replaced
+        - overridden
+        - deleted
+      register: fg_missing_write_config
+      ignore_errors: true
+      tags: [test_fg_gathered]
+
+    - name: "TEST 8h: Assert every write state requires config"
+      ansible.builtin.assert:
+        that:
+          - fg_missing_write_config.results | length == 4
+          - >-
+            fg_missing_write_config.results
+            | selectattr('failed', 'defined')
+            | selectattr('failed', 'equalto', true)
+            | list
+            | length == 4
+        fail_msg: "At least one write state accepted an omitted config"
+        success_msg: "All write states require config"
+      tags: [test_fg_gathered]
+
+    #############################################################################
     # FINAL CLEANUP - Clean up all test fabric groups
     #############################################################################
     - name: "CLEANUP: Delete all test fabric groups"
@@ -544,6 +731,16 @@
 
           TEST 7: FORMAT VALIDATION
             - Malformed input rejected: {{ 'PASSED' if (fg_bad_ip is failed and fg_bad_time is failed and fg_bad_key is failed) else 'FAILED' }}
+
+          TEST 8: STATE GATHERED
+            - Read-only gather-all: {{ 'PASSED' if (fg_gathered_result is not changed and fg_gathered_result.gathered is defined) else 'FAILED' }}
+            - Empty config accepted: {{ 'PASSED' if fg_gathered_empty_config is not changed else 'FAILED' }}
+            - Check-mode equivalence: {{ 'PASSED' if fg_gathered_check_mode is not changed else 'FAILED' }}
+            - Filtering config rejected: {{ 'PASSED' if fg_gathered_with_config is failed else 'FAILED' }}
+            - Disabled config actions accepted: {{ 'PASSED' if fg_gathered_actions_disabled is not changed else 'FAILED' }}
+            - Save action rejected: {{ 'PASSED' if fg_gathered_save_enabled is failed else 'FAILED' }}
+            - Deploy action rejected: {{ 'PASSED' if fg_gathered_deploy_enabled is failed else 'FAILED' }}
+            - Write states require config: {{ 'PASSED' if (fg_missing_write_config.results | selectattr('failed', 'defined') | selectattr('failed', 'equalto', true) | list | length == 4) else 'FAILED' }}
           ========================================================
       tags: [test_summary, always]
   always:

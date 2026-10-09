@@ -29,18 +29,11 @@ from typing import Literal, Optional
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
-    FabricNameMixin,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    Field,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
@@ -87,6 +80,21 @@ class _EpManageL3OutBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("l3Outs", self.l3out_name)
 
 
+class L3OutsListEndpointParams(EndpointQueryParams):
+    """Pagination parameters for the List L3Outs endpoint."""
+
+    max: int | None = Field(
+        default=None,
+        ge=1,
+        description="Number of L3Out records to return",
+    )
+    offset: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of L3Out records to skip",
+    )
+
+
 class EpManageL3OutsGet(_EpManageL3OutBase):
     """
     GET /api/v1/manage/l3Outs?fabricName={fabricName}
@@ -94,12 +102,18 @@ class EpManageL3OutsGet(_EpManageL3OutBase):
     List all L3Outs. Optionally filter by fabric name using query parameter.
     The fabricName query param is rendered into the path by the endpoint,
     keeping query-string construction out of the orchestrator.
+    The list endpoint also supports max/offset pagination.
     """
 
     class_name: Literal["EpManageL3OutsGet"] = Field(
         default="EpManageL3OutsGet",
         frozen=True,
         description="Class name for backward compatibility",
+    )
+
+    endpoint_params: L3OutsListEndpointParams = Field(
+        default_factory=L3OutsListEndpointParams,
+        description="Query parameters for the List L3Outs endpoint",
     )
 
     def set_identifiers(self, identifier: IdentifierKey = None):
@@ -112,8 +126,14 @@ class EpManageL3OutsGet(_EpManageL3OutBase):
     @property
     def path(self) -> str:
         base_path = self._build_collection_path()
+        query_parts = []
         if self.fabric_name:
-            return f"{base_path}?fabricName={quote(self.fabric_name, safe='')}"
+            query_parts.append(f"fabricName={quote(self.fabric_name, safe='')}")
+        pagination_query = self.endpoint_params.to_query_string()
+        if pagination_query:
+            query_parts.append(pagination_query)
+        if query_parts:
+            return f"{base_path}?{'&'.join(query_parts)}"
         return base_path
 
     @property
