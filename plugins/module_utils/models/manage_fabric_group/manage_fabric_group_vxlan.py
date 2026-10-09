@@ -512,7 +512,7 @@ class FabricGroupVxlanModel(NDBaseModel):
             state={
                 "type": "str",
                 "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden"],
+                "choices": ["merged", "replaced", "deleted", "overridden", "gathered"],
             },
             config={
                 "required": False,

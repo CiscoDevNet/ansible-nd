@@ -741,10 +741,12 @@ def test_ethernet_routed_interface_00170():
     """
     # Summary
 
-    Verify `get_argument_spec` exposes the required discriminators and the union of both branches' fields.
+    Verify `get_argument_spec` exposes gathered state, the required discriminators, and the union of both branches' fields.
 
     ## Test
 
+    - `config` is optional so gather-all can omit it
+    - `state` includes `gathered`
     - `network_os_type` required with choices ["nx-os", "ios-xe"]
     - `policy_type` OPTIONAL (derived from `network_os_type` when omitted) with choices ["routedHost", "iosXeRoutedHost"]
     - NX-only options (e.g. `fec`, `pim_sparse`) and shared options (`ip`, `prefix`, `vrf`) present
@@ -754,6 +756,14 @@ def test_ethernet_routed_interface_00170():
     - EthernetRoutedInterfaceModel.get_argument_spec()
     """
     spec = EthernetRoutedInterfaceModel.get_argument_spec()
+    assert spec["config"]["required"] is False
+    assert spec["state"]["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
     network_os = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]
     assert network_os["network_os_type"]["required"] is True
     assert network_os["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
