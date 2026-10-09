@@ -1,0 +1,144 @@
+---
+# Gathered state tests for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# These tests run after merged.yaml. Ethernet1/31 through Ethernet1/33 carry
+# explicit routed configuration, while Ethernet1/34 intentionally carries only
+# the routedHost template defaults and must remain outside the managed scope.
+
+- name: "GATHERED: Gather all configured routed ethernet interfaces"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify gather-all output is read-only"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+- name: "GATHERED: Select the known Ethernet1/31 test interface"
+  ansible.builtin.set_fact:
+    gathered_routed_31: >-
+      {{
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr('interface_name', 'equalto', 'Ethernet1/31')
+        | list
+      }}
+
+- name: "GATHERED: Verify configured interfaces are included and defaults-only is excluded"
+  ansible.builtin.assert:
+    that:
+      - gathered_routed_31 | length == 1
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr('interface_name', 'equalto', 'Ethernet1/32')
+        | list
+        | length == 1
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr('interface_name', 'equalto', 'Ethernet1/33')
+        | list
+        | length == 1
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr('interface_name', 'equalto', 'Ethernet1/34')
+        | list
+        | length == 0
+
+- name: "GATHERED: Verify Ethernet1/31 policy values"
+  ansible.builtin.assert:
+    that:
+      - gathered_routed_31[0].config_data.network_os.network_os_type == "nx-os"
+      - gathered_routed_31[0].config_data.network_os.policy.policy_type == "routedHost"
+      - gathered_routed_31[0].config_data.network_os.policy.admin_state == true
+      - gathered_routed_31[0].config_data.network_os.policy.ip == "10.99.31.5"
+      - gathered_routed_31[0].config_data.network_os.policy.prefix == 30
+      - gathered_routed_31[0].config_data.network_os.policy.description == "Updated routed Ethernet1/31 description"
+      - gathered_routed_31[0].config_data.network_os.policy.routing_tag == "54321"
+
+- name: "GATHERED: Verify every item has its composite identifier"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'defined')
+        | list
+        | length == nm_gathered_all.gathered | length
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('interface_name', 'defined')
+        | list
+        | length == nm_gathered_all.gathered | length
+
+- name: "GATHERED: Gather all with explicit empty config"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: []
+    state: gathered
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify empty config is equivalent to omitted config"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - nm_gathered_empty_config.gathered == nm_gathered_all.gathered
+
+- name: "GATHERED: Gather all in check mode"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  check_mode: true
+  register: cm_gathered_all
+
+- name: "GATHERED: Verify check mode is identical and read-only"
+  ansible.builtin.assert:
+    that:
+      - cm_gathered_all is not changed
+      - cm_gathered_all.gathered == nm_gathered_all.gathered
+
+- name: "GATHERED: Reuse gathered Ethernet1/31 as merged config in check mode"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ gathered_routed_31 }}"
+    state: merged
+  check_mode: true
+  register: cm_reuse_gathered
+
+- name: "GATHERED: Verify gathered output is reusable"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered is not changed
+
+- name: "GATHERED: Reject nonempty config because filtering is unsupported"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Ethernet1/31
+    state: gathered
+  register: nm_gathered_with_config
+  ignore_errors: true
+
+- name: "GATHERED: Verify nonempty config is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_with_config is failed
+      - "'currently supports gather-all only' in nm_gathered_with_config.msg"
