@@ -111,6 +111,9 @@ class NDBaseModel(BaseModel, ABC):
     # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
     # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
     # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
+    # A model used as a LIST ITEM gets one more effect from the same table (issue #598): `get_diff` matches list items
+    # bidirectionally, so a default ND injects into an item would never match the item the user wrote without it.
+    # Item values equal to their entry are therefore normalized to absent on BOTH sides, on the forward pass too.
     reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
     # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of
@@ -619,6 +622,37 @@ class NDBaseModel(BaseModel, ABC):
                     # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
                     value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
 
+    def _scrub_list_item_defaults(self, data: Dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Normalize `data` (an aliased dump of `self`) for list-item matching (issue #598), in place: inside every list of
+        `NDBaseModel` items, drop the keys whose value equals the item model's declared `reverse_diff_defaults` entry, then
+        recurse so nested models and nested lists apply their own declarations. `issubset` matches list items bidirectionally,
+        so without this a default ND echoes inside an item never matches the item the user wrote without it. Applied to both
+        sides of `get_diff`, which makes "absent" and "equal to the declared default" equivalent inside list items. Item
+        models that declare no defaults keep strict matching.
+
+        ## Raises
+
+        None
+        """
+        for field_name, field_info in type(self).model_fields.items():
+            value = getattr(self, field_name, None)
+            dumped = data.get(field_info.alias or field_name)
+            if isinstance(value, NDBaseModel):
+                if isinstance(dumped, dict):
+                    # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
+                    value._scrub_list_item_defaults(dumped)  # pylint: disable=protected-access
+            elif isinstance(value, list) and isinstance(dumped, list) and len(value) == len(dumped):
+                for item, item_data in zip(value, dumped):
+                    if not isinstance(item, NDBaseModel) or not isinstance(item_data, dict):
+                        continue
+                    for alias, default in item.reverse_diff_defaults.items():
+                        if alias in item_data and item_data[alias] == default:
+                            del item_data[alias]
+                    item._scrub_list_item_defaults(item_data)  # pylint: disable=protected-access
+
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.
 
@@ -653,6 +687,10 @@ class NDBaseModel(BaseModel, ABC):
 
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
+        # List items match bidirectionally, so ND-echoed item defaults are normalized on both sides first (issue #598).
+        self._scrub_list_item_defaults(self_data)
+        # Same-class access; pylint cannot infer `other` shares this NDBaseModel API.
+        other._scrub_list_item_defaults(other_data)  # pylint: disable=protected-access
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False
