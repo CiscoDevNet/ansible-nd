@@ -725,6 +725,24 @@ def test_switch_credentials_are_separate_and_runtime_bound():
     assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD')" in fallback_inventory
 
 
+def test_switch_self_heal_adds_vxlan_ibgp_greenfield_in_one_call_per_fabric():
+    text = (ROOT / "playbooks/nd_ensure_switches.yaml").read_text()
+    play = yaml.safe_load(text)[0]
+    # A brownfield add parks every VXLAN iBGP switch in Migration mode and nd_manage_switches then waits for Normal
+    # before it deploys (live ND 4.3: ~3 hours), so iBGP is added greenfield and every other type keeps the module default.
+    assert play["vars"]["nd_switch_preserve_config"] == "auto"
+    assert "{'preserve_config': false}" in text
+    assert "== 'vxlanibgp'" in text
+    onboard = next(task for task in play["tasks"] if task.get("name", "").startswith("Onboard the missing switches"))
+    adds = [task for task in onboard["block"] if "cisco.nd.nd_manage_switches" in task]
+    assert len(adds) == 1
+    assert adds[0]["loop"] == "{{ nd_add_requests | dict2items }}"
+    assert adds[0]["cisco.nd.nd_manage_switches"]["config"] == "{{ _req.value }}"
+    assert 'preserve_config: "{{ nd_switch_preserve_config | bool }}"' not in text
+    # Role correction touches a switch that is already a member, so any value valid for every fabric type will do.
+    assert "preserve_config: true" in text
+
+
 def test_integration_config_declares_complete_canonical_fabric_membership():
     config = yaml.safe_load((ROOT / "tests/integration_config.yml").read_text())
     fabrics = config["nd_test_fabric_switches"]

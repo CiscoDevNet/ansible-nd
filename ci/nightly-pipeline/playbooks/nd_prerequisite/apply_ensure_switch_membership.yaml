@@ -2,6 +2,9 @@
 # Adds a switch that is absent from fabric inventory to its canonical baseline.
 # The planner rejects this operation if either the fabric or role differs from
 # the immutable lab assignment, so this task never performs a cross-fabric move.
+# A VXLAN iBGP switch is added greenfield: a brownfield add parks it in Migration mode and
+# nd_manage_switches then waits ~3 hours for Normal before it deploys. Other fabric types keep
+# the module default (External must preserve).
 - name: "ensure_switch_membership add {{ _ndp_operation.switch_ref }} to {{ _ndp_operation.fabric_ref }}"
   cisco.nd.nd_manage_switches:
     fabric: "{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}"
@@ -14,6 +17,6 @@
         role: "{{ _ndp_operation.desired_role }}"
         username: "{{ nd_switch_username | default(switch_username) | default(omit) }}"
         password: "{{ nd_switch_password | default(switch_password) | default(omit) }}"
-        preserve_config: true
+        preserve_config: "{{ false if ((_ndp_fabric_type_by_ref[_ndp_operation.fabric_ref] | default('')) | lower) == 'vxlanibgp' else omit }}"
   run_once: true
   no_log: true

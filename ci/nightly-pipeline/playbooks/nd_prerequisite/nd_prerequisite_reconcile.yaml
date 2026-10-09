@@ -13,6 +13,14 @@
       disposable_ai_ibgp: ANSIBLE_NIGHTLY_AI_IBGP
       disposable_ai_ebgp: ANSIBLE_NIGHTLY_AI_EBGP
       disposable_external: ANSIBLE_NIGHTLY_EXTERNAL
+    _ndp_fabric_type_by_ref:
+      advanced: vxlanIbgp
+      external: externalConnectivity
+      disposable_ibgp: vxlanIbgp
+      disposable_ebgp: vxlanEbgp
+      disposable_ai_ibgp: aimlVxlanIbgp
+      disposable_ai_ebgp: aimlVxlanEbgp
+      disposable_external: externalConnectivity
     _ndp_fabric_module_by_type:
       vxlanIbgp: cisco.nd.nd_manage_fabric_ibgp_vxlan
       vxlanEbgp: cisco.nd.nd_manage_fabric_ebgp_vxlan

@@ -58,8 +58,13 @@
     # mandatory full-roster confirmation gate below is what fails the run, regardless
     # of this flag.
     nd_switch_fail_on_missing: false
-    # Brownfield re-add (keep the switch's existing running config) by default.
-    nd_switch_preserve_config: true
+    # How a missing switch is onboarded. auto (default) = per fabric type: a Data Center VXLAN iBGP fabric is added
+    # GREENFIELD (preserve_config false) and every other type keeps the module's own default (External must preserve,
+    # eBGP/Campus/Routed must not). A BROWNFIELD add (preserve_config true) lands each VXLAN iBGP switch in Migration
+    # mode, which only a Recalculate & Deploy can leave, but nd_manage_switches waits for Normal BEFORE it deploys, so it
+    # sits in that wait for ~3 hours (live-proven on ND 4.3: Normal -> Migration within a minute, never back). Set true or
+    # false to force one value for every fabric.
+    nd_switch_preserve_config: auto
     # expected_serial_number exists only on cisco.nd branches that implement it (GitHub develop does not
     # yet); detect it in the cloned collection so the pre-flight works on whichever ND_GIT_BRANCH runs.
     nd_switch_expected_serial_supported: "{{ 'expected_serial_number' in (lookup('ansible.builtin.file', playbook_dir ~ '/plugins/modules/nd_manage_switches.py', errors='ignore') | default('', true) | string) }}"
@@ -245,32 +250,79 @@
               Onboarding needs switch credentials. Pass -e switch_username=... and
               -e switch_password=... (or nd_switch_username / nd_switch_password).
 
-        # Add each missing switch and RECALCULATE & DEPLOY its fabric. state: merged
-        # adds the switch to fabric membership (the durable fix for "ND Error 400:
+        # Fabric types decide the onboarding mode (see nd_switch_preserve_config). The probe is read-only.
+        - name: Read the fabric type of every fabric that is missing switches
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ _fab }}"
+          loop: "{{ nd_missing_switches | map(attribute='fabric') | unique | list }}"
+          loop_control:
+            loop_var: _fab
+          register: nd_fabric_type_probe
+          failed_when: false
+          no_log: true
+
+        - name: Decide the onboarding mode of each fabric
+          ansible.builtin.set_fact:
+            nd_preserve_override: >-
+              {{ (nd_preserve_override | default({})) | combine({
+                   _p._fab: (
+                     {'preserve_config': (nd_switch_preserve_config | bool)}
+                       if ((nd_switch_preserve_config | string | lower) in ['true', 'false'])
+                     else ({'preserve_config': false}
+                       if (((_p.current | default({})).get('management', {})).get('type', '') | string | lower) == 'vxlanibgp'
+                       else {})
+                   )
+                 }) }}
+          loop: "{{ nd_fabric_type_probe.results }}"
+          loop_control:
+            loop_var: _p
+            label: "{{ _p._fab }}"
+
+        - name: Report how each fabric's switches will be onboarded
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_ONBOARD_MODE {{ nd_preserve_override }} (empty = module default for that fabric type)
+
+        - name: Build one add request per fabric
+          ansible.builtin.set_fact:
+            nd_add_requests: >-
+              {{ (nd_add_requests | default({})) | combine({
+                   _sw.fabric: ((nd_add_requests | default({})).get(_sw.fabric, []) + [
+                     {'seed_ip': _sw.seed_ip, 'role': _sw.role,
+                      'username': (nd_switch_username | default(switch_username)),
+                      'password': (nd_switch_password | default(switch_password))}
+                     | combine({'expected_serial_number': _sw.serial} if (nd_switch_expected_serial_supported | bool) else {})
+                     | combine((nd_preserve_override | default({})).get(_sw.fabric, {}))
+                   ])
+                 }) }}
+          loop: "{{ nd_missing_switches }}"
+          loop_control:
+            loop_var: _sw
+            label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
+          no_log: true
+
+        # Add every missing switch of a fabric in ONE call and RECALCULATE & DEPLOY once. state: merged
+        # adds the switches to fabric membership (the durable fix for "ND Error 400:
         # Switch id <serial> not found"); config_actions.save recalculates and
-        # config_actions.deploy deploys, so the switch AND its fabric peers converge.
-        # This is an ENFORCED restore, not a best-effort self-heal: there is
+        # config_actions.deploy deploys, so the switches AND their fabric peers converge.
+        # One call per fabric lets greenfield reloads run in parallel instead of one after
+        # the other. This is an ENFORCED restore, not a best-effort self-heal: there is
         # deliberately no ignore_errors, so a switch that will not onboard or deploy
         # fails the play right here rather than letting the suite start half-restored.
-        - name: Add each missing switch, then recalculate and deploy its fabric
+        - name: Add each fabric's missing switches in one call, then recalculate and deploy
           cisco.nd.nd_manage_switches:
-            fabric: "{{ _sw.fabric }}"
+            fabric: "{{ _req.key }}"
             state: merged
             config_actions:
               save: true
               deploy: "{{ nd_switch_deploy | bool }}"
               type: "{{ nd_switch_deploy_scope }}"
-            config:
-              - seed_ip: "{{ _sw.seed_ip }}"
-                role: "{{ _sw.role }}"
-                expected_serial_number: "{{ _sw.serial if (nd_switch_expected_serial_supported | bool) else omit }}"
-                username: "{{ nd_switch_username | default(switch_username) }}"
-                password: "{{ nd_switch_password | default(switch_password) }}"
-                preserve_config: "{{ nd_switch_preserve_config | bool }}"
-          loop: "{{ nd_missing_switches }}"
+            config: "{{ _req.value }}"
+          loop: "{{ nd_add_requests | dict2items }}"
           loop_control:
-            loop_var: _sw
-            label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
+            loop_var: _req
+            label: "{{ _req.key }} ({{ _req.value | length }} switch(es))"
           register: nd_onboard_results
           no_log: true
 
@@ -604,7 +656,7 @@
                 role: "{{ _sw.expected }}"
                 username: "{{ nd_switch_username | default(switch_username) }}"
                 password: "{{ nd_switch_password | default(switch_password) }}"
-                preserve_config: "{{ nd_switch_preserve_config | bool }}"
+                preserve_config: true
           loop: "{{ nd_role_drift | default([]) }}"
           loop_control:
             loop_var: _sw
