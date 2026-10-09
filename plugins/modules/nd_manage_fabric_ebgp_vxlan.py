@@ -1948,6 +1948,200 @@ api_payload:
     description: Request payloads sent to the API.
     type: list
     returned: verbosity >= 3 (-vvv)
+config_actions:
+  description:
+  - Result of configuration save and deploy processing.
+  - Includes planned actions in check mode and preserves completed steps when a later action fails.
+  returned: when config actions are evaluated after a configuration change
+  type: dict
+  contains:
+    requested:
+      description: Parsed config action request, including policy defaults and metadata about explicitly supplied options.
+      returned: always
+      type: dict
+      contains:
+        save:
+          description: Whether configuration save was requested.
+          returned: always
+          type: bool
+        deploy:
+          description: Whether deployment was requested.
+          returned: always
+          type: bool
+        type:
+          description: Requested deploy scope, or null when deployment was not requested.
+          returned: always
+          type: str
+        provided:
+          description: Whether the user supplied the config_actions option.
+          returned: always
+          type: bool
+        explicit_options:
+          description: Config action option names explicitly supplied by the user.
+          returned: always
+          type: list
+          elements: str
+        resource_deploy_provided:
+          description: Whether any resource-level deploy option was explicitly supplied.
+          returned: always
+          type: bool
+        resource_deploy_indexes:
+          description: Zero-based indexes of resources with an explicit deploy option.
+          returned: always
+          type: list
+          elements: int
+    effective:
+      description: Config actions that remained effective after policy defaults and validation were applied.
+      returned: always
+      type: dict
+      contains:
+        save:
+          description: Whether configuration save was effective.
+          returned: always
+          type: bool
+        deploy:
+          description: Whether deployment was effective.
+          returned: always
+          type: bool
+        type:
+          description: Effective deploy scope, or null when deployment was not effective.
+          returned: always
+          type: str
+        provided:
+          description: Whether the user supplied the config_actions option.
+          returned: always
+          type: bool
+        explicit_options:
+          description: Config action option names explicitly supplied by the user.
+          returned: always
+          type: list
+          elements: str
+        resource_deploy_provided:
+          description: Whether any resource-level deploy option was explicitly supplied.
+          returned: always
+          type: bool
+        resource_deploy_indexes:
+          description: Zero-based indexes of resources with an explicit deploy option.
+          returned: always
+          type: list
+          elements: int
+    status:
+      description: Overall config action outcome.
+      returned: always
+      type: str
+      choices: [skipped, planned, completed, failed]
+    reason:
+      description: Machine-readable reason for the overall outcome.
+      returned: always
+      type: str
+    targets:
+      description: Fabric, switch, and resource targets considered by the config action controller.
+      returned: always
+      type: dict
+      contains:
+        fabrics:
+          description: Target fabric names.
+          returned: always
+          type: list
+          elements: str
+        switches:
+          description: Target switch identifiers.
+          returned: always
+          type: list
+          elements: str
+        resources:
+          description: Target resource identifiers.
+          returned: always
+          type: list
+          elements: str
+    actions:
+      description: Ordered save and deploy action results.
+      returned: always
+      type: list
+      elements: dict
+      contains:
+        action:
+          description: Action that was planned or executed.
+          returned: always
+          type: str
+          choices: [save, deploy]
+        status:
+          description: Outcome of this action.
+          returned: always
+          type: str
+          choices: [planned, completed, skipped, failed]
+        scope:
+          description: Deploy scope. Omitted for save actions.
+          returned: for deploy actions
+          type: str
+          choices: [global, switch, resource]
+        target:
+          description: Fabric targeted by the action.
+          returned: always
+          type: str
+        response:
+          description:
+          - Raw controller response for a completed save action.
+          - Structured submission and verification details for a deploy action, including partial details when later verification fails.
+          returned: for completed save actions or deploy actions with an accepted submission
+          type: dict
+          contains:
+            submissions:
+              description: Deploy requests accepted by ND, in submission order.
+              returned: for deploy actions after at least one accepted submission
+              type: list
+              elements: dict
+              contains:
+                sequence:
+                  description: One-based deploy submission number.
+                  returned: always
+                  type: int
+                scope:
+                  description: Scope used for this submission. A second submission is always switch scoped.
+                  returned: always
+                  type: str
+                  choices: [global, switch]
+                switch_ids:
+                  description:
+                  - Switch identifiers associated with the submission.
+                  - For a global first submission, this is the pre-action membership used for verification rather than a POST payload.
+                  - For a switch submission, these are the explicitly bounded switches sent to ND.
+                  returned: always
+                  type: list
+                  elements: str
+                response:
+                  description: Raw response returned by ND for this deploy submission.
+                  returned: always
+                  type: raw
+            verified_switch_ids:
+              description: Switch identifiers confirmed converged before the deploy action completed or failed.
+              returned: for deploy responses
+              type: list
+              elements: str
+        error:
+          description: Failure detail or machine-readable reason for a skipped action.
+          returned: for failed or skipped actions
+          type: str
+        error_type:
+          description: Exception class name for a failed action.
+          returned: for failed actions
+          type: str
+        http_status:
+          description: HTTP status associated with a failed action.
+          returned: when available for a failed action
+          type: int
+        request_payload:
+          description: Request payload associated with a failed action.
+          returned: when available for a failed action
+          type: raw
+        response_payload:
+          description: Response payload associated with a failed action.
+          returned: when available for a failed action
+          type: raw
+        raw:
+          description: Additional structured failure detail.
+          returned: when available for a failed action
+          type: raw
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -2006,12 +2200,7 @@ def main():
                 if name and name not in fabric_names:
                     fabric_names.append(name)
             if fabric_names:
-                nd_state_machine.model_orchestrator.run_config_actions(
-                    actions=config_actions,
-                    fabric_names=fabric_names,
-                    state=state,
-                    check_mode=module.check_mode,
-                )
+                nd_state_machine.run_config_actions(actions=config_actions, fabric_names=fabric_names)
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))

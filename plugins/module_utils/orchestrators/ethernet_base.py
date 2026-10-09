@@ -1479,6 +1479,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the normalize request fails for any reason other than the ND 4.3.1 empty-description rejection, or if the resend fails.
         """
+        checkpoint = self.results.checkpoint() if self.results is not None else None
         payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=self._normalize_omits_description)
         response_count = self.rest_send.response_count
         try:
@@ -1487,7 +1488,15 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             if not self._normalize_omits_description and self._rejected_empty_description(response_count):
                 self._normalize_omits_description = True
                 payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=True)
-                return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+                response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+                if checkpoint is not None:
+                    self.results.mark_recovered_attempts(
+                        checkpoint,
+                        path=api_endpoint.path,
+                        verb=api_endpoint.verb,
+                        reason="normalize without an empty description eventually succeeded",
+                    )
+                return response
             raise
 
     def _rejected_empty_description(self, response_count: int) -> bool:

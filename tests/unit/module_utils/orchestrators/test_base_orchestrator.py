@@ -26,6 +26,7 @@ import pkgutil
 from typing import ClassVar, Literal, Optional
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDRequestError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
@@ -33,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import ManageExternalFabricOrchestrator
@@ -430,6 +432,20 @@ class TestRequestErrorHandlingWithResults:
         assert task.verbosity_level == 2
         assert task.path == "/api/v1/stub"
 
+    def test_failed_request_propagates_structured_retry_metadata(self):
+        """Controller failures retain response context and ResponseHandler retryability."""
+        rest_send = _make_rest_send([_error_response(500, "Server Error")])
+        rest_send.timeout = 1
+        orch = _make_orchestrator(rest_send, _make_results())
+
+        with pytest.raises(NDRequestError, match="Request failed") as error:
+            orch._request("/api/v1/stub", HttpVerbEnum.POST, data={"name": "leaf1"}, operation_type=OperationType.CREATE)
+
+        assert error.value.status == 500
+        assert error.value.request_payload == {"name": "leaf1"}
+        assert error.value.response_payload == {}
+        assert error.value.retryable is True
+
     def test_404_not_found_ok_registered(self):
         """404 with not_found_ok=True is registered and returns empty dict."""
         rest_send = _make_rest_send([_not_found_response()])
@@ -440,6 +456,55 @@ class TestRequestErrorHandlingWithResults:
 
         assert result == {}
         assert len(results._tasks) == 1
+
+    def test_404_requires_not_found_ok_and_preserves_structured_context(self):
+        """A default GET 404 remains a structured failure after Results registration."""
+        rest_send = _make_rest_send([_not_found_response()])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        with pytest.raises(NDRequestError, match="Request failed") as error:
+            orch._request("/api/v1/stub", HttpVerbEnum.GET, operation_type=OperationType.QUERY)
+
+        assert error.value.status == 404
+        assert error.value.retryable is False
+        assert error.value.response_payload == {}
+        assert len(results._tasks) == 1
+        assert results._tasks[0].result["found"] is False
+
+    def test_generic_query_one_does_not_silently_accept_404(self):
+        """The shared query-one wrapper keeps absence distinct from an empty resource."""
+        rest_send = _make_rest_send([_not_found_response()])
+        orch = _make_orchestrator(rest_send, _make_results())
+
+        with pytest.raises(Exception, match=r"Query failed.*Request failed") as error:
+            orch.query_one(StubModel(name="missing"))
+
+        assert isinstance(error.value.__cause__, NDRequestError)
+        assert error.value.__cause__.status == 404
+
+    def test_generic_query_all_continues_to_treat_404_as_empty_inventory(self):
+        """Collection reads opt in to not-found and remain safe for state-machine initialization."""
+        rest_send = _make_rest_send([_not_found_response()])
+        results = _make_results()
+        orch = _make_orchestrator(rest_send, results)
+
+        assert orch.query_all() == []
+        assert len(results._tasks) == 1
+        assert results._tasks[0].result["found"] is False
+
+    def test_state_machine_initializes_empty_inventory_from_query_all_404(self):
+        """The generic state-machine read path uses query_all's explicit 404 opt-in."""
+        module = MockAnsibleModule()
+        module.check_mode = False
+        module.params = {"state": "gathered", "config": [], "output_level": "normal", "ignore_errors": False}
+        orch = _make_orchestrator(_make_rest_send([_not_found_response()]))
+
+        state_machine = NDStateMachine(module=module, model_orchestrator=orch)
+
+        assert len(state_machine.before) == 0
+        assert len(state_machine.results._tasks) == 1
+        assert state_machine.results._tasks[0].result["found"] is False
 
 
 # =============================================================================
