@@ -15,7 +15,7 @@ version_added: "2.0.0"
 short_description: Manage VXLAN Fabric Groups (MSD) on Cisco Nexus Dashboard
 description:
 - Manage VXLAN Fabric Groups (Multi-Site Domain) on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing and deleting VXLAN fabric groups.
+- It supports creating, updating, replacing, deleting and gathering VXLAN fabric groups.
 - Fabric groups aggregate multiple member fabrics for multi-site operations.
 author:
 - Matt Tarkington (@mtarking)
@@ -23,6 +23,7 @@ options:
   config:
     description:
     - The list of VXLAN fabric groups to configure.
+    - Must be omitted or empty when O(state=gathered) to gather all VXLAN fabric groups.
     type: list
     elements: dict
     suboptions:
@@ -365,15 +366,21 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       Any fabric group existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the fabric groups specified in the configuration from the Cisco Nexus Dashboard.
+    - Use O(state=gathered) to retrieve all VXLAN fabric group configurations from
+      Cisco Nexus Dashboard without making changes.
+    - O(config) must be omitted or empty with O(state=gathered), because gathered
+      filtering is not supported.
+    - Gathered configurations are returned under the C(gathered) result key.
     type: str
     default: merged
-    choices: [ merged, replaced, deleted, overridden ]
+    choices: [ merged, replaced, deleted, overridden, gathered ]
   config_actions:
     description:
     - Controls save and deploy behavior after fabric group configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
     - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
+    - Must not enable O(config_actions.save) or O(config_actions.deploy) when O(state=gathered).
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -546,6 +553,11 @@ EXAMPLES = r"""
       deploy: true
       type: switch
   register: result
+
+- name: Gather all VXLAN fabric groups
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    state: gathered
+  register: gathered_fabric_groups
 """
 
 RETURN = r"""
@@ -573,15 +585,23 @@ after:
     type: list
     returned: always
     sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "40000-59000"}}]
+gathered:
+    description:
+    - All VXLAN fabric group configurations gathered from Cisco Nexus Dashboard.
+    - Returned in the module's supported Ansible configuration format.
+    type: list
+    elements: dict
+    returned: when O(state=gathered)
+    sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "30000-49000"}}]
 diff:
     description: Configuration differences between before and after states.
     type: list
-    returned: always
+    returned: when O(state) is not V(gathered)
     sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "40000-59000"}}]
 proposed:
     description: Proposed configuration sent to the module.
     type: list
-    returned: info or debug output_level
+    returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
     sample: [{"fabric_name": "my_fabric_group", "management": {"l2_vni_range": "40000-59000"}}]
 output_level:
     description: The output level set for the module.
@@ -646,6 +666,12 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
 
     require_pydantic(module)
@@ -654,6 +680,12 @@ def main():
     # input fails deterministically on every run, including idempotent no-drift
     # runs, and never mutates ND before failing.
     state = module.params.get("state", "merged")
+    config_items = module.params.get("config") or []
+
+    if state == "gathered" and config_items:
+        module.fail_json(
+            msg=("config is not supported when state is gathered because this " "module currently supports gather-all only; omit config or use an empty list.")
+        )
     try:
         config_actions = parse_config_actions(
             params=module.params,

@@ -138,10 +138,14 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS: ClassVar[int] = 6
     INTERFACE_INVENTORY_RETRY_DELAY_SECONDS: ClassVar[int] = 2
 
-    # Subclasses opt in to server-side gathered filtering by setting gathered_lucene_spec.
-    # _MAX_EXPRESSIONS_PER_SWITCH caps per-switch fan-out and _MAX_TOTAL_REQUESTS caps fabric-wide
-    # fan-out: beyond these thresholds a single broad query is cheaper than N targeted ones;
-    # the local post-filter guarantees correctness.
+    # Subclasses using the shared paginated gathered query provide a Lucene
+    # specification. `base_terms` define the minimum endpoint scope.
+    # User-directed server filtering is independently controlled by
+    # `supports_gathered_server_filtering` and the model's
+    # `supports_gathered_filtering`.
+    #
+    # _MAX_EXPRESSIONS_PER_SWITCH caps per-switch fan-out and
+    # _MAX_TOTAL_REQUESTS caps fabric-wide fan-out.
     gathered_lucene_spec: ClassVar[Any] = None
     _MAX_EXPRESSIONS_PER_SWITCH: ClassVar[int] = 3
     _MAX_TOTAL_REQUESTS: ClassVar[int] = 300
@@ -1010,7 +1014,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         ### RuntimeError
 
-        - If pagination exceeds 100 pages (50,000 interfaces), indicating a possible runaway query.
+        - If the endpoint response is not an object, `interfaces` is not a list,
+          or a page contains a non-object interface entry.
+        - If pagination exceeds 100 pages (50,000 interfaces), indicating a
+          possible runaway query.
         """
         page_size = 500
         max_pages = 100
@@ -1033,9 +1040,19 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 not_found_ok=True,
             )
             if not isinstance(result, dict):
-                break
+                raise RuntimeError(
+                    "The List Interfaces endpoint returned an unexpected " f"response type for switch '{switch_id}': " f"{type(result).__name__}."
+                )
 
-            page = result.get("interfaces", []) or []
+            raw_page = result.get("interfaces")
+            page = [] if raw_page is None else raw_page
+
+            if not isinstance(page, list):
+                raise RuntimeError("The List Interfaces endpoint returned an invalid " f"'interfaces' value for switch '{switch_id}'; expected a list.")
+
+            if any(not isinstance(item, dict) for item in page):
+                raise RuntimeError("The List Interfaces endpoint returned a non-object entry " f"for switch '{switch_id}'.")
+
             candidates.extend(page)
 
             if not page:

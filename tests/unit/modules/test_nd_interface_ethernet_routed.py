@@ -93,10 +93,18 @@ class _FakeAnsibleModule:
     None
     """
 
-    def __init__(self, *, config_actions: Any, check_mode: bool, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        config_actions: Any,
+        check_mode: bool,
+        state: str = "merged",
+        config: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> None:
         self.params: dict[str, Any] = {
-            "config": [],
-            "state": "merged",
+            "config": [] if config is None else config,
+            "state": state,
             "config_actions": None if config_actions is OMITTED else config_actions,
             "output_level": "normal",
         }
@@ -204,7 +212,13 @@ class _FakeStateMachine:
 
 
 def _run_main(
-    monkeypatch: pytest.MonkeyPatch, *, config_actions: Any = OMITTED, check_mode: bool = False, failure: Exception | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    config_actions: Any = OMITTED,
+    check_mode: bool = False,
+    failure: Exception | None = None,
+    state: str = "merged",
+    config: list[dict[str, Any]] | None = None,
 ) -> tuple[type[Exception], dict[str, Any], _RecordingOrchestrator]:
     """
     # Summary
@@ -223,7 +237,17 @@ def _run_main(
         pass
 
     _StateMachine.failure = failure
-    monkeypatch.setattr(module, "AnsibleModule", lambda **kwargs: _FakeAnsibleModule(config_actions=config_actions, check_mode=check_mode, **kwargs))
+    monkeypatch.setattr(
+        module,
+        "AnsibleModule",
+        lambda **kwargs: _FakeAnsibleModule(
+            config_actions=config_actions,
+            check_mode=check_mode,
+            state=state,
+            config=config,
+            **kwargs,
+        ),
+    )
     monkeypatch.setattr(module, "NDStateMachine", _StateMachine)
     monkeypatch.setattr(module, "require_pydantic", lambda module: None)
     monkeypatch.setattr(module, "setup_logging", lambda module: None)
@@ -335,6 +359,112 @@ def test_nd_interface_ethernet_routed_00030(monkeypatch: pytest.MonkeyPatch) -> 
     assert orchestrator.deploy is True
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
+
+
+def test_nd_interface_ethernet_routed_00040(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify gathered state never flushes mutation queues, even if a state-machine stand-in leaves a pair queued and deploy is enabled.
+
+    ## Test
+
+    - Run `main()` with `state: gathered`, omitted config, and `config_actions.deploy: true`
+    - The module exits successfully
+    - No deploy occurs and the queued pair remains untouched
+
+    ## Classes and Methods
+
+    - nd_interface_ethernet_routed.main()
+    """
+    kind, _kwargs, orchestrator = _run_main(monkeypatch, config_actions={"deploy": True}, state="gathered")
+
+    assert kind is _ExitJson
+    assert orchestrator._deployed == []
+    assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
+
+
+def test_nd_interface_ethernet_routed_00050(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify the wrapper keeps config mandatory for write states after making the model-level option optional for gathered state.
+
+    ## Test
+
+    - Capture the keyword arguments passed to `AnsibleModule`
+    - `required_if` requires config for merged, replaced, overridden, and deleted
+    - Gathered is intentionally absent from `required_if`
+
+    ## Classes and Methods
+
+    - nd_interface_ethernet_routed.main()
+    """
+    captured: dict[str, Any] = {}
+
+    def build_module(**kwargs: Any) -> _FakeAnsibleModule:
+        captured.update(kwargs)
+        return _FakeAnsibleModule(config_actions=OMITTED, check_mode=False, state="gathered", **kwargs)
+
+    monkeypatch.setattr(module, "AnsibleModule", build_module)
+    monkeypatch.setattr(module, "NDStateMachine", _FakeStateMachine)
+    monkeypatch.setattr(module, "require_pydantic", lambda module: None)
+    monkeypatch.setattr(module, "setup_logging", lambda module: None)
+
+    with pytest.raises(_ExitJson):
+        module.main()
+
+    assert captured["required_if"] == [
+        ("state", "merged", ["config"]),
+        ("state", "replaced", ["config"]),
+        ("state", "overridden", ["config"]),
+        ("state", "deleted", ["config"]),
+    ]
+
+
+def test_nd_interface_ethernet_routed_00060(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify gathered rejects a non-empty config before constructing the state machine because filtering is unsupported.
+
+    ## Test
+
+    - Run `main()` with `state: gathered` and one config identifier
+    - `fail_json` reports gather-all-only behavior
+    - The state machine is never constructed
+
+    ## Classes and Methods
+
+    - nd_interface_ethernet_routed.main()
+    """
+    state_machine_constructed = False
+
+    class UnexpectedStateMachine:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            nonlocal state_machine_constructed
+            state_machine_constructed = True
+
+    monkeypatch.setattr(
+        module,
+        "AnsibleModule",
+        lambda **kwargs: _FakeAnsibleModule(
+            config_actions=OMITTED,
+            check_mode=False,
+            state="gathered",
+            config=[{"switch_ip": "192.168.1.1", "interface_name": "Ethernet1/7"}],
+            **kwargs,
+        ),
+    )
+    monkeypatch.setattr(module, "NDStateMachine", UnexpectedStateMachine)
+    monkeypatch.setattr(module, "require_pydantic", lambda module: None)
+    monkeypatch.setattr(module, "setup_logging", lambda module: None)
+
+    with pytest.raises(_FailJson) as exc_info:
+        module.main()
+
+    assert "currently supports gather-all only" in exc_info.value.args[0]["msg"]
+    assert state_machine_constructed is False
 
 
 # =============================================================================
