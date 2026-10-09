@@ -86,7 +86,7 @@ options:
         type: str
         choices: [ layer2, layer2WithVrf, layer3 ]
       x_connect:
-        description: Enable xConnect.
+        description: Enable cross-connect for Layer 2 Networks only.
         type: bool
       network_template_name:
         description:

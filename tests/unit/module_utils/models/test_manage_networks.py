@@ -81,7 +81,7 @@ def test_network_factories_select_matching_typed_models(model_cls, l2_cls, l3_cl
     proposed = NetworkBaseModel.from_config({"network_name": "USERS", "network_type": network_type, "l2_data": {}, "l3_data": {}}, context={"state": "merged"})
     existing = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": network_type, "l2Data": {}, "l3Data": {}})
     for model in (proposed, existing):
-        assert type(model) is model_cls
+        assert isinstance(model, model_cls)
         assert isinstance(model.l2_data, l2_cls)
         assert isinstance(model.l3_data, l3_cls)
         assert not model.l2_data.model_fields_set
@@ -210,6 +210,89 @@ def test_custom_network_comparison_does_not_apply_vxlan_collection_equivalence()
     """Verify raw custom schemas retain their own absent-versus-empty semantics."""
     existing = NetworkBaseModel.from_response({"networkName": "CUSTOM", "networkType": "userDefined", "l3Data": {}})
     proposed = NetworkBaseModel.from_config({"networkName": "CUSTOM", "networkType": "userDefined", "l3Data": {"dhcpServers": []}})
+    assert not existing.get_diff(proposed, exclude_unset=True)
+
+
+@pytest.mark.parametrize("network_type", ["vxlan", "vxlanIbgp", "vxlanEbgp", "vxlanCampus", "aimlVxlanIbgp", "aimlVxlanEbgp"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_layer2_vxlan_comparison_excludes_l3_only_without_changing_diagnostics(network_type, exclude_unset):
+    existing = NetworkBaseModel.from_response(
+        {"networkName": "USERS", "networkType": network_type, "networkMode": "layer2", "l3Data": {"fabricData": {"igmpVersion": 3}}}
+    )
+    proposed = NetworkBaseModel.from_config({"networkName": "USERS", "networkType": network_type, "layer": "layer2"})
+    assert "l3Data" in existing.to_payload()
+    assert "l3_data" in existing.to_config()
+    expected = None if exclude_unset else {"fabricData": {"netflow": False}}
+    assert existing.to_diff_dict(exclude_unset=exclude_unset).get("l3Data") == expected
+    assert proposed.to_diff_dict(exclude_unset=exclude_unset).get("l3Data") == expected
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+def test_x_connect_rejects_routed_capable_modes(state, layer):
+    """Reject cross-connect only when the effective definition is not plain Layer 2."""
+    with pytest.raises(ValidationError, match="x_connect is only valid for layer2 networks"):
+        NetworkConfigModel.from_config({"network_name": "USERS", "layer": layer, "vrf_name": "T", "x_connect": True}, context={"state": state})
+    with pytest.raises(ValidationError, match="x_connect is only valid for layer2 networks"):
+        NetworkConfigModel.from_config(
+            {"network_name": "USERS", "x_connect": True}, context={"state": state, "existing_layer": layer, "existing_vrf_name": "T"}
+        )
+    valid = NetworkConfigModel.from_config({"network_name": "USERS", "layer": layer, "vrf_name": "T", "x_connect": False}, context={"state": state})
+    assert valid.x_connect is False
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged", "deleted", "gathered"])
+def test_layer2_x_connect_and_read_only_selectors_remain_valid(state):
+    """Keep valid Layer-2 writes and read/delete selectors independent of creation restrictions."""
+    layer = "layer3" if state in ("deleted", "gathered") else "layer2"
+    model = NetworkConfigModel.from_config({"network_name": "USERS", "layer": layer, "x_connect": True}, context={"state": state})
+    assert model.x_connect is True
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_layer2_netflow_comparison_preserves_explicit_enable_and_disable(exclude_unset):
+    """Keep genuine NetFlow changes actionable while suppressing unrelated L3 readback."""
+    existing = NetworkBaseModel.from_response(
+        {"networkName": "USERS", "networkType": "vxlanIbgp", "networkMode": "layer2", "l3Data": {"mtu": 9000, "fabricData": {"netflow": True}}}
+    )
+    disabled = NetworkBaseModel.from_config(
+        {"networkName": "USERS", "networkType": "vxlanIbgp", "layer": "layer2", "l3Data": {"fabricData": {"netflow": False}}}
+    )
+    assert not existing.get_diff(disabled, exclude_unset=exclude_unset)
+    assert existing.merge(disabled).l3_data.to_layer2_payload() == {"fabricData": {"netflow": False}}
+    assert existing.merge(disabled).get_diff(disabled, exclude_unset=exclude_unset)
+    absent = NetworkBaseModel.from_response({"networkName": "USERS", "networkType": "vxlanIbgp", "networkMode": "layer2"})
+    assert absent.get_diff(disabled, exclude_unset=exclude_unset)
+
+
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_routed_capable_vxlan_modes_retain_gathered_l3_and_detect_updates(layer, exclude_unset):
+    existing = NetworkBaseModel.from_response(
+        {
+            "networkName": "USERS",
+            "networkType": "vxlanIbgp",
+            "networkMode": layer,
+            "vrfName": "T",
+            "l3Data": {"gatewayIpv4Address": "192.0.2.1/24", "mtu": 9000, "fabricData": {"ipv4Trm": True, "igmpVersion": 3}},
+        }
+    )
+    gathered = existing.to_gathered_config()
+    assert gathered["gateway_ipv4_address"] == "192.0.2.1/24"
+    assert gathered["mtu"] == 9000
+    assert gathered["igmp_version"] == 3
+    NetworkConfigModel.from_config(gathered)
+    proposed = NetworkBaseModel.from_config({"networkName": "USERS", "networkType": "vxlanIbgp", "layer": layer, "l3Data": {"mtu": 9100}})
+    assert not existing.get_diff(proposed, exclude_unset=exclude_unset)
+    assert existing.merge(proposed).to_payload()["l3Data"]["mtu"] == 9100
+
+
+def test_layer2_custom_network_retains_its_own_l3_comparison_and_gathered_semantics():
+    existing = CustomNetworkModel.from_response({"networkName": "CUSTOM", "networkMode": "layer2", "l3Data": {"mtu": 9000, "customSetting": True}})
+    proposed = CustomNetworkModel.from_config({"network_name": "CUSTOM", "layer": "layer2", "l3_data": {"mtu": 9100}})
+    assert existing.to_gathered_config()["mtu"] == 9000
+    assert "l3Data" in existing.to_diff_dict()
     assert not existing.get_diff(proposed, exclude_unset=True)
 
 

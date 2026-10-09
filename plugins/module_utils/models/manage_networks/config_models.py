@@ -576,6 +576,8 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         context = info.context or {}
         read_only_or_delete = context.get("state") in ("deleted", "gathered")
+        if not read_only_or_delete and self.x_connect and self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value):
+            raise ValueError("x_connect is only valid for layer2 networks")
         if not read_only_or_delete and (
             self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value)
             and network_type != NetworkType.USER_DEFINED.value

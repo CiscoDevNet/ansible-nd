@@ -1401,10 +1401,7 @@ def test_child_network_update_payload_uses_sparse_source_after_state_machine_mer
     assert payload["l2Data"]["vlanName"] == "BLUE_VLAN"
     assert "enableIr" not in payload["l2Data"]["fabricData"]
     assert payload["l2Data"]["fabricData"]["multicastGroup"] == "239.1.1.1"
-    assert payload["l3Data"]["fabricData"]["gatewayOnBorder"] is False
-    assert payload["l3Data"]["fabricData"]["ipv4Trm"] is False
-    assert payload["l3Data"]["fabricData"]["ipv6Trm"] is False
-    assert payload["l3Data"]["fabricData"]["netflow"] is False
+    assert payload["l3Data"] == {"fabricData": {"netflow": False}}
 
 
 def test_attachment_only_network_config_does_not_generate_definition_defaults():
@@ -4850,6 +4847,376 @@ def test_network_gathered_output_uses_public_config_shape():
     assert gathered["gateway_ipv4_address"] == "10.10.10.1/24"
     assert gathered["interface_netflow_monitor"] == "INT_MON"
     NetworkConfigModel.from_config(gathered)
+
+
+def _layer2_network_readback(vlan_network_type, with_igmp):
+    return {
+        "fabricName": "fab1",
+        "networkName": "USERS",
+        "networkType": "vxlanIbgp",
+        "networkMode": "layer2",
+        "vlanNetworkType": vlan_network_type,
+        "vrfName": "NA",
+        "networkId": 30001,
+        "vlanId": 101,
+        "l2Data": {"vlanName": "USERS", "fabricData": {"multicastGroup": "239.1.1.11"}},
+        "l3Data": {
+            "routingTag": 12345,
+            "arpSuppression": False,
+            "fabricData": {
+                "netflow": False,
+                "gatewayOnBorder": False,
+                "ipv4Trm": False,
+                "ipv6Trm": False,
+                **({"igmpVersion": 3} if with_igmp else {}),
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("vlan_network_type", ["normal", "privatePrimary"])
+@pytest.mark.parametrize("with_igmp", [False, True], ids=["nd42-shaped", "nd43-shaped"])
+def test_layer2_gathered_config_replays_without_controller_l3_echoes(state, vlan_network_type, with_igmp):
+    model = NDNetworkOrchestrator.model_class.from_response(_layer2_network_readback(vlan_network_type, with_igmp))
+    output = NDOutput(output_level="normal", state="gathered")
+    output.assign(
+        after=NDConfigCollection(NDNetworkOrchestrator.model_class, [model]),
+        gathered_spec=NDNetworkOrchestrator.model_class.get_argument_spec()["config"]["options"],
+    )
+    gathered = output.format()["gathered"][0]
+    assert gathered["layer"] == "layer2"
+    assert gathered["vlan_name"] == "USERS"
+    assert gathered["multicast_group_address"] == "239.1.1.11"
+    assert not {"mtu", "arp_suppression", "routing_tag", "igmp_version", "gateway_on_border", "trm_enable", "ipv6_trm"} & gathered.keys()
+    # Read-side diagnostics retain the controller block and its independently injected model defaults.
+    assert model.to_config()["l3_data"]["mtu"] == 9216
+    assert "mtu" not in model.l3_data.model_fields_set
+    orchestrator = _orchestrator()
+    coordinator = NetworkWorkflowCoordinator(module=_Module({"output_level": "normal"}), strategy=orchestrator.strategy)
+    validated = _validated_network_config([gathered])
+    NetworkConfigModel.from_config(validated[0], context={"state": state})
+    parsed = coordinator._parse_config(validated, orchestrator.strategy.config_model_cls, state)
+    orchestrator.rest_send.params["state"] = crud_module_args({"state": state})["state"]
+    proposed = orchestrator.model_class.from_config(orchestrator.prepare_config_data(parsed)[0])
+    assert model.get_diff(proposed, exclude_unset=state == "merged")
+    assert orchestrator._create_or_update_payload(proposed).get("l3Data") in (None, {"fabricData": {"netflow": False}})
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("vlan_network_type", ["normal", "privatePrimary"])
+@pytest.mark.parametrize("with_igmp", [False, True], ids=["nd42-shaped", "nd43-shaped"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_layer2_controller_l3_echo_does_not_trigger_state_machine_update(state, strategy_cls, vlan_network_type, with_igmp, check_mode):
+    entry = {
+        "network_name": "USERS",
+        "layer": "layer2",
+        "vlan_network_type": "normal" if vlan_network_type == "normal" else "primary",
+        "network_id": 30001,
+        "vlan_id": 101,
+        "vlan_name": "USERS",
+        "multicast_group_address": "239.1.1.11",
+    }
+    effective_state = crud_module_args({"state": state})["state"]
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": effective_state, "config": [entry], "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    parsed = coordinator._parse_config(_validated_network_config([entry]), strategy.config_model_cls, state)
+    orchestrator = _LayerValidationNetworkOrchestrator(
+        rest_send=RestSend({"state": effective_state}),
+        strategy=strategy,
+        inventory=[_layer2_network_readback(vlan_network_type, with_igmp)],
+    )
+    sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
+    sm.manage_state()
+    assert not sm.results.changed
+    assert sm.output.format()["changed"] is False
+    assert not sm.sent
+    assert not orchestrator.written_payloads
+    assert orchestrator.query_count == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("field,value,payload_key", [("vlan_name", "USERS_NEW", "vlanName"), ("multicast_group_address", "239.1.1.12", "multicastGroup")])
+def test_layer2_real_update_remains_actionable_despite_controller_l3_echo(state, field, value, payload_key):
+    entry = {
+        "network_name": "USERS",
+        "layer": "layer2",
+        "network_id": 30001,
+        "vlan_id": 101,
+        "vlan_name": "USERS",
+        "multicast_group_address": "239.1.1.11",
+        field: value,
+    }
+    module = _Module({"state": state, "config": [entry], "output_level": "normal"})
+    strategy = StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    parsed = coordinator._parse_config(_validated_network_config([entry]), strategy.config_model_cls, state)
+    orchestrator = _LayerValidationNetworkOrchestrator(
+        rest_send=RestSend({"state": state}), strategy=strategy, inventory=[_layer2_network_readback("normal", True)]
+    )
+    sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
+    sm.manage_state()
+    assert sm.output.format()["changed"] is True
+    assert len(orchestrator.written_payloads) == 1
+    payload = orchestrator.written_payloads[0]
+    target = payload["l2Data"]["fabricData"] if field == "multicast_group_address" else payload["l2Data"]
+    assert target[payload_key] == value
+    assert payload.get("l3Data") in (None, {"fabricData": {"netflow": False}})
+    assert orchestrator.model_class.from_response(payload).get_diff(sm.proposed.get("USERS"), exclude_unset=state == "merged")
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("vlan_network_type", ["normal", "primary"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_layer2_vlan_netflow_survives_prepare_payload_gather_and_repeat(state, strategy_cls, vlan_network_type, check_mode):
+    """Exercise NetFlow through the real CRUD comparison and replay public gathered configuration."""
+    entry = {
+        "network_name": "USERS",
+        "layer": "layer2",
+        "vlan_network_type": vlan_network_type,
+        "network_id": 30001,
+        "vlan_id": 101,
+        "netflow_enable": True,
+        "vlan_netflow_monitor": "VLAN_MON",
+    }
+    effective_state = crud_module_args({"state": state})["state"]
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": effective_state, "config": [entry], "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    parsed = coordinator._parse_config(_validated_network_config([entry]), strategy.config_model_cls, state)
+    orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": effective_state}), strategy=strategy, inventory=[])
+    prepared = orchestrator.prepare_config_data(parsed)
+    sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=prepared)
+    sm.manage_state()
+    assert sm.sent.get("USERS") is not None
+    assert sm.output.format()["changed"] is True
+    expected = {"fabricData": {"netflow": True, "l2NetflowMonitor": "VLAN_MON"}}
+    payload = orchestrator._create_or_update_payload(sm.proposed.get("USERS"))
+    assert payload["l3Data"] == expected
+    assert bool(orchestrator.written_payloads) is not check_mode
+    assert orchestrator.query_count == 1
+
+    readback = {**payload, "l3Data": {**expected, "mtu": 9216, "arpSuppression": False}}
+    model = orchestrator.model_class.from_response(readback)
+    gathered = model.to_gathered_config()
+    assert gathered["netflow_enable"] is True
+    assert gathered["vlan_netflow_monitor"] == "VLAN_MON"
+    assert "mtu" not in gathered
+    NetworkConfigModel.from_config(_validated_network_config([gathered])[0], context={"state": state})
+    repeated = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": effective_state}), strategy=strategy, inventory=[readback])
+    repeat_sm = NDStateMachine(module=module, model_orchestrator=repeated, config=prepared)
+    repeat_sm.manage_state()
+    assert not repeat_sm.results.changed
+    assert not repeated.written_payloads
+    assert repeated.query_count == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("vlan_network_type", ["community", "isolated"])
+def test_secondary_pvlan_gathered_output_replays_public_config(state, vlan_network_type):
+    """Rebuild public PVLAN configuration without exposing internal custom-template controls."""
+    orchestrator = _orchestrator()
+    orchestrator.rest_send.params["state"] = crud_module_args({"state": state})["state"]
+    entry = {
+        "network_name": "SECONDARY",
+        "network_id": 30002,
+        "vlan_id": 102,
+        "vlan_network_type": vlan_network_type,
+        "primary_network_id": 30001,
+        "vlan_name": "SECONDARY_VLAN",
+        "multicast_group_address": "239.1.1.22",
+    }
+    prepared = orchestrator.prepare_config_data([NetworkConfigModel.from_config(entry).to_config(exclude_unset=True)])[0]
+    proposed = orchestrator.model_class.from_config(prepared)
+    readback = orchestrator._normalize_query_network_item(orchestrator._create_or_update_payload(proposed))
+    readback["networkStatus"] = "deployed"
+    current = orchestrator.model_class.from_response(readback)
+    gathered = current.to_gathered_config()
+    assert gathered["vlan_network_type"] == vlan_network_type
+    assert gathered["primary_network_id"] == 30001
+    assert gathered["vlan_id"] == 102
+    assert gathered["vlan_name"] == "SECONDARY_VLAN"
+    assert gathered["multicast_group_address"] == "239.1.1.22"
+    assert not {"vrf_name", "x_connect", "ds_vni", "network_template_name", "network_extension_template_name", "network_template_config"} & gathered.keys()
+    validated = _validated_network_config([gathered])[0]
+    replay = NetworkConfigModel.from_config(validated, context={"state": state}).to_config(exclude_unset=True)
+    replay_model = orchestrator.model_class.from_config(orchestrator.prepare_config_data([replay])[0])
+    assert current.get_diff(replay_model, exclude_unset=state == "merged")
+    wire = orchestrator._create_or_update_payload(replay_model)
+    assert "vlanId" not in wire
+    assert wire["networkTemplateConfig"]["vlanId"] == "102"
+
+
+@pytest.mark.parametrize("layer", ["layer2", "layer2WithVrf", "layer3"])
+def test_template_normalization_fills_gaps_without_overwriting_explicit_data(layer):
+    """Prefer explicit API identity, mode, and nested fields over incomplete template values."""
+    row = {
+        "networkName": "USERS",
+        "networkType": "vxlanIbgp",
+        "networkMode": layer,
+        "networkId": 30001,
+        "vlanNetworkType": "normal",
+        "l2Data": {"vlanName": "ACTUAL", "fabricData": {"multicastGroup": "239.1.1.1"}},
+        "l3Data": {"mtu": 9100, "gatewayIpv4Address": "192.0.2.1/24", "fabricData": {"netflow": True, "ipv4Trm": True}},
+        "networkTemplateConfig": {
+            "isLayer2Only": "true",
+            "segmentId": "40001",
+            "vlanName": "TEMPLATE",
+            "mtu": "9000",
+            "ENABLE_NETFLOW": "false",
+            "l2NetflowMonitor": "VLAN_MON",
+            "type": "Community",
+        },
+    }
+    normalized = _orchestrator()._normalize_query_network_item(row)
+    assert "layer" not in normalized
+    assert normalized["networkMode"] == layer
+    assert normalized["networkId"] == 30001
+    assert normalized["vlanNetworkType"] == "normal"
+    assert normalized["l2Data"] == row["l2Data"]
+    assert normalized["l3Data"] == {**row["l3Data"], "fabricData": {"netflow": True, "ipv4Trm": True, "l2NetflowMonitor": "VLAN_MON"}}
+    assert _orchestrator().model_class.from_response(normalized).layer == layer
+    assert row["l3Data"]["fabricData"] == {"netflow": True, "ipv4Trm": True}
+
+
+def test_template_without_mode_evidence_does_not_invent_layer3():
+    """Do not infer a mode from a missing isLayer2Only template field."""
+    normalized = _orchestrator()._normalize_query_network_item(
+        {"networkName": "CUSTOM", "networkType": "userDefined", "networkTemplateConfig": {"mtu": "9000"}}
+    )
+    assert "layer" not in normalized
+    assert "networkMode" not in normalized
+    assert normalized["l3Data"]["mtu"] == 9000
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+def test_sparse_x_connect_rejects_existing_routed_mode_before_writes(check_mode, layer, strategy_cls):
+    """Validate cross-connect after inherited mode resolution without another inventory read."""
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+        [{"network_name": "USERS", "x_connect": True}],
+        [{"fabricName": "fab1", "networkName": "USERS", "networkType": "vxlanIbgp", "networkMode": layer, "vrfName": "T"}],
+        check_mode,
+        strategy_cls,
+    )
+    with pytest.raises(ValueError, match="x_connect is only valid for layer2 networks"):
+        coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    assert not orchestrator.written_payloads
+    assert orchestrator.query_count == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+def test_layer2_explicit_netflow_disable_remains_actionable_and_converges(state, strategy_cls):
+    """Send an explicit false value and compare the disabled readback without L3-only noise."""
+    entry = {"network_name": "USERS", "layer": "layer2", "network_id": 30001, "vlan_id": 101, "netflow_enable": False}
+    effective_state = crud_module_args({"state": state})["state"]
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": effective_state, "config": [entry], "output_level": "normal"})
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    parsed = coordinator._parse_config(_validated_network_config([entry]), strategy.config_model_cls, state)
+    readback = {
+        "fabricName": "fab1",
+        "networkName": "USERS",
+        "networkType": "vxlanIbgp",
+        "networkMode": "layer2",
+        "vrfName": "NA",
+        "networkId": 30001,
+        "vlanId": 101,
+        "vlanNetworkType": "normal",
+        "l3Data": {"fabricData": {"netflow": True}},
+    }
+    orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": effective_state}), strategy=strategy, inventory=[readback])
+    prepared = orchestrator.prepare_config_data(parsed)
+    sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=prepared)
+    sm.manage_state()
+    assert sm.output.format()["changed"] is True
+    assert len(orchestrator.written_payloads) == 1
+    payload = orchestrator.written_payloads[0]
+    assert payload["l3Data"] == {"fabricData": {"netflow": False}}
+    current = orchestrator.model_class.from_response(payload)
+    assert current.get_diff(sm.proposed.get("USERS"), exclude_unset=state == "merged")
+    assert orchestrator.query_count == 1
+
+
+def test_sparse_layer2_rename_preserves_existing_vlan_netflow():
+    """A merged L2 rename must preserve omitted NetFlow state and monitor settings."""
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+        [{"network_name": "USERS", "vlan_name": "NEW_NAME"}],
+        [
+            {
+                "fabricName": "fab1",
+                "networkName": "USERS",
+                "networkType": "vxlanIbgp",
+                "networkMode": "layer2",
+                "vrfName": "NA",
+                "l2Data": {"vlanName": "OLD_NAME"},
+                "l3Data": {"mtu": 9216, "fabricData": {"netflow": True, "l2NetflowMonitor": "VLAN_MON"}},
+            }
+        ],
+        False,
+    )
+    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    sm.manage_state()
+    assert len(orchestrator.written_payloads) == 1
+    payload = orchestrator.written_payloads[0]
+    assert payload["l2Data"]["vlanName"] == "NEW_NAME"
+    assert payload["l3Data"] == {"fabricData": {"netflow": True, "l2NetflowMonitor": "VLAN_MON"}}
+    assert orchestrator.query_count == 1
+
+
+def test_mcfg_layer2_netflow_payload_is_not_changed_without_onemanage_evidence():
+    """Leave OneManage parent NetFlow behavior outside the Manage-only correction."""
+    orchestrator = _mcfg_parent_orchestrator()
+    entry = {"network_name": "USERS", "layer": "layer2", "network_id": 30001, "netflow_enable": True, "vlan_netflow_monitor": "VLAN_MON"}
+    prepared = orchestrator.prepare_config_data([entry])[0]
+    payload = orchestrator._create_or_update_payload(orchestrator.model_class.from_config(prepared))
+    assert payload["l3Data"] == orchestrator._mcfg_parent_default_l3_data()
+
+
+@pytest.mark.parametrize("network_type", ["routed", "aimlRouted", "classicLanEnhanced"])
+def test_layer2_classic_or_routed_preparation_is_unchanged(network_type):
+    """Keep unverified non-VXLAN Layer-2 behavior outside the NetFlow correction."""
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend({"state": "replaced"}),
+        strategy=StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": network_type}),
+    )
+    prepared = orchestrator.prepare_config_data([{"network_name": "USERS", "layer": "layer2", "vlan_id": 101}])[0]
+    assert "l3_data" not in prepared
+
+
+@pytest.mark.parametrize("netflow", [False, True])
+def test_layer2_child_update_preserves_requested_vlan_netflow(netflow):
+    """Keep child deltas through sparse preparation, typed merging, and final payload projection."""
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend({"state": "merged"}),
+        strategy=ChildNetworkStrategy(fabric_name="child1", fabric_data={"managementType": "vxlanIbgp"}),
+    )
+    entry = {"network_name": "USERS", "layer": "layer2", "netflow_enable": netflow}
+    if netflow:
+        entry["vlan_netflow_monitor"] = "VLAN_MON"
+    proposed = orchestrator.model_class.from_config(orchestrator.prepare_config_data([entry])[0])
+    existing = orchestrator.model_class.from_response(
+        {
+            "fabricName": "child1",
+            "networkName": "USERS",
+            "networkType": "vxlanIbgp",
+            "networkMode": "layer2",
+            "vrfName": "NA",
+            "l3Data": {"mtu": 9000, "fabricData": {"netflow": not netflow, "ipv4Trm": False}},
+        }
+    )
+    merged = existing.merge(proposed)
+    payload = orchestrator._create_or_update_payload(merged)
+    expected = {"netflow": netflow, **({"l2NetflowMonitor": "VLAN_MON"} if netflow else {})}
+    assert payload["l3Data"] == {"fabricData": expected}
+    assert orchestrator.model_class.from_response(payload).get_diff(proposed, exclude_unset=True)
 
 
 def test_transform_l3_network_payload_uses_l3_data_fabric_data():

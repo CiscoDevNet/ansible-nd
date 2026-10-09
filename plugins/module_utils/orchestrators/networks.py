@@ -176,6 +176,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             NetworkType.AIML_ROUTED.value,
             NetworkType.CLASSIC_LAN_ENHANCED.value,
         ):
+            if self._network_layer(config) == NetworkLayer.LAYER2.value:
+                return None
             model = ClassicOrRoutedL3DataModel(**{k: v for k, v in common.items() if v is not None})
             payload = model.to_payload(exclude_unset=exclude_unset)
             return payload or None
@@ -226,6 +228,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             fabric_data=fabric_data,
         )
         model = DefaultL3DataModel(**{key: value for key, value in l3_values.items() if value is not None})
+        if self._network_layer(config) == NetworkLayer.LAYER2.value:
+            return model.to_layer2_payload(exclude_unset=exclude_unset) or None
         payload = model.to_payload(exclude_unset=exclude_unset)
         if self._network_layer(config) is None and not payload.get("fabricData"):
             payload.pop("fabricData", None)
@@ -291,7 +295,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             l2_data.setdefault("fabricData", {})
         if l2_data is not None:
             transformed["l2_data"] = l2_data
-        if layer is None or self._network_mode_allows_l3_data(layer):
+        if layer is None or self._network_mode_allows_l3_data(layer) or (layer == NetworkLayer.LAYER2.value and not self._is_mcfg_parent()):
             l3_data = self._l3_data(config, network_type)
             if l3_data:
                 transformed["l3_data"] = l3_data
@@ -748,11 +752,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if isinstance(template_config, dict):
             template_config = {str(key): "" if value is None else str(value) for key, value in template_config.items()}
             normalized["networkTemplateConfig"] = template_config
-            normalized.update(self._schema_fields_from_top_down_template(template_config))
+            converted = self._schema_fields_from_top_down_template(template_config)
+            self._fill_missing_template_fields(normalized, converted)
             template_type = str(template_config.get("type") or "").strip().lower()
-            if template_type == "community":
+            if template_type == "community" and not normalized.get("vlanNetworkType"):
                 normalized["vlanNetworkType"] = VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value
-            elif template_type == "isolated":
+            elif template_type == "isolated" and not normalized.get("vlanNetworkType"):
                 normalized["vlanNetworkType"] = VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value
         if self._is_mcfg_parent():
             l3_data = normalized.get("l3Data")
@@ -764,6 +769,29 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                     l3_data.pop("secondaryGatewayIpv6Collection")
                 normalized["l3Data"] = l3_data
         return normalized
+
+    @staticmethod
+    def _fill_missing_template_fields(normalized: dict[str, Any], converted: dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Fill missing fields from template conversion while preserving explicit controller readback.
+
+        ## Raises
+
+        None
+        """
+        if normalized.get("layer") is not None or normalized.get("networkMode") is not None:
+            converted.pop("layer", None)
+        for key, value in converted.items():
+            if key in ("l2Data", "l3Data") and isinstance(normalized.get(key), dict):
+                existing = normalized[key]
+                merged = {**value, **existing}
+                if isinstance(value.get("fabricData"), dict) and isinstance(existing.get("fabricData"), dict):
+                    merged["fabricData"] = {**value["fabricData"], **existing["fabricData"]}
+                normalized[key] = merged
+            elif key not in normalized or normalized[key] is None:
+                normalized[key] = value
 
     def _normalize_query_network_items(self, items: Any) -> list[Any]:
         return [self._normalize_query_network_item(item) for item in (items or [])]
@@ -805,7 +833,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 converted[target] = value
 
         layer2_only = self._top_down_bool(template_config.get("isLayer2Only"))
-        converted["layer"] = NetworkLayer.LAYER2.value if layer2_only else NetworkLayer.LAYER3.value
+        if layer2_only is not None:
+            converted["layer"] = NetworkLayer.LAYER2.value if layer2_only else NetworkLayer.LAYER3.value
 
         l2_fabric_data = {
             "multicastGroup": template_config.get("mcastGroup"),
@@ -1067,11 +1096,18 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
     def _create_or_update_payload(self, model_instance: NDNetworkModel) -> dict[str, Any]:
         if self.strategy.is_child:
-            return self._child_network_update_payload(model_instance)
-        if self._is_mcfg_parent():
+            payload = self._child_network_update_payload(model_instance)
+        elif self._is_mcfg_parent():
             return self._mcfg_parent_network_payload(model_instance)
-        payload = model_instance.to_payload()
-        if model_instance.layer == NetworkLayer.LAYER2.value:
+        else:
+            payload = model_instance.to_payload()
+        if model_instance.layer == NetworkLayer.LAYER2.value and isinstance(model_instance.l3_data, DefaultL3DataModel):
+            applicable = model_instance.l3_data.to_layer2_payload()
+            if applicable:
+                payload["l3Data"] = applicable
+            else:
+                payload.pop("l3Data", None)
+        elif model_instance.layer == NetworkLayer.LAYER2.value and not self.strategy.is_child:
             payload.pop("l3Data", None)
         if payload.get("vlanNetworkType") in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             payload.pop("vlanId", None)

@@ -211,6 +211,22 @@ class DefaultL3DataModel(NDNestedModel):
     def validate_mtu(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_mtu(v)
 
+    def to_layer2_payload(self, **kwargs) -> dict[str, Any]:
+        """
+        # Summary
+
+        Export VLAN NetFlow settings without Layer-3-only properties.
+
+        ## Raises
+
+        None
+        """
+        if self.fabric_data is None:
+            return {}
+        fabric_data = self.fabric_data.to_payload(**kwargs)
+        applicable = {key: fabric_data[key] for key in ("netflow", "l2NetflowMonitor") if key in fabric_data}
+        return {"fabricData": applicable} if applicable else {}
+
 
 class ClassicOrRoutedL2FabricDataModel(NDNestedModel):
     """Fabric-specific configuration for classic/routed L2 data."""
@@ -422,7 +438,22 @@ class NetworkBaseModel(NetworkCommonModel):
             data.pop(key, None)
 
         self._flatten_l2_data(data, l2_data)
-        self._flatten_l3_data(data, l3_data)
+        if self.vlan_network_type in (VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value, VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value):
+            for key in (
+                "vrf_name",
+                "x_connect",
+                "ds_vni",
+                "network_template_name",
+                "network_extension_template_name",
+                "service_network_template_name",
+                "network_template_config",
+            ):
+                data.pop(key, None)
+        elif self.layer == NetworkLayer.LAYER2.value and isinstance(self.l3_data, DefaultL3DataModel):
+            applicable = self.l3_data.to_layer2_payload(exclude_unset=True)
+            self._flatten_l3_data(data, applicable)
+        elif self.layer != NetworkLayer.LAYER2.value or self.network_type == NetworkType.USER_DEFINED.value:
+            self._flatten_l3_data(data, l3_data)
         return data
 
     @classmethod
@@ -580,8 +611,9 @@ class VxlanNetworkModel(NetworkBaseModel):
         """
         # Summary
 
-        Compare absent or null VXLAN collections as empty without changing payloads or sparse input intent.
+        Compare only mode-applicable VXLAN data without changing payloads or sparse input intent.
 
+        Plain Layer 2 retains VLAN NetFlow settings but ignores Layer-3-only readback.
         ND omits cleared DHCP and secondary gateway collections from GET responses. Full comparison
         exports represent them as empty lists; sparse proposed exports retain only supplied fields.
 
@@ -590,6 +622,15 @@ class VxlanNetworkModel(NetworkBaseModel):
         None
         """
         data = super().to_diff_dict(**kwargs)
+        if self.layer == NetworkLayer.LAYER2.value:
+            l3_data = self.l3_data.to_layer2_payload(exclude_unset=kwargs.get("exclude_unset", False)) if self.l3_data is not None else {}
+            if not kwargs.get("exclude_unset", False):
+                l3_data.setdefault("fabricData", {}).setdefault("netflow", False)
+            if l3_data:
+                data["l3Data"] = l3_data
+            else:
+                data.pop("l3Data", None)
+            return data
         if not kwargs.get("exclude_unset", False):
             l3_data = data.setdefault("l3Data", {})
             l3_data.setdefault("secondaryGatewayIpv4Collection", [])
