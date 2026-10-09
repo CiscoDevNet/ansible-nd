@@ -272,10 +272,7 @@ def validate_gathered_filters(
 
     for idx, filter_item in enumerate(filters):
         if not isinstance(filter_item, dict):
-            raise ValueError(
-                f"Each gathered filter item must be a dictionary, "
-                f"got {type(filter_item).__name__} at index {idx}."
-            )
+            raise ValueError(f"Each gathered filter item must be a dictionary, " f"got {type(filter_item).__name__} at index {idx}.")
 
         if supported_properties:
             _reject_unsupported_filter_properties(
@@ -289,10 +286,7 @@ def validate_gathered_filters(
             normalized = normalize_filter(normalized)
 
         if not _contains_active_value(normalized):
-            raise ValueError(
-                f"Gathered filter item at index {idx} must contain "
-                f"at least one filtering criterion."
-            )
+            raise ValueError(f"Gathered filter item at index {idx} must contain " f"at least one filtering criterion.")
 
         normalized_filters.append(normalized)
 
