@@ -48,6 +48,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
     ResponseType,
 )
 
+_LIST_KEY = "l3Outs"
+
 
 class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
     """
@@ -67,6 +69,9 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
     model_class: ClassVar[Type[NDBaseModel]] = L3OutModel
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+
+    query_all_page_size: ClassVar[int] = 100
+    query_all_max_pages: ClassVar[int] = 100
 
     # CRUD endpoints
     create_endpoint: Type[NDEndpointBaseModel] = EpManageL3OutPost
@@ -311,17 +316,91 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
 
     def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
         """
-        Query all L3Outs, filtered by fabric name.
+        Query L3Outs filtered by fabric name.
 
-        The fabric name is obtained from module params and set on the endpoint,
-        which renders the ?fabricName= query parameter into the path.
+        The fabric name is obtained from module parameters and set on the list
+        endpoint, which renders it as the ``fabricName`` query parameter.
+
+        Gathered state retrieves the complete collection through bounded
+        ``max``/``offset`` pagination. Management states retain their existing
+        single-request collection query.
+
+        ``model_instance`` and ``kwargs`` are accepted for compatibility with the
+        common orchestrator interface and are not used by this collection query.
 
         Returns:
-            List of L3Out dicts from the API response.
+            A list of L3Out dictionaries returned by Nexus Dashboard.
+
+        Raises:
+            RuntimeError: If the controller query or gathered pagination fails.
         """
         try:
+            if self.rest_send.params.get("state") == "gathered":
+                return self._query_all_for_gathered()
+
+            return self._query_all_for_management_states()
+
+        except Exception as e:
+            raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self) -> ResponseType:
+        """
+        Query L3Outs for merged, replaced, and deleted states.
+
+        This preserves the established management-state workflow: one collection
+        request scoped by ``fabricName``, without adding explicit ``max`` or
+        ``offset`` parameters.
+
+        Returns:
+            The ``l3Outs`` list unwrapped from the controller response. An empty
+            list is returned when the response contains no L3Outs.
+        """
+        api_endpoint = self.query_all_endpoint()
+        api_endpoint.fabric_name = self.fabric_name
+
+        result = self._request(
+            path=api_endpoint.path,
+            verb=api_endpoint.verb,
+            not_found_ok=True,
+        )
+
+        return result.get(_LIST_KEY, []) or []
+
+    def _query_all_for_gathered(self) -> list[dict[str, Any]]:
+        """
+        Query the complete L3Out collection for gathered state.
+
+        Requests consecutive pages using ``max`` and ``offset``. Pagination
+        continues according to controller-provided ``meta.counts.total`` or
+        ``meta.counts.remaining`` values. When usable metadata is unavailable, a
+        full page indicates that another page may exist.
+
+        Results are deduplicated by L3Out name, which is the model's identifier.
+        Duplicate-only pages are treated as a pagination failure when the
+        controller reports additional results. A maximum-page limit prevents an
+        inconsistent controller response from causing an unbounded loop.
+
+        Returns:
+            A list containing every unique L3Out associated with the configured
+            fabric.
+
+        Raises:
+            RuntimeError: If the response has an invalid shape, pagination does
+                not advance, or the configured page limit is reached.
+        """
+        page_size = self.query_all_page_size
+        collected: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+        offset = 0
+        pages_fetched = 0
+
+        while pages_fetched < self.query_all_max_pages:
+            pages_fetched += 1
+
             api_endpoint = self.query_all_endpoint()
             api_endpoint.fabric_name = self.fabric_name
+            api_endpoint.endpoint_params.max = page_size
+            api_endpoint.endpoint_params.offset = offset
 
             result = self._request(
                 path=api_endpoint.path,
@@ -329,11 +408,104 @@ class L3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 not_found_ok=True,
             )
 
-            # Unwrap the l3Outs array from the response envelope
-            return result.get("l3Outs", []) or []
+            if result is None:
+                page = []
+            elif isinstance(result, dict):
+                raw_page = result.get(_LIST_KEY)
+                page = [] if raw_page is None else raw_page
+            else:
+                raise RuntimeError(f"The List L3Outs endpoint returned an unexpected response type: {type(result).__name__}.")
 
-        except Exception as e:
-            raise RuntimeError(f"Query all failed: {e}") from e
+            if not isinstance(page, list):
+                raise RuntimeError(f"The List L3Outs endpoint returned an invalid '{_LIST_KEY}' value; expected a list.")
+
+            has_next_page = self._has_next_page(
+                result=result,
+                page_count=len(page),
+                offset=offset,
+                page_size=page_size,
+            )
+
+            if not page:
+                if has_next_page:
+                    raise RuntimeError("The List L3Outs endpoint returned an empty page while the controller reported additional results.")
+                break
+
+            new_rows = 0
+
+            for row in page:
+                if not isinstance(row, dict):
+                    raise RuntimeError("The List L3Outs endpoint returned a non-object entry.")
+
+                name = row.get("name")
+                if not isinstance(name, str) or not name:
+                    raise RuntimeError("The List L3Outs endpoint returned an entry without a valid L3Out name.")
+
+                if name in seen_names:
+                    continue
+
+                seen_names.add(name)
+                collected.append(row)
+                new_rows += 1
+
+            if not has_next_page:
+                break
+
+            if new_rows == 0:
+                raise RuntimeError("L3Out pagination did not advance while the controller reported additional results.")
+
+            offset += len(page)
+
+        else:
+            raise RuntimeError(
+                f"L3Out pagination reached the safety limit of "
+                f"{self.query_all_max_pages} pages after collecting "
+                f"{len(collected)} L3Outs. Results may be incomplete."
+            )
+
+        return collected
+
+    @staticmethod
+    def _has_next_page(result: object, page_count: int, offset: int, page_size: int) -> bool:
+        """
+        Determine whether another L3Out collection page must be requested.
+
+        Controller metadata takes precedence over page-length inference. ``total``
+        is evaluated first because it can be compared with the current offset and
+        returned record count. ``remaining`` is used when ``total`` is absent or
+        invalid. When neither value is usable, a page containing exactly
+        ``page_size`` records indicates that another request is required.
+
+        Args:
+            result: Raw response returned by the List L3Outs endpoint.
+            page_count: Number of L3Out records in the current page.
+            offset: Offset used to request the current page.
+            page_size: Maximum number of records requested per page.
+
+        Returns:
+            ``True`` when another page should be requested; otherwise ``False``.
+        """
+
+        if isinstance(result, dict):
+            counts = (result.get("meta") or {}).get("counts") or {}
+
+            try:
+                total = int(counts["total"])
+            except (KeyError, TypeError, ValueError):
+                total = None
+
+            if total is not None:
+                return offset + page_count < total
+
+            try:
+                remaining = int(counts["remaining"])
+            except (KeyError, TypeError, ValueError):
+                remaining = None
+
+            if remaining is not None:
+                return remaining > 0
+
+        return page_count > 0 and page_count == page_size
 
     def attach_l3outs(
         self,
