@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from time import monotonic, sleep
 from typing import Any, Callable, Iterable
 
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
@@ -35,6 +36,8 @@ Target = tuple[str, str]
 _FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 _SUCCESS_STATUSES = frozenset({"success"})
 _OUTCOME_KEYS = ("results", "switchIds", "links")
+_PARENT_DISCOVERY_TIMEOUT_SECONDS = 90
+_PARENT_DISCOVERY_POLL_SECONDS = 2
 
 
 @dataclass
@@ -131,6 +134,7 @@ class InterfaceWorkflowExecutor:
             "status": "not_attempted",
             "targets": [],
         }
+        self._attempted_deploy_targets: set[Target] = set()
 
     @staticmethod
     def _all_orchestrators(plan: InterfaceWorkflowPlan) -> tuple[NDBaseInterfaceOrchestrator, ...]:
@@ -704,8 +708,12 @@ class InterfaceWorkflowExecutor:
         return resource.resource_index, action, switch_id, getattr(model, "interface_name").casefold()
 
     def _execute_scheduled_layers(self, plan: InterfaceWorkflowPlan) -> bool:
-        """Execute dependency layers, flushing deferred deletes between layers."""
+        """Execute dependency layers and deploy parents before dependent children."""
 
+        barrier_keys = {operation.key for operation in getattr(plan, "parent_deployment_barriers", ())}
+        if barrier_keys and not self.deploy:
+            self._errors.append("A subinterface requires a same-workflow routed-parent deployment, but deploy is disabled.")
+            return False
         for layer in plan.execution_layers:
             if not layer:
                 continue
@@ -721,12 +729,10 @@ class InterfaceWorkflowExecutor:
                     return False
                 if not self._flush_ethernet_removes(plan):
                     return False
-                continue
-            if action == "transition":
+            elif action == "transition":
                 if not self._execute_transitions(plan, layer):
                     return False
-                continue
-            if action == "update":
+            elif action == "update":
                 refresh_operations = [operation for operation in layer if operation.refresh_before]
                 if refresh_operations:
                     selected_by_resource: dict[int, list[NDBaseModel]] = defaultdict(list)
@@ -746,14 +752,68 @@ class InterfaceWorkflowExecutor:
                             return False
                 if not self._execute_updates(plan, layer):
                     return False
-                continue
-            if action == "create":
+            elif action == "create":
                 if not self._execute_creates(plan, layer):
                     return False
-                continue
-            self._errors.append(f"Interface execution schedule contains unsupported action {action!r}.")
-            return False
+            else:
+                self._errors.append(f"Interface execution schedule contains unsupported action {action!r}.")
+                return False
+            parents = tuple(operation for operation in layer if operation.key in barrier_keys)
+            if parents and not self._deploy_and_discover_parents(plan, parents):
+                return False
         return True
+
+    def _deploy_and_discover_parents(
+        self,
+        plan: InterfaceWorkflowPlan,
+        parents: tuple[InterfaceWorkflowOperation, ...],
+    ) -> bool:
+        """Deploy only accepted routed parents and wait for operational mode."""
+
+        resources = {resource.resource_index: resource for resource in plan.resources}
+        targets: list[Target] = []
+        for operation in parents:
+            source = resources[operation.resource_index].orchestrator
+            matching = [
+                target for target in source.pending_deploys if target[1] == operation.switch_id and target[0].casefold() == operation.interface_name.casefold()
+            ]
+            if len(matching) != 1:
+                self._errors.append(f"Routed parent {operation.switch_id}/{operation.interface_name} was not queued exactly once after its accepted mutation.")
+                return False
+            targets.append(matching[0])
+        selected = tuple(dict.fromkeys(targets))
+        if not self._deploy_pending(plan, mutation_targets=selected):
+            return False
+
+        deadline = monotonic() + _PARENT_DISCOVERY_TIMEOUT_SECONDS
+        pending = selected
+        while pending:
+            try:
+                refreshed = self.snapshot.refresh(tuple(dict.fromkeys(switch_id for _name, switch_id in pending)))
+            except Exception as exc:  # pylint: disable=broad-except
+                self._errors.append(f"Routed-parent discovery refresh failed after deployment: {exc}")
+                return False
+            pending = tuple(
+                (name, switch_id) for name, switch_id in pending if not self._routed_parent_discovered(refreshed.get(switch_id, {}).get(name.casefold()))
+            )
+            if not pending:
+                return True
+            if monotonic() >= deadline:
+                names = ", ".join(f"{switch_id}/{name}" for name, switch_id in pending)
+                self._errors.append(f"Routed-parent deployment did not reach discovered routed mode before child mutation: {names}.")
+                return False
+            sleep(min(_PARENT_DISCOVERY_POLL_SECONDS, max(0.0, deadline - monotonic())))
+        return True
+
+    @staticmethod
+    def _routed_parent_discovered(row: dict[str, Any] | None) -> bool:
+        """Require operational, not merely intended, routed mode."""
+
+        if not isinstance(row, dict) or str(row.get("interfaceType") or "").casefold() not in {"ethernet", "portchannel"}:
+            return False
+        config_data = row.get("configData") or {}
+        oper_data = row.get("operData") or {}
+        return config_data.get("mode") == "routed" and oper_data.get("mode") == "routed"
 
     def _prepare_vpc_deploy_context(self, plan: InterfaceWorkflowPlan, targets: tuple[Target, ...]) -> None:
         """Let each vPC source prove its pair/child preview before consolidated deployment.
@@ -793,19 +853,21 @@ class InterfaceWorkflowExecutor:
             (pair for orchestrator in self._all_orchestrators(plan) for pair in orchestrator.pending_deploys) if mutation_targets is None else mutation_targets
         )
         targets = tuple(dict.fromkeys((*selected_mutations, *supplemental_targets)))
-        self._deployment = {
-            "requested": self.deploy,
-            "status": ("not_needed" if not targets else ("disabled" if not self.deploy else "pending")),
-            "targets": [
-                {
-                    "interface_name": interface_name,
-                    "switch_id": switch_id,
-                    "status": "not_attempted",
-                }
-                for interface_name, switch_id in targets
-            ],
-        }
-        if not targets or not self.deploy:
+        if not targets:
+            if not self._deployment["targets"]:
+                self._deployment["status"] = "not_needed"
+            return True
+        batch = [
+            {
+                "interface_name": interface_name,
+                "switch_id": switch_id,
+                "status": "not_attempted",
+            }
+            for interface_name, switch_id in targets
+        ]
+        self._deployment["targets"].extend(batch)
+        self._deployment["status"] = "disabled" if not self.deploy else "pending"
+        if not self.deploy:
             return True
         # A vPC orchestrator expands every verification pair to its peer.
         # Use an ordinary orchestrator for a mixed-family request so only the
@@ -813,6 +875,7 @@ class InterfaceWorkflowExecutor:
         target = next((resource.orchestrator for resource in plan.resources if resource.adapter.ownership_domain != "vpc"), plan.resources[0].orchestrator)
         target.deploy = True
         markers = self._request_markers(target.rest_send)
+        self._attempted_deploy_targets.update((name.casefold(), switch_id) for name, switch_id in targets)
         try:
             self._prepare_vpc_deploy_context(plan, targets)
             if isinstance(target, NDBaseInterfaceOrchestrator):
@@ -824,7 +887,7 @@ class InterfaceWorkflowExecutor:
             error = f"Consolidated interface deployment failed: {exc}"
             response, result = self._fresh_current(target.rest_send, markers)
             outcomes = self._classify_response(targets, response, result, error)
-            for entry in self._deployment["targets"]:
+            for entry in batch:
                 status, message = outcomes[(entry["interface_name"], entry["switch_id"])]
                 entry["status"] = status
                 if message:
@@ -839,22 +902,24 @@ class InterfaceWorkflowExecutor:
         if response.get("RETURN_CODE") == 207 and set(getattr(target, "verified_deploy_targets", ())) != set(targets):
             error = "Consolidated interface deployment failed: HTTP 207 response did not report exact success for every requested interface."
             outcomes = self._classify_response(targets, response, result, error)
-            for entry in self._deployment["targets"]:
+            for entry in batch:
                 status, message = outcomes[(entry["interface_name"], entry["switch_id"])]
                 entry["status"] = status
                 if message:
                     entry["message"] = message
-            statuses = {entry["status"] for entry in self._deployment["targets"]}
-            if statuses != {"succeeded"}:
+            batch_statuses = {entry["status"] for entry in batch}
+            if batch_statuses != {"succeeded"}:
+                statuses = {entry["status"] for entry in self._deployment["targets"]}
                 self._deployment["status"] = "partial_failure" if "succeeded" in statuses else "failed"
                 self._deployment["message"] = error
                 self._dequeue_deployed_targets(plan)
                 self._errors.append(error)
                 return False
         else:
-            for entry in self._deployment["targets"]:
+            for entry in batch:
                 entry["status"] = "succeeded"
-        self._deployment["status"] = "succeeded"
+        statuses = {entry["status"] for entry in self._deployment["targets"]}
+        self._deployment["status"] = "succeeded" if statuses == {"succeeded"} else "partial_failure"
         self._dequeue_deployed_targets(plan)
         return True
 
@@ -956,7 +1021,13 @@ class InterfaceWorkflowExecutor:
         if phases_ok:
             phases_ok = self._deploy_pending(plan, deployment_targets)
         elif self.deploy:
-            accepted_targets = tuple(dict.fromkeys(item.target for item in self._items if item.status == "succeeded"))
+            accepted_targets = tuple(
+                dict.fromkeys(
+                    item.target
+                    for item in self._items
+                    if item.status == "succeeded" and (item.interface_name.casefold(), item.switch_id) not in self._attempted_deploy_targets
+                )
+            )
             if accepted_targets:
                 self._deploy_pending(plan, mutation_targets=accepted_targets)
 

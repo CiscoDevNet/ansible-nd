@@ -36,6 +36,21 @@ COMPACT_RESULT_KEYS = {
 }
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_staged_parent_child_workflow_fails_before_executor(check_mode, monkeypatch):
+    """Neither real nor check-mode staging may promise an undiscovered routed parent."""
+    workflow_plan = plan()
+    workflow_plan.parent_deployment_barriers = (SimpleNamespace(switch_id="SERIAL1", interface_name="port-channel921"),)
+    module = FakeModule(check_mode=check_mode)
+    module.params["config_actions"]["deploy"] = False
+    coordinator = InterfaceWorkflowCoordinator(module)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+    coordinator.executor_factory = lambda **_kwargs: pytest.fail("Executor must not be created for unsafe staged workflow")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="deploy=false cannot establish"):
+        coordinator.run()
+
+
 @pytest.mark.parametrize("status", [204, 404])
 def test_collection_read_rejects_204_or_404_even_if_transport_reports_success(status):
     rest_send = SimpleNamespace(

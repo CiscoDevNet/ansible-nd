@@ -1014,6 +1014,14 @@ class InterfaceWorkflowCoordinator:
         plan = self._build_plan()
         deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
         verify = bool((self.module.params.get("verify") or {}).get("enabled", False))
+        barriers = getattr(plan, "parent_deployment_barriers", ())
+        if barriers and not deploy:
+            parents = ", ".join(f"{operation.switch_id}/{operation.interface_name}" for operation in barriers)
+            raise InterfaceWorkflowValidationError(
+                f"Subinterface mutation depends on a same-workflow routed parent that is not yet operationally routed: {parents}. "
+                "config_actions.deploy=false cannot establish the required parent deployment and discovery. "
+                "Use deploy=true for this workflow or deploy the routed parent in an earlier task. No interface writes were sent."
+            )
         pending_deployment_targets = self._pending_deployment_targets(plan) if deploy else ()
         if self.module.check_mode:
             preview_targets = tuple(dict.fromkeys((*self._operation_deployment_targets(plan), *pending_deployment_targets))) if deploy else ()

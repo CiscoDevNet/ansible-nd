@@ -218,7 +218,10 @@ Before selecting a family, reserve controller-visible resources that will not co
 - Existing NetFlow monitors/samplers, QoS and queuing policies, and controller/switch support for PFC or VLAN mapping when those optional packs are exercised.
 
 Subinterface writes are intentionally fail-closed in the aggregator. Their Ethernet or port-channel parent must either already exist in
-routed mode or be supplied as a compatible parent resource in the same workflow. The accepted parent contracts are `routedHost` and
+routed mode or be supplied as a compatible parent resource in the same workflow with deployment enabled. A parent not already
+operationally discovered as routed is deployed as an exact target first; the workflow waits for discovered routed mode before writing
+the child, then deploys the child. With `deploy: false`, that same combination fails before writes, including in check mode. The
+accepted parent contracts are `routedHost` and
 `iosXeRoutedHost` for NX-OS and IOS-XE Ethernet, and `l3Po` and `iosXeL3PortChannel` for NX-OS and IOS-XE port-channels. The dependency
 scheduler orders parent creation or update before child work and child deletion before parent mutation or deletion. It rejects missing,
 structurally incompatible, access, or trunk parents and rejects a parent mutation while an undeleted child remains.

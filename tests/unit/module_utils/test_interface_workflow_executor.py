@@ -697,6 +697,29 @@ class FakeSnapshot:
         }
 
 
+class ParentDiscoverySnapshot(FakeSnapshot):
+    """Expose configured and operational mode after each discovery refresh."""
+
+    def __init__(self, events, operational_modes):
+        super().__init__(events)
+        self.operational_modes = iter(operational_modes)
+        self.last_mode = None
+
+    def refresh(self, switch_ids):
+        super().refresh(switch_ids)
+        self.last_mode = next(self.operational_modes, self.last_mode)
+        return {
+            "SERIAL1": {
+                "port-channel10": {
+                    "interfaceName": "port-channel10",
+                    "interfaceType": "portChannel",
+                    "configData": {"mode": "routed"},
+                    "operData": {"mode": self.last_mode},
+                }
+            }
+        }
+
+
 def resource(
     index,
     orchestrator,
@@ -739,13 +762,14 @@ def policy_transition(name="Ethernet1/1"):
     )
 
 
-def plan(*resources, auxiliary_orchestrators=(), execution_layers=()):
+def plan(*resources, auxiliary_orchestrators=(), execution_layers=(), parent_deployment_barriers=()):
     """Build one InterfaceWorkflowPlan-shaped value."""
     return SimpleNamespace(
         resources=tuple(resources),
         target_switch_ids=("SERIAL1", "SERIAL2"),
         auxiliary_orchestrators=tuple(auxiliary_orchestrators),
         execution_layers=tuple(execution_layers),
+        parent_deployment_barriers=tuple(parent_deployment_barriers),
     )
 
 
@@ -845,6 +869,107 @@ def test_dependency_schedule_can_run_parent_create_before_member_update():
         ("create", "parent", ("port-channel10",)),
         ("update", "member", "Ethernet1/1"),
     ]
+
+
+def test_routed_parent_barrier_deploys_and_discovers_before_child_create():
+    """Only the accepted parent deploys early; the child deploys after its create."""
+    events = []
+    parent_orchestrator = FakeOrchestrator("parent", events)
+    child_orchestrator = FakeOrchestrator("child", events)
+    parent_model = FakeModel("port-channel10")
+    child_model = FakeModel("port-channel10.10")
+    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_routed")
+    child_resource = resource(1, child_orchestrator, creates=[child_model], resource_type="subinterface_unmanaged")
+    parent_operation = scheduled_operation(parent_resource, "create", parent_model)
+    workflow_plan = plan(
+        parent_resource,
+        child_resource,
+        execution_layers=((parent_operation,), (scheduled_operation(child_resource, "create", child_model),)),
+        parent_deployment_barriers=(parent_operation,),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=ParentDiscoverySnapshot(events, ("trunk", "routed")), deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.deploy_requests == 2
+    assert result.deployment["status"] == "succeeded"
+    assert [entry["interface_name"] for entry in result.deployment["targets"]] == ["port-channel10", "port-channel10.10"]
+    assert [event[0] for event in events if event[0] in {"create", "deploy", "refresh"}] == ["create", "deploy", "refresh", "refresh", "create", "deploy"]
+
+
+def test_routed_parent_discovery_timeout_stops_child_without_redeploy(monkeypatch):
+    """A successful parent deploy is not replayed when discovery never converges."""
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor._PARENT_DISCOVERY_TIMEOUT_SECONDS",
+        0,
+    )
+
+    class CanonicalParentOrchestrator(FakeOrchestrator):
+        def create_bulk(self, models):
+            super().create_bulk(models)
+            self._deploys = [(name.casefold(), switch_id) for name, switch_id in self._deploys]
+
+    events = []
+    parent_orchestrator = CanonicalParentOrchestrator("parent", events)
+    child_orchestrator = FakeOrchestrator("child", events)
+    parent_model = FakeModel("Port-channel10")
+    child_model = FakeModel("port-channel10.10")
+    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_routed")
+    child_resource = resource(1, child_orchestrator, creates=[child_model], resource_type="subinterface_unmanaged")
+    parent_operation = scheduled_operation(parent_resource, "create", parent_model)
+    workflow_plan = plan(
+        parent_resource,
+        child_resource,
+        execution_layers=((parent_operation,), (scheduled_operation(child_resource, "create", child_model),)),
+        parent_deployment_barriers=(parent_operation,),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=ParentDiscoverySnapshot(events, ("trunk",)), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.deploy_requests == 1
+    assert any("did not reach discovered routed mode" in error for error in result.errors)
+    assert [event[0] for event in events if event[0] in {"create", "deploy"}] == ["create", "deploy"]
+    assert child_orchestrator.pending_deploys == ()
+
+
+def test_routed_parent_deploy_failure_stops_child_without_replay():
+    """An uncertain or rejected barrier deploy must never be retried by recovery."""
+
+    class RejectingParentOrchestrator(FakeOrchestrator):
+        def deploy_targets(self, targets):
+            self.events.append(("deploy", self.name, tuple(targets)))
+            self.rest_send.record(
+                "/interfaceActions/deploy",
+                success=False,
+                changed=False,
+                data={"results": [{"name": targets[0][0], "switchId": targets[0][1], "status": "failed", "message": "rejected"}]},
+            )
+            raise RuntimeError("parent deploy rejected")
+
+    events = []
+    parent_orchestrator = RejectingParentOrchestrator("parent", events)
+    child_orchestrator = FakeOrchestrator("child", events)
+    parent_model = FakeModel("port-channel10")
+    child_model = FakeModel("port-channel10.10")
+    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_routed")
+    child_resource = resource(1, child_orchestrator, creates=[child_model], resource_type="subinterface_unmanaged")
+    parent_operation = scheduled_operation(parent_resource, "create", parent_model)
+    workflow_plan = plan(
+        parent_resource,
+        child_resource,
+        execution_layers=((parent_operation,), (scheduled_operation(child_resource, "create", child_model),)),
+        parent_deployment_barriers=(parent_operation,),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=ParentDiscoverySnapshot(events, ("trunk",)), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.deploy_requests == 1
+    assert result.deployment["status"] == "failed"
+    assert [event[0] for event in events if event[0] in {"create", "deploy"}] == ["create", "deploy"]
 
 
 class RefreshingMemberFakeOrchestrator(FakeOrchestrator):

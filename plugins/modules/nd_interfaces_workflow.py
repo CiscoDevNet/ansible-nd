@@ -20,7 +20,8 @@ description:
   O(resources[].type).
 - Check mode returns the complete multi-family plan, per-resource operation changes, prospective deployment-only targets, and request
   statistics without sending mutation or deployment requests. Validation conflicts are returned on failure.
-- Normal mode executes the complete validated plan in dependency-safe order and consolidates deferred remove and deploy actions.
+- Normal mode executes the complete validated plan in dependency-safe order and consolidates compatible deferred remove and deploy
+  actions. A newly routed parent needed by a same-workflow subinterface is an exception that requires an earlier parent deployment.
   Successful mutations return projected intended state by default; O(verify.enabled=true) refetches affected switches to report observed
   controller state. The module can also deploy previously staged intent for explicitly requested interfaces when the current workflow
   has no interface mutations.
@@ -114,7 +115,10 @@ options:
       deploy:
         description:
         - Whether changed interfaces and explicitly requested interfaces with staged controller intent should be deployed in one
-          consolidated action.
+          consolidated action when dependencies allow. A same-workflow subinterface whose routed parent is not yet operationally
+          discovered requires an exact parent deployment before the child write, followed by a later child deployment.
+        - When V(false), such a parent/child combination fails before any interface write; create and deploy the parent in an earlier
+          task, or enable deployment for this workflow. The same preflight applies in check mode.
         - An identical replay after O(config_actions.deploy=false) can therefore perform deployment with no new interface mutation.
         - Check mode reports a prospective deployment but sends no request.
         type: bool
@@ -182,8 +186,10 @@ notes:
   never synthesized by the workflow.
 - Managed and unmanaged subinterface writes require a routed parent. Accepted policies are V(routedHost) or V(iosXeRoutedHost) for Ethernet, and V(l3Po) or
   V(iosXeL3PortChannel) for a port-channel, with matching network OS. A compatible routed parent may be created or transitioned in the
-  same workflow and is executed before the child. A planned child delete executes before its parent mutation; an unplanned existing
-  child continues to block that parent mutation.
+  same workflow when deployment is enabled. If the parent is not already operationally routed, the workflow writes and deploys only
+  that parent, waits for the controller's discovered mode to become routed, then writes the child and deploys the remaining targets.
+  With deployment disabled, this combination fails preflight without writes. A planned child delete executes before its parent mutation;
+  an unplanned existing child continues to block that parent mutation.
 - For V(deleted), the selected type supplies the input and execution contract, but explicit identity lookup is policy-independent within
   that structural interface domain. A physical Ethernet delete resets the interface to the unconfigured default instead of removing the
   physical interface.
@@ -206,7 +212,8 @@ notes:
   additional GET request. Only an explicitly normalized out-of-sync or pending switch status qualifies; an in-sync, missing, or unknown status does
   not cause deployment.
 - Deployment-only requests contain only explicitly requested interface identities and are combined with any mutation-produced targets in
-  one de-duplicated deployment POST. The switch status is coarser than an interface status, so an explicitly requested interface can be
+  one de-duplicated final deployment POST, apart from an earlier exact routed-parent barrier when required. The switch status is coarser
+  than an interface status, so an explicitly requested interface can be
   harmlessly redeployed when different pending intent keeps the same switch out of sync; unrelated interfaces are never added.
 - For a vPC identity, an explicit out-of-sync or pending status on either authoritative peer qualifies the pair-scoped target. The consolidated
   request retains the vPC orchestrator's primary-switch target convention.
@@ -315,7 +322,7 @@ EXAMPLES = r"""
       enabled: true
   register: interface_result
 
-- name: Preview dependency ordering across NX-OS and IOS-XE routed resources
+- name: Preview dependency ordering and required parent deployment
   cisco.nd.nd_interfaces_workflow:
     fabric_name: FABRIC1
     resources:
@@ -371,7 +378,7 @@ EXAMPLES = r"""
                 policy:
                   description: Routed port-channel member
     config_actions:
-      deploy: false
+      deploy: true
   check_mode: true
 
 - name: Preview a fabric-wide authoritative SVI group
@@ -694,7 +701,7 @@ execution:
       description: Number of non-GET, non-deployment mutation requests sent.
       type: int
     deployments_sent:
-      description: Number of consolidated deployment requests sent.
+      description: Number of deployment requests sent, including any required routed-parent barrier request.
       type: int
     affected_switch_ids:
       description:

@@ -220,6 +220,7 @@ class InterfaceWorkflowPlan:
     request_stats: dict[str, int]
     auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = field(default=(), repr=False, compare=False)
     execution_layers: tuple[tuple[InterfaceWorkflowOperation, ...], ...] = field(default=(), repr=False, compare=False)
+    parent_deployment_barriers: tuple[InterfaceWorkflowOperation, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def changed(self) -> bool:
@@ -320,6 +321,7 @@ class InterfaceWorkflowPlanner:
             raise InterfaceWorkflowConflictError(conflicts)
 
         execution_layers = self._build_execution_layers(resource_plans)
+        parent_deployment_barriers = self._parent_deployment_barriers(resource_plans, execution_layers)
         self._apply_preflight_projections(resource_plans)
         self._run_preflights(resource_plans)
         auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = ()
@@ -332,6 +334,7 @@ class InterfaceWorkflowPlanner:
             request_stats=request_stats,
             auxiliary_orchestrators=auxiliary_orchestrators,
             execution_layers=execution_layers,
+            parent_deployment_barriers=parent_deployment_barriers,
         )
 
     def _validate_resource_groups(self, resources: list[dict[str, Any]]) -> list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]:
@@ -1309,6 +1312,57 @@ class InterfaceWorkflowPlanner:
                         # never from the planning snapshot.
                         refresh_before.add(ethernet_key)
         return edges, refresh_before
+
+    def _parent_deployment_barriers(
+        self,
+        resources: list[InterfaceResourcePlan],
+        layers: tuple[tuple[InterfaceWorkflowOperation, ...], ...],
+    ) -> tuple[InterfaceWorkflowOperation, ...]:
+        """Identify parent writes whose children need fresh routed discovery."""
+
+        operations = {operation.key: operation for layer in layers for operation in layer}
+        planned_parents = self._planned_parent_operations(resources)
+        inventory = self._inventory()
+        barriers: dict[tuple[int, str, str, str], InterfaceWorkflowOperation] = {}
+        for resource in resources:
+            if resource.adapter.ownership_domain != "subinterface":
+                continue
+            for child_action, child_model in self._iter_operations(resource):
+                if child_action == "delete":
+                    continue
+                child_name = getattr(child_model, "interface_name")
+                if "." not in child_name:
+                    continue
+                switch_id = self.fabric_context.get_switch_id(getattr(child_model, "switch_ip"))
+                parent_name = child_name.rsplit(".", 1)[0].casefold()
+                parent_identity = InterfaceIdentity("switch", (switch_id,), parent_name)
+                parent = inventory.get((switch_id, parent_name))
+                operational_mode = (parent.get("operData") or {}).get("mode") if parent else None
+                configured_parent_ready = (
+                    parent is not None
+                    and self._routed_parent_contract_error(
+                        interface_type=self._canonical_interface_type(parent.get("interfaceType")),
+                        mode=self._wire_mode(parent),
+                        policy_type=InterfaceStateSnapshot.policy_type(parent),
+                        network_os_type=self._wire_network_os_type(parent),
+                        child_network_os_type=self._desired_network_os_type(child_model),
+                    )
+                    is None
+                )
+                if configured_parent_ready and operational_mode == "routed":
+                    continue
+                for parent_resource, parent_action, parent_model in planned_parents.get(parent_identity, ()):
+                    if parent_action == "delete":
+                        continue
+                    key = (
+                        parent_resource.resource_index,
+                        parent_action,
+                        switch_id,
+                        getattr(parent_model, "interface_name").casefold(),
+                    )
+                    if key in operations:
+                        barriers[key] = operations[key]
+        return tuple(sorted(barriers.values(), key=self._operation_priority))
 
     def _apply_preflight_projections(self, resources: list[InterfaceResourcePlan]) -> None:
         """Project only registry-required host conversions into the shared safety view.

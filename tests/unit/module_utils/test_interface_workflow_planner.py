@@ -1881,6 +1881,7 @@ def test_subinterface_write_rejects_ios_xe_parent_or_child_platform_mismatch(
 def test_routed_parent_create_is_scheduled_before_subinterface_create() -> None:
     """One workflow can create a routed parent and then its managed child."""
     current_parent = _wire_interface("Ethernet1/1", "ethernet", "trunkHost")
+    current_parent["operData"] = {"mode": "routed"}  # A stale echo must not bypass the barrier while intent is still trunk.
     planner, _recorder = _planner(responses=[{"interfaces": [current_parent]}])
     parent = {
         "switch_ip": "192.0.2.1",
@@ -1909,6 +1910,34 @@ def test_routed_parent_create_is_scheduled_before_subinterface_create() -> None:
         ["Ethernet1/1"],
         ["Ethernet1/1.10"],
     ]
+    assert [operation.interface_name for operation in plan.parent_deployment_barriers] == ["Ethernet1/1"]
+
+
+def test_predeployed_routed_parent_update_needs_no_child_deployment_barrier() -> None:
+    """An already discovered routed parent may be updated with a child in one workflow."""
+    current_parent = _wire_interface("Ethernet1/1", "ethernet", "routedHost", mode="routed", ip="198.51.100.1", prefix=30)
+    current_parent["operData"] = {"mode": "routed"}
+    planner, _recorder = _planner(responses=[{"interfaces": [current_parent]}])
+    parent = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "Ethernet1/1",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"ip": "198.51.100.5", "prefix": 30}}},
+    }
+    child = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "Ethernet1/1.10",
+        "config_data": {"network_os": {"policy": {"vlan_id": 10}}},
+    }
+
+    plan = planner.plan(
+        [
+            {"type": "ethernet_routed", "state": "merged", "config": [parent]},
+            {"type": "subinterface_managed", "state": "merged", "config": [child]},
+        ]
+    )
+
+    assert plan.parent_deployment_barriers == ()
+    assert [layer[0].interface_name for layer in plan.execution_layers] == ["Ethernet1/1", "Ethernet1/1.10"]
 
 
 def test_subinterface_delete_is_scheduled_before_parent_policy_transition() -> None:
