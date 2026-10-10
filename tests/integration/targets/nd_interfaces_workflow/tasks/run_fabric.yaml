@@ -1,0 +1,57 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow fabric | Select reserved switch and interface identities
+  ansible.builtin.set_fact:
+    nd_iw_active_switches: "{{ nd_iw_current_fabric.switches }}"
+    nd_iw_active_resources: "{{ nd_iw_reserved_resources[nd_iw_current_fabric.reserved_set] }}"
+    nd_iw_selected_cases: []
+    nd_iw_active_cases: []
+    nd_iw_unsupported_cases: []
+
+- name: Interface workflow fabric | Validate rendered fixture contracts
+  ansible.builtin.assert:
+    that:
+      - nd_iw_property_matrix is mapping
+      - nd_iw_reserved_resources is mapping
+      - nd_iw_active_resources is mapping
+      - nd_iw_cleanup_resources is sequence
+    fail_msg: >-
+      The property matrix, reserved resources, or cleanup payload did not render for
+      {{ nd_iw_current_fabric.discriminator }} after its runtime aliases were selected.
+
+- name: Interface workflow fabric | Normalize selected family fixtures
+  ansible.builtin.include_tasks: normalize_case.yaml
+  loop: "{{ nd_iw_property_matrix | dict2items }}"
+  loop_control:
+    loop_var: nd_iw_family_entry
+    label: "{{ nd_iw_family_entry.key }}"
+  when: >-
+    nd_iw_selected_families | length == 0
+    or nd_iw_family_entry.key in nd_iw_selected_families
+
+- name: Interface workflow fabric | Require at least one supported selected family
+  ansible.builtin.assert:
+    that:
+      - nd_iw_active_cases | length > 0
+    fail_msg: >-
+      No selected interface family is supported by the {{ nd_iw_current_fabric.discriminator }}
+      mapping. Check nd_iw_selected_families and supported_families.
+
+- name: Interface workflow fabric | Run batched and fabric-wide scenarios
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/{{ nd_iw_common_scenario }}.yaml"
+  loop: "{{ nd_iw_common_scenarios }}"
+  loop_control:
+    loop_var: nd_iw_common_scenario
+    label: "{{ nd_iw_common_scenario }}"
+  when: >-
+    nd_iw_common_scenario in ['batched_lifecycle', 'output_levels', 'shared_snapshot',
+                              'mixed_workflow', 'repeated_types'] or nd_iw_run_full
+
+- name: Interface workflow fabric | Run family-specific property branches
+  ansible.builtin.include_tasks: run_family.yaml
+  loop: "{{ nd_iw_active_cases }}"
+  loop_control:
+    loop_var: nd_iw_family_case
+    label: "{{ nd_iw_family_case.family }}"

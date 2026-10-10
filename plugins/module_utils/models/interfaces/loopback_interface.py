@@ -40,6 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import default_network_os_type, default_policy_type
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6Host
 
@@ -422,6 +423,25 @@ class LoopbackConfigDataModel(NDNestedModel):
 
     mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
     network_os: NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel = Field(alias="networkOS", discriminator="network_os_type")
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_discriminators(cls, data: Any) -> Any:
+        """Keep pre-union loopback input compatible by injecting the NX-OS and base-policy discriminators."""
+        if not isinstance(data, dict):
+            return data
+        for key in ("network_os", "networkOS"):
+            raw_network_os = data.get(key)
+            if not isinstance(raw_network_os, dict):
+                continue
+            network_os = default_network_os_type(raw_network_os)
+            network_os_type = network_os.get("network_os_type") or network_os.get("networkOSType")
+            for policy_key in ("policy",):
+                if isinstance(network_os.get(policy_key), dict):
+                    base_policy_type = "iosXeLoopback" if network_os_type == "ios-xe" else "loopback"
+                    network_os = {**network_os, policy_key: default_policy_type(network_os[policy_key], base_policy_type)}
+            return {**data, key: network_os}
+        return data
 
 
 class LoopbackInterfaceModel(NDBaseModel):

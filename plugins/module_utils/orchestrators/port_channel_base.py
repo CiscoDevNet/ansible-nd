@@ -176,10 +176,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         raise NotImplementedError("Subclasses must implement _managed_policy_types()")
 
     def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
-        """Register this port-channel's intent and exact operational members."""
+        """Retain exact members even when a workflow defers the eventual deploy."""
 
-        if not self.deploy:
-            return
         derived = [(member_name, switch_id) for member_name in self._proposed_members(model_instance)]
         match = _XE_PORT_CHANNEL_NAME_RE.match(model_instance.interface_name.lower())
         if match:
@@ -355,6 +353,12 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         match = _XE_PORT_CHANNEL_NAME_RE.match(name)
         return f"Port-channel{match.group(1)}" if match else name
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run local platform and member-ownership safety without capability API calls."""
+        super().preflight_safety(model_instances)
+        self._validate_members_available(model_instances)
+        self._validate_xe_member_modes(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -373,8 +377,6 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Via `_validate_xe_member_modes` if any proposed IOS-XE member's current policy mode does not match.
         """
         super().preflight(model_instances)
-        self._validate_members_available(model_instances)
-        self._validate_xe_member_modes(model_instances)
 
     @staticmethod
     def _policy_of(iface: dict) -> dict:

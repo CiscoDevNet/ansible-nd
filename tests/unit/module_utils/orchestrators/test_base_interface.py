@@ -25,6 +25,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
 import logging
+from copy import deepcopy
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -216,7 +217,7 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
 
     def request(*, path, verb, not_found_ok=False, **_kwargs):
         assert verb == HttpVerbEnum.GET
-        assert not_found_ok is True
+        assert not_found_ok is False
         calls.append(path)
         offset = int(parse_qs(urlsplit(path).query)["offset"][0])
         return pages[offset]
@@ -226,7 +227,9 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
     inventory = instance._switch_interfaces("SERIAL1")
 
     assert list(inventory) == ["ethernet1/1", "ethernet1/2"]
+    assert instance._switch_interfaces("SERIAL1") == inventory
     assert instance._switch_interfaces("SERIAL1") is inventory
+    assert instance.state_snapshot.cached_switch("SERIAL1") is not inventory
     assert len(calls) == 2
     for expected_offset, path in enumerate(calls):
         assert "/switches/SERIAL1/interfaces?" in path
@@ -277,7 +280,7 @@ def test_switch_interfaces_never_publishes_an_invalid_second_page(second_page, m
     with pytest.raises(InterfacePaginationError, match=match):
         instance._switch_interfaces("SERIAL1")
 
-    assert "SERIAL1" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 def test_switch_interfaces_retries_complete_snapshot_after_identity_mismatch(
@@ -380,7 +383,7 @@ def test_switch_interfaces_page_two_transport_failure_publishes_no_cache() -> No
     with pytest.raises(RuntimeError, match="page two unavailable"):
         instance._switch_interfaces("SERIAL1")
 
-    assert "SERIAL1" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 # =============================================================================
@@ -742,6 +745,22 @@ def test_base_interface_00530() -> None:
     instance._queue_remove("loopback10", "FDO12345ABC")
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00540() -> None:
+    """Verify public queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    targets = [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD")]
+
+    instance.queue_deploy_targets([*targets, targets[0]])
+    instance.queue_remove_targets([*targets, targets[0]])
+
+    assert instance.pending_deploys == tuple(targets)
+    assert instance.pending_removes == tuple(targets)
 
 
 # =============================================================================
@@ -1110,6 +1129,16 @@ def test_reconcile_no_diff_contradictory_preview_fails_without_deploy(monkeypatc
     assert instance._pending_deploys == []
 
 
+def _seed_shared_inventory(instance, switch_id: str, inventory: dict) -> None:
+    """Seed the authoritative snapshot and its orchestrator-local read cache together."""
+    snapshot = instance.state_snapshot
+    snapshot._interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._original_interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._revisions_by_switch[switch_id] = 1
+    instance._switch_interfaces_cache[switch_id] = deepcopy(inventory)
+    instance._switch_interfaces_cache_revisions[switch_id] = 1
+
+
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode: bool) -> None:
     """An explicit absent delete remains actionable while preview shows pending CLI."""
@@ -1125,7 +1154,7 @@ def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {}
+    _seed_shared_inventory(instance, "FDO12345ABC", {})
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is True
@@ -1149,7 +1178,7 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {}
+    _seed_shared_inventory(instance, "FDO12345ABC", {})
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is False
@@ -1170,9 +1199,9 @@ def test_reconcile_absent_delete_skips_foreign_policy_and_previews_only_absent_t
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {
-        "loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}
-    }
+    _seed_shared_inventory(
+        instance, "FDO12345ABC", {"loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}}
+    )
     foreign = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
     truly_absent = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback11")
 
@@ -1228,6 +1257,50 @@ def test_deploy_207_accepts_only_registered_derived_identity_for_preview() -> No
     }
 
     assert instance._classify_deploy_results(result, [("port-channel501", "FDO12345ABC")]) == (False, None)
+
+
+def test_consolidated_deploy_absorbs_only_registered_child_context() -> None:
+    """A workflow may deploy a port-channel through another family's orchestrator."""
+
+    source = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    target = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    source._register_deploy_derived_identities("port-channel501", "FDO12345ABC", [("Ethernet1/1", "FDO12345ABC")])
+    source._queue_preview_derived_discovery("port-channel501", "FDO12345ABC")
+
+    target.absorb_deploy_context_from(source)
+
+    assert target._allowed_derived_deploy_pairs([("port-channel501", "FDO12345ABC")]) == {("ethernet1/1", "FDO12345ABC")}
+    assert ("port-channel501", "FDO12345ABC") in target._pending_preview_derived_discovery
+    assert target._allowed_derived_deploy_pairs([("port-channel999", "FDO12345ABC")]) == set()
+
+
+def test_consolidated_deploy_absorbs_proven_vpc_peer_scope_and_verifies_both_parents() -> None:
+    """A non-vPC deploy target must not reject a proven peer child or verify one side only."""
+
+    source = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    target = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    source._absorbed_preview_scoped_child_switches[("vpc951", "FDO11111AAA")] = {"FDO11111AAA", "FDO22222BBB"}
+    pairs = [("Ethernet1/41", "FDO11111AAA"), ("vpc951", "FDO11111AAA")]
+
+    target.absorb_deploy_context_from(source)
+
+    assert target._preview_verification_pairs(pairs) == [
+        ("Ethernet1/41", "FDO11111AAA"),
+        ("vpc951", "FDO11111AAA"),
+        ("vpc951", "FDO22222BBB"),
+    ]
+    result = {
+        "results": [
+            {"interfaceName": "Ethernet1/41", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "vpc951", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "Ethernet1/5", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "port-channel951", "switchId": "FDO22222BBB", "status": "success"},
+        ]
+    }
+    assert target._classify_deploy_results(result, pairs) == (False, None)
+
+    result["results"][-1]["switchId"] = "FDO33333CCC"
+    assert "unexpected identity" in target._classify_deploy_results(result, pairs)[1]
 
 
 def test_pending_parent_preview_registers_only_inventory_backed_ethernet_children() -> None:
@@ -1371,6 +1444,7 @@ def test_deploy_207_incomplete_results_require_exact_converged_preview(
     assert rest_send.response_count == 2
     assert rest_send.path.endswith("/interfaceActions/preview")
     assert instance._pending_deploys == []
+    assert instance.verified_deploy_targets == (("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD"))
 
 
 @pytest.mark.parametrize(
@@ -1437,6 +1511,7 @@ def test_deploy_207_contradictory_results_fail_without_preview(deploy_data, erro
     with pytest.raises(RuntimeError, match=error):
         instance.deploy_pending()
 
+    assert instance.verified_deploy_targets == ()
     assert rest_send.response_count == 1
     assert rest_send.path.endswith("/interfaceActions/deploy")
     assert instance._pending_deploys == [
@@ -2422,7 +2497,7 @@ def _bulk_orchestrator_with_inventory(gen_responses: ResponseGenerator, names: l
     """Return a bulk-create stub whose cached inventory for FDO12345ABC holds `names` (no cache entry at all when `None`)."""
     instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(gen_responses))
     if names is not None:
-        instance._switch_interfaces_cache["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
+        instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
     return instance
 
 
@@ -2566,7 +2641,7 @@ def test_base_interface_00799() -> None:
 
     assert "inventory unavailable" not in str(exc_info.value)
     assert instance._pending_deploys == []
-    assert "FDO12345ABC" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("FDO12345ABC")
 
 
 def test_base_interface_00795() -> None:
@@ -3442,7 +3517,7 @@ def _xe_record(name: str, status: str | None, network_os_type: str = "ios-xe") -
 def _seeded_orchestrator(gen_responses: ResponseGenerator, records: list[dict]) -> _StubInterfaceOrchestrator:
     """Return a stub orchestrator whose inventory cache for CAT9KV1701 already holds `records` (no interface-list GET needed)."""
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses))
-    instance._switch_interfaces_cache["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
+    instance.state_snapshot._interfaces_by_switch["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
     return instance
 
 

@@ -1,0 +1,18 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Check every expected unsupported fabric and interface combination
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/unsupported_case.yaml"
+  loop: "{{ nd_iw_unsupported_cases }}"
+  loop_control:
+    loop_var: nd_iw_unsupported_case
+    label: "{{ nd_iw_current_fabric.discriminator }}:{{ nd_iw_unsupported_case.family }}"
+
+- name: Report a fabric with no expected unsupported combinations
+  ansible.builtin.debug:
+    msg: >-
+      Every selected interface family is expected to be supported on
+      {{ nd_iw_current_fabric.discriminator }}.
+  when: nd_iw_unsupported_cases | length == 0

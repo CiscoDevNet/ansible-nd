@@ -17,9 +17,10 @@ inherit from this base and provide their own `model_class` and `_managed_policy_
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch resolution) from
 `NDBaseInterfaceOrchestrator` and adds vPC-specific functionality:
 
-- Peer-serial auto-resolution: each create/update reads the per-switch `vpcPair` endpoint to obtain the peer
-  serial, then injects it as `peerSwitchId` in the payload. Results are cached per orchestrator instance so
-  bulk operations make at most one lookup per primary switch.
+- Peer-serial auto-resolution: create/update injects the peer serial as `peerSwitchId` in the payload. Standalone
+  orchestrators resolve a cache miss through the per-switch `vpcPair` endpoint. The aggregate interface workflow
+  shares a cache seeded from its authoritative fabric-wide `vpcPairs` read, so its mutations need no per-primary
+  pair lookups.
 - Standard remove-based deletion (vPC interfaces are virtual and deletable).
 - Fabric-wide `query_all()` filtered by `interfaceType: "vpc"` and per-type policy filtering.
 
@@ -75,8 +76,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     Provides shared logic for all vPC interface types. Subclasses must set `model_class` and implement
     `_managed_policy_types()` to define which policy types they manage.
 
-    Each create/update reads the `vpcPair` record for the primary switch to obtain the peer serial, which is
-    then injected as `peerSwitchId` in the payload. Lookups are cached per orchestrator instance.
+    Each create/update obtains the peer serial from the active cache and injects it as `peerSwitchId` in the
+    payload. Standalone instances populate cache misses from `vpcPair`; aggregate workflows can share a cache
+    pre-seeded from an authoritative `vpcPairs` inventory.
 
     Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` issues an immediate
     per-interface `DELETE /interfaces/{name}` (the bulk `interfaceActions/remove` endpoint rejects vPC interfaces;
@@ -164,6 +166,14 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 self._preview_scoped_child_switches[parent] = switch_ids
         return processed
 
+    def _preview_scoped_deploy_child_switches(self) -> dict[tuple[str, str], set[str]]:
+        """Expose exact parent/peer preview scopes to a consolidated deploy."""
+
+        scopes = {parent: set(switch_ids) for parent, switch_ids in super()._preview_scoped_deploy_child_switches().items()}
+        for parent, switch_ids in self._preview_scoped_child_switches.items():
+            scopes.setdefault(parent, set()).update(switch_ids)
+        return scopes
+
     def _preview_scoped_unregistered_child_requires_verification(
         self,
         pair: tuple[str, str],
@@ -171,13 +181,15 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     ) -> bool:
         """Force post-deploy preview for canonical children on an exact vPC pair."""
 
-        if not self._is_canonical_deploy_child_name(pair[0]):
-            return False
-        for interface_name, switch_id in submitted_pairs:
-            parent = self._normalized_interface_pair(interface_name, switch_id)
-            if parent is not None and pair[1] in self._preview_scoped_child_switches.get(parent, set()):
-                return True
-        return False
+        return super()._preview_scoped_unregistered_child_requires_verification(pair, submitted_pairs)
+
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Validate both peers and member ownership without capability API calls."""
+        super().preflight_safety(model_instances)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        self._validate_unique_pair_names(model_instances)
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
@@ -203,10 +215,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
           proposed vPCs in the same task.
         - Propagated from `super().preflight` / `_resolve_switch_id` / `_resolve_peer_switch_id` (unresolvable switch, missing pair).
         """
-        super().preflight(model_instances)
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        self.preflight_safety(model_instances)
+        self.validate_switches_capable(model_instances)
+
+    def _validate_unique_pair_names(self, model_instances: Sequence[ModelType]) -> None:
+        """Reject one vPC name listed under both peers of the same pair."""
         items_by_name: dict[str, list[ModelType]] = {}
         for model_instance in model_instances:
             items_by_name.setdefault(model_instance.interface_name, []).append(model_instance)
@@ -367,6 +380,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"'{self.fabric_name}': {'; '.join(conflicts)}. Remove each member from its current parent first."
             )
 
+    def share_peer_serial_cache(self, cache: dict[str, str]) -> None:
+        """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
+        self._peer_serial_cache = cache
+
     def _managed_policy_types(self) -> set[str]:
         """
         # Summary
@@ -388,7 +405,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Resolve one switch's declared peer serial from its authoritative
         ``vpcPair`` endpoint. Cache only that directed observation; a one-sided
-        record is not evidence for the reverse relation.
+        record is not evidence for the reverse relation. Aggregate-workflow
+        orchestrators may share the directed-observation cache.
 
         ## Raises
 

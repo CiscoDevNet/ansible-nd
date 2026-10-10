@@ -1,0 +1,47 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow fabric | Determine whether the family is a candidate
+  ansible.builtin.set_fact:
+    nd_iw_case_candidate: >-
+      {{ nd_iw_family_entry.key
+         in (nd_iw_current_fabric.candidate_families
+             | default(nd_iw_property_matrix.keys() | list)) }}
+
+- name: Interface workflow fabric | Determine declared family support
+  ansible.builtin.set_fact:
+    nd_iw_case_supported: >-
+      {{ (nd_iw_case_candidate | bool)
+         and (nd_iw_family_entry.key not in (nd_iw_current_fabric.unsupported_families | default([])))
+         and (nd_iw_family_entry.key in (nd_iw_current_fabric.supported_families
+                                         | default(nd_iw_property_matrix.keys() | list)))
+         and (nd_iw_current_fabric.discriminator
+              in (nd_iw_family_entry.value.supported_fabric_types
+                  | default(nd_iw_supported_fabric_types))) }}
+
+- name: Interface workflow fabric | Build normalized family case
+  ansible.builtin.set_fact:
+    nd_iw_normalized_case: >-
+      {{ nd_iw_family_entry.value
+         | combine({'family': nd_iw_family_entry.key,
+                    'type': nd_iw_family_entry.value.type | default(nd_iw_family_entry.key),
+                    'create_config': (nd_iw_family_entry.value.maximal
+                                      if nd_iw_run_full and nd_iw_family_entry.value.maximal is defined
+                                      else nd_iw_family_entry.value.minimal),
+                    'update_config': nd_iw_family_entry.value.alternate | default([]),
+                    'replace_config': nd_iw_family_entry.value.replacement | default([]),
+                    'delete_config': nd_iw_family_entry.value.delete | default([]),
+                    'property_assertions': nd_iw_family_entry.value.properties | default([]),
+                    'expected_supported': nd_iw_case_supported}) }}
+
+- name: Interface workflow fabric | Add normalized family case to coverage lists
+  ansible.builtin.set_fact:
+    nd_iw_selected_cases: >-
+      {{ nd_iw_selected_cases + ([nd_iw_normalized_case] if nd_iw_case_candidate | bool else []) }}
+    nd_iw_active_cases: >-
+      {{ nd_iw_active_cases + ([nd_iw_normalized_case] if nd_iw_case_supported else []) }}
+    nd_iw_unsupported_cases: >-
+      {{ nd_iw_unsupported_cases
+         + ([nd_iw_normalized_case]
+            if nd_iw_case_candidate | bool and not nd_iw_case_supported | bool else []) }}

@@ -12,6 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan, NDStatePlanner
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
@@ -149,15 +150,20 @@ class NDStateMachine:
         """
         Manage state according to desired configuration.
         """
+        if self.state == "gathered":
+            # Read-only state: __init__ already queried the existing objects and
+            # assigned them as ``after`` in the output, so no plan or mutation is needed.
+            return
+
+        plan = self._build_plan()
         if self.state in ["merged", "replaced", "overridden"]:
             proposed_items = list(self.proposed)
 
             # Policy-required-on-create guard (issue #350) runs FIRST: it is local-only (self.existing is
             # already in memory), so it fails before the API-backed capability preflight below and before
-            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. Create
-            # subset = proposed items not present in the existing inventory -- the same key-membership
-            # criterion get_diff_config uses to classify "new" (PR #362 review).
-            items_to_create = [item for item in proposed_items if self.existing.get(item.get_identifier_value()) is None]
+            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. The shared
+            # planner supplies the exact create subset used by standalone and aggregate workflows.
+            items_to_create = list(plan.creates)
 
             # Normalize preflight failures to NDStateMachineError (PR #362 review, gmicol). Both preflight
             # hooks raise a bare RuntimeError (base_interface.preflight_create / the capability preflight),
@@ -178,21 +184,16 @@ class NDStateMachine:
             except Exception as e:
                 raise NDStateMachineError(f"Preflight failed: {e}") from e
 
-            self._manage_create_update_state()
+            self._manage_create_update_state(plan)
 
             if self.state == "overridden":
-                self._manage_override_deletions()
+                self._manage_override_deletions(plan)
 
         elif self.state == "deleted":
             # Capability preflight intentionally NOT run for deletes: removing configuration does not
             # depend on a switch's capability to host the interface type (PR #275 scope decision).
             # The delete-specific guards run via preflight_delete inside _manage_delete_state.
-            self._manage_delete_state()
-
-        elif self.state == "gathered":
-            # Read-only state: __init__ already queried the existing objects and
-            # assigned them as ``after`` in the output, so no changes are made.
-            pass
+            self._manage_delete_state(plan)
 
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
@@ -215,10 +216,24 @@ class NDStateMachine:
                 raise NDStateMachineError(error_msg) from e
         return None
 
-    def _manage_create_update_state(self) -> None:
-        """
-        Handle merged/replaced/overridden states.
-        """
+    def _build_plan(self, state: str | None = None) -> NDStatePlan:
+        """Calculate all operations without invoking an orchestrator mutation method."""
+        try:
+            before = getattr(self, "before", None)
+            if before is None:
+                before = self.existing
+            return NDStatePlanner.plan(
+                state=state or self.state,
+                before=before,
+                proposed=self.proposed,
+                ignore_errors=getattr(self, "ignore_errors", False),
+            )
+        except Exception as e:
+            raise NDStateMachineError(str(e)) from e
+
+    def _manage_create_update_state(self, plan: NDStatePlan | None = None) -> None:
+        """Execute the create/update portion of a precomputed state plan."""
+        plan = plan or self._build_plan()
         execution_baseline = self.existing.copy()
         items_to_create: list[NDBaseModel] = []
         items_to_update: list[NDBaseModel] = []
@@ -361,21 +376,12 @@ class NDStateMachine:
             if getattr(item, "is_unsupported_policy", False):
                 self.module.warn(item.describe_unsupported_policy() + "; it is read-only and will not be modified or deleted by this module.")
 
-    def _manage_override_deletions(self) -> None:
-        """
-        Delete items not in proposed config (for overridden state).
-        """
-        diff_identifiers = self.before.get_diff_identifiers(self.proposed)
-        # Never implicitly delete an unsupported (opaque) object during reconciliation;
-        # it is absent from the user's proposed config only because it cannot be modeled.
-        items_to_delete = [
-            existing_item
-            for identifier in diff_identifiers
-            if (existing_item := self.existing.get(identifier)) is not None and not getattr(existing_item, "is_unsupported_policy", False)
-        ]
-        self._delete_items(items_to_delete)
+    def _manage_override_deletions(self, plan: NDStatePlan | None = None) -> None:
+        """Delete items not in proposed config for overridden state."""
+        plan = plan or self._build_plan("overridden")
+        self._delete_items(list(plan.deletes))
 
-    def _manage_delete_state(self) -> None:
+    def _manage_delete_state(self, plan: NDStatePlan | None = None) -> None:
         """Handle deleted state."""
         items_to_delete = []
         absent_items = []

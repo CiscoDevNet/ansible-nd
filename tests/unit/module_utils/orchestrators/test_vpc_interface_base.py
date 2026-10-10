@@ -1217,6 +1217,7 @@ def test_vpc_pending_preview_allows_omitted_peer_children_only_with_post_preview
 
     assert processed == {("vpc501", "FDO11111AAA")}
     assert instance._preview_scoped_child_switches == {("vpc501", "FDO11111AAA"): {"FDO11111AAA", "FDO22222BBB"}}
+    assert instance._preview_scoped_deploy_child_switches() == {("vpc501", "FDO11111AAA"): {"FDO11111AAA", "FDO22222BBB"}}
     allowed = instance._allowed_derived_deploy_pairs([("vpc501", "FDO11111AAA")])
     assert allowed == {("ethernet1/41", "FDO11111AAA")}
 
@@ -1642,16 +1643,16 @@ def test_vpc_interface_base_00940() -> None:
     """
     # Summary
 
-    Verify `query_all` skips a switch whose interfaces endpoint returns no body (the `not_found_ok` branch) and
-    yields an empty list when no managed vPC interfaces are found.
+    Verify a switch-scoped interface-list 404 fails closed rather than being
+    treated as an empty complete inventory.
 
     ## Test
 
     - Fabric summary and switches-list succeed (one switch)
     - The switch's interfaces endpoint returns 404 (no body)
-    - `query_all` returns `[]`
+    - `query_all` raises without publishing a partial inventory
 
-    `state=overridden` keeps `query_all` fabric-wide so the 404 switch is still visited and skipped.
+    `state=overridden` keeps `query_all` fabric-wide, so the 404 switch must block the run.
 
     ## Classes and Methods
 
@@ -1666,11 +1667,9 @@ def test_vpc_interface_base_00940() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
-    with does_not_raise():
-        instance = _build_orchestrator(gen_responses, state="overridden")
-        result = instance.query_all()
-
-    assert result == []
+    instance = _build_orchestrator(gen_responses, state="overridden")
+    with pytest.raises(RuntimeError, match=r"Query all failed.*404"):
+        instance.query_all()
 
 
 def test_vpc_interface_base_00920() -> None:
@@ -2204,7 +2203,7 @@ def test_vpc_member_preflight_rejects_member_owned_by_another_vpc(monkeypatch) -
     """A conflicting vPC parent must fail before its create reaches ND."""
 
     _wire_membership_pair(monkeypatch, _membership_inventories())
-    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", lambda self, model_instances: None)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
     instance = _build_orchestrator(ResponseGenerator(iter(())))
     proposed = _build_model(interface_name="vpc502", peer1_member_ports=["Ethernet1/42"])
 
@@ -2252,7 +2251,7 @@ def test_vpc_member_preflight_rejects_same_task_double_claim(monkeypatch) -> Non
             _MEMBERSHIP_PEER: {},
         },
     )
-    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", lambda self, model_instances: None)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
     instance = _build_orchestrator(ResponseGenerator(iter(())))
     proposed = [
         _build_model(interface_name="vpc502", peer1_member_ports=["Ethernet1/43"]),
@@ -2301,7 +2300,7 @@ def test_vpc_member_public_preflight_rejects_existing_owner_for_each_family(
         member_policy_type=member_policy_type,
     )
     _wire_membership_pair(monkeypatch, inventories, orchestrator_class)
-    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", lambda self, model_instances: None)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
     instance = orchestrator_class(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
     proposed = model_class(
         switch_ip="192.168.1.1",

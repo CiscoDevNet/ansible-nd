@@ -963,20 +963,20 @@ def test_rest_send_00510():
     ## Test
 
     - Failed POST request returns 400 response
-    - Loop retries until timeout is exhausted
+    - The deterministic 400 is terminal and is submitted exactly once
+    - A following sentinel 200 response is not consumed
 
     ## Classes and Methods
 
     - RestSend.commit()
     - RestSend._commit_normal_mode()
+    - ResponseHandler._is_terminal_client_error()
     """
     method_name = inspect.stack()[0][3]
-    key = f"{method_name}a"
 
     def responses():
-        # Provide responses for multiple retry attempts (60 retries * 5 second interval = 300 seconds)
-        for _ in range(60):
-            yield responses_rest_send(key)
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
 
@@ -1003,9 +1003,10 @@ def test_rest_send_00510():
         instance.payload = {"invalid": "data"}
         instance.commit()
 
-    # Verify error response
+    # One submission: the terminal 400 is final; the sentinel 200 was never consumed.
     assert instance.response_current["RETURN_CODE"] == 400
     assert instance.result_current["success"] is False
+    assert instance.result_current["retryable"] is False
 
 
 def test_rest_send_00520():
@@ -1815,6 +1816,23 @@ def test_rest_send_response_count():
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(RestSend, "responses", property(_no_copy))
         assert instance.response_count == 2
+
+
+def test_rest_send_result_count():
+    """`result_count` tracks results without reading the deep-copying public history."""
+    instance = RestSend({"check_mode": False})
+
+    assert instance.result_count == 0
+    instance.add_result({"success": True})
+    instance.add_result({"success": False})
+    assert instance.result_count == 2
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("result_count must not read the deep-copying results property")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(RestSend, "results", property(_no_copy))
+        assert instance.result_count == 2
 
 
 # =============================================================================

@@ -172,6 +172,10 @@ def test_absent_access_delete_does_not_deploy_staged_trunk_port_channel(monkeypa
             "configData": {"networkOS": {"policy": {"policyType": "trunkPoHost", "description": "staged trunk change"}}},
         }
     }
+    snapshot = orchestrator.state_snapshot
+    snapshot._interfaces_by_switch["FDO11111AAA"] = dict(orchestrator._switch_interfaces_cache["FDO11111AAA"])
+    snapshot._original_interfaces_by_switch["FDO11111AAA"] = dict(orchestrator._switch_interfaces_cache["FDO11111AAA"])
+    snapshot._revisions_by_switch["FDO11111AAA"] = 1
 
     access_delete = _build_pc_model(interface_name="port-channel997", include_config=False)
     assert orchestrator.reconcile_absent_deletes([access_delete]) is False
@@ -191,6 +195,16 @@ def test_port_channel_deploy_results_allow_derived_members_only_via_preview() ->
         ("ethernet1/2", "FDO11111AAA"),
     }
     assert ("loopback99", "UNRELATED") not in instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")])
+
+
+def test_deferred_port_channel_deploy_retains_exact_member_context() -> None:
+    """A workflow stages the parent before it consolidates the deploy."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance._prepare_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
+
+    assert instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")]) == {("ethernet1/1", "FDO11111AAA")}
 
 
 def test_port_channel_deploy_context_includes_exact_operational_member_after_staged_removal() -> None:
@@ -447,13 +461,12 @@ def test_port_channel_access_orchestrator_00430() -> None:
     """
     # Summary
 
-    Verify `query_all` returns an empty list when a switch's interfaces endpoint returns no body
-    (the `not_found_ok=True` branch in `PortChannelBaseOrchestrator.query_all`).
+    Verify a switch-scoped interface-list 404 fails closed.
 
     ## Test
 
-    - Switch's interface list returns 404 (treated as no interfaces present)
-    - query_all skips the switch and yields []
+    - Switch's interface list returns 404
+    - query_all raises instead of assuming a complete empty inventory
 
     ## Classes and Methods
 
@@ -467,12 +480,9 @@ def test_port_channel_access_orchestrator_00430() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
-    with does_not_raise():
-        # state=overridden keeps query_all fabric-wide so the 404 switch is still visited and skipped.
-        orchestrator = _build_orchestrator(gen_responses, state="overridden")
-        result = orchestrator.query_all()
-
-    assert result == []
+    orchestrator = _build_orchestrator(gen_responses, state="overridden")
+    with pytest.raises(RuntimeError, match=r"Query all failed.*404"):
+        orchestrator.query_all()
 
 
 def test_port_channel_access_orchestrator_00440() -> None:
@@ -1183,12 +1193,12 @@ def test_port_channel_access_orchestrator_00800() -> None:
 
 
 def _preflight_orchestrator(method_name: str, check_mode: bool = False) -> PortChannelAccessInterfaceOrchestrator:
-    """Build an orchestrator whose responses are the switches list (a) then the member-conflict inventory (b)."""
+    """Build an orchestrator with safety inventory before the capability response."""
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), state="merged", check_mode=check_mode)
     return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
@@ -1368,8 +1378,8 @@ def test_port_channel_access_orchestrator_00960() -> None:
 
     - `query_all` (state merged, config scoped to 192.168.1.1) consumes summary (a), switches (b), interfaces (c)
     - Only the `capableSwitches` response remains queued
-    - `preflight` for a free member does not raise (an extra inventory GET would exhaust the generator and raise)
-    - `_switch_interfaces_cache` holds the unfiltered inventory for FDO11111AAA
+    - `preflight` consumes that capability response for a free member but issues no extra inventory GET
+    - The shared `InterfaceStateSnapshot` holds the unfiltered inventory for FDO11111AAA
 
     ## Classes and Methods
 
@@ -1395,9 +1405,10 @@ def test_port_channel_access_orchestrator_00960() -> None:
     # query_all still returns only the managed accessPoHost port-channels...
     assert [iface["interfaceName"] for iface in result] == ["port-channel501"]
     # ...while the cache retains the unfiltered inventory the preflight reads.
-    assert set(instance._switch_interfaces_cache) == {"FDO11111AAA"}
-    assert "ethernet1/2" in instance._switch_interfaces_cache["FDO11111AAA"]
-    assert "port-channel500" in instance._switch_interfaces_cache["FDO11111AAA"]
+    cached = instance.state_snapshot.interfaces_by_switch
+    assert set(cached) == {"FDO11111AAA"}
+    assert "ethernet1/2" in cached["FDO11111AAA"]
+    assert "port-channel500" in cached["FDO11111AAA"]
 
 
 def test_port_channel_access_orchestrator_00970() -> None:
@@ -1786,14 +1797,14 @@ def test_port_channel_access_orchestrator_01100(ports, match) -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_pc_model(ports=ports)])
-    assert len(rest_send.responses) == 3
+    assert len(rest_send.responses) == 2
 
 
 def test_port_channel_access_orchestrator_01110() -> None:
@@ -1816,8 +1827,8 @@ def test_port_channel_access_orchestrator_01110() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with does_not_raise():
@@ -1848,8 +1859,8 @@ def test_port_channel_access_orchestrator_01120() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel102"):
@@ -2096,7 +2107,7 @@ def test_port_channel_access_orchestrator_01320() -> None:
     ## Test
 
     - Proposed config names only port-channel101, so the fabric-wide override would remove port-channel102 (`unknown`)
-    - Responses: switches list, capableSwitches, fabric summary, inventory, deployment history holding port-channel102's create push
+    - Responses: switches list, inventory, capableSwitches, fabric summary, deployment history holding port-channel102's create push
     - `preflight` raises `RuntimeError` naming port-channel102
 
     ## Classes and Methods
@@ -2105,7 +2116,7 @@ def test_port_channel_access_orchestrator_01320() -> None:
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
     """
     config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel101"}]
-    instance = _guard_orchestrator(inspect.stack()[0][3], "a+bcd", "overridden", config)
+    instance = _guard_orchestrator(inspect.stack()[0][3], "ac+bd", "overridden", config)
 
     with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*port-channel102"):
         instance.preflight([_xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"])])
@@ -2149,7 +2160,7 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
 
     - Two NX-OS port-channels on switch A and two IOS-XE port-channels on the Catalyst; both switches are capable
     - `preflight` does not raise
-    - One switches GET and one `capableSwitches` GET, then one interface-list GET per switch for the member checks: four responses
+    - One switches GET, one interface-list GET per switch for the member checks, then one `capableSwitches` GET: four responses
 
     ## Classes and Methods
 
@@ -2160,9 +2171,9 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access(f"{method_name}b")
         yield responses_pc_access(f"{method_name}c")
         yield responses_pc_access(f"{method_name}d")
+        yield responses_pc_access(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
@@ -2185,8 +2196,10 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
         instance.preflight(models)
 
     paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
-    assert paths[:2] == [
+    assert paths == [
         "/api/v1/manage/fabrics/fabric_1/switches",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
         "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access",
     ]
     assert len(rest_send.responses) == 4
@@ -2213,6 +2226,7 @@ def test_port_channel_access_orchestrator_01410() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access("test_port_channel_access_orchestrator_01400d")
         yield responses_pc_access(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))

@@ -33,6 +33,7 @@ wrapping or flattening.
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -69,6 +70,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+
+# True only while EthernetTrunkHostPolicyModel.merge() applies a prevalidated
+# vlan_mapping/vlan_mapping_entries pair. Assignment validation runs after
+# every setattr in NDBaseModel.merge(), so without this guard a valid
+# false -> true transition is rejected before the entries are assigned.
+_VLAN_MAPPING_VALIDATION_SUSPENDED: ContextVar[bool] = ContextVar("ethernet_trunk_vlan_mapping_validation_suspended", default=False)
 
 # Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
 # The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
@@ -385,9 +392,46 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
 
         - If `vlan_mapping` is true and `vlan_mapping_entries` is missing or empty.
         """
+        if _VLAN_MAPPING_VALIDATION_SUSPENDED.get():
+            return self
         if self.vlan_mapping is True and not self.vlan_mapping_entries:
             raise ValueError("vlan_mapping_entries must be provided when vlan_mapping is true.")
         return self
+
+    def merge(self, other: NDBaseModel) -> NDBaseModel:
+        """
+        Merge VLAN-mapping intent without exposing an invalid intermediate assignment.
+
+        `NDBaseModel.merge` assigns explicitly configured fields in model order. Since `vlan_mapping` precedes
+        `vlan_mapping_entries`, assignment validation would otherwise reject a valid proposal containing both while the entries
+        still have their existing value. Validate the final pair before mutation, then suspend only this invariant while the shared
+        merge applies both fields.
+
+        ## Raises
+
+        ### ValueError
+
+        - If the final merged policy enables VLAN mapping without entries.
+        """
+        if not isinstance(other, type(self)):
+            return super().merge(other)
+
+        proposed_vlan_mapping = getattr(other, "vlan_mapping", None)
+        proposed_vlan_mapping_entries = getattr(other, "vlan_mapping_entries", None)
+        final_vlan_mapping = proposed_vlan_mapping if "vlan_mapping" in other.model_fields_set and proposed_vlan_mapping is not None else self.vlan_mapping
+        final_vlan_mapping_entries = (
+            proposed_vlan_mapping_entries
+            if "vlan_mapping_entries" in other.model_fields_set and proposed_vlan_mapping_entries is not None
+            else self.vlan_mapping_entries
+        )
+        if final_vlan_mapping is True and not final_vlan_mapping_entries:
+            raise ValueError("vlan_mapping_entries must be provided when vlan_mapping is true.")
+
+        token = _VLAN_MAPPING_VALIDATION_SUSPENDED.set(True)
+        try:
+            return super().merge(other)
+        finally:
+            _VLAN_MAPPING_VALIDATION_SUSPENDED.reset(token)
 
 
 class XeEthernetTrunkHostPolicyModel(InterfacePolicyStrictBase):
