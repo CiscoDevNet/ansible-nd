@@ -16,3 +16,88 @@
   with_items: "{{ nd_network_test_items }}"
   loop_control:
     loop_var: nd_network_test_case_to_run
+
+# Keep the legacy testcase dispatcher above as the default integration path.
+# The ND4X harness is opt-in and runs only when one of its tags is requested.
+- name: Run ND4X harness preflight
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_preflight.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_gathered
+        - nd4x_demo_overridden
+        - nd4x_demo_deleted
+        - nd4x_demo_staged
+        - nd4x_demo_negative
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_merged
+    - nd4x_demo_replaced
+    - nd4x_demo_gathered
+    - nd4x_demo_overridden
+    - nd4x_demo_deleted
+    - nd4x_demo_staged
+    - nd4x_demo_negative
+
+- name: Run merged state tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_merged.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_merged]
+  tags: [never, nd4x_demo, nd4x_demo_merged]
+  when: nd4x_network_supported | default(false) | bool
+
+- name: Run replaced state tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_replaced.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_replaced]
+  tags: [never, nd4x_demo, nd4x_demo_replaced]
+  when: nd4x_network_supported | default(false) | bool
+
+- name: Run gathered state tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_gathered.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_gathered]
+  tags: [never, nd4x_demo, nd4x_demo_gathered]
+  when: nd4x_network_supported | default(false) | bool
+
+- name: Run overridden state tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_overridden.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_overridden]
+  tags: [never, nd4x_demo, nd4x_demo_overridden]
+  when: nd4x_network_supported | default(false) | bool
+
+- name: Run deleted state tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_deleted.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_deleted]
+  tags: [never, nd4x_demo, nd4x_demo_deleted]
+  when: nd4x_network_supported | default(false) | bool
+
+- name: Run staged state tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_staged.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_staged]
+  tags: [never, nd4x_demo, nd4x_demo_staged]
+  when: nd4x_network_supported | default(false) | bool
+
+- name: Run negative validation tests using the ND4X harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_negative.yaml
+    apply:
+      tags: [never, nd4x_demo, nd4x_demo_negative]
+  tags: [never, nd4x_demo, nd4x_demo_negative]
+  when: nd4x_network_supported | default(false) | bool

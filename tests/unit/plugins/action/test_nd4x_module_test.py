@@ -1201,3 +1201,101 @@ def test_jsonpath_values_support_extended_filters(action_plugin):
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "network_item",
+    [
+        {
+            "network_name": "harness-nd-network-replaced",
+            "network_id": 9110002,
+            "vlan_id": 3902,
+            "layer": "layer2",
+            "l2_data": {
+                "vlan_name": "harness_nd_network_replaced_vlan",
+                "rt_auto": False,
+                "fabric_data": {"enable_ir": False},
+            },
+        },
+        {
+            "networkName": "harness-nd-network-replaced",
+            "networkId": 9110002,
+            "vlanId": 3902,
+            "layer": "layer2",
+            "l2Data": {
+                "vlanName": "harness_nd_network_replaced_vlan",
+                "rtAuto": False,
+                "fabricData": {"enableIr": False},
+            },
+        },
+    ],
+)
+def test_summarize_network_config_item(action_plugin, network_item):
+    assert action_plugin._summarize_config_item(network_item) == {
+        "network_name": "harness-nd-network-replaced",
+        "network_id": 9110002,
+        "vlan_id": 3902,
+        "vlan_name": "harness_nd_network_replaced_vlan",
+        "is_l2only": None,
+        "layer": "layer2",
+        "enable_ir": False,
+        "rt_auto": False,
+        "deploy": None,
+        "deploy_type": None,
+    }
+
+
+def test_summarize_gathered_module_result(action_plugin):
+    module_result = {
+        "changed": False,
+        "before": [],
+        "after": [],
+        "gathered": [
+            {
+                "network_name": "harness-nd-network-gathered",
+                "network_id": 9110003,
+                "vlan_id": 3903,
+            }
+        ],
+    }
+
+    assert action_plugin._summarize_module_result(module_result) == {
+        "changed": False,
+        "failed": False,
+        "before_count": 0,
+        "before_items": [],
+        "after_count": 0,
+        "after_items": [],
+        "gathered_count": 1,
+        "gathered_items": [
+            {
+                "network_name": "harness-nd-network-gathered",
+                "network_id": 9110003,
+                "vlan_id": 3903,
+                "vlan_name": None,
+                "is_l2only": None,
+                "layer": None,
+                "enable_ir": None,
+                "rt_auto": None,
+                "deploy": None,
+                "deploy_type": None,
+            }
+        ],
+    }
+
+
+def test_config_diff_paths_reports_nested_changes_without_values(action_plugin):
+    before = [
+        {
+            "network_name": "harness-nd-network-replaced",
+            "l2_data": {"rt_auto": True, "fabric_data": {"enable_ir": False}},
+        }
+    ]
+    proposed = [
+        {
+            "network_name": "harness-nd-network-replaced",
+            "l2_data": {"rt_auto": False, "fabric_data": {"enable_ir": False}},
+        }
+    ]
+
+    assert action_plugin._config_diff_paths(before, proposed) == ["/0/l2_data/rt_auto"]

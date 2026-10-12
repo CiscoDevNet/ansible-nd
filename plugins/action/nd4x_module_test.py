@@ -1188,7 +1188,7 @@ class ActionModule(ActionBase):
         elif diff:
             summary["diff_present"] = True
 
-        for key in ("before", "after", "proposed"):
+        for key in ("before", "after", "proposed", "gathered"):
             value = module_result.get(key)
             if isinstance(value, list):
                 summary["%s_count" % key] = len(value)
@@ -1196,11 +1196,65 @@ class ActionModule(ActionBase):
             elif value is not None:
                 summary[key] = value
 
+        before = module_result.get("before")
+        proposed = module_result.get("proposed")
+        if isinstance(before, list) and isinstance(proposed, list):
+            summary["before_proposed_diff_paths"] = self._config_diff_paths(before, proposed)[:50]
+
         return summary
+
+    def _config_diff_paths(self, before, proposed, path=""):
+        """Return paths that differ between config snapshots without exposing values."""
+        if isinstance(before, dict) and isinstance(proposed, dict):
+            paths = []
+            for key in sorted(set(before) | set(proposed), key=str):
+                child_path = "%s/%s" % (path, key)
+                if key not in before or key not in proposed:
+                    paths.append(child_path)
+                else:
+                    paths.extend(self._config_diff_paths(before[key], proposed[key], child_path))
+            return paths
+
+        if isinstance(before, list) and isinstance(proposed, list):
+            if len(before) != len(proposed):
+                return [path or "/"]
+            paths = []
+            for index, (before_item, proposed_item) in enumerate(zip(before, proposed)):
+                paths.extend(self._config_diff_paths(before_item, proposed_item, "%s/%s" % (path, index)))
+            return paths
+
+        return [] if before == proposed else [path or "/"]
 
     def _summarize_config_item(self, item):
         if not isinstance(item, dict):
             return item
+
+        if "network_name" in item or "networkName" in item:
+            def value_from(source, snake_case, camel_case):
+                value = source.get(snake_case)
+                return source.get(camel_case) if value is None else value
+
+            l2_data = item.get("l2_data") or item.get("l2Data") or {}
+            fabric_data = l2_data.get("fabric_data") or l2_data.get("fabricData") or {}
+
+            def network_value(snake_case, camel_case, nested=None):
+                value = value_from(item, snake_case, camel_case)
+                if value is not None or nested is None:
+                    return value
+                return value_from(nested, snake_case, camel_case)
+
+            return {
+                "network_name": network_value("network_name", "networkName"),
+                "network_id": network_value("network_id", "networkId"),
+                "vlan_id": network_value("vlan_id", "vlanId"),
+                "vlan_name": network_value("vlan_name", "vlanName", l2_data),
+                "is_l2only": network_value("is_l2only", "isL2Only"),
+                "layer": network_value("layer", "layer"),
+                "enable_ir": network_value("enable_ir", "enableIr", fabric_data),
+                "rt_auto": network_value("rt_auto", "rtAuto", l2_data),
+                "deploy": item.get("deploy"),
+                "deploy_type": network_value("deploy_type", "deployType"),
+            }
 
         config_data = item.get("config_data") or item.get("configData") or {}
         network_os = config_data.get("network_os") or config_data.get("networkOS") or {}
