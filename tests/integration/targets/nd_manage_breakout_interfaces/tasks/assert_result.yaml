@@ -1,0 +1,62 @@
+---
+- name: Validate original Ansible result and shared business fields
+  ansible.builtin.assert:
+    that:
+      - (breakout_result.failed | default(false) | bool) == (breakout_expected_failed | default(false) | bool)
+      - (breakout_result.changed | bool) == (breakout_expected_changed | bool)
+      - breakout_result.output_level is defined
+      - breakout_result.before is sequence
+      - breakout_result.before is not string and breakout_result.before is not mapping
+      - breakout_result.after is sequence
+      - breakout_result.after is not string and breakout_result.after is not mapping
+      - breakout_result.diff is sequence
+      - breakout_result.diff is not string and breakout_result.diff is not mapping
+      - breakout_result.after_status is defined
+      - breakout_result.api_outcomes is sequence
+      - breakout_result.api_outcomes is not string and breakout_result.api_outcomes is not mapping
+      - breakout_result.may_have_changed is defined
+      - breakout_result.api_outcomes | length == (breakout_expected_outcome_count | default(1) | int)
+      - not (breakout_expected_changed | bool) or breakout_result.diff | length > 0
+      - >-
+        breakout_result.api_outcomes | map(attribute='outcome') | unique | list
+        == ([breakout_expected_outcome | default('success')]
+        if (breakout_expected_outcome_count | default(1) | int) > 0 else [])
+      - not (breakout_expect_empty_diff | default(false) | bool) or breakout_result.diff | length == 0
+    fail_msg: "Unexpected original module result: {{ breakout_result }}"
+
+- name: Validate requested after-state provenance when specified
+  ansible.builtin.assert:
+    that:
+      - breakout_result.after_status == breakout_expected_after_status
+  when: breakout_expected_after_status is defined
+
+- name: Validate mutation uncertainty when specified
+  ansible.builtin.assert:
+    that:
+      - (breakout_result.may_have_changed | bool) == (breakout_expected_may_have_changed | bool)
+  when: breakout_expected_may_have_changed is defined
+
+- name: Validate module write count and order from high-verbosity trace
+  ansible.builtin.assert:
+    that:
+      - breakout_result.api_calls is defined
+      - >-
+        breakout_result.api_calls | rejectattr('method', 'equalto', 'GET') |
+        map(attribute='method') | unique | list
+        == (['POST'] if (breakout_expected_write_actions | default([]) | length) > 0 else [])
+      - >-
+        breakout_result.api_calls | selectattr('method', 'equalto', 'POST') |
+        map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list
+        == (breakout_expected_write_actions | default([]))
+    fail_msg: >-
+      Unexpected module write trace. Validator GETs are separate and are not
+      counted in this module's API budget.
+  when: ansible_verbosity | int >= 3
+
+- name: Validate the focused GET budget when specified
+  ansible.builtin.assert:
+    that:
+      - breakout_result.api_calls | selectattr('method', 'equalto', 'GET') | list | length == (breakout_expected_get_count | int)
+  when:
+    - ansible_verbosity | int >= 3
+    - breakout_expected_get_count is defined

@@ -1,0 +1,239 @@
+---
+# Optional independent hardware groups, not another quad-specific lifecycle.
+# Every fixture is operator supplied, reserved, initially native and complete.
+# Do not list 21 and 23 separately when they share the 21-24 hardware footprint.
+- name: Validate optional bulk fixture list locally
+  ansible.builtin.assert:
+    that:
+      - test_breakout_bulk_fixtures | default([]) is sequence
+      - test_breakout_bulk_fixtures | default([]) is not string
+      - test_breakout_bulk_fixtures | default([]) is not mapping
+
+- name: Report missing optional independent bulk resources
+  ansible.builtin.debug:
+    msg: >-
+      SKIP bulk lifecycle: provide at least two complete, reserved, independent
+      initially native 100G fixtures in test_breakout_bulk_fixtures. Distinct
+      control names in the same coupled hardware group are not independent.
+  when: test_breakout_bulk_fixtures | default([]) | length < 2
+
+- name: Initialize optional bulk state without controller discovery
+  ansible.builtin.set_fact:
+    breakout_bulk_fixtures: []
+    breakout_bulk_create_config: []
+    breakout_bulk_delete_config: []
+    breakout_bulk_owned_fixtures: []
+    breakout_bulk_group_keys: []
+    breakout_bulk_pending_removals: []
+    breakout_bulk_cleanup_failures: []
+    breakout_bulk_cleanup_completed_groups: []
+    breakout_bulk_snapshots: {}
+    breakout_bulk_baselines: {}
+    breakout_bulk_guard_baselines: {}
+    breakout_bulk_unchanged_indices: []
+
+- name: Validate each complete optional bulk footprint before any write
+  ansible.builtin.include_tasks: ../tasks/validate_bulk_fixture.yaml
+  loop: "{{ test_breakout_bulk_fixtures | default([]) }}"
+  loop_control:
+    loop_var: breakout_bulk_candidate
+    label: "{{ breakout_bulk_candidate.control_parent | default('invalid fixture') }}"
+  when: test_breakout_bulk_fixtures | default([]) | length >= 2
+
+- name: Build bulk inputs using only supplied control parents and maps
+  ansible.builtin.set_fact:
+    breakout_bulk_create_config: >-
+      {{ breakout_bulk_create_config + [{'switch_id': item.switch_id,
+          'interface_names': [item.control_parent],
+          'breakout_map': item.profiles.map_a.breakout_map | trim | lower}] }}
+    breakout_bulk_delete_config: >-
+      {{ breakout_bulk_delete_config + [{'switch_id': item.switch_id,
+          'interface_names': [item.control_parent]}] }}
+    breakout_bulk_group_keys: "{{ breakout_bulk_group_keys + [item.switch_id ~ '/' ~ item.control_parent] }}"
+  loop: "{{ breakout_bulk_fixtures }}"
+  loop_control:
+    label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+- name: Exercise optional bulk lifecycle on independent declared groups
+  when: breakout_bulk_fixtures | length >= 2
+  block:
+    - name: B01 - Create every supplied independent parent in one bulk breakout
+      cisco.nd.nd_manage_breakout_interfaces: &breakout_bulk_create
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        config: "{{ breakout_bulk_create_config }}"
+      register: breakout_result
+      ignore_errors: true
+
+    - name: Track only native groups this invocation could have changed
+      ansible.builtin.set_fact:
+        breakout_bulk_owned_fixtures: "{{ breakout_bulk_owned_fixtures + [item] }}"
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+      when:
+        - >-
+          breakout_result.before | default([]) |
+          selectattr('switch_id', 'equalto', item.switch_id) |
+          selectattr('interface_name', 'equalto', item.control_parent) |
+          selectattr('broken_out', 'equalto', false) | list | length == 1
+        - (breakout_result.changed | default(false) | bool) or (breakout_result.may_have_changed | default(false) | bool)
+
+    - name: B01 - Require one confirmed operation per supplied parent
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [breakout]
+        breakout_expected_after_status: response_confirmed
+
+    - name: B01 - Match every confirmed outcome to its original serial and parent
+      ansible.builtin.assert: &breakout_bulk_identity_assert
+        that:
+          - >-
+            breakout_result.api_outcomes |
+            selectattr('switch_id', 'equalto', item.switch_id) |
+            selectattr('interface_name', 'equalto', item.control_parent) | list | length == 1
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: Initialize each independent expected hardware profile
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['map_a'] * (breakout_bulk_fixtures | length) }}"
+
+    - name: B01 - Validate every complete hardware footprint and its own map
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Save independent initial bulk baseline
+      ansible.builtin.set_fact:
+        breakout_bulk_baselines: "{{ breakout_bulk_snapshots }}"
+        breakout_bulk_unchanged_indices: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+
+    - name: B01 - Repeat identical per-parent bulk configuration
+      cisco.nd.nd_manage_breakout_interfaces: *breakout_bulk_create
+      register: breakout_result
+
+    - name: B01 - Require all parents are no-ops with no mutation POST
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: false
+        breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
+        breakout_expected_outcome: noop
+        breakout_expected_write_actions: []
+        breakout_expect_empty_diff: true
+
+    - name: B01 - Match every no-op outcome without depending on response order
+      ansible.builtin.assert: *breakout_bulk_identity_assert
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: B01 - Independently prove every footprint and map remained unchanged
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Record every original bulk deletion target before invocation
+      ansible.builtin.set_fact:
+        breakout_bulk_pending_removals: "{{ breakout_bulk_group_keys }}"
+
+    - name: B02 - Delete every independently broken group in one bulk request
+      cisco.nd.nd_manage_breakout_interfaces: &breakout_bulk_delete
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config: "{{ breakout_bulk_delete_config }}"
+      register: breakout_result
+
+    - name: B02 - Require one confirmed removal outcome per independent group
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [remove]
+
+    - name: B02 - Match every deletion outcome to its original serial and parent
+      ansible.builtin.assert: *breakout_bulk_identity_assert
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: Declare complete native restoration for every supplied group
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['native'] * (breakout_bulk_fixtures | length) }}"
+        breakout_bulk_unchanged_indices: []
+
+    - name: B02 - Verify complete native footprints and absence of active breakout MAPs
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Save independently restored native bulk baseline
+      ansible.builtin.set_fact:
+        breakout_bulk_baselines: "{{ breakout_bulk_snapshots }}"
+        breakout_bulk_unchanged_indices: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+        breakout_bulk_pending_removals: []
+
+    - name: Track repeated deleted invocation until independent native state is reconfirmed
+      ansible.builtin.set_fact:
+        breakout_bulk_pending_removals: "{{ breakout_bulk_group_keys }}"
+
+    - name: B02 - Repeat identical bulk deletion on native groups
+      cisco.nd.nd_manage_breakout_interfaces: *breakout_bulk_delete
+      register: breakout_result
+
+    - name: B02 - Require all native deletion requests are no-ops
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: false
+        breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
+        breakout_expected_outcome: noop
+        breakout_expected_write_actions: []
+        breakout_expect_empty_diff: true
+
+    - name: B02 - Match every repeated native deletion no-op by identity
+      ansible.builtin.assert: *breakout_bulk_identity_assert
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: B02 - Prove native topology stayed unchanged after idempotent deletion
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Release bulk ownership only after independently verified restoration
+      ansible.builtin.set_fact:
+        breakout_bulk_owned_fixtures: []
+        breakout_bulk_pending_removals: []
+
+  always:
+    - name: Preserve the original module result before any bulk recovery
+      ansible.builtin.set_fact:
+        breakout_bulk_pre_cleanup_module_result: "{{ breakout_result | default({}) }}"
+
+    - name: Recover one observed family at a time within each test-owned group
+      ansible.builtin.include_tasks: ../tasks/cleanup_bulk.yaml
+      loop: "{{ breakout_bulk_owned_fixtures }}"
+      loop_control:
+        loop_var: breakout_bulk_owned_fixture
+        label: "{{ breakout_bulk_owned_fixture.switch_id }}/{{ breakout_bulk_owned_fixture.control_parent }}"
+
+    - name: Report every bulk recovery failure after attempting later independent groups
+      ansible.builtin.assert:
+        that:
+          - breakout_bulk_cleanup_failures | length == 0
+        fail_msg: >-
+          Scoped bulk recovery failed for {{ breakout_bulk_cleanup_failures | length }}
+          owned group(s). Other independent groups were still attempted; verified
+          recovered groups: {{ breakout_bulk_cleanup_completed_groups }}.
+          Failure evidence: {{ breakout_bulk_cleanup_failures }}.
+          The original module result remains in breakout_bulk_pre_cleanup_module_result.

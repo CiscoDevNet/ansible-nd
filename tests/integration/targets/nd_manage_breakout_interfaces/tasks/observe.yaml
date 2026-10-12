@@ -1,0 +1,50 @@
+---
+- name: Capture optional guard baseline only after the first controller operation
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ test_switch_serial }}"
+    fixture: "{{ breakout_fixture }}"
+    expected_profile: "{{ breakout_expected_profile | default(breakout_active_profile) }}"
+    observe_only: true
+    retries: "{{ test_breakout_observe_retries }}"
+    interval: "{{ test_breakout_observe_interval }}"
+  check_mode: false
+  register: breakout_guard_observation
+  when:
+    - breakout_fixture.guard_interfaces | default([]) | length > 0
+    - breakout_observe_baseline is not defined
+    - (test_switch_serial ~ '/' ~ breakout_fixture.control_parent) not in breakout_guard_baselines
+    - not (breakout_observe_only | default(false) | bool)
+
+- name: Save captured guard scope without claiming a pre-mutation baseline
+  ansible.builtin.set_fact:
+    breakout_guard_baselines: >-
+      {{ breakout_guard_baselines | combine({
+           (test_switch_serial ~ '/' ~ breakout_fixture.control_parent): breakout_guard_observation.snapshot}) }}
+  when: breakout_guard_observation.snapshot is defined
+
+- name: Independently observe and validate the reserved interface footprint
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ test_switch_serial }}"
+    fixture: "{{ breakout_fixture }}"
+    expected_profile: "{{ breakout_expected_profile | default(breakout_active_profile) }}"
+    baseline: >-
+      {{ breakout_observe_baseline | default(
+           breakout_guard_baselines.get(test_switch_serial ~ '/' ~ breakout_fixture.control_parent, omit)
+           if breakout_fixture.guard_interfaces | default([]) | length > 0 else omit) }}
+    unchanged: "{{ breakout_observe_unchanged | default(false) }}"
+    observe_only: "{{ breakout_observe_only | default(false) }}"
+    retries: "{{ test_breakout_observe_retries }}"
+    interval: "{{ test_breakout_observe_interval }}"
+  check_mode: false
+  register: breakout_observation
+
+- name: Confirm observer is read-only and returned an independent snapshot
+  ansible.builtin.assert:
+    that:
+      - not breakout_observation.changed
+      - not (breakout_observation.failed | default(false))
+      - breakout_observation.snapshot is mapping
+      - breakout_observation.snapshot.families is mapping
+      - breakout_observation.snapshot.policy_maps is mapping

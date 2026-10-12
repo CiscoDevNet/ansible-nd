@@ -1,0 +1,53 @@
+---
+# The caller loops over fixture indices. Every observation covers the complete
+# declared hardware group, never just its control parent or response snapshot.
+- name: Capture optional bulk guards only after the first controller operation
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ breakout_bulk_fixtures[breakout_bulk_index].switch_id }}"
+    fixture: "{{ breakout_bulk_fixtures[breakout_bulk_index] }}"
+    expected_profile: "{{ breakout_bulk_profiles[breakout_bulk_index] }}"
+    observe_only: true
+    retries: "{{ test_breakout_observe_retries }}"
+    interval: "{{ test_breakout_observe_interval }}"
+  check_mode: false
+  register: breakout_bulk_guard_observation
+  when:
+    - breakout_bulk_fixtures[breakout_bulk_index].guard_interfaces | default([]) | length > 0
+    - (breakout_bulk_index | string) not in breakout_bulk_baselines
+    - (breakout_bulk_index | string) not in breakout_bulk_guard_baselines
+
+- name: Save guard baseline without claiming pre-mutation observation
+  ansible.builtin.set_fact:
+    breakout_bulk_guard_baselines: >-
+      {{ breakout_bulk_guard_baselines | combine({(breakout_bulk_index | string): breakout_bulk_guard_observation.snapshot}) }}
+  when: breakout_bulk_guard_observation.snapshot is defined
+
+- name: Observe one complete independently reserved bulk footprint
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ breakout_bulk_fixtures[breakout_bulk_index].switch_id }}"
+    fixture: "{{ breakout_bulk_fixtures[breakout_bulk_index] }}"
+    expected_profile: "{{ breakout_bulk_profiles[breakout_bulk_index] }}"
+    baseline: >-
+      {{ breakout_bulk_baselines.get(breakout_bulk_index | string,
+           breakout_bulk_guard_baselines.get(breakout_bulk_index | string, omit)) }}
+    unchanged: "{{ breakout_bulk_index in (breakout_bulk_unchanged_indices | default([])) }}"
+    retries: "{{ test_breakout_observe_retries }}"
+    interval: "{{ test_breakout_observe_interval }}"
+  check_mode: false
+  register: breakout_bulk_observation
+
+- name: Require an independent read-only bulk observation
+  ansible.builtin.assert:
+    that:
+      - not breakout_bulk_observation.changed
+      - not (breakout_bulk_observation.failed | default(false))
+      - breakout_bulk_observation.snapshot is mapping
+      - breakout_bulk_observation.snapshot.families is mapping
+      - breakout_bulk_observation.snapshot.policy_maps is mapping
+
+- name: Save the fixture-indexed independent snapshot
+  ansible.builtin.set_fact:
+    breakout_bulk_snapshots: >-
+      {{ breakout_bulk_snapshots | combine({(breakout_bulk_index | string): breakout_bulk_observation.snapshot}) }}

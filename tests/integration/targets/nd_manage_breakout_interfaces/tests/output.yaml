@@ -1,0 +1,69 @@
+---
+# Only check-mode tasks: the output visibility matrix does not need additional
+# disruptive breakout cycles. The full 3x4 verbosity matrix is unit-tested.
+- name: OUTPUT - Capture the native controller baseline
+  ansible.builtin.include_tasks: ../tasks/observe.yaml
+  vars:
+    breakout_expected_profile: native
+
+- name: OUTPUT - Save independent baseline
+  ansible.builtin.set_fact:
+    breakout_output_baseline: "{{ breakout_observation.snapshot }}"
+
+- name: OUTPUT - Predict breakout at each output level
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config:
+      - switch_id: "{{ test_switch_serial }}"
+        interface_names: ["{{ breakout_control_parent }}"]
+        breakout_map: "{{ breakout_map_a }}"
+    output_level: "{{ breakout_output_level }}"
+  check_mode: true
+  loop: [normal, info, debug]
+  loop_control:
+    loop_var: breakout_output_level
+  register: breakout_output_results
+
+- name: OUTPUT - Validate NDOutput fields and visibility
+  ansible.builtin.assert:
+    that:
+      - not (output_result.failed | default(false) | bool)
+      - output_result.changed | bool
+      - output_result.output_level == output_result.breakout_output_level
+      - output_result.before is sequence
+      - output_result.before is not string and output_result.before is not mapping
+      - output_result.after is sequence
+      - output_result.after is not string and output_result.after is not mapping
+      - output_result.diff is sequence and output_result.diff is not string and output_result.diff is not mapping
+      - output_result.api_outcomes is sequence and output_result.api_outcomes is not string and output_result.api_outcomes is not mapping
+      - output_result.before | length == 1
+      - output_result.before[0].switch_id == test_switch_serial
+      - output_result.before[0].interface_name == breakout_control_parent
+      - not output_result.before[0].broken_out
+      - output_result.before[0].children == []
+      - output_result.after | length == 1
+      - output_result.after[0].switch_id == test_switch_serial
+      - output_result.after[0].interface_name == breakout_control_parent
+      - output_result.after[0].broken_out
+      - output_result.after[0].requested_breakout_map == breakout_map_a
+      - output_result.after[0].evidence == 'prediction'
+      - output_result.diff | length == 1
+      - output_result.after_status == 'predicted'
+      - output_result.api_outcomes | map(attribute='outcome') | list == ['planned']
+      - "('proposed' in output_result) == (output_result.breakout_output_level in ['info', 'debug'])"
+      - "('logs' in output_result) == (output_result.breakout_output_level == 'debug')"
+      - "('api_calls' in output_result) == (ansible_verbosity | int >= 3)"
+      - output_result.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+      - output_result.verification is not defined
+  loop: "{{ breakout_output_results.results }}"
+  loop_control:
+    loop_var: output_result
+    label: "{{ output_result.breakout_output_level }}"
+
+- name: OUTPUT - Confirm predictions did not mutate topology or policy intent
+  ansible.builtin.include_tasks: ../tasks/observe.yaml
+  vars:
+    breakout_expected_profile: native
+    breakout_observe_baseline: "{{ breakout_output_baseline }}"
+    breakout_observe_unchanged: true

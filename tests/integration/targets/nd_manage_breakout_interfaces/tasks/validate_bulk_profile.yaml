@@ -1,0 +1,44 @@
+---
+- name: Validate a supplied bulk profile without guessing hardware capability
+  ansible.builtin.assert:
+    that:
+      - breakout_bulk_candidate_profile.key == 'map_a'
+      - breakout_bulk_candidate_profile.value is mapping
+      - breakout_bulk_candidate_profile.value.breakout_map is string
+      - breakout_bulk_candidate_profile.value.breakout_map | trim | length > 0
+      - breakout_bulk_candidate_profile.value.child_lanes is mapping
+      - breakout_bulk_candidate_profile.value.child_lanes | length > 0
+      - breakout_bulk_candidate.control_parent in breakout_bulk_candidate_profile.value.child_lanes
+      - breakout_bulk_candidate_profile.value.child_lanes.keys() | list | difference(breakout_bulk_candidate.native_interfaces) | length == 0
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) is sequence
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) is not string
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) is not mapping
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) | unique | length == breakout_bulk_candidate_profile.value.native_interfaces | default([]) | length
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) | select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length == breakout_bulk_candidate_profile.value.native_interfaces | default([]) | length
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) | difference(breakout_bulk_candidate.native_interfaces) | length == 0
+      - breakout_bulk_candidate_profile.value.native_interfaces | default([]) | intersect(breakout_bulk_candidate_profile.value.child_lanes.keys() | list) | length == 0
+      - breakout_bulk_candidate_profile.value.policy_maps | default({}) is mapping
+      - breakout_bulk_candidate_profile.value.policy_maps | default({}) | list | difference(breakout_bulk_candidate.native_interfaces) | length == 0
+
+- name: Validate every declared physical child lane before a bulk write
+  ansible.builtin.assert:
+    that:
+      - item.value is sequence
+      - item.value is not string
+      - item.value is not mapping
+      - item.value | length > 0
+      - item.value | select('integer') | list | length == item.value | length
+      - item.value | min > 0
+      - item.value | unique | length == item.value | length
+  loop: "{{ breakout_bulk_candidate_profile.value.child_lanes | dict2items }}"
+  loop_control:
+    label: "{{ breakout_bulk_candidate_profile.key }}/{{ item.key }}"
+
+- name: Validate any explicitly supplied per-parent expected maps
+  ansible.builtin.assert:
+    that:
+      - item.value is string
+      - item.value | trim | length > 0
+  loop: "{{ breakout_bulk_candidate_profile.value.policy_maps | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ breakout_bulk_candidate_profile.key }}/{{ item.key }}"

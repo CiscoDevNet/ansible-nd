@@ -125,6 +125,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._payload: Optional[Union[dict, list]] = None
         self._response: list[dict[str, Any]] = []
         self._response_current: dict[str, Any] = {}
+        self._response_generation: int = 0
         self._response_handler: Optional[ResponseHandlerProtocol] = None
         self._result: list[dict] = []
         self._result_current: dict = {}
@@ -348,6 +349,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         success = False
         attempts = 0
         while timeout > 0 and success is False:
+            attempts += 1
             msg = f"{self.class_name}.{method_name}: "
             msg += "Calling sender.commit(): "
             msg += f"timeout {timeout}, success {success}, verb {self.verb}, path {self.path}."
@@ -607,6 +609,22 @@ class RestSend:  # pylint: disable=too-many-public-methods
             raise TypeError(msg)
         self._payload = value
 
+    def clear_payload(self) -> None:
+        """Clear unsent payload, including one retained after a sender exception."""
+        self._payload = None
+
+    @property
+    def max_attempts(self) -> int | None:
+        """Optional send-attempt cap; None retains the timeout-based retry policy."""
+        return self._max_attempts
+
+    @max_attempts.setter
+    def max_attempts(self, value: int | None) -> None:
+        """Set a positive cap, for action endpoints that must not be replayed."""
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            raise ValueError("max_attempts must be a positive integer or None.")
+        self._max_attempts = value
+
     @property
     def response_current(self) -> dict:
         """
@@ -631,6 +649,17 @@ class RestSend:  # pylint: disable=too-many-public-methods
             msg += f"Value: {value}."
             raise TypeError(msg)
         self._response_current = value
+        self._response_generation += 1
+
+    @property
+    def response_generation(self) -> int:
+        """Monotonic freshness token for received responses, including aborted commits.
+
+        Unlike response_count, this advances before response handling and before
+        the retry loop completes. Consumers can detect a reply followed by a
+        transport/handler exception without copying the response history.
+        """
+        return self._response_generation
 
     @property
     def responses(self) -> list[dict]:
@@ -676,9 +705,9 @@ class RestSend:  # pylint: disable=too-many-public-methods
         # Summary
 
         The number of responses accumulated so far, read without copying them. The list only ever grows (it is never cleared or
-        replaced after `__init__`), so the count is a freshness token: snapshot it before a request and, if it has not grown afterwards,
-        the sender raised before the controller answered and `response_current` still holds the previous request's response (issue #554).
-        Use this instead of `len(responses)`, which deep-copies the whole history on every read.
+        replaced after `__init__`). Aborted commits do not append a history entry, even when an earlier retry received a reply;
+        use response_generation when freshness must include those replies. Use this instead of len(responses), which deep-copies
+        the whole history on every read.
 
         ## Raises
 

@@ -1,0 +1,178 @@
+---
+# One group failure must not prevent recovery of later independent owned groups.
+# Rescue records the original failure; the caller fails after the whole loop.
+# An unknown/failed write is never retried or promoted to success by readback.
+- name: Clear per-group cleanup evidence to avoid stale prior-loop results
+  ansible.builtin.set_fact:
+    breakout_bulk_cleanup_observation: {}
+    breakout_bulk_cleanup_result: {}
+    breakout_bulk_cleanup_native: {}
+    breakout_bulk_cleanup_final_native: {}
+    breakout_bulk_cleanup_families: []
+    breakout_bulk_cleanup_original_outcomes: []
+    breakout_bulk_cleanup_original_removals: []
+    breakout_bulk_cleanup_removal_blocked: false
+    breakout_bulk_cleanup_native_verified: false
+    breakout_bulk_cleanup_group_key: "{{ breakout_bulk_owned_fixture.switch_id ~ '/' ~ breakout_bulk_owned_fixture.control_parent }}"
+
+- name: Attempt one scoped recovery within the current independently owned group
+  block:
+    - name: Scope original operation evidence to the entire owned hardware footprint
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_original_outcomes: >-
+          {{ (breakout_bulk_pre_cleanup_module_result.api_outcomes | default([], true)) |
+             selectattr('switch_id', 'equalto', breakout_bulk_owned_fixture.switch_id) |
+             selectattr('interface_name', 'in', breakout_bulk_owned_fixture.native_interfaces) | list }}
+
+    - name: Collect original direct removals for this group
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_original_removals: >-
+          {{ breakout_bulk_cleanup_original_outcomes | selectattr('action', 'defined') |
+             selectattr('action', 'equalto', 'unbreakout') | list }}
+
+    - name: Block removal replay until the original operation is independently settled
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_removal_blocked: >-
+          {{ ((breakout_bulk_cleanup_group_key in breakout_bulk_pending_removals)
+              and not (breakout_bulk_cleanup_original_outcomes | length > 0
+                       and (breakout_bulk_cleanup_original_outcomes |
+                            map(attribute='outcome', default='unknown') | unique | list) == ['noop']))
+             or (breakout_bulk_cleanup_original_removals |
+                 map(attribute='outcome', default='unknown') |
+                 reject('in', ['noop', 'planned', 'not_executed']) | list | length > 0) }}
+
+    - name: Observe one owned bulk hardware group before recovery
+      cisco.nd.nd_manage_breakout_interfaces_validate:
+        fabric_name: "{{ test_fabric_name }}"
+        switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
+        fixture: "{{ breakout_bulk_owned_fixture }}"
+        observe_only: true
+        retries: "{{ test_breakout_observe_retries }}"
+        interval: "{{ test_breakout_observe_interval }}"
+      check_mode: false
+      register: breakout_bulk_cleanup_observation
+
+    - name: Find actual active families within only the owned bulk group
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_families: "{{ breakout_bulk_cleanup_families + [item.key] }}"
+      loop: "{{ breakout_bulk_cleanup_observation.snapshot.families | dict2items }}"
+      when:
+        - item.key in breakout_bulk_owned_fixture.native_interfaces
+        - item.value.children | length > 0
+
+    - name: Allow only GET settling when an original removal may still be completing
+      cisco.nd.nd_manage_breakout_interfaces_validate:
+        fabric_name: "{{ test_fabric_name }}"
+        switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
+        fixture: "{{ breakout_bulk_owned_fixture }}"
+        expected_profile: native
+        baseline: "{{ breakout_bulk_cleanup_observation.snapshot }}"
+        retries: "{{ test_breakout_observe_retries }}"
+        interval: "{{ test_breakout_observe_interval }}"
+      check_mode: false
+      register: breakout_bulk_cleanup_native
+      when:
+        - breakout_bulk_cleanup_removal_blocked | bool
+        - breakout_bulk_cleanup_families | length > 0
+
+    - name: Keep absent settling evidence empty rather than an Ansible skipped result
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_native: {}
+      when: breakout_bulk_cleanup_native.skipped | default(false)
+
+    - name: Use independently settled native state without submitting another remove
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_observation: "{{ breakout_bulk_cleanup_native }}"
+        breakout_bulk_cleanup_native_verified: true
+        breakout_bulk_cleanup_families: []
+      when:
+        - breakout_bulk_cleanup_removal_blocked | bool
+        - breakout_bulk_cleanup_native.snapshot is defined
+
+    - name: Recheck settled snapshots before allowing any cleanup mutation
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_families: "{{ breakout_bulk_cleanup_families + [item.key] }}"
+      loop: "{{ breakout_bulk_cleanup_observation.snapshot.families | dict2items }}"
+      when:
+        - breakout_bulk_cleanup_native_verified | bool
+        - item.key in breakout_bulk_owned_fixture.native_interfaces
+        - item.value.children | length > 0
+
+    - name: Refuse any remove replay against an unsettled original removal group
+      ansible.builtin.assert:
+        that:
+          - not (breakout_bulk_cleanup_removal_blocked | bool)
+        fail_msg: >-
+          This owned footprint is read-only because an original unbreakout was
+          attempted or its completion is uncertain. No remove will be replayed,
+          including through another coupled-family alias. Original removal
+          evidence: {{ breakout_bulk_cleanup_original_removals }}. Remaining
+          physical families: {{ breakout_bulk_cleanup_families }}. Snapshot:
+          {{ breakout_bulk_cleanup_observation.snapshot }}.
+      when: breakout_bulk_cleanup_families | length > 0
+
+    - name: Unbreak one currently observed active family in the owned group
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
+            interface_names: "{{ [breakout_bulk_cleanup_families | first] }}"
+      check_mode: false
+      register: breakout_bulk_cleanup_result
+      when: breakout_bulk_cleanup_families | length > 0
+
+    - name: Require an identified completed cleanup outcome before observing native state
+      ansible.builtin.assert:
+        that:
+          - not (breakout_bulk_cleanup_result.failed | default(false))
+          - breakout_bulk_cleanup_result.api_outcomes is sequence
+          - breakout_bulk_cleanup_result.api_outcomes is not string and breakout_bulk_cleanup_result.api_outcomes is not mapping
+          - breakout_bulk_cleanup_result.api_outcomes | length == 1
+          - breakout_bulk_cleanup_result.api_outcomes[0].outcome in ['success', 'noop']
+          - breakout_bulk_cleanup_result.api_outcomes[0].switch_id == breakout_bulk_owned_fixture.switch_id
+          - breakout_bulk_cleanup_result.api_outcomes[0].interface_name == breakout_bulk_cleanup_families | first
+      when: breakout_bulk_cleanup_families | length > 0
+
+    - name: Require full owned-group native restoration after scoped recovery
+      cisco.nd.nd_manage_breakout_interfaces_validate:
+        fabric_name: "{{ test_fabric_name }}"
+        switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
+        fixture: "{{ breakout_bulk_owned_fixture }}"
+        expected_profile: native
+        baseline: "{{ breakout_bulk_cleanup_observation.snapshot }}"
+        retries: "{{ test_breakout_observe_retries }}"
+        interval: "{{ test_breakout_observe_interval }}"
+      check_mode: false
+      register: breakout_bulk_cleanup_final_native
+      when: not (breakout_bulk_cleanup_native_verified | bool)
+
+    - name: Preserve the executed native verification without replacing GET settling evidence
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_native: "{{ breakout_bulk_cleanup_final_native }}"
+      when: not (breakout_bulk_cleanup_native_verified | bool)
+
+    - name: Record independently verified recovery of the owned group
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_completed_groups: >-
+          {{ breakout_bulk_cleanup_completed_groups + [{
+               'switch_id': breakout_bulk_owned_fixture.switch_id,
+               'control_parent': breakout_bulk_owned_fixture.control_parent}] }}
+
+  rescue:
+    - name: Preserve failed cleanup evidence and continue to the next independent group
+      ansible.builtin.set_fact:
+        breakout_bulk_cleanup_failures: >-
+          {{ breakout_bulk_cleanup_failures + [{
+               'switch_id': breakout_bulk_owned_fixture.switch_id,
+               'control_parent': breakout_bulk_owned_fixture.control_parent,
+               'failed_task': ansible_failed_task.name,
+               'failed_result': ansible_failed_result,
+               'observation': breakout_bulk_cleanup_observation,
+               'mutation': breakout_bulk_cleanup_result,
+               'removal_blocked': breakout_bulk_cleanup_removal_blocked,
+               'original_removals': breakout_bulk_cleanup_original_removals,
+               'native_verification': (breakout_bulk_cleanup_final_native
+                 if (breakout_bulk_cleanup_final_native | length > 0
+                     and not (breakout_bulk_cleanup_final_native.skipped | default(false)))
+                 else breakout_bulk_cleanup_native)}] }}

@@ -24,18 +24,18 @@ from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ClusterNameMixin, FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ClusterNameMixin, FabricNameMixin, FilterMixin, MaxMixin, OffsetMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-class ManageSwitchesListEndpointParams(ClusterNameMixin, EndpointQueryParams):
+class ManageSwitchesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     Endpoint-specific query parameters for listing fabric switches.
 
-    These match the non-Lucene query parameters exposed by
+    These match the query parameters exposed by
     ``/fabrics/{fabricName}/switches`` in manage.json.
     """
 
@@ -164,11 +164,8 @@ class EpManageSwitchesListGet(_EpManageSwitchesBase):
         return HttpVerbEnum.GET
 
 
-# TODO: Remove EpManageSwitchesGet once the in-flight stacked branches have merged into develop.
-# It is currently unused here -- nd_maintenance_mode resolves per-switch intendedSystemMode from the
-# bulk EpManageSwitchesListGet snapshot, not from a per-switch GET. It is retained for now because
-# sibling branches in the current stack may still reference the per-switch endpoint; revisit after
-# the stack lands and delete it if no caller has appeared.
+# FabricContext uses this endpoint for targeted platform validation when a
+# requested serial has no metadata cached from management-IP resolution.
 class EpManageSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
     """
     # Summary

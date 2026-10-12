@@ -1,0 +1,66 @@
+---
+# Deliberately local only: the first controller operation is merged creation.
+- name: Validate runner and required fixture variables locally
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - testcase in ['all', 'lifecycle', 'validation', 'output', 'bulk']
+      - test_fabric_name is string and test_fabric_name | trim | length > 0
+      - test_switch_serial is string and test_switch_serial | trim | length > 0
+      - test_switch_ip is string
+      - test_breakout_fixture is mapping
+      - test_breakout_fixture.control_parent is defined
+      - test_breakout_fixture.control_parent is match('^Ethernet[1-9][0-9]*/[1-9][0-9]*$')
+      - test_breakout_fixture.native_interfaces is defined
+      - test_breakout_fixture.native_interfaces is sequence and test_breakout_fixture.native_interfaces is not string
+      - test_breakout_fixture.control_parent in test_breakout_fixture.native_interfaces
+      - test_breakout_fixture.native_interfaces | unique | length == test_breakout_fixture.native_interfaces | length
+      - test_breakout_fixture.profiles is mapping
+      - test_breakout_fixture.profiles.keys() | list == ['map_a']
+      - test_breakout_fixture.profiles.map_a is mapping
+      - test_breakout_fixture.profiles.map_a.breakout_map is string
+      - test_breakout_fixture.profiles.map_a.breakout_map | trim | length > 0
+      - test_breakout_fixture.profiles.map_a.child_lanes is mapping
+      - test_breakout_fixture.control_parent in test_breakout_fixture.profiles.map_a.child_lanes
+      - test_breakout_observe_retries is integer
+      - test_breakout_observe_retries >= 1 and test_breakout_observe_retries <= 10
+      - test_breakout_observe_interval is number and test_breakout_observe_interval is not boolean
+      - test_breakout_observe_interval >= 0
+      - (test_breakout_observe_retries - 1) * test_breakout_observe_interval <= 60
+    fail_msg: >-
+      Supply a serial, fabric and an explicit reserved, initially native 100G
+      control parent/fixture. Run without --check; individual cases exercise
+      module check mode. Setup performs no controller discovery or cleanup.
+
+- name: Validate the complete fixture schema locally before the first mutation
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ test_switch_serial }}"
+    fixture: "{{ test_breakout_fixture }}"
+    expected_profile: native
+    validate_only: true
+    retries: "{{ test_breakout_observe_retries }}"
+    interval: "{{ test_breakout_observe_interval }}"
+  check_mode: false
+  register: breakout_fixture_validation
+
+- name: Require schema validation without a controller call or mutation
+  ansible.builtin.assert:
+    that:
+      - not breakout_fixture_validation.changed
+      - not (breakout_fixture_validation.failed | default(false))
+      - breakout_fixture_validation.validated
+      - breakout_fixture_validation.observation_calls | length == 0
+
+- name: Initialize local lifecycle state
+  ansible.builtin.set_fact:
+    breakout_fixture: "{{ test_breakout_fixture }}"
+    breakout_control_parent: "{{ test_breakout_fixture.control_parent }}"
+    breakout_map_a: "{{ test_breakout_fixture.profiles.map_a.breakout_map | trim | lower }}"
+    breakout_active_profile: map_a
+    breakout_owned: false
+    breakout_guard_baselines: {}
+    breakout_cleanup_attempts: 0
+    breakout_cleanup_attempted_families: []
+    breakout_cleanup_prefetched: false
+    breakout_lifecycle_failure: {}

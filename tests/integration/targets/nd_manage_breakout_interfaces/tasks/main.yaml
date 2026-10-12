@@ -1,0 +1,9 @@
+---
+- name: Validate local breakout test inputs
+  ansible.builtin.include_tasks: setup.yaml
+
+- name: Run selected breakout test cases
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/{{ breakout_test_case }}.yaml"
+  loop: "{{ ['lifecycle', 'validation', 'output', 'bulk'] if testcase == 'all' else [testcase] }}"
+  loop_control:
+    loop_var: breakout_test_case

@@ -1,0 +1,66 @@
+---
+# Called only AFTER independent verification of the first successful breakout.
+# These are discovery-dependent rejections, not capability guesses.
+- name: VALIDATION - Capture a nonexistent lane outside the verified child set
+  ansible.builtin.set_fact:
+    breakout_invalid_child: >-
+      {{ breakout_control_parent ~ '/' ~
+         (((breakout_observation.snapshot.families[breakout_control_parent].children |
+             map('regex_replace', '^.*/', '') | map('int') | max) + 100) | string) }}
+    breakout_missing_parent: "{{ breakout_control_parent.split('/')[0] }}/999999"
+    breakout_rejection_baseline: "{{ breakout_observation.snapshot }}"
+
+- name: VALIDATION - Delete a nonexistent child in an existing broken family
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config:
+      - switch_id: "{{ test_switch_serial }}"
+        interface_names: ["{{ breakout_invalid_child }}"]
+  ignore_errors: true
+  register: breakout_invalid_membership
+
+- name: VALIDATION - Require safe membership rejection, not a controller mutation
+  ansible.builtin.assert:
+    that:
+      - breakout_invalid_membership.failed | bool
+      - not breakout_invalid_membership.changed
+      - not breakout_invalid_membership.may_have_changed
+      - "'not an existing physical breakout child' in breakout_invalid_membership.msg"
+      - ansible_verbosity | int < 3 or breakout_invalid_membership.api_calls is defined
+      - breakout_invalid_membership.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+
+- name: VALIDATION - Reject an entirely absent parent for each state
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: "{{ missing_family_state }}"
+    config:
+      - switch_id: "{{ test_switch_serial }}"
+        interface_names: ["{{ breakout_missing_parent }}"]
+        breakout_map: "{{ breakout_map_a if missing_family_state != 'deleted' else omit }}"
+  loop: [merged, deleted]
+  loop_control:
+    loop_var: missing_family_state
+  ignore_errors: true
+  register: breakout_missing_results
+
+- name: VALIDATION - Require discovery failures before every write
+  ansible.builtin.assert:
+    that:
+      - missing_result.failed | bool
+      - not missing_result.changed
+      - not missing_result.may_have_changed
+      - "'Neither native parent nor breakout children found' in missing_result.msg"
+      - ansible_verbosity | int < 3 or missing_result.api_calls is defined
+      - missing_result.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+  loop: "{{ breakout_missing_results.results }}"
+  loop_control:
+    loop_var: missing_result
+    label: "{{ missing_result.missing_family_state }}"
+
+- name: VALIDATION - Verify discovery-dependent rejections changed neither topology nor MAP
+  ansible.builtin.include_tasks: observe.yaml
+  vars:
+    breakout_expected_profile: map_a
+    breakout_observe_baseline: "{{ breakout_rejection_baseline }}"
+    breakout_observe_unchanged: true

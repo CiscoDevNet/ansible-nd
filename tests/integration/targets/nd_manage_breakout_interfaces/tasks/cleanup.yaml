@@ -1,0 +1,208 @@
+---
+# Never normalize the whole switch or submit all children/coupled siblings.
+- name: Collect original module removal outcomes before considering cleanup writes
+  ansible.builtin.set_fact:
+    breakout_cleanup_original_removals: >-
+      {{ (breakout_result | default({})).api_outcomes | default([], true) |
+         selectattr('action', 'defined') | selectattr('action', 'equalto', 'unbreakout') | list }}
+  when: breakout_owned | bool
+
+- name: Block replay of any attempted or uncertain original removal
+  ansible.builtin.set_fact:
+    breakout_cleanup_removal_blocked: >-
+      {{ (breakout_cleanup_removal_blocked | default(false) | bool)
+         or (breakout_cleanup_original_removals | map(attribute='outcome', default='unknown') |
+             select('in', ['failed', 'unknown']) | list | length > 0)
+         or ((breakout_pending_removal | default('')) != ''
+             and not (breakout_cleanup_original_removals | length > 0
+                      and (breakout_cleanup_original_removals | map(attribute='outcome', default='unknown') | unique | list) == ['noop']))
+         or (breakout_cleanup_original_removals | map(attribute='outcome', default='unknown') |
+             reject('in', ['noop', 'planned', 'not_executed']) | list | length > 0) }}
+  when: breakout_owned | bool
+
+- name: Inspect only a test-owned footprint before cleanup
+  ansible.builtin.include_tasks: observe.yaml
+  vars:
+    breakout_observe_only: true
+  when:
+    - breakout_owned | bool
+    - not (breakout_cleanup_prefetched | default(false) | bool)
+
+- name: Consume a complete fresh cleanup observation only once
+  ansible.builtin.set_fact:
+    breakout_cleanup_prefetched: false
+  when: breakout_owned | bool
+
+- name: Select only currently observed broken families inside the owned footprint
+  ansible.builtin.set_fact:
+    breakout_cleanup_remaining: >-
+      {{ breakout_observation.snapshot.families | dict2items |
+         selectattr('key', 'in', breakout_fixture.native_interfaces) |
+         rejectattr('value.children', 'equalto', []) | map(attribute='key') | list | sort }}
+  when: breakout_owned | bool
+
+- name: Allow only readback settling for a reported successful original direct unbreakout
+  block:
+    - name: Wait for native topology without repeating the successful original removal
+      cisco.nd.nd_manage_breakout_interfaces_validate:
+        fabric_name: "{{ test_fabric_name }}"
+        switch_id: "{{ test_switch_serial }}"
+        fixture: "{{ breakout_fixture }}"
+        expected_profile: native
+        baseline: >-
+          {{ breakout_observe_baseline | default(
+               breakout_guard_baselines.get(test_switch_serial ~ '/' ~ breakout_fixture.control_parent, omit)
+               if breakout_fixture.guard_interfaces | default([]) | length > 0 else omit) }}
+        retries: "{{ test_breakout_observe_retries }}"
+        interval: "{{ test_breakout_observe_interval }}"
+      check_mode: false
+      register: breakout_cleanup_original_settling
+
+  rescue:
+    - name: Keep successful API evidence separate from a native topology settling failure
+      ansible.builtin.set_fact:
+        breakout_cleanup_original_topology_failure: "{{ ansible_failed_result }}"
+
+  always:
+    - name: Retain the last complete independent settling snapshot when available
+      ansible.builtin.set_fact:
+        breakout_observation: "{{ breakout_cleanup_original_settling }}"
+      when: breakout_cleanup_original_settling.snapshot is defined
+
+    - name: Refresh remaining families after bounded read-only settling
+      ansible.builtin.set_fact:
+        breakout_cleanup_remaining: >-
+          {{ breakout_observation.snapshot.families | dict2items |
+             selectattr('key', 'in', breakout_fixture.native_interfaces) |
+             rejectattr('value.children', 'equalto', []) | map(attribute='key') | list | sort }}
+
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+    - >-
+      ((breakout_result | default({})).api_outcomes | default([], true) |
+       selectattr('action', 'defined') | selectattr('action', 'equalto', 'unbreakout') |
+       selectattr('outcome', 'defined') | selectattr('outcome', 'equalto', 'success') | list | length) > 0
+    - >-
+      (breakout_cleanup_original_removals | map(attribute='outcome', default='unknown') | unique | list) == ['success']
+
+- name: Refuse removal replay while retaining the independently observed remaining state
+  ansible.builtin.assert:
+    that:
+      - not (breakout_cleanup_removal_blocked | bool)
+    fail_msg: >-
+      Cleanup is read-only for this footprint because an original unbreakout
+      was attempted or its completion is uncertain. An explicit
+      API success remains success even if native topology did not converge;
+      it does not authorize another remove. No remove request will be retried,
+      including through a coupled sibling alias. Original removal evidence:
+      {{ breakout_cleanup_original_removals }}. Independently observed remaining
+      families: {{ breakout_cleanup_remaining }}. Snapshot:
+      {{ breakout_observation.snapshot }}. Native settling failure:
+      {{ breakout_cleanup_original_topology_failure | default({}) }}. Original failure:
+      {{ breakout_lifecycle_failure | default({}) }}.
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Bound cleanup attempts rather than replaying an unchanged topology indefinitely
+  ansible.builtin.assert:
+    that:
+      - breakout_cleanup_attempts | int < breakout_fixture.native_interfaces | length
+    fail_msg: "Scoped cleanup did not restore the reserved footprint within one attempt per family."
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Choose one observed remaining family without duplicating coupled operations
+  ansible.builtin.set_fact:
+    breakout_cleanup_selected: >-
+      {{ breakout_control_parent if breakout_control_parent in breakout_cleanup_remaining
+         else breakout_cleanup_remaining[0] }}
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Never replay cleanup against the same family
+  ansible.builtin.assert:
+    that:
+      - breakout_cleanup_selected not in (breakout_cleanup_attempted_families | default([]))
+    fail_msg: >-
+      A previously processed family still has physical children. Cleanup will
+      not retry or replay an uncertain/ineffective topology mutation.
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Remove one verified remaining family, preferring the control parent
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config:
+      - switch_id: "{{ test_switch_serial }}"
+        interface_names: "{{ [breakout_cleanup_selected] }}"
+  check_mode: false
+  register: breakout_cleanup_result
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Require completed scoped cleanup outcome before any further cleanup action
+  ansible.builtin.assert:
+    that:
+      - not (breakout_cleanup_result.failed | default(false))
+      - breakout_cleanup_result.api_outcomes | length == 1
+      - breakout_cleanup_result.api_outcomes[0].outcome in ['success', 'noop']
+    fail_msg: "Cleanup outcome is not confirmed; no further mutation is allowed."
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Allow GET-only readback settling after confirmed removal without replaying writes
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ test_switch_serial }}"
+    fixture: "{{ breakout_fixture }}"
+    expected_profile: native
+    observe_only: true
+    retries: 1
+    interval: 0
+  check_mode: false
+  register: breakout_cleanup_observation
+  until:
+    - not (breakout_cleanup_observation.failed | default(false))
+    - breakout_cleanup_observation.snapshot is defined
+    - breakout_cleanup_observation.snapshot.families[breakout_cleanup_selected].children | length == 0
+  retries: "{{ test_breakout_observe_retries | int - 1 }}"
+  delay: "{{ test_breakout_observe_interval | int }}"
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Count the one scoped cleanup mutation attempt
+  ansible.builtin.set_fact:
+    breakout_cleanup_attempts: "{{ breakout_cleanup_attempts | int + 1 }}"
+    breakout_cleanup_attempted_families: "{{ (breakout_cleanup_attempted_families | default([])) + [breakout_cleanup_selected] }}"
+    breakout_observation: "{{ breakout_cleanup_observation }}"
+    breakout_cleanup_prefetched: true
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Refresh after one removal before considering any remaining coupled family
+  ansible.builtin.include_tasks: cleanup.yaml
+  when:
+    - breakout_owned | bool
+    - breakout_cleanup_remaining | length > 0
+
+- name: Verify the complete test-owned footprint is native after cleanup
+  ansible.builtin.include_tasks: observe.yaml
+  vars:
+    breakout_expected_profile: native
+  when: breakout_owned | bool
+
+- name: Release ownership after successful scoped cleanup
+  ansible.builtin.set_fact:
+    breakout_owned: false
+    breakout_cleanup_prefetched: false
+  when: breakout_owned | bool

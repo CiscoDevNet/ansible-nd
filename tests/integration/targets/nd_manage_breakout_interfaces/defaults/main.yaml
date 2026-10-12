@@ -1,0 +1,24 @@
+---
+testcase: all
+test_fabric_name: "{{ fabric_name | default('') }}"
+test_switch_serial: "{{ switch_serial_1 | default('') }}"
+test_switch_ip: ""
+# This must name a reserved, initially native, 100G parent in the test lab.
+test_breakout_parent: ""
+test_breakout_map: 25g-4x
+test_breakout_bulk_fixtures: []
+
+# Override the complete fixture when hardware affects additional interfaces.
+# The same lifecycle is used for single-parent and coupled-port footprints.
+test_breakout_fixture:
+  control_parent: "{{ test_breakout_parent }}"
+  native_interfaces:
+    - "{{ test_breakout_parent }}"
+  profiles:
+    map_a:
+      breakout_map: "{{ test_breakout_map }}"
+      child_lanes: "{{ {test_breakout_parent: [1, 2, 3, 4]} }}"
+      native_interfaces: []
+
+test_breakout_observe_retries: 3
+test_breakout_observe_interval: 1
