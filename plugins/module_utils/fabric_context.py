@@ -64,6 +64,7 @@ class FabricContext:
     - Via `get_platform_type` if no switch matches the given management IP.
     - Via `fabric_summary` if the summary payload carries an embedded `code` error key.
     - Via the `switches` / `switch_map` accessors if the fabric does not exist.
+    - Via the `switches` / `switch_map` accessors if the switches payload carries an embedded `code` error key.
     """
 
     def __init__(self, rest_send: RestSend, fabric_name: str):

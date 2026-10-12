@@ -256,6 +256,10 @@ class SwitchServiceContext:
 
         Mark that a successful controller mutation requires a fresh inventory
         snapshot before module exit.
+
+        ## Raises
+
+        None
         """
         self.inventory_refresh_needed = True
 
@@ -2722,7 +2726,7 @@ class NDSwitchResourceModule:
             deploy_config=config_actions.get("deploy", True),
             deploy_type=config_actions.get("type", "switch"),
         )
-        self.fabric_context = FabricContext(self.nd._get_rest_send(), self.fabric)  # pylint: disable=protected-access
+        self.fabric_context = FabricContext(self.nd.get_rest_send(), self.fabric)
 
         # Switch collections
         try:
