@@ -102,6 +102,19 @@ def _build_xe_model(
     )
 
 
+def test_routed_pc_bulk_full_guard_keeps_member_changes_on_put() -> None:
+    """Only the live-qualified memberless case may use full-policy bulk modify."""
+    instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    assert instance.supports_bulk_full_modify is True
+    current = {"configData": {"networkOS": {"policy": {"policyType": "l3Po", "ports": []}}}}
+
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=[]), current) is True
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=["Ethernet1/10"]), current) is False
+    current["configData"]["networkOS"]["policy"]["ports"] = ["Ethernet1/10"]
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=[]), current) is False
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=["ethernet1/10"]), current) is False
+
+
 # =============================================================================
 # Test: ClassVar / managed policy types
 # =============================================================================

@@ -32,7 +32,7 @@ user to create the pair first via `nd_manage_vpc_pair`.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
@@ -105,6 +105,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     # per-interface `DELETE /interfaces/{name}` endpoint works (returns 204). We therefore disable bulk delete and
     # use the per-interface DELETE via `delete_endpoint`.
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = False
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
@@ -620,6 +622,36 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def _bulk_modify_payload(self, model_instance: ModelType, switch_id: str) -> dict[str, Any]:
+        """Build the singular vPC body, including its authoritative peer ID."""
+        peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        payload = super()._bulk_modify_payload(model_instance, switch_id)
+        self._inject_peer_switch_id(payload, peer_serial)
+        return payload
+
+    def _bulk_full_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> bool:
+        """Keep peer-member changes and mismatched pair ownership on PUT."""
+        current_policy = ((current.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        desired_policy = self._bulk_modify_payload(model_instance, current["switchId"])["configData"]["networkOS"]["policy"]
+        if current_policy.get("peerSwitchId") != desired_policy.get("peerSwitchId"):
+            return False
+        for peer in (1, 2):
+            field = f"peer{peer}MemberPorts"
+            before = current_policy.get(field) or []
+            after = desired_policy.get(field) or []
+            if not isinstance(before, list) or not isinstance(after, list) or before or after:
+                return False
+        return True
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Retain pair/child deploy evidence as the singular vPC update does."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if previous_model is not None:
+            self._prepare_deploy_context(previous_model, switch_id)
+            if not self._proposed_peer_members(previous_model) and not self._proposed_peer_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+        self._prepare_deploy_context(model_instance, switch_id)
 
     def delete(self, model_instance: ModelType, **kwargs) -> None:
         """

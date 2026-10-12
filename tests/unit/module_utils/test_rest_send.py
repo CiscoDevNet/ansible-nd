@@ -17,11 +17,14 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.interface_performance_profile import InterfacePerformanceProfile
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest import rest_send as rest_send_module
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.legacy_response_strategy import LegacyStrategy
@@ -613,6 +616,69 @@ def test_rest_send_00300():
     assert instance.response_current.get("CHECK_MODE") is None
     assert instance.result_current["success"] is True
     assert instance.result_current["found"] is True
+
+
+def test_disabled_debug_does_not_serialize_full_response(monkeypatch):
+    """Normal requests must not JSON-format a response when debug logging is off."""
+    response = {"RETURN_CODE": 200, "METHOD": "GET", "MESSAGE": "OK", "DATA": {"interfaces": [{"interfaceName": "Ethernet1/1"}]}}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(iter((response,)))
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test/interfaces"
+    instance.verb = HttpVerbEnum.GET
+    monkeypatch.setattr(instance.log, "isEnabledFor", lambda _level: False)
+    monkeypatch.setattr(
+        rest_send_module, "json", SimpleNamespace(dumps=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected JSON formatting")))
+    )
+
+    instance.commit()
+
+    assert instance.result_current["success"] is True
+
+
+def test_profile_counts_actual_sender_attempt():
+    """A successful GET contributes one categorized request, not just one logical commit."""
+    response = {"RETURN_CODE": 200, "METHOD": "GET", "MESSAGE": "OK", "DATA": {"interfaces": []}}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(iter((response,)))
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/manage/fabrics/F/switches/S/interfaces?max=500"
+    instance.verb = HttpVerbEnum.GET
+    instance.performance_profile = InterfacePerformanceProfile()
+
+    with instance.performance_profile.phase("inventory"):
+        instance.commit()
+
+    result = instance.performance_profile.to_dict()
+    assert result["requests"]["inventory:interface_inventory:GET"]["count"] == 1
+    assert result["requests"]["inventory:interface_inventory:GET"]["response_json_bytes"] > 0
+
+
+def test_profile_counts_sender_exception_attempt(monkeypatch):
+    """A transport exception still counts as one attempted request."""
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    monkeypatch.setattr(sender, "commit", lambda: (_ for _ in ()).throw(RuntimeError("transport disconnected")))
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/manage/fabrics/F/switches/S/interfaces?max=500"
+    instance.verb = HttpVerbEnum.GET
+    instance.performance_profile = InterfacePerformanceProfile()
+
+    with pytest.raises(RuntimeError, match="transport disconnected"):
+        with instance.performance_profile.phase("inventory"):
+            instance.commit()
+
+    result = instance.performance_profile.to_dict()
+    assert result["requests"]["inventory:interface_inventory:GET"]["count"] == 1
+    assert result["requests"]["inventory:interface_inventory:GET"]["response_json_bytes"] == 0
 
 
 def test_rest_send_00310():

@@ -130,6 +130,7 @@ def test_load_switch_caches_indexes_and_isolates_callers() -> None:
         "switches": 1,
         "interface_inventory_gets": 1,
         "interface_inventory_pages": 1,
+        "interface_exact_gets": 0,
         "interface_inventory_cache_hits": 1,
         "interface_summary_switches": 0,
         "interface_summary_gets": 0,
@@ -139,6 +140,46 @@ def test_load_switch_caches_indexes_and_isolates_callers() -> None:
         "interface_inventory_dirty_refetches": 0,
         "snapshot_overlays": 0,
     }
+
+
+def test_read_exact_uses_encoded_name_without_mutating_snapshot() -> None:
+    """One exact GET is a live readiness probe, not a cached safety read."""
+    row = _interface("Ethernet1/2", "ethernet", "numbered")
+    row["switchId"] = "SERIAL1"
+    row["configData"]["mode"] = "routed"
+    row["operData"] = {"mode": "routed"}
+    recorder = _RequestRecorder([row])
+    snapshot = _snapshot(recorder)
+
+    received = snapshot.read_exact("SERIAL1", "Ethernet1/2")
+
+    assert received == row
+    assert recorder.calls[0]["path"].endswith("/switches/SERIAL1/interfaces/Ethernet1%2F2")
+    assert recorder.calls[0]["not_found_ok"] is True
+    received["configData"]["mode"] = "trunk"
+    assert row["configData"]["mode"] == "routed"
+    assert snapshot.request_stats["interface_exact_gets"] == 1
+    assert snapshot.request_stats["interface_inventory_gets"] == 0
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"interfaceName": "Ethernet1/3", "switchId": "SERIAL1"},
+        {"interfaceName": "Ethernet1/2", "switchId": "SERIAL2"},
+    ],
+)
+def test_read_exact_rejects_mismatched_identity(response) -> None:
+    snapshot = _snapshot(_RequestRecorder([response]))
+
+    with pytest.raises(ValueError, match="did not match requested"):
+        snapshot.read_exact("SERIAL1", "Ethernet1/2")
+
+
+def test_read_exact_missing_row_is_not_ready() -> None:
+    snapshot = _snapshot(_RequestRecorder([{}]))
+
+    assert snapshot.read_exact("SERIAL1", "Ethernet1/2") is None
 
 
 def test_cached_interface_is_read_only_case_insensitive_and_never_fetches():
@@ -908,6 +949,22 @@ def test_apply_overlay_atomically_updates_current_but_not_original_state() -> No
     assert set(snapshot.original_interfaces_by_switch["SERIAL1"]) == {"ethernet1/1", "loopback10"}
     assert snapshot.policy_type(snapshot.original_interfaces_by_switch["SERIAL1"]["ethernet1/1"]) == "accessHost"
     assert snapshot.request_stats["snapshot_overlays"] == 1
+
+
+def test_repeated_overlays_keep_first_baseline_and_isolate_returned_rows() -> None:
+    """Retaining the original cache as rollback baseline cannot alias callers or later overlays."""
+    recorder = _RequestRecorder([{"interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost")]}])
+    snapshot = _snapshot(recorder)
+    before = snapshot.load_switch("SERIAL1")
+
+    first = snapshot.apply_overlay("SERIAL1", upserts=[_interface("Ethernet1/1", "ethernet", "trunkHost")])
+    first["ethernet1/1"]["configData"]["networkOS"]["policy"]["policyType"] = "caller-modified"
+    snapshot.apply_overlay("SERIAL1", upserts=[_interface("loopback10", "loopback", "loopback")])
+
+    assert snapshot.policy_type(snapshot.cached_interface("SERIAL1", "Ethernet1/1")) == "trunkHost"
+    snapshot.discard_overlays()
+    assert snapshot.load_switch("SERIAL1") == before
+    assert snapshot.cached_interface("SERIAL1", "loopback10") is None
 
 
 def test_apply_overlay_validation_is_atomic_and_rejects_dirty_state() -> None:

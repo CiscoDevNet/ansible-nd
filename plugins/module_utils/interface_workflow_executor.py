@@ -137,7 +137,9 @@ class InterfaceWorkflowExecutor:
         self._attempted_deploy_targets: set[Target] = set()
 
     @staticmethod
-    def _all_orchestrators(plan: InterfaceWorkflowPlan) -> tuple[NDBaseInterfaceOrchestrator, ...]:
+    def _all_orchestrators(
+        plan: InterfaceWorkflowPlan,
+    ) -> tuple[NDBaseInterfaceOrchestrator, ...]:
         """Return resource and auxiliary orchestrators once, preserving construction order."""
         values = [resource.orchestrator for resource in plan.resources]
         values.extend(getattr(plan, "auxiliary_orchestrators", ()))
@@ -183,7 +185,13 @@ class InterfaceWorkflowExecutor:
                     to_policy_type=transition.to_policy_type,
                 )
                 self._items.append(item)
-                self._item_by_key[(resource.resource_index, "transition", model.get_identifier_value())] = item
+                self._item_by_key[
+                    (
+                        resource.resource_index,
+                        "transition",
+                        model.get_identifier_value(),
+                    )
+                ] = item
 
             for action, models in (
                 ("update", resource.operations.updates),
@@ -271,6 +279,11 @@ class InterfaceWorkflowExecutor:
         switch_value = outcome.get("switchId") or outcome.get("serialNumber")
         if name_value is None and switch_value is None:
             return ()
+        if isinstance(name_value, str) and "~" in name_value:
+            prefix, separator, suffix = name_value.partition("~")
+            if not separator or not suffix or "~" in suffix or (switch_value is not None and str(switch_value).casefold() != prefix.casefold()):
+                return ()
+            switch_value, name_value = prefix, suffix
         candidates = list(targets)
         if name_value is not None:
             candidates = [target for target in candidates if target[0].lower() == str(name_value).lower()]
@@ -315,7 +328,7 @@ class InterfaceWorkflowExecutor:
         for target in target_list:
             if target not in classified:
                 classified[target] = (
-                    "failed" if is_multistatus else ("uncertain" if changed_on_failure or outcomes else "failed"),
+                    ("failed" if is_multistatus else ("uncertain" if changed_on_failure or outcomes else "failed")),
                     error,
                 )
         return classified
@@ -357,6 +370,8 @@ class InterfaceWorkflowExecutor:
         items: list[InterfaceExecutionItem],
         operation: Callable[[], Any],
         context: str,
+        *,
+        exact_207_classifier: Callable[[], tuple[set[Target], bool]] | None = None,
     ) -> bool:
         markers = self._request_markers(orchestrator.rest_send)
         create_targets = {item.target for item in items if item.action == "create"}
@@ -366,7 +381,11 @@ class InterfaceWorkflowExecutor:
         except Exception as exc:  # pylint: disable=broad-except
             error = f"{context}: {exc}"
             response, result = self._fresh_mutation_result(orchestrator.rest_send, markers)
-            outcomes = self._classify_response((item.target for item in items), response, result, error)
+            if response.get("RETURN_CODE") == 207 and exact_207_classifier is not None:
+                accepted, _exact = exact_207_classifier()
+                outcomes = {item.target: (("succeeded", None) if item.target in accepted else ("failed", error)) for item in items}
+            else:
+                outcomes = self._classify_response((item.target for item in items), response, result, error)
             # The standalone bulk-create path can recover exact accepted names
             # after a flat HTTP 500. Its recovery GET is not a write result;
             # only newly queued exact targets may override failed/uncertain.
@@ -378,6 +397,15 @@ class InterfaceWorkflowExecutor:
             return False
         response, result = self._fresh_current(orchestrator.rest_send, markers)
         error = f"{context}: HTTP 207 response did not report exact success for every requested interface."
+        if response.get("RETURN_CODE") == 207 and exact_207_classifier is not None:
+            accepted, exact = exact_207_classifier()
+            for item in items:
+                item.status = "succeeded" if item.target in accepted else "failed"
+                item.message = None if item.target in accepted else error
+            if not exact or any(item.status != "succeeded" for item in items):
+                self._errors.append(error)
+                return False
+            return True
         if not self._apply_success_response(items, response, result, error):
             self._errors.append(error)
             return False
@@ -402,7 +430,10 @@ class InterfaceWorkflowExecutor:
                     if resource.platform_deletes:
                         resource.orchestrator.preflight_delete(list(resource.platform_deletes))
                     continue
-                create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
+                create_candidates = [
+                    *resource.operations.creates,
+                    *(transition.desired for transition in resource.transitions),
+                ]
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
                     *(transition.desired for transition in resource.transitions),
@@ -500,7 +531,10 @@ class InterfaceWorkflowExecutor:
             targets = tuple(dict.fromkeys((*targets, *local)))
         if not targets:
             return None
-        target = next((source for source in sources if queue_name in source.deferred_delete_queue_names), None)
+        target = next(
+            (source for source in sources if queue_name in source.deferred_delete_queue_names),
+            None,
+        )
         if target is None:
             self._errors.append(f"{context}: no orchestrator accepts deferred queue {queue_name!r}.")
             return None
@@ -638,18 +672,116 @@ class InterfaceWorkflowExecutor:
         operations: Iterable[InterfaceWorkflowOperation] | None = None,
     ) -> bool:
         selected = None if operations is None else {operation.key for operation in operations}
+        batch_type = tuple[
+            InterfaceResourcePlan,
+            NDBaseModel,
+            InterfaceExecutionItem,
+            dict[str, Any],
+            NDBaseModel | None,
+            str,
+        ]
+        pending: list[batch_type] = []
+        completed_batches: list[list[batch_type]] = []
+        singular: list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem]] = []
+
+        def execute_batch(batch: list[batch_type]) -> bool:
+            if len(batch) == 1:
+                resource, model, item, _payload, _previous, _mode = batch[0]
+                return self._call_items(
+                    resource.orchestrator,
+                    [item],
+                    lambda: resource.orchestrator.update(model),
+                    f"resources[{resource.resource_index}] {resource.resource_type} update failed",
+                )
+            source = batch[0][0].orchestrator
+            items = [entry[2] for entry in batch]
+            try:
+                # A preceding batch dirties each touched switch's shared
+                # snapshot. Revalidate every touched switch before another
+                # request; one 4.3.1 modify request may span many switches.
+                snapshot = getattr(source, "state_snapshot", None)
+                if snapshot is not None:
+                    for switch_id in {item.switch_id for item in items}:
+                        if not snapshot.has_switch(switch_id):
+                            snapshot.load_switch(switch_id)
+                for resource, model, _item, _payload, previous, _mode in batch:
+                    resource.orchestrator.prepare_bulk_modify_context(model, previous)
+            except Exception as exc:  # pylint: disable=broad-except
+                self._errors.append(f"Bulk interface update context preflight failed: {exc}")
+                return False
+            requested = {(item.switch_id.casefold(), item.interface_name.casefold()): (item.switch_id, item.interface_name) for item in items}
+            peer_switch_ids = {
+                (item.switch_id.casefold(), item.interface_name.casefold()): payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                for _resource, _model, item, payload, _previous, _mode in batch
+                if str(payload.get("interfaceType") or "").casefold() == "vpc"
+            }
+
+            def classify_modify() -> tuple[set[Target], bool]:
+                accepted_pairs, exact = source._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peer_switch_ids)
+                return {(requested[key][1], requested[key][0]) for key in accepted_pairs}, exact
+
+            success = self._call_items(
+                source,
+                items,
+                lambda: source.modify_bulk_prepared(
+                    [entry[3] for entry in batch],
+                    payload_orchestrators=[entry[0].orchestrator for entry in batch],
+                    payload_models=[entry[1] for entry in batch],
+                    payload_modes=[entry[5] for entry in batch],
+                ),
+                f"Bulk interface update failed across {len({item.switch_id for item in items})} switch(es)",
+                exact_207_classifier=classify_modify,
+            )
+            return success
+
         for resource in plan.resources:
             for model in resource.operations.updates:
                 if selected is not None and self._scheduled_key(resource, "update", model) not in selected:
                     continue
                 item = self._item(resource, "update", model)
-                if not self._call_items(
-                    resource.orchestrator,
-                    [item],
-                    lambda resource=resource, model=model: resource.orchestrator.update(model),
-                    f"resources[{resource.resource_index}] {resource.resource_type} update failed",
-                ):
+                previous = resource.before.get(model.get_identifier_value()) if hasattr(resource.before, "get") else None
+                try:
+                    prepare = getattr(resource.orchestrator, "prepare_bulk_description_update", None)
+                    payload = prepare(model, previous) if callable(prepare) else None
+                    mode = "description"
+                    if payload is None:
+                        prepare_full = getattr(resource.orchestrator, "prepare_bulk_full_update", None)
+                        payload = prepare_full(model, previous) if callable(prepare_full) else None
+                        mode = "full"
+                except Exception as exc:  # pylint: disable=broad-except
+                    item.status = "failed"
+                    item.message = f"Bulk interface update preflight failed: {exc}"
+                    self._errors.append(item.message)
                     return False
+                if payload is not None:
+                    # Preserve dependency layers, split repeated exact
+                    # identities, and respect ND's documented 10,000-item
+                    # request limit.
+                    if len(pending) >= 10000 or any(
+                        entry[2].switch_id == item.switch_id and entry[2].interface_name.casefold() == item.interface_name.casefold() for entry in pending
+                    ):
+                        completed_batches.append(pending)
+                        pending = []
+                    pending.append((resource, model, item, payload, previous, mode))
+                    continue
+                singular.append((resource, model, item))
+
+        if pending:
+            completed_batches.append(pending)
+        for batch in completed_batches:
+            if not execute_batch(batch):
+                return False
+        # Every operation in this invocation is in the same independent
+        # dependency layer; singular fallbacks may follow bulk batches without
+        # crossing a parent/member or routed-parent discovery barrier.
+        for resource, model, item in singular:
+            if not self._call_items(
+                resource.orchestrator,
+                [item],
+                lambda resource=resource, model=model: resource.orchestrator.update(model),
+                f"resources[{resource.resource_index}] {resource.resource_type} update failed",
+            ):
+                return False
         return True
 
     def _execute_creates(
@@ -657,16 +789,58 @@ class InterfaceWorkflowExecutor:
         plan: InterfaceWorkflowPlan,
         operations: Iterable[InterfaceWorkflowOperation] | None = None,
     ) -> bool:
+        """Use one guarded mixed create per independent layer when worthwhile."""
         selected_by_resource: dict[int, set[tuple[int, str, str, str]]] | None = None
         if operations is not None:
             selected_by_resource = defaultdict(set)
             for operation in operations:
                 selected_by_resource[operation.resource_index].add(operation.key)
+        eligible: list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem, dict[str, Any]]] = []
+        fallback: dict[int, list[NDBaseModel]] = defaultdict(list)
         for resource in plan.resources:
             models = list(resource.operations.creates)
             if selected_by_resource is not None:
                 selected = selected_by_resource.get(resource.resource_index, set())
                 models = [model for model in models if self._scheduled_key(resource, "create", model) in selected]
+            if not models:
+                continue
+            for model in models:
+                try:
+                    prepare = getattr(resource.orchestrator, "prepare_bulk_create_modify", None)
+                    payload = prepare(model) if callable(prepare) else None
+                except Exception as exc:  # pylint: disable=broad-except
+                    self._errors.append(f"resources[{resource.resource_index}] {resource.resource_type} mixed-create preflight failed: {exc}")
+                    return False
+                if payload is None:
+                    fallback[resource.resource_index].append(model)
+                else:
+                    eligible.append((resource, model, self._item(resource, "create", model), payload))
+
+        batches: list[list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem, dict[str, Any]]]] = []
+        current: list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem, dict[str, Any]]] = []
+        reserved: set[tuple[str, str]] = set()
+        for entry in eligible:
+            resource, model, item, payload = entry
+            keys = {(item.switch_id.casefold(), item.interface_name.casefold())}
+            if str(payload.get("interfaceType") or "").casefold() == "vpc":
+                keys.add((payload["configData"]["networkOS"]["policy"]["peerSwitchId"].casefold(), item.interface_name.casefold()))
+            if len(current) >= 10000 or reserved & keys:
+                batches.append(current)
+                current = []
+                reserved = set()
+            current.append((resource, model, item, payload))
+            reserved.update(keys)
+        if current:
+            batches.append(current)
+        for batch in batches:
+            if len(batch) == 1:
+                resource, model, _item, _payload = batch[0]
+                fallback[resource.resource_index].append(model)
+
+        # Retain the established per-family path for physical assignments,
+        # member-bearing parents, unqualified names, and singletons.
+        for resource in plan.resources:
+            models = fallback.get(resource.resource_index, [])
             if not models:
                 continue
             if resource.orchestrator.supports_bulk_create:
@@ -694,6 +868,47 @@ class InterfaceWorkflowExecutor:
                     f"resources[{resource.resource_index}] {resource.resource_type} create failed",
                 ):
                     return False
+        for batch in batches:
+            if len(batch) < 2:
+                continue
+            source = batch[0][0].orchestrator
+            items = [entry[2] for entry in batch]
+            touched = {item.switch_id for item in items}
+            touched.update(
+                entry[3]["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                for entry in batch
+                if str(entry[3].get("interfaceType") or "").casefold() == "vpc"
+            )
+            try:
+                for switch_id in touched:
+                    if not self.snapshot.has_switch(switch_id):
+                        self.snapshot.load_switch(switch_id)
+            except Exception as exc:  # pylint: disable=broad-except
+                self._errors.append(f"Mixed bulk create inventory refresh failed: {exc}")
+                return False
+            requested = {(item.switch_id.casefold(), item.interface_name.casefold()): (item.switch_id, item.interface_name) for item in items}
+            peer_switch_ids = {
+                (item.switch_id.casefold(), item.interface_name.casefold()): payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                for _resource, _model, item, payload in batch
+                if str(payload.get("interfaceType") or "").casefold() == "vpc"
+            }
+
+            def classify_create() -> tuple[set[Target], bool]:
+                accepted, exact = source._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peer_switch_ids)
+                return {(requested[key][1], requested[key][0]) for key in accepted}, exact
+
+            if not self._call_items(
+                source,
+                items,
+                lambda: source.create_bulk_modify_prepared(
+                    [entry[3] for entry in batch],
+                    payload_orchestrators=[entry[0].orchestrator for entry in batch],
+                    payload_models=[entry[1] for entry in batch],
+                ),
+                f"Mixed bulk create failed across {len(touched)} switch(es)",
+                exact_207_classifier=classify_create,
+            ):
+                return False
         return True
 
     @staticmethod
@@ -705,7 +920,12 @@ class InterfaceWorkflowExecutor:
         """Return the planner/executor key for one model mutation."""
 
         switch_id = resource.orchestrator.fabric_context.get_switch_id(getattr(model, "switch_ip"))
-        return resource.resource_index, action, switch_id, getattr(model, "interface_name").casefold()
+        return (
+            resource.resource_index,
+            action,
+            switch_id,
+            getattr(model, "interface_name").casefold(),
+        )
 
     def _execute_scheduled_layers(self, plan: InterfaceWorkflowPlan) -> bool:
         """Execute dependency layers and deploy parents before dependent children."""
@@ -787,20 +1007,57 @@ class InterfaceWorkflowExecutor:
 
         deadline = monotonic() + _PARENT_DISCOVERY_TIMEOUT_SECONDS
         pending = selected
+        last_observed: dict[Target, tuple[object, object, object]] = {}
+
+        def observed_mode(target: Target, row: dict[str, Any] | None) -> bool:
+            if isinstance(row, dict):
+                last_observed[target] = (
+                    row.get("interfaceType"),
+                    (row.get("configData") or {}).get("mode"),
+                    (row.get("operData") or {}).get("mode"),
+                )
+            else:
+                last_observed[target] = (None, None, None)
+            return self._routed_parent_discovered(row)
+
+        # A few parents are cheaper to poll by exact GET. A larger parent set
+        # stays on the switch-inventory path to avoid one GET per identity.
+        poll_exact = len(selected) <= 2
         while pending:
             try:
-                refreshed = self.snapshot.refresh(tuple(dict.fromkeys(switch_id for _name, switch_id in pending)))
+                if poll_exact:
+                    pending = tuple(
+                        (name, switch_id) for name, switch_id in pending if not observed_mode((name, switch_id), self.snapshot.read_exact(switch_id, name))
+                    )
+                    if not pending:
+                        # Exact GET is only a readiness probe. Invalidate and
+                        # rebuild complete state before the child safety path.
+                        refreshed = self.snapshot.refresh(tuple(dict.fromkeys(switch_id for _name, switch_id in selected)))
+                        pending = tuple(
+                            (name, switch_id)
+                            for name, switch_id in selected
+                            if not observed_mode((name, switch_id), refreshed.get(switch_id, {}).get(name.casefold()))
+                        )
+                else:
+                    refreshed = self.snapshot.refresh(tuple(dict.fromkeys(switch_id for _name, switch_id in pending)))
+                    pending = tuple(
+                        (name, switch_id)
+                        for name, switch_id in pending
+                        if not observed_mode((name, switch_id), refreshed.get(switch_id, {}).get(name.casefold()))
+                    )
             except Exception as exc:  # pylint: disable=broad-except
                 self._errors.append(f"Routed-parent discovery refresh failed after deployment: {exc}")
                 return False
-            pending = tuple(
-                (name, switch_id) for name, switch_id in pending if not self._routed_parent_discovered(refreshed.get(switch_id, {}).get(name.casefold()))
-            )
             if not pending:
                 return True
             if monotonic() >= deadline:
                 names = ", ".join(f"{switch_id}/{name}" for name, switch_id in pending)
-                self._errors.append(f"Routed-parent deployment did not reach discovered routed mode before child mutation: {names}.")
+                mode_summaries = []
+                for name, switch_id in pending:
+                    interface_type, config_mode, operational_mode = last_observed.get((name, switch_id), (None, None, None))
+                    mode_summaries.append(f"{switch_id}/{name}=type:{interface_type!r},config:{config_mode!r},oper:{operational_mode!r}")
+                modes = ", ".join(mode_summaries)
+                self._errors.append(f"Routed-parent deployment did not reach discovered routed mode before child mutation: {names}. Last observed: {modes}.")
                 return False
             sleep(min(_PARENT_DISCOVERY_POLL_SECONDS, max(0.0, deadline - monotonic())))
         return True
@@ -872,7 +1129,10 @@ class InterfaceWorkflowExecutor:
         # A vPC orchestrator expands every verification pair to its peer.
         # Use an ordinary orchestrator for a mixed-family request so only the
         # vPC parents proven by their sources receive that expansion.
-        target = next((resource.orchestrator for resource in plan.resources if resource.adapter.ownership_domain != "vpc"), plan.resources[0].orchestrator)
+        target = next(
+            (resource.orchestrator for resource in plan.resources if resource.adapter.ownership_domain != "vpc"),
+            plan.resources[0].orchestrator,
+        )
         target.deploy = True
         markers = self._request_markers(target.rest_send)
         self._attempted_deploy_targets.update((name.casefold(), switch_id) for name, switch_id in targets)

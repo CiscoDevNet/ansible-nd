@@ -19,6 +19,8 @@ in the ND Manage API.
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
   (PUT /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
+- `EpManageInterfacesModify` - Bulk update interfaces in a fabric (ND 4.3.1+)
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/modify)
 - `EpManageInterfacesDelete` - Delete a virtual interface (loopback, SVI); not supported for physical ethernet
   (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesDeploy` - Deploy interface configurations
@@ -318,6 +320,24 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
         None
         """
         return HttpVerbEnum.PUT
+
+
+class EpManageInterfacesModify(FabricNameMixin, NDEndpointBaseModel):
+    """ND 4.3.1+ bulk modify endpoint; the caller validates exact item identity."""
+
+    class_name: Literal["EpManageInterfacesModify"] = Field(
+        default="EpManageInterfacesModify", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("EpManageInterfacesModify.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "modify")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
 
 
 class EpManageInterfacesDelete(_EpManageInterfacesBase):

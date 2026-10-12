@@ -18,18 +18,22 @@ from __future__ import annotations
 
 import logging
 import re
+from copy import deepcopy
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from time import sleep
 from typing import Any, ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
     EpManageFabricsSwitchesDeploymentHistoryGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
+    EpManageInterfacesModify,
     EpManageInterfacesPreview,
     EpManageInterfacesRemove,
 )
@@ -39,10 +43,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.inter
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_bulk_create_guard import (
+    bulk_create_identity_qualified,
+    bulk_create_parent,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import (
     InterfaceCapabilityPreflight,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot, _InterfaceSwitchIdentityMismatch
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
+    InterfaceStateSnapshot,
+    _InterfaceSwitchIdentityMismatch,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    get_member_policy_descriptor,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     ModelType,
     NDBaseOrchestrator,
@@ -143,6 +157,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS: ClassVar[int] = 6
     INTERFACE_INVENTORY_RETRY_DELAY_SECONDS: ClassVar[int] = 2
     deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"remove"})
+    # Enable only after the family's full-policy modify behavior is qualified.
+    supports_bulk_full_modify: ClassVar[bool] = False
+    # Qualify only logical NX-OS creates with exact identity and dependency guards.
+    supports_bulk_modify_create: ClassVar[bool] = False
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -377,6 +395,292 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             groups[group_key].append(BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
         return dict(groups)
 
+    def _bulk_modify_payload(self, model_instance: ModelType, switch_id: str) -> dict[str, Any]:
+        """Build the same full policy body used by the family's singular update."""
+        payload = model_instance.to_payload()
+        payload["switchId"] = switch_id
+        return payload
+
+    def _bulk_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> None:
+        """Family hook for write guards that must run before a bulk request."""
+
+    def _bulk_full_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> bool:
+        """Family hook to exclude full-policy changes not yet qualified for bulk."""
+        return True
+
+    def _canonicalize_bulk_wire_echo(self, config_data: dict[str, Any]) -> bool:
+        """Family hook for known GET values that must be canonicalized on write.
+
+        It mutates only the supplied deep copy of a complete config. Returning
+        false keeps the singular PUT path (or rejects a prepared bulk body).
+        The low-level preflight applies this to the cached current config too,
+        so only an explicitly registered wire echo may differ from GET.
+        """
+        return True
+
+    def prepare_bulk_description_update(self, model_instance: ModelType, previous_model: ModelType | None = None) -> dict[str, Any] | None:
+        """Return a guarded full payload only for an existing description-only update.
+
+        A non-eligible update keeps its singular PUT. Compare the model's
+        reverse-diff view before/after excluding description, so omitted ND
+        defaults do not hide a real replacement reset. Build the bulk body from
+        the complete wire config, preserving unknown/read-only echo fields.
+        ND 4.3.1 modify can upsert an identity deleted after this preflight; the
+        exact-identity check limits but cannot eliminate that external race.
+        """
+        profile = getattr(self.rest_send, "performance_profile", None)
+
+        def decline(reason: str) -> None:
+            if profile is not None:
+                profile.record_bulk_update_decision(reason)
+            return None
+
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return decline("controller_not_431")
+        if previous_model is None:
+            return decline("missing_previous_model")
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            snapshot.load_switch(switch_id)
+        current = snapshot.cached_interface(switch_id, model_instance.interface_name)
+        if current is None or current.get("switchId") != switch_id:
+            return decline("missing_exact_identity")
+        payload = self._bulk_modify_payload(model_instance, switch_id)
+        if (
+            str(current.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+            or str(current.get("interfaceType") or "").casefold() != str(payload.get("interfaceType") or "").casefold()
+        ):
+            return decline("identity_or_family_mismatch")
+        current_config = deepcopy(current.get("configData"))
+        proposed_config = payload.get("configData")
+        if not isinstance(current_config, dict) or not isinstance(proposed_config, dict):
+            return decline("incomplete_config")
+        current_os = current_config.get("networkOS")
+        proposed_os = proposed_config.get("networkOS")
+        if not isinstance(current_os, dict) or not isinstance(proposed_os, dict):
+            return decline("incomplete_network_os")
+        current_policy = current_os.get("policy")
+        proposed_policy = proposed_os.get("policy")
+        if not isinstance(current_policy, dict) or not isinstance(proposed_policy, dict):
+            return decline("incomplete_policy")
+        policy_type = current_policy.get("policyType")
+        if (
+            not isinstance(policy_type, str)
+            or get_member_policy_descriptor(policy_type) is not None
+            or proposed_policy.get("policyType") != policy_type
+            or not isinstance(proposed_policy.get("description"), str)
+            or current_policy.get("description") == proposed_policy.get("description")
+            or ("peerSwitchId" in proposed_policy and current_policy.get("peerSwitchId") != proposed_policy["peerSwitchId"])
+        ):
+            return decline("not_description_only_policy")
+        previous_semantic = previous_model.to_reverse_diff_dict()
+        desired_semantic = model_instance.to_reverse_diff_dict()
+        for semantic in (previous_semantic, desired_semantic):
+            semantic_config = semantic.get("configData") or {}
+            semantic_os = semantic_config.get("networkOS") or {}
+            semantic_policy = semantic_os.get("policy") or {}
+            semantic_policy.pop("description", None)
+        if previous_semantic != desired_semantic:
+            return decline("other_semantic_change")
+        # A description-only change still submits a complete parent policy to
+        # modify. Member-bearing PC/vPC parents retain singular PUT semantics,
+        # even when the requested member list itself is unchanged.
+        if not self._bulk_full_modify_guard(model_instance, current):
+            return decline("member_bearing_parent")
+        self._bulk_modify_guard(model_instance, current)
+        if not self._canonicalize_bulk_wire_echo(current_config):
+            return decline("uncanonicalizable_wire_echo")
+        current_policy["description"] = proposed_policy["description"]
+        if profile is not None:
+            profile.record_bulk_update_decision("eligible")
+        return {
+            "interfaceName": current["interfaceName"],
+            "switchId": switch_id,
+            "interfaceType": current["interfaceType"],
+            "configData": current_config,
+        }
+
+    def prepare_bulk_full_update(self, model_instance: ModelType, previous_model: ModelType | None = None) -> dict[str, Any] | None:
+        """Return the family's singular-PUT body for a qualified 4.3.1 full-policy update.
+
+        The low-level sender rechecks the exact identity, policy, payload
+        equivalence, and family guards for every item before any POST. Keep
+        member policies, IOS-XE, and unqualified families on singular PUT.
+        """
+        if not self.supports_bulk_full_modify or previous_model is None:
+            return None
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return None
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            snapshot.load_switch(switch_id)
+        current = snapshot.cached_interface(switch_id, model_instance.interface_name)
+        if current is None or current.get("switchId") != switch_id:
+            return None
+        payload = self._bulk_modify_payload(model_instance, switch_id)
+        if (
+            str(current.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+            or str(current.get("interfaceType") or "").casefold() != str(payload.get("interfaceType") or "").casefold()
+        ):
+            return None
+        current_os = (current.get("configData") or {}).get("networkOS") or {}
+        proposed_os = (payload.get("configData") or {}).get("networkOS") or {}
+        current_policy = current_os.get("policy") or {}
+        proposed_policy = proposed_os.get("policy") or {}
+        policy_type = current_policy.get("policyType")
+        if (
+            current_os.get("networkOSType") != "nx-os"
+            or proposed_os.get("networkOSType") != "nx-os"
+            or not isinstance(policy_type, str)
+            or get_member_policy_descriptor(policy_type) is not None
+            or proposed_policy.get("policyType") != policy_type
+        ):
+            return None
+        if not self._bulk_full_modify_guard(model_instance, current):
+            return None
+        profile = getattr(self.rest_send, "performance_profile", None)
+        if profile is not None:
+            profile.record_bulk_update_decision("eligible_full_policy")
+        return payload
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Family hook to retain deploy evidence before an accepted bulk mutation."""
+
+    def prepare_bulk_create_modify(self, model_instance: ModelType) -> dict[str, Any] | None:
+        """Return a guarded 4.3.1 logical-create payload, or retain ordinary create.
+
+        The ordinary family model and preflight have already run. The modify
+        endpoint's lax upsert validation makes canonical identity bounds,
+        exact absence, pair identity, and discovered routed parents mandatory.
+        Member-bearing parents remain on the established family create path.
+        """
+        if not self.supports_bulk_modify_create or not self.supports_bulk_create:
+            return None
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return None
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        payload = self._bulk_modify_payload(model_instance, switch_id)
+        if not bulk_create_identity_qualified(payload):
+            return None
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            snapshot.load_switch(switch_id)
+        if snapshot.cached_interface(switch_id, payload["interfaceName"]) is not None:
+            return None
+        if payload["interfaceType"] == "vpc":
+            peer_id = payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+            if not snapshot.has_switch(peer_id):
+                snapshot.load_switch(peer_id)
+            if snapshot.cached_interface(peer_id, payload["interfaceName"]) is not None:
+                return None
+        if payload["interfaceType"] == "subInterface":
+            parent_name = bulk_create_parent(payload)
+            parent = snapshot.cached_interface(switch_id, parent_name)
+            if not isinstance(parent, dict) or str(parent.get("interfaceType") or "").casefold() not in {"ethernet", "portchannel"}:
+                return None
+            if (parent.get("configData") or {}).get("mode") != "routed" or (parent.get("operData") or {}).get("mode") != "routed":
+                return None
+        return payload
+
+    def create_bulk_modify_prepared(
+        self,
+        payloads: Sequence[dict[str, Any]],
+        *,
+        payload_orchestrators: Sequence[NDBaseInterfaceOrchestrator],
+        payload_models: Sequence[ModelType],
+    ) -> ResponseType:
+        """Create qualified logical interfaces through one mixed 4.3.1 POST.
+
+        Every item is rechecked against the clean complete inventory and its
+        family's exact model body immediately before transport. A failed or
+        uncertain response dirties all touched switch snapshots and retains
+        only exact accepted targets in their owning deploy queues.
+        """
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            raise RuntimeError("Mixed bulk create requires confirmed ND 4.3.1 or newer.")
+        if not 2 <= len(payloads) <= 10000 or len(payload_orchestrators) != len(payloads) or len(payload_models) != len(payloads):
+            raise ValueError("Mixed bulk create requires 2–10000 aligned payloads, family orchestrators, and models.")
+        snapshot = self.state_snapshot
+        requested: dict[tuple[str, str], tuple[str, str]] = {}
+        owners: dict[tuple[str, str], NDBaseInterfaceOrchestrator] = {}
+        peer_ids: dict[tuple[str, str], str] = {}
+        touched: set[str] = set()
+        for payload, owner, model in zip(payloads, payload_orchestrators, payload_models):
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(owner, NDBaseInterfaceOrchestrator)
+                or not owner.supports_bulk_modify_create
+                or not isinstance(model, owner.model_class)
+            ):
+                raise ValueError("Mixed bulk create received an unqualified family payload.")
+            sid, name = payload.get("switchId"), payload.get("interfaceName")
+            if not isinstance(sid, str) or not isinstance(name, str) or not bulk_create_identity_qualified(payload):
+                raise ValueError(f"Mixed bulk create refuses an unqualified identity: {sid}/{name}.")
+            key = (sid.casefold(), name.casefold())
+            if key in requested or owner.state_snapshot is not snapshot or owner.fabric_name != self.fabric_name:
+                raise ValueError(f"Mixed bulk create refuses repeated or unrelated identity {sid}/{name}.")
+            if model.interface_name.casefold() != name.casefold() or owner._resolve_switch_id(model.switch_ip) != sid:
+                raise ValueError(f"Mixed bulk create model identity differs from payload {sid}/{name}.")
+            if owner._bulk_modify_payload(model, sid) != payload:
+                raise ValueError(f"Mixed bulk create body differs from the family model for {sid}/{name}.")
+            if not snapshot.has_switch(sid) or snapshot.cached_interface(sid, name) is not None:
+                raise ValueError(f"Mixed bulk create requires complete, absent switch identity {sid}/{name}.")
+            if payload["interfaceType"] == "vpc":
+                peer_id = payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                if not snapshot.has_switch(peer_id) or snapshot.cached_interface(peer_id, name) is not None:
+                    raise ValueError(f"Mixed bulk create requires an absent identity on both vPC peers for {sid}/{name}.")
+                peer_ids[key] = peer_id
+                touched.add(peer_id)
+            if payload["interfaceType"] == "subInterface":
+                parent = snapshot.cached_interface(sid, bulk_create_parent(payload))
+                if (
+                    not isinstance(parent, dict)
+                    or (parent.get("configData") or {}).get("mode") != "routed"
+                    or (parent.get("operData") or {}).get("mode") != "routed"
+                ):
+                    raise ValueError(f"Mixed bulk create requires a discovered routed parent for {sid}/{name}.")
+            owner._prepare_deploy_context(model, sid)
+            requested[key] = (sid, name)
+            owners[key] = owner
+            touched.add(sid)
+
+        endpoint = EpManageInterfacesModify()
+        endpoint.fabric_name = self.fabric_name
+        recorded = self.rest_send.response_count
+        try:
+            result = self._request(path=endpoint.path, verb=endpoint.verb, data={"interfaces": list(payloads)})
+        except Exception as error:
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted, _exact = self._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peer_ids)
+                for key in accepted:
+                    sid, name = requested[key]
+                    owners[key]._queue_deploy(name, sid)
+                if accepted:
+                    raise RuntimeError(f"Mixed bulk create accepted {len(accepted)} of {len(requested)} named identities before failure.") from error
+            raise
+        finally:
+            for sid in touched:
+                snapshot.mark_dirty(sid)
+        if self.rest_send.return_code != 207:
+            raise RuntimeError(f"Mixed bulk create expected HTTP 207, received {self.rest_send.return_code}; outcomes are uncertain.")
+        accepted, exact = self._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peer_ids)
+        for key in accepted:
+            sid, name = requested[key]
+            owners[key]._queue_deploy(name, sid)
+        if not exact or accepted != set(requested):
+            raise RuntimeError(f"Mixed bulk create did not report exact success for all {len(requested)} identities; {len(accepted)} accepted.")
+        return result
+
     def _post_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> ResponseType:
         """
         # Summary
@@ -436,6 +740,255 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         for item in items:
             self._queue_deploy(item.interface_name, group_key.switch_id)
         return result
+
+    def modify_bulk_prepared(
+        self,
+        payloads: Sequence[dict[str, Any]],
+        *,
+        changed_policy_fields: frozenset[str] = frozenset({"description"}),
+        payload_orchestrators: Sequence[NDBaseInterfaceOrchestrator] | None = None,
+        payload_models: Sequence[ModelType] | None = None,
+        payload_modes: Sequence[str] | None = None,
+    ) -> ResponseType:
+        """Send the 4.3.1 bulk-modify transport for preflighted full PUT bodies.
+
+        This low-level method does not build or validate family policy intent. A
+        caller must first run the same family/member/ownership checks as
+        the singular ``update`` path and split requests at dependency barriers.
+        It deliberately refuses member policies. Cross-switch batches require
+        switch-qualified 207 result names; a bare result name is accepted only
+        for a one-switch batch, where it is unambiguous.
+        ND 4.3.1 also *creates* an absent target submitted to modify, so this
+        path requires a complete, clean preflight snapshot with every
+        requested identity already owned by the same switch and family. That
+        guard does not eliminate an external deletion race after preflight.
+        Description mode permits only the named policy fields to differ from
+        the complete cached config. Full mode instead requires the qualified
+        family's exact singular-PUT model body and its write guards.
+        Standalone and workflow callers use this for description-only updates
+        and explicitly qualified full-policy family updates; other updates
+        retain their singular PUT path.
+        """
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            raise RuntimeError(f"Bulk interface modify requires confirmed ND 4.3.1 or newer; controller version is {version or 'unknown'!r}.")
+        if len(payloads) < 2 or len(payloads) > 10000:
+            raise ValueError("Bulk interface modify requires 2–10000 prepared interfaces.")
+        if not changed_policy_fields or any(not isinstance(field, str) or not field for field in changed_policy_fields):
+            raise ValueError("Bulk interface modify requires explicit non-empty policy fields allowed to change.")
+        if "policyType" in changed_policy_fields:
+            raise ValueError("Bulk interface modify cannot change policyType.")
+        if payload_orchestrators is not None and len(payload_orchestrators) != len(payloads):
+            raise ValueError("Bulk interface modify needs one family orchestrator for each prepared payload.")
+        if payload_modes is not None and (len(payload_modes) != len(payloads) or any(mode not in ("description", "full") for mode in payload_modes)):
+            raise ValueError("Bulk interface modify needs a valid mode for each prepared payload.")
+        if payload_models is not None and len(payload_models) != len(payloads):
+            raise ValueError("Bulk interface modify needs one model for each prepared payload.")
+        if payload_modes is not None and "full" in payload_modes and (payload_orchestrators is None or payload_models is None):
+            raise ValueError("Full-policy bulk modify requires aligned family orchestrators and models.")
+
+        names: dict[tuple[str, str], tuple[str, str]] = {}
+        deploy_owners: dict[tuple[str, str], NDBaseInterfaceOrchestrator] = {}
+        peer_switch_ids: dict[tuple[str, str], str] = {}
+        switch_ids: set[str] = set()
+        affected_peer_ids: set[str] = set()
+        for index, payload in enumerate(payloads):
+            if not isinstance(payload, dict):
+                raise ValueError("Bulk interface modify requires prepared interface objects.")
+            name = payload.get("interfaceName")
+            switch_id = payload.get("switchId")
+            interface_type = payload.get("interfaceType")
+            config_data = payload.get("configData") or {}
+            network_os = config_data.get("networkOS") if isinstance(config_data, dict) else None
+            policy = network_os.get("policy") if isinstance(network_os, dict) else None
+            policy_type = policy.get("policyType") if isinstance(policy, dict) else None
+            if not isinstance(name, str) or not name.strip() or not isinstance(switch_id, str) or not switch_id.strip():
+                raise ValueError("Bulk interface modify requires exact interfaceName and switchId in every full payload.")
+            if not isinstance(interface_type, str) or not interface_type.strip():
+                raise ValueError(f"Bulk interface modify requires interfaceType for {name!r}.")
+            if not isinstance(policy_type, str) or not policy_type:
+                raise ValueError(f"Bulk interface modify requires a policyType for {name!r}.")
+            if get_member_policy_descriptor(policy_type) is not None:
+                raise ValueError(f"Bulk interface modify cannot bypass member-policy update safety for {name!r}.")
+            key = (switch_id.casefold(), name.casefold())
+            if key in names:
+                raise ValueError(f"Bulk interface modify cannot distinguish repeated name {name!r} on switch {switch_id} in a 207 result.")
+            names[key] = (switch_id, name)
+            deploy_owners[key] = payload_orchestrators[index] if payload_orchestrators is not None else self
+            if interface_type.casefold() == "vpc":
+                peer_switch_id = policy.get("peerSwitchId")
+                if not isinstance(peer_switch_id, str) or not peer_switch_id.strip():
+                    raise ValueError(f"Bulk interface modify requires an authoritative peerSwitchId for vPC {switch_id}/{name}.")
+                peer_switch_ids[key] = peer_switch_id.casefold()
+                affected_peer_ids.add(peer_switch_id)
+            switch_ids.add(switch_id)
+
+        endpoint = EpManageInterfacesModify()
+        endpoint.fabric_name = self.fabric_name
+        snapshot = self.state_snapshot
+        if any(not snapshot.has_switch(switch_id) for switch_id in switch_ids):
+            raise ValueError("Bulk interface modify requires a complete, clean preflighted switch inventory for every switch.")
+        for index, payload in enumerate(payloads):
+            name = payload["interfaceName"]
+            switch_id = payload["switchId"]
+            family_orchestrator = payload_orchestrators[index] if payload_orchestrators is not None else self
+            mode = payload_modes[index] if payload_modes is not None else "description"
+            if (
+                not isinstance(family_orchestrator, NDBaseInterfaceOrchestrator)
+                or family_orchestrator.state_snapshot is not snapshot
+                or family_orchestrator.fabric_name != self.fabric_name
+            ):
+                raise ValueError(f"Bulk interface modify requires shared family context for {switch_id}/{name}.")
+            current = snapshot.cached_interface(switch_id, name)
+            if (
+                current is None
+                or current.get("switchId") != switch_id
+                or str(current.get("interfaceName") or "").casefold() != name.casefold()
+                or str(current.get("interfaceType") or "").casefold() != payload["interfaceType"].casefold()
+            ):
+                raise ValueError(f"Bulk interface modify refuses absent or unowned preflight identity {switch_id}/{name}.")
+            current_config = deepcopy((current or {}).get("configData"))
+            proposed_config = deepcopy(payload.get("configData"))
+            if not isinstance(current_config, dict) or not isinstance(proposed_config, dict):
+                raise ValueError(f"Bulk interface modify requires complete configData for {switch_id}/{name}.")
+            current_network_os = current_config.get("networkOS")
+            proposed_network_os = proposed_config.get("networkOS")
+            if not isinstance(current_network_os, dict) or not isinstance(proposed_network_os, dict):
+                raise ValueError(f"Bulk interface modify requires complete networkOS for {switch_id}/{name}.")
+            current_policy = current_network_os.get("policy")
+            proposed_policy = proposed_network_os.get("policy")
+            if not isinstance(current_policy, dict) or not isinstance(proposed_policy, dict):
+                raise ValueError(f"Bulk interface modify requires complete policy for {switch_id}/{name}.")
+            if not isinstance(current_policy.get("policyType"), str):
+                raise ValueError(f"Bulk interface modify refuses a missing current policyType for {switch_id}/{name}.")
+            if current_policy["policyType"] != proposed_policy.get("policyType"):
+                raise ValueError(f"Bulk interface modify refuses policyType change for {switch_id}/{name}.")
+            if payload["interfaceType"].casefold() == "vpc" and current_policy.get("peerSwitchId") != proposed_policy.get("peerSwitchId"):
+                raise ValueError(f"Bulk interface modify refuses changed vPC peer ownership for {switch_id}/{name}.")
+            if payload["interfaceType"].casefold() in ("portchannel", "vpc"):
+                member_fields = ("ports",) if payload["interfaceType"].casefold() == "portchannel" else ("peer1MemberPorts", "peer2MemberPorts")
+                for field in member_fields:
+                    for policy in (current_policy, proposed_policy):
+                        members = policy.get(field, [])
+                        if members is None:
+                            members = []
+                        if not isinstance(members, list) or members:
+                            raise ValueError(f"Bulk interface modify refuses member-bearing parent {switch_id}/{name} ({field}).")
+            if not family_orchestrator._canonicalize_bulk_wire_echo(current_config):
+                raise ValueError(f"Bulk interface modify refuses an uncanonicalizable wire echo for {switch_id}/{name}.")
+            if mode == "full":
+                model = payload_models[index]
+                if not family_orchestrator.supports_bulk_full_modify or (
+                    model.interface_name.casefold() != name.casefold()
+                    or family_orchestrator._resolve_switch_id(model.switch_ip) != switch_id
+                    or family_orchestrator._bulk_modify_payload(model, switch_id) != payload
+                ):
+                    raise ValueError(f"Bulk interface modify refuses an unqualified full-policy body for {switch_id}/{name}.")
+                if current_network_os.get("networkOSType") != "nx-os" or proposed_network_os.get("networkOSType") != "nx-os":
+                    raise ValueError(f"Bulk interface modify refuses unqualified network OS for {switch_id}/{name}.")
+                if not family_orchestrator._bulk_full_modify_guard(model, current):
+                    raise ValueError(f"Bulk interface modify refuses an unqualified family property change for {switch_id}/{name}.")
+                family_orchestrator._bulk_modify_guard(model, current)
+            else:
+                for policy in (current_policy, proposed_policy):
+                    for field in changed_policy_fields:
+                        policy.pop(field, None)
+                if current_config != proposed_config:
+                    raise ValueError(f"Bulk interface modify would omit or alter unrelated policy/config fields for {switch_id}/{name}.")
+        recorded = self.rest_send.response_count
+        try:
+            result = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data={"interfaces": list(payloads)},
+            )
+        except Exception as error:
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted, _exact = self._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
+                for key in names:
+                    if key in accepted:
+                        accepted_switch_id, accepted_name = names[key]
+                        deploy_owners[key]._queue_deploy(accepted_name, accepted_switch_id)
+                if accepted:
+                    raise RuntimeError(
+                        f"Bulk interface modify failed after ND accepted {len(accepted)} of {len(names)} named updates; "
+                        "accepted targets remain queued for deployment."
+                    ) from error
+            raise
+        finally:
+            # Even a transport failure can have committed a subset of the request.
+            for switch_id in switch_ids | affected_peer_ids:
+                snapshot.mark_dirty(switch_id)
+
+        if self.rest_send.return_code != 207:
+            raise RuntimeError(f"Bulk interface modify expected HTTP 207, received {self.rest_send.return_code}; update outcomes are uncertain.")
+        accepted, exact = self._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
+        for key in names:
+            if key in accepted:
+                accepted_switch_id, accepted_name = names[key]
+                deploy_owners[key]._queue_deploy(accepted_name, accepted_switch_id)
+        if not exact or accepted != set(names):
+            raise RuntimeError(f"Bulk interface modify did not report exact success for all {len(names)} updates; {len(accepted)} were accepted.")
+        return result
+
+    def _bulk_modify_classify_result_pairs(
+        self,
+        requested: Mapping[tuple[str, str], tuple[str, str]],
+        *,
+        peer_switch_ids: Mapping[tuple[str, str], str] | None = None,
+    ) -> tuple[set[tuple[str, str]], bool]:
+        """Retain exact switch/name successes, validating vPC peer IDs when echoed."""
+        data = self.rest_send.response_current.get("DATA")
+        rows = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return set(), False
+        seen: set[tuple[str, str]] = set()
+        accepted: set[tuple[str, str]] = set()
+        switch_ids = {switch_id for switch_id, _name in requested}
+        exact = True
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+                exact = False
+                continue
+            response_name = row["name"].strip().casefold()
+            # ND 4.3.1 uses ``switchId~name`` for successful modify rows but
+            # can use ``switchId:name`` for failed rows in the *same* 207.
+            if "~" in response_name and ":" in response_name:
+                exact = False
+                continue
+            separator = "~" if "~" in response_name else ":" if ":" in response_name else None
+            if separator is not None:
+                parts = response_name.split(separator)
+                if len(parts) not in (2, 3) or parts[0] not in switch_ids or any(not part for part in parts):
+                    exact = False
+                    continue
+                key = (parts[0], parts[-1])
+                if len(parts) == 3 and (peer_switch_ids is None or (peer_switch_ids.get(key) or "").casefold() != parts[1]):
+                    exact = False
+                    continue
+            else:
+                if len(switch_ids) != 1:
+                    exact = False
+                    continue
+                key = (next(iter(switch_ids)), response_name)
+            if key not in requested:
+                exact = False
+                continue
+            if key in seen:
+                exact = False
+                accepted.discard(key)
+                continue
+            seen.add(key)
+            if str(row.get("status") or "").strip().casefold() == "success":
+                accepted.add(key)
+        return accepted, exact and seen == set(requested)
+
+    def _bulk_modify_classify_results(self, requested: Mapping[str, str], switch_id: str) -> tuple[set[str], bool]:
+        """Compatibility wrapper for one-switch callers and result checks."""
+        pairs = {(switch_id.casefold(), name.casefold()): (switch_id, name) for name in requested.values()}
+        accepted, exact = self._bulk_modify_classify_result_pairs(pairs)
+        return {name for _switch_id, name in accepted}, exact
 
     def _created_despite_failure(self, switch_id: str, items: list[BulkCreateItem], names_before: set[str] | None) -> list[str]:
         """
@@ -1052,7 +1605,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 inventory = self._switch_interfaces_cache.get(row_pair[1], {})
                 for interface_name in _INTERFACE_HEADER_RE.findall(pending_config):
                     record = inventory.get(interface_name.lower())
-                    if isinstance(record, Mapping) and record.get("interfaceType") in {"ethernet", "portChannel"}:
+                    if isinstance(record, Mapping) and record.get("interfaceType") in {
+                        "ethernet",
+                        "portChannel",
+                    }:
                         canonical_name = record.get("interfaceName")
                         if isinstance(canonical_name, str) and canonical_name.strip():
                             derived.append((canonical_name, row_pair[1]))
@@ -1246,7 +1802,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         for parent, children in source._deploy_derived_identities.items():
             self._deploy_derived_identities.setdefault(parent, set()).update(children)
         self._pending_preview_derived_discovery.update(source._pending_preview_derived_discovery)
-        for parent, switch_ids in source._preview_scoped_deploy_child_switches().items():
+        for (
+            parent,
+            switch_ids,
+        ) in source._preview_scoped_deploy_child_switches().items():
             self._absorbed_preview_scoped_child_switches.setdefault(parent, set()).update(switch_ids)
 
     def _preview_scoped_deploy_child_switches(self) -> dict[tuple[str, str], set[str]]:
@@ -1449,7 +2008,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         for interface_name, switch_id in pairs:
             parent = self._normalized_interface_pair(interface_name, switch_id)
             peer_switch_ids = scopes.get(parent, set()) if parent is not None else set()
-            for pair in ((interface_name, switch_id), *((interface_name, peer_id) for peer_id in sorted(peer_switch_ids) if peer_id != switch_id)):
+            for pair in (
+                (interface_name, switch_id),
+                *((interface_name, peer_id) for peer_id in sorted(peer_switch_ids) if peer_id != switch_id),
+            ):
                 if pair not in expanded:
                     expanded.append(pair)
         return expanded
@@ -1607,7 +2169,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 return set(), "preview contains a non-mapping row"
             pair = cls._normalized_interface_pair(row.get("interfaceName"), row.get("switchId"))
             if pair is None:
-                return set(), "preview contains a row without a valid interfaceName and switchId"
+                return (
+                    set(),
+                    "preview contains a row without a valid interfaceName and switchId",
+                )
             if pair in observed:
                 return set(), f"preview contains duplicate identity {pair!r}"
             observed.add(pair)
@@ -1617,20 +2182,32 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             if not isinstance(combined_configs, Sequence) or isinstance(combined_configs, (str, bytes)):
                 return set(), f"preview for {pair!r} lacks combinedConfigs"
             if any(not isinstance(item, Mapping) for item in combined_configs):
-                return set(), f"preview for {pair!r} contains a non-mapping combinedConfigs entry"
+                return (
+                    set(),
+                    f"preview for {pair!r} contains a non-mapping combinedConfigs entry",
+                )
             if any(not isinstance(item.get("configType"), str) or not item.get("configType").strip() for item in combined_configs):
-                return set(), f"preview for {pair!r} contains a combinedConfigs entry without a valid configType"
+                return (
+                    set(),
+                    f"preview for {pair!r} contains a combinedConfigs entry without a valid configType",
+                )
             pending = [item for item in combined_configs if item.get("configType", "").strip().lower() == "pending"]
             pending_lines = pending[0].get("lines") if len(pending) == 1 else None
             if len(pending) != 1 or not isinstance(pending_lines, int) or isinstance(pending_lines, bool) or pending_lines < 0:
-                return set(), f"preview for {pair!r} does not prove zero pending configuration"
+                return (
+                    set(),
+                    f"preview for {pair!r} does not prove zero pending configuration",
+                )
             if pending_lines > 0:
                 pending_pairs.add(pair)
 
         if observed != expected:
             missing = sorted(expected - observed)
             unexpected = sorted(observed - expected)
-            return set(), f"preview identities differ from the submitted pairs: missing={missing!r}, unexpected={unexpected!r}"
+            return (
+                set(),
+                f"preview identities differ from the submitted pairs: missing={missing!r}, unexpected={unexpected!r}",
+            )
         return pending_pairs, None
 
     def _accepted_multistatus_pairs(self) -> set[tuple[str, str]]:

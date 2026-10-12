@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesDeploy,
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
+    EpManageInterfacesModify,
     EpManageInterfacesNormalize,
     EpManageInterfacesPost,
     EpManageInterfacesPreview,
@@ -1157,3 +1158,12 @@ def test_ep_manage_interfaces_00930():
     instance = EpManageInterfacesPreview()
     assert not hasattr(instance, "switch_sn")
     assert not hasattr(instance, "interface_name")
+
+
+def test_bulk_modify_endpoint_is_fabric_scoped_post() -> None:
+    """The ND 4.3.1 modify path encodes the fabric and does not select a switch."""
+    endpoint = EpManageInterfacesModify()
+    endpoint.fabric_name = "fabric/odd"
+
+    assert endpoint.verb == HttpVerbEnum.POST
+    assert endpoint.path == "/api/v1/manage/fabrics/fabric%2Fodd/interfaceActions/modify"

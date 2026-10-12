@@ -46,7 +46,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPost,
     EpManageInterfacesPut,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import EpManageLinksListGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import (
+    EpManageLinksListGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
     EthernetMembershipIndex,
     MissingPeerInventoryError,
@@ -61,8 +63,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     normalize_safe_member_updates,
     parse_member_interface_response,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import normalize_ethernet_interface_name
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import XeEthernetTrunkHostPolicyModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    normalize_ethernet_interface_name,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+    XeEthernetTrunkHostPolicyModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
     InterfaceDefaultPolicyModel,
@@ -71,7 +77,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
     DeferredDeleteRequestGroup,
     NDBaseInterfaceOrchestrator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 ModelType = NDBaseModel
 
@@ -134,6 +142,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     """
 
     supports_bulk_create: ClassVar[bool] = True
+    # ND 4.3.1 accepts the singular PUT body through bulk modify. Member and
+    # fabric-owned policies remain excluded by the existing preflight guards.
+    supports_bulk_full_modify: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"normalize", "reset", "platform_reset"})
 
@@ -357,7 +368,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 "mode": cls.XE_RESET_MODE,
                 "networkOS": {
                     "networkOSType": "ios-xe",
-                    "policy": {"policyType": cls.XE_RESET_POLICY_TYPE, "adminState": True, **cls.XE_RESET_POLICY_DEFAULTS},
+                    "policy": {
+                        "policyType": cls.XE_RESET_POLICY_TYPE,
+                        "adminState": True,
+                        **cls.XE_RESET_POLICY_DEFAULTS,
+                    },
                 },
             },
         }
@@ -1938,6 +1953,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def _bulk_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> None:
+        """Keep the singular Ethernet ownership and membership guards on the fast path."""
+        self._check_fabric_ownership(model_instance, current)
+        self._check_port_channel_restrictions(model_instance, current)
 
     def delete(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """

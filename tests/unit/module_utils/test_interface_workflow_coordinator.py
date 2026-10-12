@@ -51,6 +51,21 @@ def test_staged_parent_child_workflow_fails_before_executor(check_mode, monkeypa
         coordinator.run()
 
 
+def test_opt_in_profile_is_returned_after_output_finishes(monkeypatch):
+    """The diagnostic result includes completed planning/output timers only when opted in."""
+    workflow_plan = plan()
+    module = FakeModule(check_mode=True)
+    module.params["profile"] = True
+    coordinator = InterfaceWorkflowCoordinator(module)
+    coordinator._snapshot = SimpleNamespace(request_stats=workflow_plan.request_stats)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+
+    result = coordinator.run()
+
+    assert result["performance_profile"]["phases"]["planning"]["calls"] == 1
+    assert result["performance_profile"]["phases"]["output"]["calls"] == 1
+
+
 @pytest.mark.parametrize("status", [204, 404])
 def test_collection_read_rejects_204_or_404_even_if_transport_reports_success(status):
     rest_send = SimpleNamespace(

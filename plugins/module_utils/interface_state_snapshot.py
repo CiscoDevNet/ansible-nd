@@ -13,15 +13,18 @@ several orchestrators so every family observes the same initial state.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from copy import deepcopy
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
+    EpManageInterfacesGet,
     EpManageInterfacesListGet,
     EpManageInterfacesSummaryGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import InterfaceOffsetPaginator
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.interface_performance_profile import InterfacePerformanceProfile
 
 
 class _InterfaceSwitchIdentityMismatch(ValueError):
@@ -52,6 +55,7 @@ class InterfaceStateSnapshot:
         request: Callable[..., Any],
         page_size: int = InterfaceOffsetPaginator.DEFAULT_PAGE_SIZE,
         max_pages: int = InterfaceOffsetPaginator.DEFAULT_MAX_PAGES,
+        performance_profile: InterfacePerformanceProfile | None = None,
     ) -> None:
         if not fabric_name:
             raise ValueError("InterfaceStateSnapshot requires a non-empty fabric_name.")
@@ -67,6 +71,7 @@ class InterfaceStateSnapshot:
         self._request = request
         self.page_size = page_size
         self.max_pages = max_pages
+        self.performance_profile = performance_profile
         self._paginator = InterfaceOffsetPaginator(page_size=page_size, max_pages=max_pages)
         self._interfaces_by_switch: dict[str, dict[str, dict]] = {}
         self._overlay_baselines_by_switch: dict[str, dict[str, dict]] = {}
@@ -78,6 +83,7 @@ class InterfaceStateSnapshot:
         self._requested_summary_switches: set[str] = set()
         self._interface_inventory_gets = 0
         self._interface_inventory_pages = 0
+        self._interface_exact_gets = 0
         self._cache_hits = 0
         self._interface_summary_gets = 0
         self._interface_summary_pages = 0
@@ -190,6 +196,30 @@ class InterfaceStateSnapshot:
         )
         return {summary["interfaceName"].lower(): deepcopy(summary) for summary in summaries if summary["switchId"] == switch_id}
 
+    def read_exact(self, switch_id: str, interface_name: str) -> dict[str, Any] | None:
+        """Read one live interface without replacing the complete cached inventory.
+
+        This is suitable for routed-parent discovery polling, not for safety
+        decisions. A caller must refresh the complete switch snapshot before
+        using the newly discovered state to plan dependent mutations.
+        """
+        if not switch_id or not interface_name:
+            raise ValueError("InterfaceStateSnapshot.read_exact requires a switch_id and interface_name.")
+        endpoint = EpManageInterfacesGet()
+        endpoint.fabric_name = self.fabric_name
+        endpoint.switch_sn = switch_id
+        endpoint.interface_name = interface_name
+        self._interface_exact_gets += 1
+        with self.performance_profile.phase("exact_interface_read") if self.performance_profile is not None else nullcontext():
+            row = self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True)
+        if not row:
+            return None
+        if not isinstance(row, dict) or str(row.get("interfaceName") or "").casefold() != interface_name.casefold():
+            raise ValueError(f"Exact interface response did not match requested name {interface_name!r}.")
+        if row.get("switchId") not in (None, switch_id):
+            raise ValueError(f"Exact interface response did not match requested switch {switch_id!r}.")
+        return deepcopy(row)
+
     def load_switch(self, switch_id: str) -> dict[str, dict]:
         """Return current state, automatically refetching a locally dirty switch.
 
@@ -206,14 +236,15 @@ class InterfaceStateSnapshot:
 
         if switch_id in self._dirty_switches:
             self._dirty_refetches += 1
-        interfaces = self._fetch_switch(switch_id)
-        self._interfaces_by_switch[switch_id] = interfaces
-        self._overlay_baselines_by_switch.pop(switch_id, None)
-        self._revisions_by_switch[switch_id] = self._revisions_by_switch.get(switch_id, 0) + 1
-        self._original_interfaces_by_switch.setdefault(switch_id, deepcopy(interfaces))
-        self._requested_switches.add(switch_id)
-        self._dirty_switches.discard(switch_id)
-        return deepcopy(interfaces)
+        with self.performance_profile.phase("inventory") if self.performance_profile is not None else nullcontext():
+            interfaces = self._fetch_switch(switch_id)
+            self._interfaces_by_switch[switch_id] = interfaces
+            self._overlay_baselines_by_switch.pop(switch_id, None)
+            self._revisions_by_switch[switch_id] = self._revisions_by_switch.get(switch_id, 0) + 1
+            self._original_interfaces_by_switch.setdefault(switch_id, deepcopy(interfaces))
+            self._requested_switches.add(switch_id)
+            self._dirty_switches.discard(switch_id)
+            return deepcopy(interfaces)
 
     def load_switches(self, switch_ids: Iterable[str]) -> dict[str, dict[str, dict]]:
         """Load several switches, de-duplicating IDs supplied by the caller."""
@@ -279,7 +310,8 @@ class InterfaceStateSnapshot:
             if switch_id in self._interface_summaries_by_switch:
                 self._interface_summary_cache_hits += 1
                 continue
-            self._interface_summaries_by_switch[switch_id] = self._fetch_interface_summary_switch(switch_id)
+            with self.performance_profile.phase("safety_summaries") if self.performance_profile is not None else nullcontext():
+                self._interface_summaries_by_switch[switch_id] = self._fetch_interface_summary_switch(switch_id)
             self._requested_summary_switches.add(switch_id)
 
         return {
@@ -381,8 +413,12 @@ class InterfaceStateSnapshot:
         if overlap:
             raise ValueError(f"InterfaceStateSnapshot overlay cannot upsert and delete the same interface(s): {sorted(overlap)}.")
 
-        candidate = deepcopy(self._interfaces_by_switch[switch_id])
-        self._overlay_baselines_by_switch.setdefault(switch_id, deepcopy(candidate))
+        current = self._interfaces_by_switch[switch_id]
+        candidate = deepcopy(current)
+        # The prior cache dictionary is no longer mutated or published after
+        # assignment below, so retain it as the rollback baseline directly.
+        # This avoids a second whole-switch deepcopy on the first overlay.
+        self._overlay_baselines_by_switch.setdefault(switch_id, current)
         for interface_name in prepared_deletes:
             candidate.pop(interface_name, None)
         candidate.update(prepared_upserts)
@@ -433,10 +469,11 @@ class InterfaceStateSnapshot:
         normally contributes one to both counters; HTTP pages are counted by
         ``_interface_inventory_gets``.
         """
-        normalised = self._normalise_switch_ids(switch_ids)
-        self._interface_inventory_refreshes += len(normalised)
-        self.invalidate(normalised)
-        return self.load_switches(normalised)
+        with self.performance_profile.phase("reconciliation") if self.performance_profile is not None else nullcontext():
+            normalised = self._normalise_switch_ids(switch_ids)
+            self._interface_inventory_refreshes += len(normalised)
+            self.invalidate(normalised)
+            return self.load_switches(normalised)
 
     @property
     def request_stats(self) -> dict[str, int]:
@@ -445,6 +482,7 @@ class InterfaceStateSnapshot:
             "switches": len(self._requested_switches),
             "interface_inventory_gets": self._interface_inventory_gets,
             "interface_inventory_pages": self._interface_inventory_pages,
+            "interface_exact_gets": self._interface_exact_gets,
             "interface_inventory_cache_hits": self._cache_hits,
             "interface_summary_switches": len(self._requested_summary_switches),
             "interface_summary_gets": self._interface_summary_gets,

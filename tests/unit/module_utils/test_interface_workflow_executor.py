@@ -10,8 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
+    FabricContext,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
+    InterfaceStateSnapshot,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor import (
     InterfaceWorkflowExecutor,
 )
@@ -20,11 +24,62 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planne
     InterfaceWorkflowOperation,
     InterfaceWorkflowPlanner,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import DeferredDeleteRequestGroup
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    DeferredDeleteRequestGroup,
+    NDBaseInterfaceOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import (
     VpcInterfaceBaseOrchestrator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+
+
+class BulkUpdateOrchestrator:
+    """Opt-in surface layered on the normal executor fake for bulk tests."""
+
+    def prepare_bulk_description_update(self, model, _previous):
+        policy_type = "intfSvi" if model.interface_name.startswith("Vlan") else "loopback"
+        return {
+            "interfaceName": model.interface_name,
+            "switchId": self.fabric_context.get_switch_id(model.switch_ip),
+            "configData": {"networkOS": {"policy": {"policyType": policy_type}}},
+        }
+
+    def prepare_bulk_modify_context(self, model, _previous):
+        self.events.append(("bulk_context", self.name, model.interface_name))
+
+    def _bulk_modify_classify_results(self, requested, switch_id):
+        return NDBaseInterfaceOrchestrator._bulk_modify_classify_results(self, requested, switch_id)
+
+    def _bulk_modify_classify_result_pairs(self, requested, *, peer_switch_ids=None):
+        return NDBaseInterfaceOrchestrator._bulk_modify_classify_result_pairs(self, requested, peer_switch_ids=peer_switch_ids)
+
+    def modify_bulk_prepared(self, payloads, *, payload_orchestrators=None, payload_models=None, payload_modes=None):
+        assert payload_orchestrators is not None and len(payload_orchestrators) == len(payloads)
+        assert payload_models is not None and len(payload_models) == len(payloads)
+        assert payload_modes is not None and len(payload_modes) == len(payloads)
+        names = tuple(payload["interfaceName"] for payload in payloads)
+        self.events.append(("bulk_modify", self.name, names))
+        failed = getattr(self, "fail_bulk_name", None)
+        rows = [
+            {
+                "name": f"{payload['switchId']}~{payload['interfaceName']}",
+                "status": "failed" if name == failed else "success",
+            }
+            for name, payload in zip(names, payloads)
+        ]
+        self.rest_send.record(
+            "/interfaceActions/modify",
+            method="POST",
+            return_code=207,
+            success=failed is None,
+            data={"results": rows},
+        )
+        for name, owner, payload in zip(names, payload_orchestrators, payloads):
+            if name != failed:
+                owner.queue_deploy_targets([(name, payload["switchId"])])
+        if failed is not None:
+            raise RuntimeError("one update was rejected")
 
 
 class FakeModel:
@@ -77,12 +132,21 @@ class FakeRestSend:
     def result_current(self):
         return self.results[-1] if self.results else {}
 
-    def record(self, path, *, success=True, changed=True, data=None, method="POST", return_code=None):
+    def record(
+        self,
+        path,
+        *,
+        success=True,
+        changed=True,
+        data=None,
+        method="POST",
+        return_code=None,
+    ):
         self.responses.append(
             {
                 "METHOD": method,
                 "REQUEST_PATH": path,
-                "RETURN_CODE": return_code if return_code is not None else (200 if success else 207),
+                "RETURN_CODE": (return_code if return_code is not None else (200 if success else 207)),
                 "DATA": data or {},
             }
         )
@@ -212,7 +276,12 @@ class FakeOrchestrator:
         action = "transition" if existing_data is not None else "update"
         self.events.append((action, self.name, model.interface_name))
         if action == "transition" and self.fail_transition:
-            self.rest_send.record(f"/interfaces/{model.interface_name}", success=False, changed=False, method="PUT")
+            self.rest_send.record(
+                f"/interfaces/{model.interface_name}",
+                success=False,
+                changed=False,
+                method="PUT",
+            )
             raise RuntimeError("policy transition rejected")
         self.rest_send.record(f"/interfaces/{model.interface_name}", method="PUT")
         self.queue_deploy_targets([target])
@@ -574,9 +643,19 @@ class OrderedEthernetFakeOrchestrator(FakeOrchestrator):
         )
 
     def delete_bulk(self, models):
-        self.events.append(("delete_bulk", self.name, self.queue_name, tuple(model.interface_name for model in models)))
+        self.events.append(
+            (
+                "delete_bulk",
+                self.name,
+                self.queue_name,
+                tuple(model.interface_name for model in models),
+            )
+        )
         for model in models:
-            target = (model.interface_name, self.fabric_context.get_switch_id(model.switch_ip))
+            target = (
+                model.interface_name,
+                self.fabric_context.get_switch_id(model.switch_ip),
+            )
             self.queue_deferred_delete_targets(self.queue_name, [target])
             self.queue_deploy_targets([target])
 
@@ -623,9 +702,18 @@ class PlatformResetFakeOrchestrator(FakeOrchestrator):
         return tuple(DeferredDeleteRequestGroup("platform_reset", (target,)) for target in self._platform_resets)
 
     def delete_bulk(self, models):
-        self.events.append(("platform_delete_bulk", self.name, tuple(model.interface_name for model in models)))
+        self.events.append(
+            (
+                "platform_delete_bulk",
+                self.name,
+                tuple(model.interface_name for model in models),
+            )
+        )
         for model in models:
-            target = (model.interface_name, self.fabric_context.get_switch_id(model.switch_ip))
+            target = (
+                model.interface_name,
+                self.fabric_context.get_switch_id(model.switch_ip),
+            )
             self.queue_deferred_delete_targets("platform_reset", [target])
             self.queue_deploy_targets([target])
 
@@ -640,7 +728,13 @@ class OverriddenPlatformResetFakeOrchestrator(PlatformResetFakeOrchestrator):
     """Model the routed overridden contract, which skips IOS-XE physical deletes."""
 
     def delete_bulk(self, models):
-        self.events.append(("platform_delete_bulk_skipped", self.name, tuple(model.interface_name for model in models)))
+        self.events.append(
+            (
+                "platform_delete_bulk_skipped",
+                self.name,
+                tuple(model.interface_name for model in models),
+            )
+        )
 
 
 class PlatformResetPreflightFakeOrchestrator(PlatformResetFakeOrchestrator):
@@ -697,13 +791,66 @@ class FakeSnapshot:
         }
 
 
+class CompleteFakeSnapshot(FakeSnapshot):
+    """Expose the complete cached-inventory contract for mixed-create tests."""
+
+    def has_switch(self, _switch_id):
+        return True
+
+
+class MixedCreateFakeOrchestrator(FakeOrchestrator):
+    """Model mixed-create result routing without invoking a controller."""
+
+    def __init__(self, name, events, *, fail_name=None):
+        super().__init__(name, events)
+        self.fail_name = fail_name
+
+    def prepare_bulk_create_modify(self, model):
+        if model.interface_name == "fallback":
+            return None
+        return {
+            "interfaceName": model.interface_name,
+            "switchId": self.fabric_context.get_switch_id(model.switch_ip),
+            "interfaceType": "loopback",
+            "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+        }
+
+    def _bulk_modify_classify_result_pairs(self, requested, *, peer_switch_ids=None):
+        return NDBaseInterfaceOrchestrator._bulk_modify_classify_result_pairs(self, requested, peer_switch_ids=peer_switch_ids)
+
+    def create_bulk_modify_prepared(self, payloads, *, payload_orchestrators, payload_models):
+        assert len(payloads) == len(payload_orchestrators) == len(payload_models)
+        assert all(payload["interfaceName"] == model.interface_name for payload, model in zip(payloads, payload_models))
+        self.events.append(("mixed_create", tuple(payload["interfaceName"] for payload in payloads)))
+        rows = []
+        for payload, owner in zip(payloads, payload_orchestrators):
+            name, sid = payload["interfaceName"], payload["switchId"]
+            accepted = name != self.fail_name
+            rows.append({"name": f"{sid}~{name}", "status": "success" if accepted else "failed"})
+            if accepted:
+                owner.queue_deploy_targets([(name, sid)])
+        self.rest_send.record("/interfaceActions/modify", success=self.fail_name is None, return_code=207, data={"results": rows})
+        if self.fail_name is not None:
+            raise RuntimeError("one mixed create was rejected")
+
+
 class ParentDiscoverySnapshot(FakeSnapshot):
-    """Expose configured and operational mode after each discovery refresh."""
+    """Expose configured and operational mode after each exact discovery probe."""
 
     def __init__(self, events, operational_modes):
         super().__init__(events)
         self.operational_modes = iter(operational_modes)
         self.last_mode = None
+
+    def read_exact(self, switch_id, interface_name):
+        self.events.append(("exact", switch_id, interface_name))
+        self.last_mode = next(self.operational_modes, self.last_mode)
+        return {
+            "interfaceName": interface_name,
+            "interfaceType": "portChannel",
+            "configData": {"mode": "routed"},
+            "operData": {"mode": self.last_mode},
+        }
 
     def refresh(self, switch_ids):
         super().refresh(switch_ids)
@@ -762,7 +909,12 @@ def policy_transition(name="Ethernet1/1"):
     )
 
 
-def plan(*resources, auxiliary_orchestrators=(), execution_layers=(), parent_deployment_barriers=()):
+def plan(
+    *resources,
+    auxiliary_orchestrators=(),
+    execution_layers=(),
+    parent_deployment_barriers=(),
+):
     """Build one InterfaceWorkflowPlan-shaped value."""
     return SimpleNamespace(
         resources=tuple(resources),
@@ -850,7 +1002,12 @@ def test_dependency_schedule_can_run_parent_create_before_member_update():
     member_orchestrator = FakeOrchestrator("member", events)
     parent_model = FakeModel("port-channel10")
     member_model = FakeModel("Ethernet1/1")
-    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_access")
+    parent_resource = resource(
+        0,
+        parent_orchestrator,
+        creates=[parent_model],
+        resource_type="port_channel_access",
+    )
     member_resource = resource(1, member_orchestrator, updates=[member_model], resource_type="ethernet_access")
     workflow_plan = plan(
         parent_resource,
@@ -878,13 +1035,26 @@ def test_routed_parent_barrier_deploys_and_discovers_before_child_create():
     child_orchestrator = FakeOrchestrator("child", events)
     parent_model = FakeModel("port-channel10")
     child_model = FakeModel("port-channel10.10")
-    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_routed")
-    child_resource = resource(1, child_orchestrator, creates=[child_model], resource_type="subinterface_unmanaged")
+    parent_resource = resource(
+        0,
+        parent_orchestrator,
+        creates=[parent_model],
+        resource_type="port_channel_routed",
+    )
+    child_resource = resource(
+        1,
+        child_orchestrator,
+        creates=[child_model],
+        resource_type="subinterface_unmanaged",
+    )
     parent_operation = scheduled_operation(parent_resource, "create", parent_model)
     workflow_plan = plan(
         parent_resource,
         child_resource,
-        execution_layers=((parent_operation,), (scheduled_operation(child_resource, "create", child_model),)),
+        execution_layers=(
+            (parent_operation,),
+            (scheduled_operation(child_resource, "create", child_model),),
+        ),
         parent_deployment_barriers=(parent_operation,),
     )
 
@@ -893,8 +1063,19 @@ def test_routed_parent_barrier_deploys_and_discovers_before_child_create():
     assert result.failed is False
     assert result.deploy_requests == 2
     assert result.deployment["status"] == "succeeded"
-    assert [entry["interface_name"] for entry in result.deployment["targets"]] == ["port-channel10", "port-channel10.10"]
-    assert [event[0] for event in events if event[0] in {"create", "deploy", "refresh"}] == ["create", "deploy", "refresh", "refresh", "create", "deploy"]
+    assert [entry["interface_name"] for entry in result.deployment["targets"]] == [
+        "port-channel10",
+        "port-channel10.10",
+    ]
+    assert [event[0] for event in events if event[0] in {"create", "deploy", "exact", "refresh"}] == [
+        "create",
+        "deploy",
+        "exact",
+        "exact",
+        "refresh",
+        "create",
+        "deploy",
+    ]
 
 
 def test_routed_parent_discovery_timeout_stops_child_without_redeploy(monkeypatch):
@@ -914,13 +1095,26 @@ def test_routed_parent_discovery_timeout_stops_child_without_redeploy(monkeypatc
     child_orchestrator = FakeOrchestrator("child", events)
     parent_model = FakeModel("Port-channel10")
     child_model = FakeModel("port-channel10.10")
-    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_routed")
-    child_resource = resource(1, child_orchestrator, creates=[child_model], resource_type="subinterface_unmanaged")
+    parent_resource = resource(
+        0,
+        parent_orchestrator,
+        creates=[parent_model],
+        resource_type="port_channel_routed",
+    )
+    child_resource = resource(
+        1,
+        child_orchestrator,
+        creates=[child_model],
+        resource_type="subinterface_unmanaged",
+    )
     parent_operation = scheduled_operation(parent_resource, "create", parent_model)
     workflow_plan = plan(
         parent_resource,
         child_resource,
-        execution_layers=((parent_operation,), (scheduled_operation(child_resource, "create", child_model),)),
+        execution_layers=(
+            (parent_operation,),
+            (scheduled_operation(child_resource, "create", child_model),),
+        ),
         parent_deployment_barriers=(parent_operation,),
     )
 
@@ -930,7 +1124,10 @@ def test_routed_parent_discovery_timeout_stops_child_without_redeploy(monkeypatc
     assert result.status == "partial_failure"
     assert result.deploy_requests == 1
     assert any("did not reach discovered routed mode" in error for error in result.errors)
-    assert [event[0] for event in events if event[0] in {"create", "deploy"}] == ["create", "deploy"]
+    assert [event[0] for event in events if event[0] in {"create", "deploy"}] == [
+        "create",
+        "deploy",
+    ]
     assert child_orchestrator.pending_deploys == ()
 
 
@@ -944,7 +1141,16 @@ def test_routed_parent_deploy_failure_stops_child_without_replay():
                 "/interfaceActions/deploy",
                 success=False,
                 changed=False,
-                data={"results": [{"name": targets[0][0], "switchId": targets[0][1], "status": "failed", "message": "rejected"}]},
+                data={
+                    "results": [
+                        {
+                            "name": targets[0][0],
+                            "switchId": targets[0][1],
+                            "status": "failed",
+                            "message": "rejected",
+                        }
+                    ]
+                },
             )
             raise RuntimeError("parent deploy rejected")
 
@@ -953,13 +1159,26 @@ def test_routed_parent_deploy_failure_stops_child_without_replay():
     child_orchestrator = FakeOrchestrator("child", events)
     parent_model = FakeModel("port-channel10")
     child_model = FakeModel("port-channel10.10")
-    parent_resource = resource(0, parent_orchestrator, creates=[parent_model], resource_type="port_channel_routed")
-    child_resource = resource(1, child_orchestrator, creates=[child_model], resource_type="subinterface_unmanaged")
+    parent_resource = resource(
+        0,
+        parent_orchestrator,
+        creates=[parent_model],
+        resource_type="port_channel_routed",
+    )
+    child_resource = resource(
+        1,
+        child_orchestrator,
+        creates=[child_model],
+        resource_type="subinterface_unmanaged",
+    )
     parent_operation = scheduled_operation(parent_resource, "create", parent_model)
     workflow_plan = plan(
         parent_resource,
         child_resource,
-        execution_layers=((parent_operation,), (scheduled_operation(child_resource, "create", child_model),)),
+        execution_layers=(
+            (parent_operation,),
+            (scheduled_operation(child_resource, "create", child_model),),
+        ),
         parent_deployment_barriers=(parent_operation,),
     )
 
@@ -969,14 +1188,23 @@ def test_routed_parent_deploy_failure_stops_child_without_replay():
     assert result.status == "partial_failure"
     assert result.deploy_requests == 1
     assert result.deployment["status"] == "failed"
-    assert [event[0] for event in events if event[0] in {"create", "deploy"}] == ["create", "deploy"]
+    assert [event[0] for event in events if event[0] in {"create", "deploy"}] == [
+        "create",
+        "deploy",
+    ]
 
 
 class RefreshingMemberFakeOrchestrator(FakeOrchestrator):
     """Record the mandatory post-parent member refresh hook."""
 
     def refresh_member_update_contexts(self, models):
-        self.events.append(("member_refresh", self.name, tuple(model.interface_name for model in models)))
+        self.events.append(
+            (
+                "member_refresh",
+                self.name,
+                tuple(model.interface_name for model in models),
+            )
+        )
 
 
 def test_dependency_schedule_refreshes_member_state_after_parent_mutation(monkeypatch):
@@ -990,7 +1218,12 @@ def test_dependency_schedule_refreshes_member_state_after_parent_mutation(monkey
     member_orchestrator = RefreshingMemberFakeOrchestrator("member", events)
     parent_model = FakeModel("port-channel10")
     member_model = FakeModel("Ethernet1/1")
-    parent_resource = resource(0, parent_orchestrator, updates=[parent_model], resource_type="port_channel_access")
+    parent_resource = resource(
+        0,
+        parent_orchestrator,
+        updates=[parent_model],
+        resource_type="port_channel_access",
+    )
     member_resource = resource(1, member_orchestrator, updates=[member_model], resource_type="ethernet_access")
     workflow_plan = plan(
         parent_resource,
@@ -1019,8 +1252,20 @@ def test_dependency_schedule_flushes_child_delete_before_parent_delete():
     child_orchestrator = FakeOrchestrator("child", events)
     parent_model = FakeModel("Ethernet1/1")
     child_model = FakeModel("Ethernet1/1.10")
-    parent_resource = resource(0, parent_orchestrator, deletes=[parent_model], state="deleted", resource_type="ethernet_routed")
-    child_resource = resource(1, child_orchestrator, deletes=[child_model], state="deleted", resource_type="subinterface_managed")
+    parent_resource = resource(
+        0,
+        parent_orchestrator,
+        deletes=[parent_model],
+        state="deleted",
+        resource_type="ethernet_routed",
+    )
+    child_resource = resource(
+        1,
+        child_orchestrator,
+        deletes=[child_model],
+        state="deleted",
+        resource_type="subinterface_managed",
+    )
     workflow_plan = plan(
         parent_resource,
         child_resource,
@@ -1109,7 +1354,13 @@ def test_deployment_only_execution_sends_one_exact_target_without_mutation_or_re
     assert result.deployment == {
         "requested": True,
         "status": "succeeded",
-        "targets": [{"interface_name": "loopback1", "switch_id": "SERIAL1", "status": "succeeded"}],
+        "targets": [
+            {
+                "interface_name": "loopback1",
+                "switch_id": "SERIAL1",
+                "status": "succeeded",
+            }
+        ],
     }
     assert events == [
         ("validate", "only"),
@@ -1308,7 +1559,15 @@ def test_explicit_delete_preflight_is_repeated_immediately_before_writes() -> No
     """Normal execution refuses a newly unsafe explicit delete before queueing or sending any mutation."""
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_delete_preflight=True)
-    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1")], state="deleted", actual=("before",)))
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            deletes=[FakeModel("Ethernet1/1")],
+            state="deleted",
+            actual=("before",),
+        )
+    )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
@@ -1335,7 +1594,9 @@ def test_overridden_delete_does_not_call_explicit_delete_preflight() -> None:
     assert ("delete_bulk", "only", ("loopback1",)) in events
 
 
-def test_ios_xe_physical_delete_uses_selected_family_reset_and_one_consolidated_deploy(monkeypatch) -> None:
+def test_ios_xe_physical_delete_uses_selected_family_reset_and_one_consolidated_deploy(
+    monkeypatch,
+) -> None:
     """A physical delete keeps its IOS-XE reset on the selected family orchestrator."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1370,7 +1631,9 @@ def test_ios_xe_physical_delete_uses_selected_family_reset_and_one_consolidated_
     assert selected.pending_deploys == ()
 
 
-def test_scheduled_ios_xe_platform_deletes_are_filtered_to_each_dependency_layer(monkeypatch) -> None:
+def test_scheduled_ios_xe_platform_deletes_are_filtered_to_each_dependency_layer(
+    monkeypatch,
+) -> None:
     """Later IOS-XE resets are neither executed early nor replayed in a later layer."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1411,7 +1674,9 @@ def test_scheduled_ios_xe_platform_deletes_are_filtered_to_each_dependency_layer
     ]
 
 
-def test_ios_xe_explicit_delete_uses_its_family_after_routed_overridden(monkeypatch) -> None:
+def test_ios_xe_explicit_delete_uses_its_family_after_routed_overridden(
+    monkeypatch,
+) -> None:
     """An earlier routed overridden group cannot capture a later access-family IOS-XE reset."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1440,12 +1705,22 @@ def test_ios_xe_explicit_delete_uses_its_family_after_routed_overridden(monkeypa
     assert result.mutation_requests == 1
     assert result.deploy_requests == 1
     assert result.items[0].status == "succeeded"
-    assert ("platform_delete_bulk_skipped", "routed_overridden", ("GigabitEthernet4",)) not in events
+    assert (
+        "platform_delete_bulk_skipped",
+        "routed_overridden",
+        ("GigabitEthernet4",),
+    ) not in events
     assert ("platform_delete_bulk", "access_deleted", ("GigabitEthernet4",)) in events
-    assert ("platform_reset", "access_deleted", ("GigabitEthernet4", "SERIAL1")) in events
+    assert (
+        "platform_reset",
+        "access_deleted",
+        ("GigabitEthernet4", "SERIAL1"),
+    ) in events
 
 
-def test_direct_routed_ios_xe_delete_rechecks_platform_proxy_immediately_before_writes(monkeypatch) -> None:
+def test_direct_routed_ios_xe_delete_rechecks_platform_proxy_immediately_before_writes(
+    monkeypatch,
+) -> None:
     """A newly fabric-owned direct routed target is refused through its IOS-XE proxy before any mutation request."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1480,7 +1755,9 @@ def test_direct_routed_ios_xe_delete_rechecks_platform_proxy_immediately_before_
     assert not any(event[0] in {"platform_delete_bulk", "platform_reset", "deploy"} for event in events)
 
 
-def test_family_specific_platform_resets_precede_consolidated_nx_resets(monkeypatch) -> None:
+def test_family_specific_platform_resets_precede_consolidated_nx_resets(
+    monkeypatch,
+) -> None:
     """IOS-XE queues stay on their family owners and flush before NX normalize and PUT-reset work."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1488,7 +1765,12 @@ def test_family_specific_platform_resets_precede_consolidated_nx_resets(monkeypa
     )
     events = []
     access_xe = OrderedEthernetFakeOrchestrator("access_xe", events, queue_name="platform_reset", reset_profile="iosXeTrunkHost")
-    routed_xe = OrderedEthernetFakeOrchestrator("routed_xe", events, queue_name="platform_reset", reset_profile="iosXeRoutedHost")
+    routed_xe = OrderedEthernetFakeOrchestrator(
+        "routed_xe",
+        events,
+        queue_name="platform_reset",
+        reset_profile="iosXeRoutedHost",
+    )
     nx_normalize = OrderedEthernetFakeOrchestrator("nx_normalize", events, queue_name="normalize")
     nx_reset = OrderedEthernetFakeOrchestrator("nx_reset", events, queue_name="reset")
     workflow_plan = plan(
@@ -1508,8 +1790,20 @@ def test_family_specific_platform_resets_precede_consolidated_nx_resets(monkeypa
             state="deleted",
             resource_type="ethernet_routed",
         ),
-        resource(2, nx_normalize, deletes=[FakeModel("Ethernet1/1")], state="deleted", resource_type="ethernet_trunk_host"),
-        resource(3, nx_reset, deletes=[FakeModel("Ethernet1/2")], state="deleted", resource_type="ethernet_access"),
+        resource(
+            2,
+            nx_normalize,
+            deletes=[FakeModel("Ethernet1/1")],
+            state="deleted",
+            resource_type="ethernet_trunk_host",
+        ),
+        resource(
+            3,
+            nx_reset,
+            deletes=[FakeModel("Ethernet1/2")],
+            state="deleted",
+            resource_type="ethernet_access",
+        ),
     )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
@@ -1534,7 +1828,13 @@ def test_normalize_retry_uses_queue_drainage_not_response_position(monkeypatch) 
     )
     events = []
     orchestrator = RetryingNormalizeFakeOrchestrator("access", events)
-    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1"), FakeModel("Ethernet1/2")]))
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            deletes=[FakeModel("Ethernet1/1"), FakeModel("Ethernet1/2")],
+        )
+    )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
@@ -1542,10 +1842,15 @@ def test_normalize_retry_uses_queue_drainage_not_response_position(monkeypatch) 
     assert result.mutation_requests == 2
     assert result.deploy_requests == 1
     assert {item.status for item in result.items} == {"succeeded"}
-    assert [event[0] for event in events if event[0].startswith("normalize_")] == ["normalize_first", "normalize_retry"]
+    assert [event[0] for event in events if event[0].startswith("normalize_")] == [
+        "normalize_first",
+        "normalize_retry",
+    ]
 
 
-def test_normalize_exception_without_fresh_response_does_not_consume_stale_success(monkeypatch) -> None:
+def test_normalize_exception_without_fresh_response_does_not_consume_stale_success(
+    monkeypatch,
+) -> None:
     """A transport exception keeps the target failed even when `response_current` contains an older HTTP 207 success."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1566,7 +1871,9 @@ def test_normalize_exception_without_fresh_response_does_not_consume_stale_succe
     assert not any(event[0] == "deploy" for event in events)
 
 
-def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_change(monkeypatch):
+def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_change(
+    monkeypatch,
+):
     """A read-only failed run keeps independent same-name pairs and reports no controller change."""
     switch_map = {
         "192.0.2.1": "SERIAL1",
@@ -1662,10 +1969,25 @@ def test_preflight_failure_discards_uncommitted_planning_overlay_before_reportin
     snapshot = InterfaceStateSnapshot(
         fabric_name="FABRIC1",
         fabric_context=context,
-        request=lambda **_kwargs: {"interfaces": [{"interfaceName": "loopback1", "configData": {"networkOS": {"policy": {"policyType": "loopback"}}}}]},
+        request=lambda **_kwargs: {
+            "interfaces": [
+                {
+                    "interfaceName": "loopback1",
+                    "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+                }
+            ]
+        },
     )
     snapshot.load_switch("SERIAL1")
-    snapshot.apply_overlay("SERIAL1", upserts=[{"interfaceName": "loopback1", "configData": {"networkOS": {"policy": {"policyType": "projected"}}}}])
+    snapshot.apply_overlay(
+        "SERIAL1",
+        upserts=[
+            {
+                "interfaceName": "loopback1",
+                "configData": {"networkOS": {"policy": {"policyType": "projected"}}},
+            }
+        ],
+    )
 
     class SnapshotAdapter:
         ownership_domain = "loopback"
@@ -1713,11 +2035,35 @@ def test_207_exact_success_allowlist_fails_all_identified_non_success_outcomes()
         "DATA": {
             "results": [
                 {"name": "loopback1", "switchId": "SERIAL1", "status": " Success "},
-                {"name": "loopback2", "switchId": "SERIAL1", "message": "status omitted"},
-                {"name": "loopback3", "switchId": "SERIAL1", "status": None, "message": "status null"},
-                {"name": "loopback4", "switchId": "SERIAL1", "status": "warning", "message": "partially applied"},
-                {"name": "loopback5", "switchId": "SERIAL1", "status": "notexecuted", "message": "dependency failed"},
-                {"name": "loopback6", "switchId": "SERIAL1", "status": "futureStatus", "message": "unknown outcome"},
+                {
+                    "name": "loopback2",
+                    "switchId": "SERIAL1",
+                    "message": "status omitted",
+                },
+                {
+                    "name": "loopback3",
+                    "switchId": "SERIAL1",
+                    "status": None,
+                    "message": "status null",
+                },
+                {
+                    "name": "loopback4",
+                    "switchId": "SERIAL1",
+                    "status": "warning",
+                    "message": "partially applied",
+                },
+                {
+                    "name": "loopback5",
+                    "switchId": "SERIAL1",
+                    "status": "notexecuted",
+                    "message": "dependency failed",
+                },
+                {
+                    "name": "loopback6",
+                    "switchId": "SERIAL1",
+                    "status": "futureStatus",
+                    "message": "unknown outcome",
+                },
             ]
         },
     }
@@ -1767,13 +2113,22 @@ def test_207_unidentified_non_success_fails_unclassified_targets():
 
 def test_207_success_result_with_missing_target_outcome_fails_without_uncertain_status():
     """A successful top-level 207 cannot substitute for exact-success evidence for every requested target."""
-    targets = (("loopback1", "SERIAL1"), ("loopback2", "SERIAL1"), ("loopback3", "SERIAL1"))
+    targets = (
+        ("loopback1", "SERIAL1"),
+        ("loopback2", "SERIAL1"),
+        ("loopback3", "SERIAL1"),
+    )
     response = {
         "RETURN_CODE": 207,
         "DATA": {
             "results": [
                 {"name": "loopback1", "switchId": "SERIAL1", "status": "success"},
-                {"name": "loopback2", "switchId": "SERIAL1", "status": "failed", "message": "invalid policy"},
+                {
+                    "name": "loopback2",
+                    "switchId": "SERIAL1",
+                    "status": "failed",
+                    "message": "invalid policy",
+                },
             ]
         },
     }
@@ -1811,7 +2166,13 @@ def test_normal_return_207_create_omitting_target_fails_end_to_end():
     assert result.deployment == {
         "requested": True,
         "status": "succeeded",
-        "targets": [{"interface_name": "loopback1", "switch_id": "SERIAL1", "status": "succeeded"}],
+        "targets": [
+            {
+                "interface_name": "loopback1",
+                "switch_id": "SERIAL1",
+                "status": "succeeded",
+            }
+        ],
     }
     assert result.errors == (
         "resources[0] loopback bulk create failed on SERIAL1: HTTP 207 response did not report exact success for every requested interface.",
@@ -1844,12 +2205,23 @@ def test_flat_500_create_recovery_get_only_accepts_exact_queued_targets(accepted
             self.events.append(("create", self.name, tuple(model.interface_name for model in models)))
             self.rest_send.record("/interfaces", success=False, changed=False, return_code=500)
             self.queue_deploy_targets((name, "SERIAL1") for name in accepted_names)
-            self.rest_send.record("/interfaces", method="GET", success=True, changed=False, data={"interfaces": []})
+            self.rest_send.record(
+                "/interfaces",
+                method="GET",
+                success=True,
+                changed=False,
+                data={"interfaces": []},
+            )
             raise RuntimeError("bulk create failed after recovery")
 
     orchestrator = RecoveringCreate("recovering", events)
     workflow_plan = plan(
-        resource(0, orchestrator, creates=[FakeModel("loopback1"), FakeModel("loopback2")], actual=("after",) if accepted_names else ("before",))
+        resource(
+            0,
+            orchestrator,
+            creates=[FakeModel("loopback1"), FakeModel("loopback2")],
+            actual=("after",) if accepted_names else ("before",),
+        )
     )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
@@ -1865,7 +2237,9 @@ def test_flat_500_create_recovery_get_only_accepts_exact_queued_targets(accepted
     assert result.deploy_requests == (1 if accepted_names else 0)
 
 
-def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(monkeypatch):
+def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(
+    monkeypatch,
+):
     """A non-raising Ethernet normalize HTTP 207 is classified against every queued delete."""
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_executor.EthernetBaseOrchestrator",
@@ -1873,7 +2247,13 @@ def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(m
     )
     events = []
     orchestrator = NormalReturn207EthernetFakeOrchestrator("ethernet", events)
-    workflow_plan = plan(resource(0, orchestrator, deletes=[FakeModel("Ethernet1/1"), FakeModel("Ethernet1/2")]))
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            deletes=[FakeModel("Ethernet1/1"), FakeModel("Ethernet1/2")],
+        )
+    )
 
     result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
 
@@ -1888,7 +2268,13 @@ def test_normal_return_207_ethernet_normalize_omitting_target_fails_end_to_end(m
     assert result.deployment == {
         "requested": True,
         "status": "succeeded",
-        "targets": [{"interface_name": "Ethernet1/1", "switch_id": "SERIAL1", "status": "succeeded"}],
+        "targets": [
+            {
+                "interface_name": "Ethernet1/1",
+                "switch_id": "SERIAL1",
+                "status": "succeeded",
+            }
+        ],
     }
 
 
@@ -1981,7 +2367,10 @@ def test_bulk_create_matches_loopback_switch_and_policy_request_boundaries():
         "loopback2": "succeeded",
         "loopback3": "failed",
     }
-    assert orchestrator.pending_deploys == (("loopback1", "SERIAL1"), ("loopback2", "SERIAL1"))
+    assert orchestrator.pending_deploys == (
+        ("loopback1", "SERIAL1"),
+        ("loopback2", "SERIAL1"),
+    )
     assert result.failed is True
     assert result.status == "partial_failure"
     assert result.changed is True
@@ -2006,12 +2395,72 @@ def test_mixed_create_response_deploys_only_the_exact_successful_item():
     assert result.deployment == {
         "requested": True,
         "status": "succeeded",
-        "targets": [{"interface_name": "loopback1", "switch_id": "SERIAL1", "status": "succeeded"}],
+        "targets": [
+            {
+                "interface_name": "loopback1",
+                "switch_id": "SERIAL1",
+                "status": "succeeded",
+            }
+        ],
     }
     assert events[-2:] == [
         ("dirty", ("SERIAL1", "SERIAL2")),
         ("refresh", ("SERIAL1", "SERIAL2")),
     ]
+
+
+def test_mixed_create_batches_independent_families_and_switches_once():
+    events = []
+    loopback = MixedCreateFakeOrchestrator("loopback", events)
+    svi = MixedCreateFakeOrchestrator("svi", events)
+    svi.rest_send = loopback.rest_send
+    workflow_plan = plan(
+        resource(0, loopback, creates=[FakeModel("loopback10")], resource_type="loopback"),
+        resource(1, svi, creates=[FakeModel("Vlan10", switch_ip="192.0.2.2")], resource_type="svi"),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=CompleteFakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert {item.interface_name: item.status for item in result.items} == {"loopback10": "succeeded", "Vlan10": "succeeded"}
+    assert loopback.pending_deploys == (("loopback10", "SERIAL1"),)
+    assert svi.pending_deploys == (("Vlan10", "SERIAL2"),)
+    assert [event for event in events if event[0] == "mixed_create"] == [("mixed_create", ("loopback10", "Vlan10"))]
+
+
+def test_mixed_create_runs_unqualified_singleton_on_established_create_path():
+    events = []
+    orchestrator = MixedCreateFakeOrchestrator("loopback", events)
+    workflow_plan = plan(resource(0, orchestrator, creates=[FakeModel("loopback10"), FakeModel("fallback"), FakeModel("loopback11")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=CompleteFakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 2
+    assert [event[0] for event in events if event[0] in {"create", "mixed_create"}] == ["create", "mixed_create"]
+    assert [event for event in events if event[0] == "create"] == [("create", "loopback", ("fallback",))]
+    assert [event for event in events if event[0] == "mixed_create"] == [("mixed_create", ("loopback10", "loopback11"))]
+
+
+def test_mixed_create_partial_207_reports_only_exact_accepted_family():
+    events = []
+    loopback = MixedCreateFakeOrchestrator("loopback", events, fail_name="Vlan10")
+    svi = MixedCreateFakeOrchestrator("svi", events)
+    svi.rest_send = loopback.rest_send
+    workflow_plan = plan(
+        resource(0, loopback, creates=[FakeModel("loopback10")], resource_type="loopback"),
+        resource(1, svi, creates=[FakeModel("Vlan10", switch_ip="192.0.2.2")], resource_type="svi"),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=CompleteFakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.mutation_requests == 1
+    assert {item.interface_name: item.status for item in result.items} == {"loopback10": "succeeded", "Vlan10": "failed"}
+    assert loopback.pending_deploys == (("loopback10", "SERIAL1"),)
+    assert not svi.pending_deploys
 
 
 def test_mixed_deploy_response_reports_target_outcomes_without_erasing_mutation_success():
@@ -2108,3 +2557,150 @@ def test_seeded_shared_vpc_cache_avoids_pair_gets_during_transition_update_and_c
     assert trunk._peer_serial_cache is shared_cache
     assert all(response["METHOD"] != "GET" for response in responses)
     assert all("/vpcPair" not in response["REQUEST_PATH"] for response in responses)
+
+
+def test_workflow_bulk_updates_across_resource_groups_use_one_post() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    loopbacks = BulkFake("loopback", events)
+    second = BulkFake("second", events)
+    workflow_plan = plan(
+        resource(0, loopbacks, updates=[FakeModel("loopback1")]),
+        resource(1, second, updates=[FakeModel("loopback2")]),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert [event for event in events if event[0] == "bulk_modify"] == [("bulk_modify", "loopback", ("loopback1", "loopback2"))]
+    assert all(item.status == "succeeded" for item in result.items)
+
+
+def test_medium_bulk_update_layer_stays_in_one_request() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    loopbacks = BulkFake("loopback", events)
+    updates = [FakeModel(f"loopback{index}", "192.0.2.1") for index in range(450)]
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(plan(resource(0, loopbacks, updates=updates)))
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    bulk_events = [event for event in events if event[0] == "bulk_modify"]
+    assert len(bulk_events) == 1
+    assert len(bulk_events[0][2]) == 450
+
+
+def test_workflow_mixed_policies_share_one_bulk_update() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    loopbacks = BulkFake("loopback", events)
+    svis = BulkFake("svi", events)
+    workflow_plan = plan(
+        resource(0, loopbacks, updates=[FakeModel("loopback1")]),
+        resource(1, svis, updates=[FakeModel("Vlan100")], resource_type="svi"),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert [event for event in events if event[0] == "bulk_modify"] == [("bulk_modify", "loopback", ("loopback1", "Vlan100"))]
+    assert loopbacks.pending_deploys == (("loopback1", "SERIAL1"),)
+    assert svis.pending_deploys == (("Vlan100", "SERIAL1"),)
+
+
+def test_workflow_vpc_pair_qualified_bulk_result_is_exact_success() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    class PairBulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        def prepare_bulk_description_update(self, model, previous):
+            payload = super().prepare_bulk_description_update(model, previous)
+            payload["interfaceType"] = "vpc"
+            payload["configData"]["networkOS"]["policy"].update({"policyType": "accessVpcHost", "peerSwitchId": "SERIAL2"})
+            return payload
+
+        def modify_bulk_prepared(self, payloads, **kwargs):
+            super().modify_bulk_prepared(payloads, **kwargs)
+            for row in self.rest_send.response_current["DATA"]["results"]:
+                if row["name"].endswith("~vpc10"):
+                    row["name"] = "SERIAL1~SERIAL2~vpc10"
+
+    events = []
+    vpcs = PairBulkFake("vpc", events)
+    loopbacks = BulkFake("loopback", events)
+    workflow_plan = plan(
+        resource(0, vpcs, updates=[FakeModel("vpc10")], resource_type="vpc_access"),
+        resource(1, loopbacks, updates=[FakeModel("loopback1")]),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert all(item.status == "succeeded" for item in result.items)
+
+
+def test_workflow_interleaved_switch_updates_regroup_within_layer() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    first = BulkFake("first", events)
+    second = BulkFake("second", events)
+    third = BulkFake("third", events)
+    workflow_plan = plan(
+        resource(0, first, updates=[FakeModel("loopback1", "192.0.2.1")]),
+        resource(1, second, updates=[FakeModel("loopback2", "192.0.2.2")]),
+        resource(2, third, updates=[FakeModel("loopback3", "192.0.2.1")]),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert [event for event in events if event[0] == "bulk_modify"] == [("bulk_modify", "first", ("loopback1", "loopback2", "loopback3"))]
+
+
+def test_workflow_200_eligible_updates_use_one_request() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    orchestrator = BulkFake("loopback", events)
+    models = [FakeModel(f"loopback{index}") for index in range(200)]
+    workflow_plan = plan(resource(0, orchestrator, updates=models))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert len([event for event in events if event[0] == "bulk_modify"][0][2]) == 200
+
+
+def test_workflow_bulk_partial_207_preserves_exact_success() -> None:
+    class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    orchestrator = BulkFake("loopback", events)
+    orchestrator.fail_bulk_name = "loopback2"
+    workflow_plan = plan(resource(0, orchestrator, updates=[FakeModel("loopback1"), FakeModel("loopback2")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert {item.interface_name: item.status for item in result.items} == {
+        "loopback1": "succeeded",
+        "loopback2": "failed",
+    }
+    assert orchestrator.pending_deploys == (("loopback1", "SERIAL1"),)

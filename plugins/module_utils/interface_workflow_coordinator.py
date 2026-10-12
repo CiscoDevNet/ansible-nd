@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
@@ -22,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters
     INTERFACE_FAMILY_ADAPTERS,
     InterfaceDeleteStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_performance_profile import InterfacePerformanceProfile
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
     InterfaceStateSnapshot,
 )
@@ -83,6 +85,7 @@ class InterfaceWorkflowCoordinator:
         self.executor_factory = executor_factory
         self._vpc_pair_gets = 0
         self._snapshot: InterfaceStateSnapshot | None = None
+        self._performance_profile = InterfacePerformanceProfile() if module.params.get("profile", False) else None
 
     def _new_rest_send(self, params: dict[str, Any] | None = None, *, check_mode: bool | None = None) -> RestSend:
         """Build an authenticated collection REST runtime for this module invocation."""
@@ -93,6 +96,7 @@ class InterfaceWorkflowCoordinator:
         rest_send = RestSend(rest_send_params)
         rest_send.sender = sender
         rest_send.response_handler = ResponseHandler()
+        rest_send.performance_profile = self._performance_profile
         return rest_send
 
     @staticmethod
@@ -266,6 +270,7 @@ class InterfaceWorkflowCoordinator:
             fabric_name=fabric_name,
             fabric_context=fabric_context,
             request=lambda **kwargs: self._request(rest_send, **kwargs),
+            performance_profile=self._performance_profile,
         )
         self._snapshot = snapshot
         vpc_pair_by_switch_ip = self._vpc_pair_map(
@@ -1011,7 +1016,9 @@ class InterfaceWorkflowCoordinator:
 
     def run(self) -> dict[str, Any]:
         """Plan the complete workflow, then execute only after all validation succeeds."""
-        plan = self._build_plan()
+        profile = self._performance_profile
+        with profile.phase("planning") if profile is not None else nullcontext():
+            plan = self._build_plan()
         deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
         verify = bool((self.module.params.get("verify") or {}).get("enabled", False))
         barriers = getattr(plan, "parent_deployment_barriers", ())
@@ -1025,26 +1032,40 @@ class InterfaceWorkflowCoordinator:
         pending_deployment_targets = self._pending_deployment_targets(plan) if deploy else ()
         if self.module.check_mode:
             preview_targets = tuple(dict.fromkeys((*self._operation_deployment_targets(plan), *pending_deployment_targets))) if deploy else ()
-            return self._format_result(plan, deployment_targets=preview_targets)
+            with profile.phase("output") if profile is not None else nullcontext():
+                result = self._format_result(plan, deployment_targets=preview_targets)
+            if profile is not None:
+                result["performance_profile"] = profile.to_dict()
+            return result
         if not plan.changed and not pending_deployment_targets:
-            return self._format_result(plan)
+            with profile.phase("output") if profile is not None else nullcontext():
+                result = self._format_result(plan)
+            if profile is not None:
+                result["performance_profile"] = profile.to_dict()
+            return result
         if self._snapshot is None:
             raise RuntimeError("Interface workflow snapshot was not initialized.")
         executor = self.executor_factory(snapshot=self._snapshot, deploy=deploy, verify=verify)
         try:
-            execution = executor.execute(
-                plan,
-                deployment_targets=pending_deployment_targets,
-            )
+            with profile.phase("execution") if profile is not None else nullcontext():
+                execution = executor.execute(
+                    plan,
+                    deployment_targets=pending_deployment_targets,
+                )
         except Exception as exc:
             raise self._unexpected_execution_failure(plan, exc) from exc
         try:
-            result = self._format_result(plan, execution)
+            with profile.phase("output") if profile is not None else nullcontext():
+                result = self._format_result(plan, execution)
         except Exception as exc:
             raise self._unexpected_execution_failure(plan, exc, execution=execution) from exc
         if execution.failed:
             result["failed"] = True
+            if profile is not None:
+                result["performance_profile"] = profile.to_dict()
             raise InterfaceWorkflowExecutionFailed(result, execution.message)
+        if profile is not None:
+            result["performance_profile"] = profile.to_dict()
         return result
 
     @staticmethod

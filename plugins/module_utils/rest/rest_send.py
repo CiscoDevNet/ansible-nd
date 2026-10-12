@@ -15,7 +15,7 @@ import copy
 import inspect
 import json
 import logging
-from time import sleep
+from time import monotonic, process_time, sleep
 from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -132,6 +132,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._timeout: int = 300
         self._unit_test: bool = False
         self._verb: HttpVerbEnum = HttpVerbEnum.GET
+        self.performance_profile = None
 
         # See save_settings() and restore_settings()
         self.saved_timeout: Optional[int] = None
@@ -346,12 +347,29 @@ class RestSend:  # pylint: disable=too-many-public-methods
             msg += f"timeout {timeout}, success {success}, verb {self.verb}, path {self.path}."
             self.log.debug(msg)
 
+            profile = self.performance_profile
+            start_wall, start_cpu = (monotonic(), process_time()) if profile is not None else (0.0, 0.0)
             try:
                 self.sender.commit()
             except ValueError as error:
+                if profile is not None:
+                    profile.record_request(
+                        verb=self.verb.value, path=self.path, payload=self._payload, response=None, start_wall=start_wall, start_cpu=start_cpu
+                    )
                 raise ValueError(error) from error
+            except Exception:  # pylint: disable=broad-except
+                if profile is not None:
+                    profile.record_request(
+                        verb=self.verb.value, path=self.path, payload=self._payload, response=None, start_wall=start_wall, start_cpu=start_cpu
+                    )
+                raise
 
-            self.response_current = self.sender.response
+            response = self.sender.response
+            if profile is not None:
+                profile.record_request(
+                    verb=self.verb.value, path=self.path, payload=self._payload, response=response, start_wall=start_wall, start_cpu=start_cpu
+                )
+            self.response_current = response
             # Handle controller response and derive result
             try:
                 self.response_handler.response = self.response_current
@@ -365,16 +383,17 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 self.log.debug(msg)
                 raise ValueError(msg) from error
 
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"timeout: {timeout}. "
-            msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
-            self.log.debug(msg)
+            if self.log.isEnabledFor(logging.DEBUG):
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"timeout: {timeout}. "
+                msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
+                self.log.debug(msg)
 
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"timeout: {timeout}. "
-            msg += "response_current: "
-            msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
-            self.log.debug(msg)
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"timeout: {timeout}. "
+                msg += "response_current: "
+                msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
+                self.log.debug(msg)
 
             success = self.result_current["success"]
             if success is False:

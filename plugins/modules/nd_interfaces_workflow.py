@@ -138,6 +138,12 @@ options:
           forces reconciliation even when this option is V(false).
         type: bool
         default: false
+  profile:
+    description:
+    - Include aggregate phase, CPU, transport-attempt, and logical JSON-size measurements for performance experiments.
+    - Phase timings are inclusive and can overlap; JSON byte counts exclude HTTP/TLS overhead. No payloads or responses are returned.
+    type: bool
+    default: false
   output_level:
     description:
     - Controls the workflow's nested result detail; it does not add standalone-module top-level C(current), C(previous), or C(sent) keys.
@@ -206,8 +212,9 @@ notes:
   safety reads are unchanged.
 - No-op and deployment-only workflows report observed initial state. Partial or failed writes force a post-write reconciliation attempt
   even when O(verify.enabled=false), so mixed or uncertain outcomes are diagnosed against current controller state when possible.
-- Loopback creates sharing both switch and C(policy_type) remain bulked. Different loopback policy types require one POST per switch and
-  policy-type combination because Nexus Dashboard rejects mixed-policy loopback bulk requests; this does not add inventory GETs.
+- On supported ND 4.3.1 controllers, eligible NX-OS logical creates can be grouped across interface families after exact identity,
+  vPC-pair, member, and routed-parent safety checks. Unqualified creates, including IOS-XE and member-bearing parents, retain their
+  established family paths. Physical Ethernet interfaces already exist and are managed through policy assignments instead of logical creates.
 - Deployment-only candidate detection reuses the fabric switch records already fetched to resolve switch identities. It sends no
   additional GET request. Only an explicitly normalized out-of-sync or pending switch status qualifies; an in-sync, missing, or unknown status does
   not cause deployment.
@@ -689,6 +696,12 @@ request_stats:
     vpc_pair_gets:
       description: Fabric vPC-pair inventory GETs.
       type: int
+performance_profile:
+  description:
+  - Inclusive phase wall/CPU measurements and categorized transport-attempt counts, durations, and logical JSON byte sizes.
+  - Available only when O(profile=true). Values are diagnostic measurements, not stable controller throughput guarantees.
+  returned: when O(profile=true) and planning completes
+  type: dict
 execution:
   description: Execution status and write counters.
   returned: when planning completes, including post-plan execution failures; omitted when planning fails before producing a plan
@@ -784,6 +797,7 @@ def interface_workflow_argument_spec():
                     "enabled": {"type": "bool", "default": False},
                 },
             },
+            "profile": {"type": "bool", "default": False},
         }
     )
     argument_spec.update(config_actions_spec(include=("deploy",)))

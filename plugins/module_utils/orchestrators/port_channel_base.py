@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
@@ -106,6 +106,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     """
 
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 
@@ -199,6 +201,19 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         self._prepare_deploy_context(model_instance, switch_id)
 
+    def _bulk_full_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> bool:
+        """Keep member-bearing port-channel updates on singular PUT."""
+        current_policy = ((current.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        desired_policy = ((model_instance.to_payload().get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+
+        def members(policy: dict[str, Any]) -> tuple[str, ...] | None:
+            ports = policy.get("ports") or []
+            if not isinstance(ports, list) or any(not isinstance(port, str) or not port for port in ports):
+                return None
+            return tuple(sorted(port.casefold() for port in ports))
+
+        return members(current_policy) == members(desired_policy) == ()
+
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
         # Summary
@@ -255,6 +270,15 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Retain the same parent/member deployment scope as a singular update."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if previous_model is not None:
+            self._prepare_deploy_context(previous_model, switch_id)
+            if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+        self._prepare_deploy_context(model_instance, switch_id)
 
     def delete(self, model_instance: ModelType, **kwargs) -> None:
         """
