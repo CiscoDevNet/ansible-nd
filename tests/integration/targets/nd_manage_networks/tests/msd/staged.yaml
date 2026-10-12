@@ -1,0 +1,445 @@
+---
+- name: Test Entry Point - [nd_manage_networks - msd - staged]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Staged Tests - [nd_manage_networks]          +"
+      - "----------------------------------------------------------------"
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged - Build Attachment Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_msd_parent_fabric }}"
+    target_network_names:
+      - ndnetmsdstgcreate
+      - ndnetmsdstgadd
+      - ndnetmsdstgremove
+      - ndnetmsdstgdetach
+      - ndnetmsdstgomit
+    target_network_delete_config:
+      - network_name: ndnetmsdstgcreate
+        is_l2only: true
+      - network_name: ndnetmsdstgadd
+        is_l2only: true
+      - network_name: ndnetmsdstgremove
+        is_l2only: true
+      - network_name: ndnetmsdstgdetach
+        is_l2only: true
+      - network_name: ndnetmsdstgomit
+        is_l2only: true
+    nd_network_msd_staged_primary_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_msd_switch,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_msd_interface
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_run_msd_attach | bool else []
+      }}
+    nd_network_msd_staged_secondary_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_msd_switch2,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_msd_interface2
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_msd_switch2 | length > 0 and nd_network_msd_interface2 | length > 0 else []
+      }}
+    nd_network_msd_staged_create_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_msd_switch2,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_msd_interface2
+              }
+            ],
+            'deploy': true
+          }
+        ] if nd_network_msd_switch2 | length > 0 and nd_network_msd_interface2 | length > 0 else [
+          {
+            'ip_address': nd_network_msd_switch,
+            'interfaces': [
+              {
+                'mode': 'trunk',
+                'interface_range': nd_network_msd_interface
+              }
+            ],
+            'deploy': true
+          }
+        ]
+      }}
+    nd_network_msd_staged_both_attach_count: "{{ 2 if nd_network_msd_switch2 | length > 0 and nd_network_msd_interface2 | length > 0 else 1 }}"
+  delegate_to: localhost
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged - Build Parent and Child Network Config
+  ansible.builtin.set_fact:
+    nd_network_msd_staged_seed:
+      - network_name: ndnetmsdstgadd
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 280 }}"
+        vlan_id: "{{ nd_network_base_vlan + 280 }}"
+        vlan_name: ndnetmsdstgadd_vlan
+        attach: "{{ nd_network_msd_staged_primary_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ndnetmsdstgremove
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 281 }}"
+        vlan_id: "{{ nd_network_base_vlan + 281 }}"
+        vlan_name: ndnetmsdstgremove_vlan
+        attach: "{{ nd_network_msd_staged_primary_attach_block + nd_network_msd_staged_secondary_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ndnetmsdstgdetach
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 284 }}"
+        vlan_id: "{{ nd_network_base_vlan + 284 }}"
+        vlan_name: ndnetmsdstgdetach_vlan
+        attach: "{{ nd_network_msd_staged_primary_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ndnetmsdstgomit
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 282 }}"
+        vlan_id: "{{ nd_network_base_vlan + 282 }}"
+        vlan_name: ndnetmsdstgomit_vlan
+        attach: "{{ nd_network_msd_staged_primary_attach_block }}"
+        deploy: false
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+    nd_network_msd_staged_create_config:
+      - network_name: ndnetmsdstgcreate
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 283 }}"
+        vlan_id: "{{ nd_network_base_vlan + 283 }}"
+        vlan_name: ndnetmsdstgcreate_vlan
+        attach: "{{ nd_network_msd_staged_create_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+    nd_network_msd_staged_config:
+      - network_name: ndnetmsdstgcreate
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 283 }}"
+        vlan_id: "{{ nd_network_base_vlan + 283 }}"
+        vlan_name: ndnetmsdstgcreate_vlan
+        attach: "{{ nd_network_msd_staged_create_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ndnetmsdstgadd
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 280 }}"
+        vlan_id: "{{ nd_network_base_vlan + 280 }}"
+        vlan_name: ndnetmsdstgadd_vlan
+        attach: "{{ nd_network_msd_staged_primary_attach_block + nd_network_msd_staged_secondary_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ndnetmsdstgremove
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 281 }}"
+        vlan_id: "{{ nd_network_base_vlan + 281 }}"
+        vlan_name: ndnetmsdstgremove_vlan
+        attach: "{{ nd_network_msd_staged_primary_attach_block }}"
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+      - network_name: ndnetmsdstgdetach
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 284 }}"
+        vlan_id: "{{ nd_network_base_vlan + 284 }}"
+        vlan_name: ndnetmsdstgdetach_vlan
+        attach: []
+        deploy: true
+        child_fabric_config:
+          - fabric_name: "{{ nd_network_msd_child_fabric }}"
+  delegate_to: localhost
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged - Prepare Seed Configuration
+  vars:
+    file: msd_staged_seed
+    network_conf: "{{ nd_network_msd_staged_seed }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged - Prepare Create Configuration
+  vars:
+    file: msd_staged_create
+    network_conf: "{{ nd_network_msd_staged_create_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged - Prepare Configuration
+  vars:
+    file: msd_staged
+    network_conf: "{{ nd_network_msd_staged_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC1 - Create Network With Attachment
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_msd_staged_create_conf }}"
+    output_level: debug
+  register: msd_staged_create_result
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC1 - Assert Staged Create Reported Change
+  ansible.builtin.assert:
+    that:
+      - msd_staged_create_result.changed == true
+      - msd_staged_create_result.fabric_type == "multisite_parent"
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC1 - Query Created Network Attachment
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}/networkAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      networkNames:
+        - ndnetmsdstgcreate
+  register: msd_staged_create_attachment_query
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC1 - Normalize Created Network Attachment Rows
+  ansible.builtin.set_fact:
+    msd_staged_create_attachment_rows: >-
+      {{
+        msd_staged_create_attachment_query.current.attachments
+        | default(msd_staged_create_attachment_query.current.items | default([]))
+      }}
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC1 - Assert Created Network Attachment State
+  ansible.builtin.assert:
+    that:
+      - >-
+        msd_staged_create_attachment_rows
+        | selectattr("networkName", "equalto", "ndnetmsdstgcreate")
+        | selectattr("attach", "equalto", true)
+        | list | length > 0
+      - >-
+        msd_staged_create_attachment_rows
+        | selectattr("networkName", "equalto", "ndnetmsdstgcreate")
+        | selectattr("attach", "equalto", true)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC2 - Seed Existing Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_msd_staged_seed_conf }}"
+    output_level: debug
+  register: msd_staged_seed_result
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_msd_staged_conf }}"
+    output_level: debug
+  register: msd_staged_result
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC3 - Assert Staged Reconcile Reported Change
+  ansible.builtin.assert:
+    that:
+      - msd_staged_result.changed == true
+      - msd_staged_result.fabric_type == "multisite_parent"
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC3 - Repeat Reconcile For Controller-State Idempotency
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: staged
+    config: "{{ nd_network_msd_staged_conf }}"
+    output_level: debug
+  register: msd_staged_repeat_result
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC4 - Query Network Attachments
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}/networkAttachments/query?includeAll=true&max=10000&offset=0"
+    method: post
+    content:
+      networkNames: "{{ target_network_names }}"
+  register: msd_staged_attachment_query
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC4 - Normalize Network Attachment Rows
+  ansible.builtin.set_fact:
+    msd_staged_attachment_rows: >-
+      {{
+        msd_staged_attachment_query.current.attachments
+        | default(msd_staged_attachment_query.current.items | default([]))
+      }}
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC4 - Gather Parent Networks
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ target_network_delete_config }}"
+  register: msd_staged_gathered
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged
+
+- name: MSD Staged TC4 - Assert Omitted Network Definition Remains
+  ansible.builtin.assert:
+    that:
+      - (msd_staged_gathered.after | default([]) | to_json) is search("ndnetmsdstgomit")
+      - msd_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmsdstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
+      - >-
+        (
+          msd_staged_attachment_rows
+          | selectattr("networkName", "equalto", "ndnetmsdstgadd")
+          | selectattr("attach", "equalto", true)
+          | list
+          | length
+        ) == (nd_network_msd_staged_both_attach_count | int)
+      - msd_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmsdstgremove") | selectattr("attach", "equalto", true) | list | length == 1
+      - msd_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmsdstgdetach") | selectattr("attach", "equalto", true) | list | length == 0
+      - msd_staged_attachment_rows | selectattr("networkName", "equalto", "ndnetmsdstgomit") | selectattr("attach", "equalto", true) | list | length == 0
+      - msd_staged_repeat_result.changed == false
+      - >-
+        msd_staged_attachment_rows
+        | selectattr("networkName", "in", target_network_names)
+        | rejectattr("status", "equalto", "pending")
+        | list | length == 0
+  when:
+    - nd_network_run_msd | bool
+    - nd_network_run_staged | bool
+    - nd_network_run_msd_attach | bool
+  tags:
+    - msd
+    - staged

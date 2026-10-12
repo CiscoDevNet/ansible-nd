@@ -8,7 +8,7 @@ from __future__ import absolute_import, division, print_function, annotations
 
 __metaclass__ = type
 
-from typing import Any, Dict, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
@@ -80,12 +80,3 @@ class FabricAiEbgpVxlanModel(FabricEbgpModel):
 
     # Core Management Configuration
     management: AimlVxlanEbgpManagementModel | None = Field(description="AI eBGP VXLAN management configuration", default=None)
-
-    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
-        """Export for diff comparison, excluding fields that ND overrides for eBGP fabrics."""
-        d = super().to_diff_dict(**kwargs)
-        # ND always returns nxapiHttp=True for eBGP fabrics regardless of the configured value,
-        # so exclude it from diff comparison to prevent a persistent false-positive diff.
-        if "management" in d:
-            d["management"].pop("nxapiHttp", None)
-        return d

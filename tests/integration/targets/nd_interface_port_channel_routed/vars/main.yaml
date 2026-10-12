@@ -1,0 +1,248 @@
+---
+# Variables for nd_interface_port_channel_routed integration tests (issue #549).
+#
+# Override these in your inventory or extra-vars to match a real ND testbed.
+# Member ethernet interfaces (test_pc_member_*) MUST exist on the target switch and
+# MUST NOT be members of any other port-channel before tests run.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# Member ethernet interface names. Override per-testbed.
+test_pc_member_a: "{{ nd_test_pc_member_a | default('Ethernet1/10') }}"
+test_pc_member_b: "{{ nd_test_pc_member_b | default('Ethernet1/11') }}"
+test_pc_member_c: "{{ nd_test_pc_member_c | default('Ethernet1/12') }}"
+test_pc_member_d: "{{ nd_test_pc_member_d | default('Ethernet1/13') }}"
+
+# Port-channel IDs 520-523 are reserved for these integration tests.
+
+test_pc_520:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel520
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type (l3Po); merged.yaml asserts the echo carries it.
+        admin_state: true
+        ip: 10.49.20.1
+        prefix: 30
+        mtu: 9216
+        ports:
+          - "{{ test_pc_member_a }}"
+          - "{{ test_pc_member_b }}"
+        port_channel_mode: active
+        description: "Ansible integration test routed PC 520"
+
+test_pc_521:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel521
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: l3Po
+        admin_state: true
+        ip: 10.49.21.1
+        prefix: 30
+        ipv6: "2001:db8:49:21::1"
+        ipv6_prefix: 64
+        pim_sparse: true
+        routing_tag: "12345"
+        ports:
+          - "{{ test_pc_member_c }}"
+        port_channel_mode: passive
+        description: "Ansible integration test routed PC 521"
+
+# Only ND template defaults besides the identity fields: the second run must be idempotent against ND's default echoes.
+test_pc_522_defaults_only:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel522
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        ports:
+          - "{{ test_pc_member_d }}"
+
+# Updated variants for merge/replace tests
+
+test_pc_520_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel520
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        admin_state: true
+        ip: 10.49.20.5
+        prefix: 30
+        mtu: 1500
+        ports:
+          - "{{ test_pc_member_a }}"
+          - "{{ test_pc_member_b }}"
+        port_channel_mode: active
+        description: "Ansible integration test routed PC 520 updated"
+
+test_pc_520_removed_member:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel520
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        admin_state: true
+        ip: 10.49.20.1
+        prefix: 30
+        mtu: 9216
+        ports:
+          - "{{ test_pc_member_a }}"
+        port_channel_mode: active
+        description: "Ansible integration test routed PC 520"
+
+# The replaced config drops description, mtu and the explicit mode: replaced must clear them back to ND defaults.
+test_pc_520_replaced:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel520
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        ip: 10.49.20.9
+        prefix: 30
+        ports:
+          - "{{ test_pc_member_a }}"
+          - "{{ test_pc_member_b }}"
+
+# --- Subinterface on a routed port-channel parent (issue #549 acceptance item) ---
+# ND creates a subinterface only on a parent whose DISCOVERED mode is routed, so subinterface.yaml deploys port-channel523 and waits
+# for discovery before creating port-channel523.5 with nd_interface_subinterface_managed.
+test_pc_523_parent:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: port-channel523
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        admin_state: true
+        mtu: 9216
+        ports:
+          - "{{ test_pc_member_d }}"
+        description: "Ansible integration test routed PC 523 (subinterface parent)"
+
+test_pc_523_subif:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: Port-channel523.5
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "Ansible integration test subif on routed PC 523"
+        vlan_id: 5
+        ip: 10.49.23.1
+        prefix: 30
+
+# --- IOS-XE coverage ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and nd_test_xe_pc_member_a..c) in inventory/extra-vars to
+# enable; xe.yaml is skipped when nd_test_xe_switch_ip is unset. Members default to GigabitEthernet1/0/2-4 on a Catalyst leaf:
+# they must exist as real ports, must not be fabric-link endpoints, and are converted to iosXeRoutedHost by the scenario's setup.
+# Port-channel IDs 110-112 are reserved (Catalyst supports 1-128).
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+test_xe_pc_member_a: "{{ nd_test_xe_pc_member_a | default('GigabitEthernet1/0/2') }}"
+test_xe_pc_member_b: "{{ nd_test_xe_pc_member_b | default('GigabitEthernet1/0/3') }}"
+test_xe_pc_member_c: "{{ nd_test_xe_pc_member_c | default('GigabitEthernet1/0/4') }}"
+# A member deliberately LEFT at the fabric default (iosXeTrunkHost) for the negative test. Never converted.
+test_xe_pc_member_trunk: "{{ nd_test_xe_pc_member_trunk | default('GigabitEthernet1/0/6') }}"
+
+xe_members_routed:
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ test_xe_pc_member_a }}"
+    config_data:
+      network_os:
+        network_os_type: ios-xe
+        policy:
+          admin_state: true
+          description: "Ansible integration test XE routed PC member"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ test_xe_pc_member_b }}"
+    config_data:
+      network_os:
+        network_os_type: ios-xe
+        policy:
+          admin_state: true
+          description: "Ansible integration test XE routed PC member"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ test_xe_pc_member_c }}"
+    config_data:
+      network_os:
+        network_os_type: ios-xe
+        policy:
+          admin_state: true
+          description: "Ansible integration test XE routed PC member"
+
+xe_member_names:
+  - "{{ test_xe_pc_member_a }}"
+  - "{{ test_xe_pc_member_b }}"
+  - "{{ test_xe_pc_member_c }}"
+
+# No mtu: the Catalyst 9000v rejects a per-port-channel MTU at deploy time (system MTU only), so the XE scenarios never set it.
+xe_pc_110:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel110   # lowercase on purpose: the module rewrites the create body to Port-channel110
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type (iosXeL3PortChannel); xe.yaml asserts the echo carries it.
+        admin_state: true
+        ip: 10.49.110.1
+        prefix: 30
+        port_channel_mode: active
+        ports:
+          - "{{ test_xe_pc_member_a }}"
+          - "{{ test_xe_pc_member_b }}"
+        description: "Ansible integration test XE routed PC 110"
+
+xe_pc_111:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel111
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeL3PortChannel
+        admin_state: true
+        ip: 10.49.111.1
+        prefix: 30
+        ports:
+          - "{{ test_xe_pc_member_c }}"
+        description: "Ansible integration test XE routed PC 111"
+
+xe_pc_110_updated:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel110
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        ip: 10.49.110.5
+        prefix: 30
+        port_channel_mode: active
+        ports:
+          - "{{ test_xe_pc_member_a }}"
+          - "{{ test_xe_pc_member_b }}"
+        description: "Updated XE routed PC 110"
+
+xe_pc_bad_member:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel112
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        ip: 10.49.112.1
+        prefix: 30
+        ports:
+          - "{{ test_xe_pc_member_trunk }}"

@@ -1,31 +1,10 @@
 [nd]
-nd ansible_host=<TODO>
+nd1 ansible_host=10.15.0.146
 
 [nd:vars]
 ansible_connection=ansible.netcommon.httpapi
-ansible_python_interpreter=/usr/bin/python3.9
 ansible_network_os=cisco.nd.nd
-ansible_httpapi_validate_certs=False
-ansible_httpapi_use_ssl=True
-ansible_httpapi_use_proxy=True
-ansible_user=ansible_github_ci
-ansible_password=<TODO>
-insights_group=<TODO>
-site_name=<TODO>
-site_host=<TODO>
-site_username=<TODO>
-site_password=<TODO>
-dns_server=<TODO>
-app_network=<TODO>
-service_network=<TODO>
-ntp_server=<TODO>
-serial_number=<TODO>
-management_ip_address=<TODO>
-deployment_password=<TODO>
-management_ip=<TODO>
-management_gateway=<TODO>
-external_management_service_ip=<TODO>
-external_data_service_ip=<TODO>
-data_ip=<TODO>
-data_gateway=<TODO>
-service_package_host=173.36.219.254
+ansible_httpapi_use_ssl=true
+ansible_httpapi_validate_certs=false
+ansible_user=admin
+ansible_password=cisco.123

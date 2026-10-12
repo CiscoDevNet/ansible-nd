@@ -235,6 +235,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -366,19 +367,19 @@ def main():
             module.fail_json(msg=f"Module execution failed: {str(e)}", **output.format())
         return
 
-    nd_state_machine = NDStateMachine(
-        module=module,
-        model_orchestrator=FabricUpdateGroupOrchestrator,
-    )
+    nd_state_machine = None
 
     try:
+        nd_state_machine = NDStateMachine(
+            module=module,
+            model_orchestrator=FabricUpdateGroupOrchestrator,
+        )
         module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
         module.exit_json(**nd_state_machine.output.format())
-    except Exception as e:
-        module_log.exception("Unhandled exception during module execution")
-        module.fail_json(msg=f"Module execution failed: {str(e)}", **nd_state_machine.output.format())
+    except Exception as e:  # pylint: disable=broad-except
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":

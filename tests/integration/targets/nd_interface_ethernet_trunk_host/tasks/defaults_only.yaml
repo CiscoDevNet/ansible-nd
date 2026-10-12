@@ -1,0 +1,107 @@
+---
+# Defaults-only idempotency tests for nd_interface_ethernet_trunk_host (PR #558 review)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Runs after deleted.yaml, whose final cleanup leaves every test interface at the
+# int_trunk_host default. A desired config whose values are all template defaults
+# matches the unconfigured-default signature that query_all hides from before[] so
+# state: overridden does not re-normalize already-default interfaces. Naming the
+# interface must exempt it from that filter: every run below must read it back as
+# existing (present in before[]) instead of classifying it as new and re-posting
+# the same intent on every run.
+#
+# merged reports no change from the first run. replaced is asserted on its second
+# pass: interfaceActions/normalize leaves nativeVlan 1 and zeroed storm-control
+# levels on the record of a port that was configured before (lab-verified
+# 2026-09-17 on ND 4.2.1.10 and 4.3.1.175), and the full-payload replaced PUT
+# legitimately clears them once; after that the interface is at the desired
+# defaults-only shape and every further pass, including overridden, must report
+# changed: false.
+
+- name: "DEFAULTS-ONLY MERGED: Apply the defaults-only config (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: &defaults_only_merged
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_defaults_only }}"
+    state: merged
+  check_mode: true
+  register: cm_defaults_only_merged
+
+- name: "DEFAULTS-ONLY MERGED: Apply the defaults-only config (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *defaults_only_merged
+  register: nm_defaults_only_merged
+
+- name: "DEFAULTS-ONLY MERGED: Verify the named default interface is read as existing and nothing changes"
+  ansible.builtin.assert:
+    that:
+      - cm_defaults_only_merged is not changed
+      - nm_defaults_only_merged is not changed
+      - cm_defaults_only_merged.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+      - nm_defaults_only_merged.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+
+- name: "DEFAULTS-ONLY REPLACED: Apply the defaults-only config (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: &defaults_only_replaced
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_defaults_only }}"
+    state: replaced
+  check_mode: true
+  register: cm_defaults_only_replaced
+
+- name: "DEFAULTS-ONLY REPLACED: Apply the defaults-only config (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *defaults_only_replaced
+  register: nm_defaults_only_replaced
+
+- name: "DEFAULTS-ONLY REPLACED: Verify the named default interface is read as existing on the first pass"
+  ansible.builtin.assert:
+    that:
+      - cm_defaults_only_replaced.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+      - nm_defaults_only_replaced.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+
+- name: "DEFAULTS-ONLY REPLACED: Apply the defaults-only config (check mode, second pass)"
+  cisco.nd.nd_interface_ethernet_trunk_host: &defaults_only_replaced_2
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_defaults_only }}"
+    state: replaced
+  check_mode: true
+  register: cm_defaults_only_replaced_2
+
+- name: "DEFAULTS-ONLY REPLACED: Apply the defaults-only config (normal mode, second pass)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *defaults_only_replaced_2
+  register: nm_defaults_only_replaced_2
+
+- name: "DEFAULTS-ONLY REPLACED: Verify the second pass reads the interface as existing and changes nothing"
+  ansible.builtin.assert:
+    that:
+      - cm_defaults_only_replaced_2 is not changed
+      - nm_defaults_only_replaced_2 is not changed
+      - cm_defaults_only_replaced_2.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+      - nm_defaults_only_replaced_2.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+
+- name: "DEFAULTS-ONLY OVERRIDDEN: Apply the defaults-only config (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: &defaults_only_overridden
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_defaults_only }}"
+    state: overridden
+  check_mode: true
+  register: cm_defaults_only_overridden
+
+- name: "DEFAULTS-ONLY OVERRIDDEN: Apply the defaults-only config (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *defaults_only_overridden
+  register: nm_defaults_only_overridden
+
+- name: "DEFAULTS-ONLY OVERRIDDEN: Verify the named default interface is read as existing and nothing changes"
+  ansible.builtin.assert:
+    that:
+      - cm_defaults_only_overridden is not changed
+      - nm_defaults_only_overridden is not changed
+      - cm_defaults_only_overridden.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+      - nm_defaults_only_overridden.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1

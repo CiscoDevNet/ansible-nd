@@ -28,8 +28,6 @@ The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 
 
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import dataclass
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -45,39 +43,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-
-
-@dataclass(frozen=True, slots=True)
-class _BulkCreateGroupKey:
-    """
-    # Summary
-
-    Grouping key for bulk create: one POST is sent per `(switch_id, policy_type)` group. `policy_type` is `None` for
-    identifier-only items with no policy configured.
-
-    ## Raises
-
-    None
-    """
-
-    switch_id: str
-    policy_type: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class _BulkCreateItem:
-    """
-    # Summary
-
-    A single interface within a bulk-create group: the interface name (for deploy queueing) and its ready-to-send payload.
-
-    ## Raises
-
-    None
-    """
-
-    interface_name: str
-    payload: dict
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -197,31 +162,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         self._queue_remove(model_instance.interface_name, switch_id)
         self._queue_deploy(model_instance.interface_name, switch_id)
 
-    def _group_by_switch_and_policy_type(self, model_instances: list[LoopbackInterfaceModel]) -> dict[_BulkCreateGroupKey, list[_BulkCreateItem]]:
-        """
-        # Summary
-
-        Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, inject it into the payload, and
-        group the resulting items by `(switch_id, policy_type)`.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
-        """
-        # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
-        # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is
-        # created), even though the create schema allows mixed arrays. One POST per (switch, policyType).
-        groups: dict[_BulkCreateGroupKey, list[_BulkCreateItem]] = defaultdict(list)
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            group_key = _BulkCreateGroupKey(switch_id=switch_id, policy_type=model_instance.policy_type)
-            groups[group_key].append(_BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
-        return groups
-
     def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
         """
         # Summary
@@ -235,20 +175,14 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         ### RuntimeError
 
         - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
-          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults); no deploy is queued for that
-          group's items in that case.
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults). The items that response reports as accepted
+          are still queued for deploy (`_post_bulk_create_group`); the rejected ones are not.
         """
         try:
-            groups = self._group_by_switch_and_policy_type(model_instances)
+            groups = self.bulk_create_groups(model_instances)
             results = []
             for group_key, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [item.payload for item in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
-                for item in items:
-                    self._queue_deploy(item.interface_name, group_key.switch_id)
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e

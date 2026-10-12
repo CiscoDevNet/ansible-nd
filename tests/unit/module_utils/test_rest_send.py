@@ -110,6 +110,61 @@ def test_rest_send_00030():
         instance.check_mode = "invalid"  # type: ignore[assignment]
 
 
+@pytest.mark.parametrize("result", ("4.3.1.175", None))
+def test_controller_version_caches_success_and_unknown(result: str | None) -> None:
+    """A sender version lookup, including a None result, is performed only once."""
+
+    class VersionSender:
+        def __init__(self):
+            self.calls = 0
+
+        def get_version(self):
+            self.calls += 1
+            return result
+
+    instance = RestSend({"check_mode": False})
+    sender = VersionSender()
+    instance._sender = sender
+
+    assert instance.controller_version == result
+    assert instance.controller_version == result
+    assert sender.calls == 1
+
+
+def test_controller_version_caches_lookup_failure() -> None:
+    """A failed connection version lookup is negatively cached for the session."""
+
+    class VersionSender:
+        def __init__(self):
+            self.calls = 0
+
+        def get_version(self):
+            self.calls += 1
+            raise RuntimeError("about endpoint unavailable")
+
+    instance = RestSend({"check_mode": False})
+    sender = VersionSender()
+    instance._sender = sender
+
+    assert instance.controller_version is None
+    assert instance.controller_version is None
+    assert sender.calls == 1
+
+
+def test_controller_version_setter_bypasses_sender_lookup() -> None:
+    """An explicitly injected version remains the unit-test and caller override."""
+
+    class VersionSender:
+        def get_version(self):
+            raise AssertionError("sender lookup must not run")
+
+    instance = RestSend({"check_mode": False})
+    instance._sender = VersionSender()
+    instance.controller_version = "4.2.1.10"
+
+    assert instance.controller_version == "4.2.1.10"
+
+
 # =============================================================================
 # Test: RestSend property setters/getters
 # =============================================================================
@@ -191,7 +246,8 @@ def test_rest_send_00120():
 
     - payload can be set and retrieved
     - payload defaults to None
-    - TypeError raised if not dict
+    - TypeError raised if not dict or list
+    - a top-level JSON array (list) is accepted
 
     ## Classes and Methods
 
@@ -215,6 +271,12 @@ def test_rest_send_00120():
         instance.payload = {"key": "value"}
         result = instance.payload
     assert result == {"key": "value"}
+
+    # Test setter/getter with a top-level JSON array (list)
+    with does_not_raise():
+        instance.payload = [{"key": "value"}]
+        result = instance.payload
+    assert result == [{"key": "value"}]
 
 
 def test_rest_send_00130():
@@ -1711,6 +1773,48 @@ def test_rest_send_add_response_type_error():
     match = r"RestSend\.add_response:.*value must be a dict"
     with pytest.raises(TypeError, match=match):
         instance.add_response("invalid")  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Test: RestSend.response_count
+# =============================================================================
+
+
+def test_rest_send_response_count():
+    """
+    # Summary
+
+    Verify `response_count` reports the number of accumulated responses without copying them: it is the cheap freshness token the
+    orchestrators snapshot before a request and compare after (issue #554, PR #563 review), so it must track `add_response` exactly.
+
+    ## Test
+
+    - A fresh instance reports 0
+    - Each `add_response()` increments it by one and it matches `len(responses)`
+    - Reading it does not go through the deep-copying `responses` property
+
+    ## Classes and Methods
+
+    - RestSend.response_count
+    - RestSend.add_response
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    assert instance.response_count == 0
+
+    instance.add_response({"RETURN_CODE": 200})
+    assert instance.response_count == 1
+    instance.add_response({"RETURN_CODE": 404})
+    assert instance.response_count == 2
+    assert instance.response_count == len(instance.responses)
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("response_count must not read the deep-copying responses property")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(RestSend, "responses", property(_no_copy))
+        assert instance.response_count == 2
 
 
 # =============================================================================

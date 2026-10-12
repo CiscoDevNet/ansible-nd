@@ -1,0 +1,168 @@
+---
+# IOS-XE fabric-link ownership guard tests for nd_interface_ethernet_routed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Requires nd_test_xe_fabric_link_switch_ip and nd_test_xe_fabric_link_interface_name
+# (plus nd_test_xe_fabric_name when the XE fabric differs from nd_test_fabric_name)
+# to be set via inventory/extra-vars; tasks/main.yaml gates inclusion of this
+# file on both being defined. The named interface must be an IOS-XE switch port
+# that is the src or dst endpoint of an ND fabric link carrying a link policy
+# (configData.policyType non-empty), e.g. the leaf side of a Catalyst leaf-spine
+# link in a vxlanCampus fabric.
+#
+# Every module call here is expected to FAIL in preflight before anything is
+# written. Two layers can refuse the port and which one fires depends on how ND
+# stamped the endpoint's interface record, which differs between builds and
+# fabric types: the policy-type check refuses a record that carries a system
+# policy (e.g. iosXeNumbered on a campus leaf-spine link, userDefined on a 4.3.1
+# VRF-Lite leg), and the fabric-link check (GET /api/v1/manage/links?fabricName=
+# <fabric>, fetched once per run) refuses an endpoint whose record carries no
+# policy or a user-convertible one (iosXeRoutedHost). The assertions accept
+# either refusal and require the message to name the port and switch. The link
+# record and the interface record are snapshotted before the calls and asserted
+# byte-identical afterwards. Only the create side (merged, replaced) is
+# exercised: ND itself refuses to change a link endpoint's policy type through
+# the interface API on both 4.2.1 and 4.3.1, so the state the delete-side guard
+# protects against cannot be manufactured in a lab (covered by the routed
+# orchestrator's unit tests).
+
+# --- XE LINK GUARD: SNAPSHOT ---
+
+- name: "XE LINK GUARD SNAPSHOT: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: xe_link_guard_switches
+
+- name: "XE LINK GUARD SNAPSHOT: Resolve the link endpoint switch id from its management IP"
+  vars:
+    matches: "{{ xe_link_guard_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_xe_fabric_link_switch_ip) | map(attribute='switchId') | list }}"
+  ansible.builtin.set_fact:
+    xe_link_guard_switch_id: "{{ (matches + ['']) | first }}"
+
+- name: "XE LINK GUARD SNAPSHOT: Verify the link endpoint switch is in the fabric"
+  ansible.builtin.assert:
+    that:
+      - xe_link_guard_switch_id | length > 0
+    fail_msg: "No switch with fabricManagementIp {{ test_xe_fabric_link_switch_ip }} in {{ test_xe_fabric_name }}; check nd_test_xe_fabric_link_switch_ip."
+
+- name: "XE LINK GUARD SNAPSHOT: Read the fabric links"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/links?fabricName={{ test_xe_fabric_name }}"
+    method: get
+  register: xe_link_guard_links_before
+
+- name: "XE LINK GUARD SNAPSHOT: Select the link that owns the endpoint"
+  vars:
+    all_links: "{{ xe_link_guard_links_before.jsondata.links | default([]) }}"
+    as_src: "{{ all_links | selectattr('srcSwitchId', 'equalto', xe_link_guard_switch_id) | selectattr('srcInterfaceName', 'equalto', test_xe_fabric_link_interface_name) | list }}"
+    as_dst: "{{ all_links | selectattr('dstSwitchId', 'equalto', xe_link_guard_switch_id) | selectattr('dstInterfaceName', 'equalto', test_xe_fabric_link_interface_name) | list }}"
+  ansible.builtin.set_fact:
+    xe_link_guard_link_before: "{{ (as_src + as_dst + [{}]) | first }}"
+
+- name: "XE LINK GUARD SNAPSHOT: Verify the endpoint is owned by a link that carries a policy"
+  ansible.builtin.assert:
+    that:
+      - xe_link_guard_link_before.linkId is defined
+      - (xe_link_guard_link_before.configData | default({})).policyType | default('') | length > 0
+    fail_msg: >-
+      {{ test_xe_fabric_link_interface_name }} on {{ test_xe_fabric_link_switch_ip }} ({{ xe_link_guard_switch_id }})
+      is not the endpoint of a fabric link with a link policy in {{ test_xe_fabric_name }};
+      check nd_test_xe_fabric_link_switch_ip / nd_test_xe_fabric_link_interface_name.
+
+- name: "XE LINK GUARD SNAPSHOT: Read the endpoint switch's interfaces"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_link_guard_switch_id }}/interfaces"
+    method: get
+  register: xe_link_guard_interfaces_before
+
+- name: "XE LINK GUARD SNAPSHOT: Select the endpoint interface record"
+  ansible.builtin.set_fact:
+    xe_link_guard_interface_before: "{{ xe_link_guard_interfaces_before.jsondata.interfaces | selectattr('interfaceName', 'equalto', test_xe_fabric_link_interface_name) | first }}"
+
+- name: "XE LINK GUARD SNAPSHOT: Set the accepted refusal messages"
+  ansible.builtin.set_fact:
+    # policy-type check (system policy on the record) | fabric-link check (links API ownership)
+    xe_link_guard_refusal: "is owned by the fabric \\(system policy|is an endpoint of fabric link"
+
+# --- XE LINK GUARD: MERGED ---
+
+- name: "XE LINK GUARD MERGED: Name the link endpoint (check mode)"
+  cisco.nd.nd_interface_ethernet_routed: &xe_link_guard_merge
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed_fabric_link }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_link_guard_merged
+  ignore_errors: true
+
+- name: "XE LINK GUARD MERGED: Name the link endpoint (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed: *xe_link_guard_merge
+  register: nm_xe_link_guard_merged
+  ignore_errors: true
+
+- name: "XE LINK GUARD MERGED: Verify both runs were refused naming the link"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_link_guard_merged is failed
+      - nm_xe_link_guard_merged is failed
+      - cm_xe_link_guard_merged is not changed
+      - nm_xe_link_guard_merged is not changed
+      - cm_xe_link_guard_merged.msg is search(xe_link_guard_refusal)
+      - nm_xe_link_guard_merged.msg is search(xe_link_guard_refusal)
+      - test_xe_fabric_link_interface_name in cm_xe_link_guard_merged.msg
+      - test_xe_fabric_link_interface_name in nm_xe_link_guard_merged.msg
+      - test_xe_fabric_link_switch_ip in cm_xe_link_guard_merged.msg
+      - test_xe_fabric_link_switch_ip in nm_xe_link_guard_merged.msg
+
+# --- XE LINK GUARD: REPLACED ---
+
+- name: "XE LINK GUARD REPLACED: Name the link endpoint (normal mode)"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_routed_fabric_link }}"
+    state: replaced
+  register: nm_xe_link_guard_replaced
+  ignore_errors: true
+
+- name: "XE LINK GUARD REPLACED: Verify the run was refused naming the link"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_link_guard_replaced is failed
+      - nm_xe_link_guard_replaced is not changed
+      - nm_xe_link_guard_replaced.msg is search(xe_link_guard_refusal)
+      - test_xe_fabric_link_interface_name in nm_xe_link_guard_replaced.msg
+      - test_xe_fabric_link_switch_ip in nm_xe_link_guard_replaced.msg
+
+# --- XE LINK GUARD: NOTHING WAS WRITTEN ---
+
+- name: "XE LINK GUARD AFTER: Re-read the fabric links"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/links?fabricName={{ test_xe_fabric_name }}"
+    method: get
+  register: xe_link_guard_links_after
+
+- name: "XE LINK GUARD AFTER: Re-read the endpoint switch's interfaces"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_link_guard_switch_id }}/interfaces"
+    method: get
+  register: xe_link_guard_interfaces_after
+
+- name: "XE LINK GUARD AFTER: Verify the link and interface records are unchanged"
+  vars:
+    link_after: "{{ ((xe_link_guard_links_after.jsondata.links | default([]) | selectattr('linkId', 'equalto', xe_link_guard_link_before.linkId) | list) + [{}]) | first }}"
+    interface_after: "{{ xe_link_guard_interfaces_after.jsondata.interfaces | selectattr('interfaceName', 'equalto', test_xe_fabric_link_interface_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - link_after == xe_link_guard_link_before
+      - interface_after == xe_link_guard_interface_before
+    fail_msg: >-
+      The fabric-link guard let a write through: link {{ xe_link_guard_link_before.linkId }} or interface
+      {{ test_xe_fabric_link_interface_name }} on {{ xe_link_guard_switch_id }} changed. Recalculate & Deploy
+      {{ test_xe_fabric_name }} to restore it.

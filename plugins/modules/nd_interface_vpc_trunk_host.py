@@ -71,11 +71,14 @@ options:
               policy:
                 description:
                 - The policy configuration for the trunkVpcHost vPC interface.
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   admin_state:
                     description:
                     - The administrative state of the vPC interface.
+                    - The ND default is V(true).
                     type: bool
                   allowed_vlans:
                     description:
@@ -85,6 +88,7 @@ options:
                     - ND requires per-peer C(peer1AllowedVlans)/C(peer2AllowedVlans) on the wire but enforces
                       consistency between them and collapses them to a single C(allowedVlans) in the GET response.
                       The module fans out the single value to both per-peer keys on write.
+                    - The ND default is V(none).
                     type: str
                   bandwidth:
                     description:
@@ -94,24 +98,29 @@ options:
                   bpdu_filter:
                     description:
                     - BPDU filter setting for the vPC interface.
+                    - The ND default is V(default).
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the vPC interface.
+                    - The ND default is V(enable).
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the vPC interface.
+                    - The ND default is V(true).
                     type: bool
                   copy_description:
                     description:
                     - Whether to propagate the per-peer port-channel description to all member interfaces.
+                    - The ND default is V(false).
                     type: bool
                   duplex_mode:
                     description:
                     - The duplex mode of the vPC interface.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, full, half ]
                   inherit_bandwidth:
@@ -122,35 +131,42 @@ options:
                   lacp_port_priority:
                     description:
                     - LACP port priority.
-                    - Valid range is 1-65535. Default 32768.
+                    - Valid range is 1-65535.
+                    - The ND default is V(32768).
                     type: int
                   lacp_rate:
                     description:
                     - LACP rate (PDU transmit interval).
                     - V(normal) = 30 seconds, V(fast) = 1 second.
+                    - The ND default is V(normal).
                     type: str
                     choices: [ normal, fast ]
                   lacp_suspend:
                     description:
                     - If disabled, LACP puts the port in individual state instead of suspending when LACP BPDUs are
                       not received.
+                    - The ND default is V(false).
                     type: bool
                   lacp_vpc_convergence:
                     description:
                     - Enable LACP convergence for vPC port-channels.
+                    - The ND default is V(false).
                     type: bool
                   link_type:
                     description:
                     - Spanning-tree link type.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   mirror_config:
                     description:
                     - Copy Peer-1 configuration to Peer-2.
+                    - The ND default is V(false).
                     type: bool
                   mtu:
                     description:
                     - Interface MTU.
+                    - The ND default is V(jumbo).
                     type: str
                     choices: [ default, jumbo ]
                   native_vlan:
@@ -164,10 +180,12 @@ options:
                   negotiate_auto:
                     description:
                     - Enable link auto-negotiation.
+                    - The ND default is V(true).
                     type: bool
                   netflow:
                     description:
                     - Enable Netflow on the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   netflow_monitor:
                     description:
@@ -180,6 +198,9 @@ options:
                   peer1_member_ports:
                     description:
                     - Member interface names on Peer-1 (e.g. C(Ethernet1/1)).
+                    - With O(state=merged), omitting this option preserves Peer-1 membership; setting V([]) explicitly removes every
+                      Peer-1 member. With O(state=replaced) or O(state=overridden), omission resets Peer-1 membership to V([]).
+                    - When O(config_actions.deploy=true), a membership clear is deployed and can detach live links.
                     type: list
                     elements: str
                   peer1_port_channel_configuration:
@@ -199,6 +220,9 @@ options:
                   peer2_member_ports:
                     description:
                     - Member interface names on Peer-2 (e.g. C(Ethernet1/1)).
+                    - With O(state=merged), omitting this option preserves Peer-2 membership; setting V([]) explicitly removes every
+                      Peer-2 member. With O(state=replaced) or O(state=overridden), omission resets Peer-2 membership to V([]).
+                    - When O(config_actions.deploy=true), a membership clear is deployed and can detach live links.
                     type: list
                     elements: str
                   peer2_port_channel_configuration:
@@ -218,19 +242,23 @@ options:
                   pfc:
                     description:
                     - Enable priority flow control.
+                    - The ND default is V(false).
                     type: bool
                   port_channel_mode:
                     description:
                     - Port-channel mode.
+                    - The ND default is V(active).
                     type: str
                     choices: [ 'on', active, passive ]
                   port_type_edge_trunk:
                     description:
                     - Enable spanning-tree edge port (PortFast) behavior on trunk.
+                    - The ND default is V(true).
                     type: bool
                   qos:
                     description:
                     - Enable QoS configuration for the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   qos_policy:
                     description:
@@ -243,15 +271,18 @@ options:
                   speed:
                     description:
                     - Interface speed.
+                    - The ND default is V(auto).
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Enable traffic storm control on the vPC interface.
+                    - The ND default is V(false).
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - The ND default is V(default).
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
@@ -287,6 +318,7 @@ options:
                   vlan_mapping:
                     description:
                     - Enable VLAN mapping on the trunk.
+                    - The ND default is V(false).
                     type: bool
                   vlan_mapping_entries:
                     description:
@@ -322,11 +354,14 @@ options:
         description:
         - Whether to deploy vPC interface changes after mutations are complete.
         - When V(true), all queued vPC interface changes are deployed in a single bulk API call at the end of module
-          execution via the C(interfaceActions/deploy) API. Only the vPC interfaces modified by this task are deployed.
+          execution via the C(interfaceActions/deploy) API. An explicitly named interface can also be deployed when this task
+          makes no ND intent change, but only if its preview shows pending switch configuration (possibly staged by another task or operator).
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
-          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
-          changes staged but undeployed.
+        - When V(true) and the module fails after the controller accepts a subset of the requested changes, the module attempts
+          to deploy that subset and names any unconfirmed targets in the failure message.
+        - Replaying the same vPC interface config with V(true) previews unchanged intent and deploys it when pending switch
+          configuration remains. For an accepted deletion whose controller intent is already absent, replay the exact identifiers
+          with O(state=deleted); an O(state=overridden) omission alone cannot identify an already-absent target on a later run.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -519,7 +554,9 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - The existing matching vPC configuration in the module's query scope before the module ran, structured like O(config).
+  - The list can include matching vPCs on the selected pairs that were not explicitly listed in O(config); O(state=overridden) uses
+    fabric-wide scope.
   - An empty list when no matching interface configuration existed.
   returned: always
   type: list
@@ -542,7 +579,8 @@ before:
           port_channel_mode: active
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - The matching vPC configuration in the same query scope after the module ran, structured like O(config).
+  - Successfully deleted vPCs are absent. The list can include matching vPCs not explicitly listed in O(config).
   - In check mode, the configuration that would result had the module run outside of check mode.
   returned: always
   type: list
@@ -564,17 +602,13 @@ after:
           - Ethernet1/1
           port_channel_mode: active
 diff:
-  description: The per-interface difference between C(before) and C(after).
+  description:
+  - Reserved for the per-interface difference between C(before) and C(after).
+  - Currently always an empty list for this module family; compare C(before) and C(after) directly.
   returned: always
   type: list
   elements: dict
-  sample:
-  - switch_ip: 192.168.1.1
-    interface_name: vpc500
-    config_data:
-      network_os:
-        policy:
-          allowed_vlans: "100-200,300,400"
+  sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
   returned: when O(output_level) is V(info) or V(debug)
@@ -588,12 +622,14 @@ proposed:
         policy:
           allowed_vlans: "100-200,300,400"
 logs:
-  description: Internal diagnostic log messages collected during the run.
+  description:
+  - Reserved for internal diagnostic log messages collected during the run.
+  - Currently always an empty list for this module family; use the C(ND_LOGGING_CONFIG) file-based logging
+    described in the collection docs instead.
   returned: when O(output_level) is V(debug)
   type: list
   elements: str
-  sample:
-  - "Querying existing vPC interface configuration"
+  sample: []
 msg:
   description: A human-readable error message, present only when the module fails.
   returned: on failure
@@ -603,18 +639,17 @@ msg:
 
 # pylint: disable=wrong-import-position
 import logging
-import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_trunk_host_interface import (
     TrunkVpcHostInterfaceModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import (
     TrunkVpcHostInterfaceOrchestrator,
 )
@@ -669,23 +704,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except NDStateMachineError as e:
-        module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module execution failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
-
     except Exception as e:  # pylint: disable=broad-except
-        module_log.exception("Unhandled exception during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":

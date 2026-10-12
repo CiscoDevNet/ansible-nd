@@ -19,5 +19,17 @@
         interface_name: port-channel502
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel503
+    config_actions:
+      deploy: true
     state: deleted
+  register: setup_pc_access_delete
+  tags: always
+
+- name: "SETUP: Verify test access port-channels are absent"
+  ansible.builtin.assert:
+    that:
+      - >-
+        setup_pc_access_delete.after
+        | selectattr('interface_name', 'in', ['port-channel501', 'port-channel502', 'port-channel503'])
+        | list | length == 0
   tags: always

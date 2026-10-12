@@ -69,6 +69,8 @@ options:
                 description:
                 - The policy configuration for the loopback interface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -91,7 +93,7 @@ options:
                   admin_state:
                     description:
                     - The administrative state of the loopback interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   ip:
@@ -116,6 +118,7 @@ options:
                     description:
                     - The VRF to which the loopback interface belongs.
                     - Maximum 32 characters.
+                    - The ND default is V(default) for C(ipfmLoopback); the other policy types have none.
                     - Applies when policy_type is C(loopback), C(ipfmLoopback), C(iosXeLoopback), C(iosXeInternalLoopback), or C(csrLoopback).
                     type: str
                   ipv6:
@@ -128,16 +131,19 @@ options:
                   route_map_tag:
                     description:
                     - The route-map tag associated with the interface IP address.
+                    - The ND default is V(12345).
                     - Applies when policy_type is C(loopback).
                     type: str
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(ipfmLoopback).
                     type: bool
                   is_service_reflect:
                     description:
                     - Whether to use this loopback as the service-reflect source address.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(ipfmLoopback).
                     type: bool
                   routing_tag:
@@ -171,17 +177,20 @@ options:
                   enable_pim:
                     description:
                     - Enable PIM on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(iosXeInternalLoopback).
                     type: bool
                   dci_routing_protocol:
                     description:
                     - The DCI (Data Center Interconnect) link-state routing protocol.
+                    - The ND default is V(isis).
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                     choices: [ ospf, isis ]
                   dci_routing_tag:
                     description:
                     - The DCI (Data Center Interconnect) routing tag.
+                    - The ND default is V(MPLS_UNDERLAY).
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                   ospf_area_id:
@@ -199,7 +208,8 @@ options:
         description:
         - Whether to deploy interface changes after mutations are complete.
         - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
-          execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
+          execution via the C(interfaceActions/deploy) API. An explicitly named interface can also be deployed when this task
+          makes no ND intent change, but only if its preview shows pending switch configuration (possibly staged by another task or operator).
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
           accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
@@ -691,16 +701,15 @@ msg:
 # pylint: disable=wrong-import-position
 
 import logging
-import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator, finalize_accepted_intent
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 
 
@@ -758,23 +767,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except NDStateMachineError as e:
-        module_log.exception("NDStateMachineError during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module execution failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
-
     except Exception as e:  # pylint: disable=broad-except
-        module_log.exception("Unhandled exception during module execution")
-        output = nd_state_machine.output.format() if nd_state_machine else {}
-        error_msg = f"Module failed: {str(e)}"
-        error_msg += finalize_accepted_intent(nd_state_machine.model_orchestrator if nd_state_machine else None, module.check_mode, module_log)
-        if module.params.get("output_level") == "debug":
-            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
-        module.fail_json(msg=error_msg, **output)
+        fail_from_exception(module, module_log, nd_state_machine, e)
 
 
 if __name__ == "__main__":
