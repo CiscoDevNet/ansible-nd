@@ -1675,6 +1675,32 @@ def test_exit_json_normal_requeries_dirty_inventory_and_builds_delete_add_diff(m
     assert final["proposed"][0]["seed_ip"] == "192.0.2.11"
 
 
+def test_exit_json_reports_post_mutation_inventory_refresh_failure(monkeypatch):
+    """A failed final refresh identifies the fabric and preserves the controller error."""
+    resource = _resource(state="merged", existing=[_sw("192.0.2.10", "SERIAL1")])
+    resource.results.action = "create"
+    resource.results.operation_type = OperationType.CREATE
+    resource.results.response_current = {"MESSAGE": "created"}
+    resource.results.result_current = {"success": True, "changed": True}
+    resource.results.diff_current = {"created": ["SERIAL2"]}
+    resource.results.register_api_call()
+    resource.ctx.mark_inventory_refresh_needed()
+    calls = []
+
+    def fail_refresh(*, refresh=False):
+        calls.append(refresh)
+        raise RuntimeError("controller unavailable")
+
+    monkeypatch.setattr(resource, "_load_fabric_switch_inventory", fail_refresh)
+
+    with pytest.raises(FailJsonError, match="Failed to query fabric 'FAB1' inventory during finalization: controller unavailable"):
+        resource.exit_json()
+
+    assert calls == [True]
+    assert resource.module.exit_kwargs is None
+    assert any(level == "error" and "during finalization" in args[0] for level, args in resource.log.messages)
+
+
 def test_exit_json_normal_reuses_inventory_when_no_mutation(monkeypatch):
     """Successful no-op runs reuse the initial inventory snapshot."""
     before = [_sw("192.0.2.10", "SERIAL1")]

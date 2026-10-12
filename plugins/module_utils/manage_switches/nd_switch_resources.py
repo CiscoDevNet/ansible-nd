@@ -3113,7 +3113,12 @@ class NDSwitchResourceModule:
             # Re-query only after a successful mutation. Idempotent runs can
             # reuse the initial inventory snapshot without another full GET.
             if True not in self.results.failed and self.ctx.inventory_refresh_needed:
-                self.inventory = self._load_fabric_switch_inventory(refresh=True)
+                try:
+                    self.inventory = self._load_fabric_switch_inventory(refresh=True)
+                except _FABRIC_OPERATION_ERRORS as exc:
+                    msg = f"Failed to query fabric '{self.fabric}' inventory during finalization: {exc}"
+                    self.log.error(msg)
+                    self.nd.module.fail_json(msg=msg)
                 self.existing = self.inventory.collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
             diff_list: list[dict[str, Any]] = []
