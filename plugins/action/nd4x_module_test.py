@@ -1230,6 +1230,7 @@ class ActionModule(ActionBase):
             return item
 
         if "network_name" in item or "networkName" in item:
+
             def value_from(source, snake_case, camel_case):
                 value = source.get(snake_case)
                 return source.get(camel_case) if value is None else value
