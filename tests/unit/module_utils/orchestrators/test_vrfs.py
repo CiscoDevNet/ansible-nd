@@ -57,6 +57,19 @@ class _Strategy:
         self.is_multicluster = is_multicluster
 
 
+def test_vrf_gathered_flatteners_preserve_present_values_and_ignore_empty_sections():
+    flattened = {}
+    VrfDataModel._flatten_core_data(flattened, {})
+    VrfDataModel._flatten_fabric_data(flattened, None)
+    assert flattened == {}
+
+    VrfDataModel._flatten_core_data(flattened, {"vrfDescription": "tenant VRF"})
+    VrfDataModel._flatten_fabric_data(flattened, {"bgpPassword": "secret", "trmData": {"ipv4Trm": True}})
+    assert flattened == {"vrf_description": "tenant VRF", "bgp_password": "secret", "trm_enable": True}
+    assert VrfDataModel._nested_config(VrfDataModel(fabricName="FAB", vrfName="BLUE"))["vrf_name"] == "BLUE"
+    assert VrfDataModel._nested_config(object()) == {}
+
+
 def _transform(
     config,
     fabric_name="AK-VXLAN",
@@ -1527,3 +1540,65 @@ def test_vrfs_00107_vrf_status_accepts_uppercase_controller_values():
     )
 
     assert model.to_config()["vrf_status"] == "pending"
+
+
+@pytest.mark.parametrize("scope,raise_scoped", [([], False), (["BLUE"], False), (["BLUE"], True)])
+def test_vrf_query_all_uses_unfiltered_fallback_only_for_scoped_errors(scope, raise_scoped):
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    calls = []
+    object.__setattr__(orchestrator, "_query_scope_vrf_names", lambda: scope)
+    object.__setattr__(orchestrator, "_query_all_unfiltered", lambda: calls.append("unfiltered") or [{"vrfName": "BLUE"}])
+
+    def query_by_names(_names):
+        calls.append("scoped")
+        if raise_scoped:
+            raise RuntimeError("filter unavailable")
+        return [{"vrfName": "BLUE"}]
+
+    object.__setattr__(orchestrator, "query_by_names", query_by_names)
+    assert orchestrator.query_all() == [{"vrfName": "BLUE"}]
+    assert calls == (["unfiltered"] if not scope else ["scoped", "unfiltered"] if raise_scoped else ["scoped"])
+
+
+def test_vrf_query_all_preserves_unfiltered_failure_cause():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    object.__setattr__(orchestrator, "_query_scope_vrf_names", lambda: [])
+
+    def fail():
+        raise RuntimeError("controller unavailable")
+
+    object.__setattr__(orchestrator, "_query_all_unfiltered", fail)
+    with pytest.raises(Exception, match="Query all VRFs failed: controller unavailable"):
+        orchestrator.query_all()
+
+
+def test_vrf_empty_scoped_name_list_needs_no_controller_query():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    assert orchestrator.query_by_names([]) == []
+
+
+def test_mcfg_parent_normalizes_core_defaults_from_query_response():
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+    normalized = orchestrator._normalize_query_vrf_item({"vrfName": "BLUE", "coreData": {"vrfDescription": "tenant"}})
+    assert normalized["coreData"] == {"vrfDescription": "tenant", "vrfVlanName": "", "vrfInterfaceDescription": ""}
+
+
+def test_vrf_single_name_query_falls_back_after_filtered_request_failure():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+
+    def fail(**_kwargs):
+        raise RuntimeError("filter unavailable")
+
+    object.__setattr__(orchestrator, "_request", fail)
+    object.__setattr__(orchestrator, "_query_all_unfiltered", lambda: [{"vrfName": "BLUE"}, {"vrfName": "GREEN"}])
+    assert orchestrator.query_by_names(["BLUE"]) == [{"vrfName": "BLUE"}]
+
+
+def test_vrf_single_name_query_accepts_endpoint_without_filter_parameters():
+    from types import SimpleNamespace
+
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    object.__setattr__(orchestrator, "_make_endpoint", lambda _cls: SimpleNamespace(path="/vrfs", verb=HttpVerbEnum.GET))
+    object.__setattr__(orchestrator, "_request", lambda **_kwargs: {"vrfs": [{"vrfName": "BLUE"}]})
+    assert orchestrator.query_by_names(["BLUE"]) == [{"vrfName": "BLUE"}]

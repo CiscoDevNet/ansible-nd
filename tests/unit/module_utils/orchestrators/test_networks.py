@@ -4223,134 +4223,30 @@ def test_delete_deploy_payloads_honor_network_deploy_type():
     assert payloads == [{"networkNames": ["BLUE_NET"]}]
 
 
-def test_pending_network_deploy_payload_covers_deploy_false_then_deploy_true_attach():
-    class Coordinator:
-        pass
-
-    manager = NetworkAttachmentManager(coordinator=Coordinator())
-    manager.current_attachment_details_ignore_missing = lambda *_args: [
-        {
-            "networkName": "BLUE_NET",
-            "switchId": "FDO123",
-            "attach": True,
-            "status": "pending",
-        }
-    ]
+@pytest.mark.parametrize(
+    "network_status,attachment_status,attached,deploy,expected",
+    [
+        ("pending", "pending", True, True, [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]),
+        ("pending", None, None, True, [{"networkNames": ["BLUE_NET"]}]),
+        (ConfigurationStatus.PENDING, None, None, True, [{"networkNames": ["BLUE_NET"]}]),
+        ("deployed", "pending", False, True, [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]),
+        (ConfigurationStatus.DEPLOYED, ConfigurationStatus.PENDING, False, True, [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]),
+        ("deployed", "pending", False, False, []),
+    ],
+)
+def test_pending_network_deploy_payload_respects_status_and_intent(network_status, attachment_status, attached, deploy, expected):
+    manager = NetworkAttachmentManager(coordinator=_NetworkAttachmentCoordinator())
+    rows = [] if attachment_status is None else [{"networkName": "BLUE_NET", "switchId": "FDO123", "attach": attached, "status": attachment_status}]
+    manager.current_attachment_details_ignore_missing = lambda *_args: rows
 
     payloads = manager.build_pending_network_deploy_payloads(
-        {"after": [{"network_name": "BLUE_NET", "network_status": "pending"}]},
-        [{"network_name": "BLUE_NET", "deploy": True}],
+        {"after": [{"network_name": "BLUE_NET", "network_status": network_status}]},
+        [{"network_name": "BLUE_NET", "deploy": deploy}],
         {"config": []},
         _orchestrator().strategy,
     )
 
-    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
-
-
-def test_pending_network_deploy_payload_falls_back_to_network_scope_without_attachments():
-    class Coordinator:
-        pass
-
-    manager = NetworkAttachmentManager(coordinator=Coordinator())
-    manager.current_attachment_details_ignore_missing = lambda *_args: []
-
-    payloads = manager.build_pending_network_deploy_payloads(
-        {"after": [{"network_name": "BLUE_NET", "network_status": "pending"}]},
-        [{"network_name": "BLUE_NET", "deploy": True}],
-        {"config": []},
-        _orchestrator().strategy,
-    )
-
-    assert payloads == [{"networkNames": ["BLUE_NET"]}]
-
-
-def test_pending_network_deploy_payload_accepts_enum_status():
-    class Coordinator:
-        pass
-
-    manager = NetworkAttachmentManager(coordinator=Coordinator())
-    manager.current_attachment_details_ignore_missing = lambda *_args: []
-
-    payloads = manager.build_pending_network_deploy_payloads(
-        {"after": [{"network_name": "BLUE_NET", "network_status": ConfigurationStatus.PENDING}]},
-        [{"network_name": "BLUE_NET", "deploy": True}],
-        {"config": []},
-        _orchestrator().strategy,
-    )
-
-    assert payloads == [{"networkNames": ["BLUE_NET"]}]
-
-
-def test_pending_network_deploy_payload_covers_deploy_false_then_deploy_true_detach():
-    class Coordinator:
-        pass
-
-    manager = NetworkAttachmentManager(coordinator=Coordinator())
-    manager.current_attachment_details_ignore_missing = lambda *_args: [
-        {
-            "networkName": "BLUE_NET",
-            "switchId": "FDO123",
-            "attach": False,
-            "status": "pending",
-        }
-    ]
-
-    payloads = manager.build_pending_network_deploy_payloads(
-        {"after": [{"network_name": "BLUE_NET", "network_status": "deployed"}]},
-        [{"network_name": "BLUE_NET", "deploy": True}],
-        {"config": []},
-        _orchestrator().strategy,
-    )
-
-    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
-
-
-def test_pending_network_deploy_payload_accepts_enum_attachment_status():
-    class Coordinator:
-        pass
-
-    manager = NetworkAttachmentManager(coordinator=Coordinator())
-    manager.current_attachment_details_ignore_missing = lambda *_args: [
-        {
-            "networkName": "BLUE_NET",
-            "switchId": "FDO123",
-            "attach": False,
-            "status": ConfigurationStatus.PENDING,
-        }
-    ]
-
-    payloads = manager.build_pending_network_deploy_payloads(
-        {"after": [{"network_name": "BLUE_NET", "network_status": ConfigurationStatus.DEPLOYED}]},
-        [{"network_name": "BLUE_NET", "deploy": True}],
-        {"config": []},
-        _orchestrator().strategy,
-    )
-
-    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
-
-
-def test_pending_network_deploy_payload_honors_deploy_false_for_pending_detach():
-    class Coordinator:
-        pass
-
-    manager = NetworkAttachmentManager(coordinator=Coordinator())
-    manager.current_attachment_details_ignore_missing = lambda *_args: [
-        {
-            "networkName": "BLUE_NET",
-            "switchId": "FDO123",
-            "attach": False,
-            "status": "pending",
-        }
-    ]
-
-    payloads = manager.build_pending_network_deploy_payloads(
-        {"after": [{"network_name": "BLUE_NET", "network_status": "deployed"}]},
-        [{"network_name": "BLUE_NET", "deploy": False}],
-        {"config": []},
-        _orchestrator().strategy,
-    )
-
-    assert payloads == []
+    assert payloads == expected
 
 
 def test_planned_attach_payloads_ignore_api_empty_defaults():
@@ -5365,3 +5261,307 @@ def test_network_netflow_monitor_empty_strings_are_omitted():
 
     assert model.vlan_netflow_monitor is None
     assert model.interface_netflow_monitor is None
+
+
+@pytest.mark.parametrize(
+    "response,expected",
+    [
+        ([{"networkName": "N"}], [{"networkName": "N"}]),
+        ({"networks": [{"networkName": "N"}]}, [{"networkName": "N"}]),
+        ({"items": [{"networkName": "N"}]}, [{"networkName": "N"}]),
+        ({"unexpected": 1}, []),
+        (None, []),
+    ],
+)
+def test_network_scoped_query_result_shapes(response, expected):
+    coordinator = NetworkWorkflowCoordinator(_Module({"config": [], "state": "deleted"}), _orchestrator().strategy)
+
+    class Orchestrator:
+        def query_by_names(self, names):
+            assert names == ["N"]
+            return response
+
+    coordinator._new_network_orchestrator = lambda *_args: (Orchestrator(), None)
+    assert coordinator._query_current_networks_by_names({"state": "deleted"}, coordinator.strategy, ["N"]) == expected
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_delete_wait_facade_forwards_only_outside_check_mode(check_mode):
+    module = _Module({"state": "deleted", "config": []})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module, _orchestrator().strategy)
+    calls = []
+
+    class Attachments:
+        def wait_for_networks_delete_ready(self, *args):
+            calls.append(("networks", args))
+
+        def wait_for_attachments_delete_ready(self, *args):
+            calls.append(("attachments", args))
+
+        def delete_wait_deadline(self, count):
+            return count + 1, count
+
+    coordinator._attachments = Attachments()
+    coordinator._wait_for_networks_delete_ready({}, coordinator.strategy, ["N"], 10, 2)
+    coordinator._wait_for_network_attachments_delete_ready({}, coordinator.strategy, ["N"], 10, 2)
+    assert coordinator._network_delete_wait_deadline(3) == (4, 3)
+    assert [name for name, _args in calls] == ([] if check_mode else ["networks", "attachments"])
+
+
+@pytest.mark.parametrize(
+    "scope,scoped_error,expected",
+    [
+        ([], False, [{"networkName": "N"}]),
+        (["N"], False, [{"networkName": "N"}]),
+        (["N"], True, [{"networkName": "N"}]),
+    ],
+)
+def test_network_query_all_scoped_fallback_uses_one_unfiltered_read_when_needed(scope, scoped_error, expected, monkeypatch):
+    orchestrator = _orchestrator()
+    calls = []
+    orchestrator._query_scope_network_names = lambda: scope
+
+    def unfiltered():
+        calls.append("unfiltered")
+        return [{"networkName": "N"}]
+
+    def scoped(_names):
+        calls.append("scoped")
+        if scoped_error:
+            raise RuntimeError("scoped unavailable")
+        return expected
+
+    orchestrator._query_all_unfiltered = unfiltered
+    monkeypatch.setattr(NDNetworkOrchestrator, "query_by_names", lambda _self, names: scoped(names))
+    assert orchestrator.query_all() == expected
+    assert calls == (["unfiltered"] if not scope else ["scoped", "unfiltered"] if scoped_error else ["scoped"])
+
+
+def test_network_query_all_unfiltered_error_keeps_cause():
+    orchestrator = _orchestrator()
+    orchestrator._query_scope_network_names = lambda: []
+
+    def fail():
+        raise RuntimeError("controller unavailable")
+
+    orchestrator._query_all_unfiltered = fail
+    with pytest.raises(Exception, match="Query all networks failed: controller unavailable"):
+        orchestrator.query_all()
+
+
+@pytest.mark.parametrize(
+    "config,state,expected",
+    [
+        ("not-a-dict", "merged", False),
+        ({"network_name": "N", "vlan_network_type": "community", "vlan_id": 100}, "merged", False),
+        ({"network_name": "N", "vlan_id": 100}, "merged", True),
+    ],
+)
+def test_network_omitted_layer_defer_decision(config, state, expected):
+    assert NDNetworkOrchestrator.should_defer_omitted_layer(config, state) is expected
+
+
+def test_network_payload_helpers_preserve_sparse_and_reject_unknown_vlan_type():
+    orchestrator = _orchestrator()
+    assert orchestrator.query_by_names([]) == []
+    assert orchestrator.prepare_config_data("not-a-list") == "not-a-list"
+    assert orchestrator._template_config_string(None) == ""
+    assert orchestrator._template_config_string(False) == "false"
+    assert orchestrator._template_config_string(True) == "true"
+    with pytest.raises(ValueError, match="vlan_network_type must be one of"):
+        orchestrator._normalize_vlan_network_type("unknown")
+
+
+def test_mcfg_parent_omitted_defaults_are_stripped_without_removing_explicit_fields():
+    data = {
+        "vlan_id": 100,
+        "l2_data": {"vlanName": "N", "xConnect": False, "fabricData": {}},
+        "l3_data": {"fabricData": {"gatewayOnBorder": False, "ipv4Trm": False, "ipv6Trm": False, "netflow": False}},
+    }
+    NDNetworkOrchestrator._remove_mcfg_parent_non_echoed_fields(data, {})
+    assert data == {}
+    explicit = {
+        "l2_data": {"xConnect": False},
+        "l3_data": {"fabricData": {"netflow": False}},
+    }
+    NDNetworkOrchestrator._remove_mcfg_parent_non_echoed_fields(explicit, {"x_connect": False, "netflow_enable": False})
+    assert explicit == {"l2_data": {"xConnect": False}, "l3_data": {"fabricData": {"netflow": False}}}
+
+
+def test_network_attachment_payload_helpers_keep_omission_and_explicit_mapping():
+    manager = NetworkAttachmentManager(_NetworkAttachmentCoordinator())
+    assert manager._attachment_interfaces({}) is None
+    assert manager._attachment_interfaces({"interfaces": []}) == []
+    assert manager._attachment_interfaces(
+        {"interfaces": [{"interface_range": "Ethernet1/1", "mode": "access", "mapping_type": "single", "customer_vlan": 10}]}
+    ) == [{"mode": "access", "interfaceRange": "Ethernet1/1", "mapping": {"mappingType": "single", "customerVlan": 10}}]
+    assert manager.attachment_instance_values({}) == {}
+    assert manager._interfaces_for_controller(None, "4.3.1") is None
+    assert manager._interfaces_for_controller([None, {"mode": "pvlan_host"}], "4.3.1") == [None, {"mode": "pvlanHost"}]
+    assert manager._payloads_for_controller([{"networkName": "N"}], "4.3.1") == [{"networkName": "N"}]
+
+
+@pytest.mark.parametrize("wait_kind", ["attachments", "networks"])
+def test_network_delete_wait_times_out_with_controller_blockers(wait_kind):
+    coordinator = _NetworkAttachmentCoordinator()
+    coordinator.module = _Module({"state": "deleted", "config": []})
+    coordinator._query_current_networks_by_names = lambda *_args: [{"networkName": "N", "networkStatus": "pending"}]
+    manager = NetworkAttachmentManager(coordinator)
+    manager.undeploy_retry_attempts = 0
+    manager.delete_wait_deadline = lambda _count: (0, 0)
+    manager._current_attachment_details_for_wait = lambda *_args: [
+        {"networkName": "OTHER", "switchId": "S2", "attach": True, "status": "pending"},
+        {"networkName": "N", "switchId": "S1", "attach": True, "status": "pending"},
+    ]
+    strategy = _orchestrator().strategy
+    assert manager._delete_wait_timeout(1) > 0
+    if wait_kind == "networks":
+        manager.wait_for_networks_delete_ready({}, strategy, [])
+        with pytest.raises(AssertionError, match="Timed out waiting for networks"):
+            manager.wait_for_networks_delete_ready({}, strategy, ["N"])
+    else:
+        manager.wait_for_attachments_delete_ready({}, strategy, [])
+        with pytest.raises(AssertionError, match="Timed out waiting for network attachments"):
+            manager.wait_for_attachments_delete_ready({}, strategy, ["N"])
+
+
+@pytest.mark.parametrize("state,should_resolve", [("merged", True), ("replaced", False)])
+def test_network_state_machine_setup_restores_params_after_validation(state, should_resolve, monkeypatch):
+    from types import SimpleNamespace
+
+    module = _Module({"config": [{"network_name": "ORIGINAL"}], "state": "original"})
+    coordinator = NetworkWorkflowCoordinator(module, _orchestrator().strategy)
+    snapshot = SimpleNamespace(existing={}, proposed={}, state=state)
+    calls = []
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(coordinator, "_resolve_merged_layers", lambda *_args: calls.append("resolve"))
+    sm, original_config, original_state = coordinator._new_state_machine(
+        {"state": state, "config": [{"network_name": "N", "layer": "layer2"}]}, coordinator.strategy
+    )
+    assert sm is snapshot
+    assert calls == (["resolve"] if should_resolve else [])
+    coordinator._restore_state_machine_params(original_config, original_state)
+    assert module.params == {"config": [{"network_name": "ORIGINAL"}], "state": "original"}
+
+
+def test_network_state_machine_setup_restores_params_on_constructor_failure(monkeypatch):
+    module = _Module({"config": [{"network_name": "ORIGINAL"}], "state": "original"})
+    coordinator = NetworkWorkflowCoordinator(module, _orchestrator().strategy)
+
+    def fail(**_kwargs):
+        raise RuntimeError("query unavailable")
+
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", fail)
+    with pytest.raises(RuntimeError, match="query unavailable"):
+        coordinator._new_state_machine({"state": "merged", "config": [{"network_name": "N", "layer": "layer2"}]})
+    assert module.params == {"config": [{"network_name": "ORIGINAL"}], "state": "original"}
+
+
+def test_network_merged_layer_resolution_updates_cached_proposal():
+    from types import SimpleNamespace
+
+    strategy = _orchestrator().strategy
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), strategy)
+    proposed = SimpleNamespace(layer=None)
+    sm = SimpleNamespace(
+        existing={"N": SimpleNamespace(layer="layer2", vrf_name="NA")},
+        proposed={"N": proposed},
+    )
+    coordinator._resolve_merged_layers(sm, [{"network_name": "N", "vlan_name": "NEW"}], strategy)
+    assert proposed.layer == "layer2"
+
+
+def test_network_merged_layer_resolution_leaves_unresolved_proposal_unchanged():
+    from types import SimpleNamespace
+
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), _orchestrator().strategy)
+    proposed = SimpleNamespace(layer=None)
+    snapshot = SimpleNamespace(existing={}, proposed={"N": proposed})
+    model_cls = SimpleNamespace(from_config=lambda *_args, **_kwargs: SimpleNamespace(layer=None))
+    strategy = SimpleNamespace(config_model_cls=model_cls)
+    coordinator._resolve_merged_layers(snapshot, [{"network_name": "N", "vlan_id": 100}], strategy)
+    assert proposed.layer is None
+
+
+def test_network_child_task_retains_explicit_child_layer():
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), _ParentStrategy())
+    existing = {"child1": {"module_args": {"config": []}, "network_list": []}}
+    tasks = coordinator._accumulate_child_task(
+        {"network_name": "N", "layer": "layer3"},
+        {"fabric_name": "child1", "layer": "layer2"},
+        existing,
+        {},
+        "merged",
+    )
+    assert tasks["child1"]["module_args"]["config"] == [{"network_name": "N", "layer": "layer2"}]
+
+
+@pytest.mark.parametrize("wait_kind", ["attachments", "networks"])
+def test_network_delete_wait_observes_pending_then_ready(wait_kind):
+    coordinator = _NetworkAttachmentCoordinator()
+    coordinator.module = _Module({"state": "deleted", "config": []})
+    coordinator._query_current_networks_by_names = lambda *_args: [{"networkName": "N", "networkStatus": "notApplicable"}]
+    manager = NetworkAttachmentManager(coordinator)
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 1 if wait_kind == "networks" else 0
+    polls = []
+    manager._current_attachment_details_for_wait = lambda *_args: polls.append("poll") or (
+        [{"networkName": "N", "attach": True, "status": "pending"}] if len(polls) == 1 else []
+    )
+    manager.build_delete_deploy_payloads = lambda *_args: []
+    with patch("ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager.time.sleep") as sleep:
+        if wait_kind == "networks":
+            manager.wait_for_networks_delete_ready({}, _orchestrator().strategy, ["N"], float("inf"), 1)
+        else:
+            manager.wait_for_attachments_delete_ready({}, _orchestrator().strategy, ["N"], float("inf"), 1)
+    assert polls == ["poll", "poll"]
+    sleep.assert_called_once_with(0)
+
+
+def test_network_orchestrator_payload_branches_keep_supported_fields():
+    from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_data_models import VxlanIbgpNetworkModel
+
+    orchestrator = _orchestrator()
+    assert orchestrator._network_layer({"network_name": "N"}) == "layer3"
+    assert orchestrator._l3_data({"mtu": 9000, "layer": "layer3"}, "routed")["mtu"] == 9000
+    l2 = VxlanIbgpNetworkModel(networkName="N", networkMode="layer2", l3Data={"mtu": 9000})
+    assert "l3Data" not in orchestrator._create_or_update_payload(l2)
+
+    mcfg = _mcfg_parent_orchestrator()
+    secondary = VxlanIbgpNetworkModel(networkName="N", networkMode="layer2", vlanNetworkType="privateSecondaryCommunity", l3Data={"mtu": 9000})
+    assert "l3Data" not in mcfg._mcfg_parent_network_payload(secondary)
+    normalized = mcfg._normalize_query_network_item(
+        {"networkName": "N", "l3Data": {"secondaryGatewayIpv4Collection": [], "secondaryGatewayIpv6Collection": [], "mtu": 9000}}
+    )
+    assert normalized["l3Data"] == {"mtu": 9000}
+
+
+def test_private_secondary_payload_omits_unrequested_optional_fields():
+    orchestrator = _orchestrator()
+    data = orchestrator._private_secondary_payload_model_data(
+        {"network_name": "N", "network_id": 30000, "vlan_id": 100},
+        "FAB",
+        "privateSecondaryCommunity",
+        {"network_name": "N", "network_id": 30000},
+    )
+    assert data["network_template_config"]["type"] == "Community"
+    assert "vlanName" not in data["network_template_config"]
+    assert "mcastGroup" not in data["network_template_config"]
+    assert "primary_network_id" not in data
+    assert "l2_data" not in data
+
+
+def test_mcfg_parent_preserves_explicit_nonempty_l2_fabric_data():
+    data = {"l2_data": {"fabricData": {"multicastGroup": "239.1.1.1"}}}
+    NDNetworkOrchestrator._remove_mcfg_parent_non_echoed_fields(data, {})
+    assert data == {"l2_data": {"fabricData": {"multicastGroup": "239.1.1.1"}}}
+
+
+def test_network_single_name_query_accepts_endpoint_without_filter_parameters():
+    from types import SimpleNamespace
+
+    orchestrator = _orchestrator()
+    object.__setattr__(orchestrator, "_make_endpoint", lambda _cls: SimpleNamespace(path="/networks", verb=HttpVerbEnum.GET))
+    object.__setattr__(orchestrator, "_request", lambda **_kwargs: {"networks": [{"networkName": "N"}]})
+    assert orchestrator.query_by_names(["N"]) == [{"networkName": "N", "fabricName": "fab1"}]

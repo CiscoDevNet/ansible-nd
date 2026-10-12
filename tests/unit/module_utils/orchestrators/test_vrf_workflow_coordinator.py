@@ -741,7 +741,10 @@ def test_vrf_delete_wait_uses_scoped_vrf_query_and_attachment_gate():
 
         def _current_attachment_details(self, _module_args, _strategy, vrf_names):
             self.queried_attachments.append(vrf_names)
-            return []
+            return [
+                {"vrfName": "OTHER", "switchId": "OTHER-SWITCH", "attach": True, "status": "pending"},
+                {"vrfName": "BLUE", "switchId": "FDO123", "attach": False, "status": "notApplicable"},
+            ]
 
         def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
             self.queried_names.append(vrf_names)
@@ -830,8 +833,18 @@ def test_vrf_delete_wait_retries_undeploy_for_pending_status():
     assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
 
 
-@pytest.mark.parametrize("status", ["failed", "outOfSync"])
-def test_vrf_delete_wait_blocks_and_retries_failed_or_out_of_sync_attachment(status):
+@pytest.mark.parametrize(
+    "source,status,switch_id",
+    [
+        ("attachment", "failed", "FDO123"),
+        ("attachment", "outOfSync", "FDO123"),
+        ("attachment", "failed", None),
+        ("attachment", "outOfSync", None),
+        ("vrf", "failed", None),
+        ("vrf", "outOfSync", None),
+    ],
+)
+def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_status(source, status, switch_id):
     class Module:
         params = {}
 
@@ -843,48 +856,11 @@ def test_vrf_delete_wait_blocks_and_retries_failed_or_out_of_sync_attachment(sta
 
         def _current_attachment_details(self, _module_args, _strategy, vrf_names):
             assert vrf_names == ["BLUE"]
-            return [{"vrfName": "BLUE", "switchId": "FDO123", "attach": False, "status": status}]
+            return [{"vrfName": "BLUE", "switchId": switch_id, "attach": False, "status": status}] if source == "attachment" else []
 
         def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
             assert vrf_names == ["BLUE"]
-            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
-
-    manager = VrfAttachmentManager(coordinator=Coordinator())
-    manager.delete_wait_base_timeout = 0
-    manager.delete_wait_extra_chunk_timeout = 0
-    manager.delete_wait_max_timeout = 0
-    manager.delete_wait_delay = 0
-    manager.undeploy_retry_attempts = 1
-    deploy_payloads = []
-    manager.deploy_vrf_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
-
-    with pytest.raises(RuntimeError, match="last_attachment_blockers"):
-        manager.wait_for_vrfs_delete_ready(
-            {"config": [{"vrf_name": "BLUE"}]},
-            _StandaloneStrategy(),
-        )
-
-    assert deploy_payloads == [{"vrfNames": ["BLUE"], "switchIds": ["FDO123"]}]
-
-
-@pytest.mark.parametrize("status", ["failed", "outOfSync"])
-def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_vrf_status(status):
-    class Module:
-        params = {}
-
-        def fail_json(self, **kwargs):
-            raise RuntimeError(kwargs["msg"])
-
-    class Coordinator:
-        module = Module()
-
-        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
-            assert vrf_names == ["BLUE"]
-            return []
-
-        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
-            assert vrf_names == ["BLUE"]
-            return [{"vrfName": "BLUE", "vrfStatus": status}]
+            return [{"vrfName": "BLUE", "vrfStatus": status if source == "vrf" else "notApplicable"}]
 
     manager = VrfAttachmentManager(coordinator=Coordinator())
     manager.delete_wait_base_timeout = 0
@@ -901,7 +877,57 @@ def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_vrf_status(sta
             _StandaloneStrategy(),
         )
 
-    assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
+    expected = {"vrfNames": ["BLUE"]}
+    if source == "attachment" and switch_id:
+        expected["switchIds"] = [switch_id]
+    assert deploy_payloads == [expected]
+
+
+@pytest.mark.parametrize(
+    "attachment,expected_status,blocks",
+    [
+        ({}, "", False),
+        ({"attach": True}, "", True),
+        ({"attach": "true"}, "", True),
+        ({"attach": False, "configStatus": "notApplicable"}, "notApplicable", False),
+        ({"attach": False, "status": "pending"}, "pending", True),
+    ],
+)
+def test_vrf_delete_attachment_status_selection_and_blocking(attachment, expected_status, blocks):
+    assert VrfAttachmentManager.attachment_status(attachment) == expected_status
+    assert VrfAttachmentManager.attachment_blocks_delete(attachment) is blocks
+
+
+def test_vrf_switch_resolution_skips_inventory_when_no_attachment_ips_are_requested():
+    manager = VrfAttachmentManager(_StagedVrfAttachmentCoordinator())
+    assert manager.resolve_switch_ids({}, _StandaloneStrategy(), [{"vrf_name": "BLUE", "attach": [{}]}]) == {}
+
+
+def test_vrf_delete_wait_observes_pending_then_ready():
+    polls = []
+
+    class Coordinator:
+        module = _Module({})
+
+        @staticmethod
+        def _current_attachment_details(_module_args, _strategy, _names):
+            polls.append("poll")
+            if len(polls) == 1:
+                return [{"vrfName": "BLUE", "switchId": "S1", "attach": False, "status": "pending"}]
+            return []
+
+        @staticmethod
+        def _query_current_vrfs_by_names(_module_args, _strategy, _names):
+            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
+
+    manager = VrfAttachmentManager(Coordinator())
+    manager.undeploy_retry_attempts = 0
+    manager.delete_wait_delay = 0
+    manager._delete_wait_deadline = lambda _count: (float("inf"), 1)
+    with patch("ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager.time.sleep") as sleep:
+        manager.wait_for_vrfs_delete_ready({}, _StandaloneStrategy(), ["BLUE"])
+    assert polls == ["poll", "poll"]
+    sleep.assert_called_once_with(0)
 
 
 def test_vrf_gathered_output_uses_public_config_shape():
@@ -3133,3 +3159,66 @@ def test_vrf_workflow_coordinator_delete_dependency_check_batches_network_query(
             "networkName": "ansible-net-17",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "response,expected",
+    [
+        ([{"vrfName": "BLUE"}], [{"vrfName": "BLUE"}]),
+        ({"vrfs": [{"vrfName": "BLUE"}]}, [{"vrfName": "BLUE"}]),
+        ({"items": [{"vrfName": "BLUE"}]}, [{"vrfName": "BLUE"}]),
+        ({"unexpected": 1}, []),
+        (None, []),
+    ],
+)
+def test_vrf_scoped_query_result_shapes(response, expected):
+    coordinator = VrfWorkflowCoordinator(_Module({"state": "deleted", "config": []}), _StandaloneStrategy())
+
+    class Orchestrator:
+        def query_by_names(self, names):
+            assert names == ["BLUE"]
+            return response
+
+    coordinator._new_vrf_orchestrator = lambda *_args: (Orchestrator(), None)
+    assert coordinator._query_current_vrfs_by_names({"state": "deleted"}, coordinator.strategy, ["BLUE"]) == expected
+
+
+@pytest.mark.parametrize("state,expected_enrichment", [("merged", False), ("gathered", True)])
+def test_vrf_orchestrator_creation_enriches_mcfg_only_for_gathered(state, expected_enrichment, monkeypatch):
+    from types import SimpleNamespace
+
+    coordinator = VrfWorkflowCoordinator(_Module({"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}), _StandaloneStrategy())
+    calls = []
+
+    class Orchestrator:
+        def __init__(self, **kwargs):
+            calls.append(kwargs["enrich_mcfg_parent_from_children"])
+
+        @staticmethod
+        def prepare_config_data(config):
+            return config
+
+    monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
+    monkeypatch.setattr(coordinator, "_new_rest_send", lambda _params: object())
+    coordinator._new_vrf_orchestrator({"state": state, "config": []}, coordinator.strategy)
+    snapshot = SimpleNamespace(existing={}, proposed={})
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", lambda **_kwargs: snapshot)
+    sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": []})
+    assert sm is snapshot
+    coordinator._restore_state_machine_params(original_config, original_state)
+    assert calls == [expected_enrichment, expected_enrichment]
+    assert coordinator.module.params == {"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}
+
+
+def test_vrf_parent_skips_child_task_when_only_fabric_name_is_given(monkeypatch):
+    coordinator = VrfWorkflowCoordinator(_Module({"fabric_name": "MSD", "state": "merged", "config": []}), _ParentStrategy())
+    monkeypatch.setattr(coordinator, "_parse_config", lambda config, *_args: config)
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", lambda *_args, **_kwargs: {"changed": False, "failed": False})
+    monkeypatch.setattr(coordinator, "_collect_deferred_deploy_payloads", lambda *_args: [])
+    monkeypatch.setattr(coordinator, "_build_structured_result", lambda *_args: {"changed": False, "failed": False})
+    result = coordinator._handle_parent_workflow(
+        {"fabric_name": "MSD", "state": "merged", "config": [{"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "AK-VXLAN"}]}]},
+        "multisite_parent",
+    )
+    assert result == {"changed": False, "failed": False}
+    assert any(entry["event"] == "child_task_skipped_without_child_options" for entry in coordinator.workflow_trace)

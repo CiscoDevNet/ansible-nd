@@ -19,8 +19,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkSwitchesListModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    NetworkChildConfigModel,
     NetworkConfigModel,
     NetworkInterfaceConfigModel,
+    NetworkParentConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
+    NetworkAttachmentMode,
+    PublicNetworkAttachmentMode,
+    api_network_attachment_mode,
+    public_network_attachment_mode,
+    public_vlan_network_type,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_attachment_models import (
     AccessInterfaceModel,
@@ -59,6 +68,101 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
     NetworkValidators,
 )
+
+
+@pytest.mark.parametrize(
+    "mode,version,expected",
+    [
+        (None, None, None),
+        (PublicNetworkAttachmentMode.PVLAN_HOST, None, "host"),
+        (PublicNetworkAttachmentMode.PVLAN_HOST, "4.2.1", "host"),
+        (PublicNetworkAttachmentMode.PVLAN_HOST, "4.3.1", "pvlanHost"),
+        (PublicNetworkAttachmentMode.PVLAN_HOST, "invalid", "host"),
+        (PublicNetworkAttachmentMode.PVLAN_HOST, "4", "host"),
+        (NetworkAttachmentMode.TRUNK, "4.3.1", "trunk"),
+    ],
+)
+def test_attachment_mode_uses_versioned_wire_spelling(mode, version, expected):
+    assert api_network_attachment_mode(mode, version) == expected
+    assert public_network_attachment_mode(mode) == (None if mode is None else mode.value if mode == NetworkAttachmentMode.TRUNK else "pvlan_host")
+
+
+def test_public_vlan_network_type_preserves_missing_value():
+    assert public_vlan_network_type(None) is None
+
+
+@pytest.mark.parametrize(
+    "model_cls,config,error",
+    [
+        (NetworkInterfaceConfigModel, {"interface_range": "Ethernet1/1", "mapping_type": "invalid"}, "mapping_type must be one of"),
+        (NetworkChildConfigModel, {"fabric_name": "site1", "l2_fabric_data": {}}, "l2_fabric_data is not supported"),
+        (NetworkConfigModel, {"network_name": "N", "layer": "layer2", "primary_network_id": 10}, "normal networks do not use primary_network_id"),
+        (
+            NetworkConfigModel,
+            {"network_name": "N", "layer": "layer2", "vlan_network_type": "primary", "primary_network_id": 10},
+            "privatePrimary networks do not use primary_network_id",
+        ),
+        (
+            NetworkParentConfigModel,
+            {
+                "network_name": "N",
+                "layer": "layer2",
+                "child_fabric_config": [{"fabric_name": "site1", "interface_netflow_monitor": "MON", "netflow_enable": True}],
+            },
+            "interface_netflow_monitor is not valid for layer2",
+        ),
+    ],
+)
+def test_network_public_models_reject_cross_field_conflicts(model_cls, config, error):
+    with pytest.raises(ValidationError, match=error):
+        model_cls.from_config(config)
+
+
+def test_network_optional_fields_preserve_explicit_none_and_empty_child_monitor():
+    model = NetworkConfigModel(networkName="N", networkType=None, vlanNetworkType=None)
+    child = NetworkChildConfigModel(fabric_name="site1", vlan_netflow_monitor="", interface_netflow_monitor="")
+    assert model.network_type is None
+    assert model.vlan_network_type is None
+    assert child.vlan_netflow_monitor is None
+    assert child.interface_netflow_monitor is None
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        ({"arpSuppression": False, "fabricData": "unexpected"}, False),
+        ({"arpSuppression": False, "fabricData": None}, True),
+        ({"arpSuppression": False, "fabricData": {"netflow": True}}, False),
+        ({"arpSuppression": False, "fabricData": {"netflow": False}}, True),
+    ],
+)
+def test_layer2_controller_default_detection_handles_nonstandard_fabric_data(value, expected):
+    assert VxlanNetworkModel._is_layer2_default_l3_data(value) == expected
+
+
+def test_network_gathered_flatteners_ignore_empty_and_unstructured_data():
+    flattened = {}
+    NetworkBaseModel._flatten_l3_data(flattened, {})
+    NetworkBaseModel._flatten_l2_data(flattened, None)
+    assert flattened == {}
+    assert NetworkBaseModel._nested_config(object()) == {}
+    assert DefaultL3DataModel().to_layer2_payload(exclude_unset=True) == {}
+    assert NetworkBaseModel._nested_config(DefaultL3DataModel(mtu=9000))["mtu"] == 9000
+
+
+def test_custom_layer2_gathered_output_keeps_explicit_l3_data():
+    model = CustomNetworkModel.from_response({"networkName": "CUSTOM", "networkType": "userDefined", "networkMode": "layer2", "l3Data": {"mtu": 9000}})
+    assert model.to_gathered_config()["mtu"] == 9000
+
+
+def test_generic_network_factory_and_routed_layer2_gathered_paths():
+    generic = NetworkBaseModel.from_config({"network_name": "CUSTOM", "network_type": "unknown"})
+    assert isinstance(generic, NetworkBaseModel)
+    assert generic.network_type == "unknown"
+    assert "vlan_network_type" not in NetworkBaseModel.from_config({"network_name": "N"}).to_config(exclude_unset=True)
+    routed = RoutedNetworkModel.from_response({"networkName": "R", "networkType": "routed", "networkMode": "layer2"})
+    assert routed.to_gathered_config()["layer"] == "layer2"
 
 
 @pytest.mark.parametrize(

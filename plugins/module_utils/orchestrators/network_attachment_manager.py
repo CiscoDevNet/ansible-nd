@@ -814,7 +814,7 @@ class NetworkAttachmentManager:
         started_at = DeleteReadinessPolicy.now()
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str], int] = {}
-        while pending:
+        while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
             retry_targets: dict[str, set[str]] = {}
@@ -877,7 +877,7 @@ class NetworkAttachmentManager:
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str, str], int] = {}
         retried_networks: dict[str, int] = {}
-        while pending:
+        while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
             attachment_retry_targets: dict[str, set[str]] = {}

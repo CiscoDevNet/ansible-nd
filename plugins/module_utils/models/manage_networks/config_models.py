@@ -455,11 +455,6 @@ class NetworkConfigModel(NDBaseModel):
         return NetworkLayer.LAYER3.value
 
     @staticmethod
-    def _has_l3_definition_intent_for_layer(data: dict[str, Any]) -> bool:
-        """Return true when omitted layer can still be inferred as layer3."""
-        return has_l3_definition_intent_for_layer(data)
-
-    @staticmethod
     def _has_definition_intent_for_layer(data: dict[str, Any]) -> bool:
         """Return true when sparse input is intended to create or update a network definition."""
         return any(data.get(field) is not None for field in NETWORK_DEFINITION_INTENT_FIELDS)
@@ -623,9 +618,6 @@ class NetworkConfigModel(NDBaseModel):
             if self.primary_network_id is not None:
                 raise ValueError("privatePrimary networks do not use primary_network_id")
             return
-        if vlan_network_type not in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
-            return
-
         if self.primary_network_id is None:
             raise ValueError(f"{vlan_network_type} requires primary_network_id")
         if self.layer == "layer3":
@@ -670,10 +662,8 @@ class NetworkConfigModel(NDBaseModel):
             allowed_modes = _NORMAL_NETWORK_INTERFACE_MODES
         elif vlan_network_type == "privatePrimary":
             allowed_modes = _PRIVATE_PRIMARY_INTERFACE_MODES
-        elif vlan_network_type in ("privateSecondaryCommunity", "privateSecondaryIsolated"):
-            allowed_modes = _PRIVATE_SECONDARY_INTERFACE_MODES
         else:
-            return
+            allowed_modes = _PRIVATE_SECONDARY_INTERFACE_MODES
 
         for attachment in self.attach or []:
             for interface in attachment.interfaces or []:
