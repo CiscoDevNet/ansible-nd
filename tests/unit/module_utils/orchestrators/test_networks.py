@@ -4889,8 +4889,8 @@ def test_layer2_gathered_config_replays_without_controller_l3_echoes(state, vlan
     assert gathered["vlan_name"] == "USERS"
     assert gathered["multicast_group_address"] == "239.1.1.11"
     assert not {"mtu", "arp_suppression", "routing_tag", "igmp_version", "gateway_on_border", "trm_enable", "ipv6_trm"} & gathered.keys()
-    # Read-side diagnostics retain the controller block and its independently injected model defaults.
-    assert model.to_config()["l3_data"]["mtu"] == 9216
+    # Read-side diagnostics retain the controller block without inventing an MTU.
+    assert "mtu" not in model.to_config()["l3_data"]
     assert "mtu" not in model.l3_data.model_fields_set
     orchestrator = _orchestrator()
     coordinator = NetworkWorkflowCoordinator(module=_Module({"output_level": "normal"}), strategy=orchestrator.strategy)

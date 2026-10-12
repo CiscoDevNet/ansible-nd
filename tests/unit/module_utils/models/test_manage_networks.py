@@ -100,6 +100,41 @@ def test_vxlan_nested_models_apply_defaults_without_manufacturing_explicit_field
     assert model.to_payload(exclude_unset=True) == {"networkName": "USERS", "l2Data": {"fabricData": {}}, "l3Data": {"fabricData": {}}}
 
 
+@pytest.mark.parametrize(
+    "network_type",
+    ["vxlan", "vxlanIbgp", "vxlanEbgp", "vxlanCampus", "aimlVxlanIbgp", "aimlVxlanEbgp"],
+)
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+def test_vxlan_response_does_not_invent_missing_mtu(network_type, layer):
+    """Controller readback must not turn an omitted MTU into the write default."""
+    response = {
+        "networkName": "USERS",
+        "networkType": network_type,
+        "networkMode": layer,
+        "vrfName": "TENANT",
+        "l3Data": {"arpSuppression": False},
+    }
+    existing = NetworkBaseModel.from_response(response)
+    assert existing.l3_data.mtu is None
+    assert "mtu" not in existing.l3_data.model_fields_set
+    assert "mtu" not in existing.to_gathered_config()
+    assert "mtu" not in existing.to_diff_dict()["l3Data"]
+    assert "mtu" not in existing.to_payload()["l3Data"]
+
+    desired_default = NetworkBaseModel.from_config({**response, "l3Data": {"arpSuppression": False}})
+    assert desired_default.l3_data.mtu == 9216
+    assert desired_default.to_payload()["l3Data"]["mtu"] == 9216
+    assert existing.get_diff(desired_default, exclude_unset=True)
+
+    desired_explicit = NetworkBaseModel.from_config({**response, "l3Data": {"mtu": 4000}})
+    assert not existing.get_diff(desired_explicit, exclude_unset=True)
+
+    observed_explicit = NetworkBaseModel.from_response({**response, "l3Data": {"mtu": 4000}})
+    assert observed_explicit.l3_data.mtu == 4000
+    assert observed_explicit.to_gathered_config()["mtu"] == 4000
+    assert observed_explicit.get_diff(desired_explicit, exclude_unset=True)
+
+
 def test_vxlan_factory_nested_merge_preserves_omissions_and_explicit_clears():
     """Verify typed nested merging retains omitted data and sends explicit false and empty lists."""
     existing = NetworkBaseModel.from_response(

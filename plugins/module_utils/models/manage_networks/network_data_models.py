@@ -13,7 +13,9 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -181,6 +183,21 @@ class DefaultL3DataModel(NDNestedModel):
     arp_suppression: bool | None = Field(default=False, alias="arpSuppression")
     routing_tag: int | None = Field(default=None, alias="routingTag")
     fabric_data: VxlanL3FabricDataModel | None = Field(default=None, alias="fabricData")
+
+    @model_validator(mode="after")
+    def preserve_missing_response_mtu(self, info: ValidationInfo) -> "DefaultL3DataModel":
+        """
+        # Summary
+
+        Do not report the write default as an MTU observed in a controller response.
+
+        ## Raises
+
+        None
+        """
+        if info.context and info.context.get("source") == "response" and "mtu" not in self.model_fields_set:
+            object.__setattr__(self, "mtu", None)
+        return self
 
     @field_validator("gateway_ipv4_address", mode="before")
     @classmethod
