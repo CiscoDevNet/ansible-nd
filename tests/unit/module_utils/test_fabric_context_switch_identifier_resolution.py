@@ -183,7 +183,6 @@ def test_optional_observer_sees_completed_queries_before_error_handling(status, 
     rest_send = SimpleNamespace(
         return_code=status,
         response_count=0,
-        response_generation=0,
         success=success,
         response_current={"DATA": {"switches": [_switch()]}},
         error_summary="test error",
@@ -255,20 +254,6 @@ def test_query_error_observer_reports_timeout_without_fresh_response():
     assert observations == [("/test/switches", error, False)]
     assert completed == []
     assert sender.calls == 1
-
-
-def test_query_error_observer_sees_response_received_before_later_retry_timeout():
-    first_reply = {"RETURN_CODE": 500, "MESSAGE": "Internal server error", "DATA": {"error": "Retryable query failure"}}
-    error = TimeoutError("Later switch query retry response was lost")
-    rest_send, sender = _query_transport(first_reply, error)
-    observations = []
-    context = FabricContext(rest_send, "fabric_1", query_error_observer=lambda path, exc, fresh: observations.append((path, exc, fresh)))
-    with pytest.raises(TimeoutError) as raised:
-        context._query_get("/test/switches")
-    assert raised.value is error
-    assert rest_send.response_current == first_reply
-    assert observations == [("/test/switches", error, True)]
-    assert sender.calls == 2
 
 
 def test_missing_error_observer_preserves_legacy_timeout_behavior():
@@ -509,7 +494,7 @@ def test_query_elapsed_time_is_available_before_completed_or_error_observer(monk
 
     rest_send = SimpleNamespace(
         return_code=200,
-        response_generation=0,
+        response_count=0,
         success=True,
         response_current={"DATA": {}},
         error_summary="",

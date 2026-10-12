@@ -426,12 +426,27 @@ def test_physical_parent_with_physical_children_fails_closed_without_mutation():
     assert writes(calls) == []
 
 
-def test_mutation_http500_is_single_attempt_and_outcome_is_unknown():
-    result, calls = run([summary("Ethernet1/50"), response({"message": "Internal server error"}, code=500, method="POST")])
-    assert result["failed"] is True
-    assert result["may_have_changed"] is True
-    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "unknown"
-    assert len(calls) == 3
+def test_action_uses_existing_shared_retry_then_matches_completed_response():
+    trace = Results()
+    result, calls = run(
+        [summary("Ethernet1/50"), response({"message": "Internal server error"}, code=500, method="POST"), action(item("Ethernet1/50"))],
+        results=trace,
+    )
+    assert result["failed"] is False
+    assert result["changed"] is True
+    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "success"
+    assert len(calls) == 4
+    posts = writes(calls)
+    assert len(posts) == 2
+    assert posts[0] == posts[1]
+    assert posts[0]["path"] == BREAKOUT
+    assert posts[0]["payload"] == {"interfaces": [{"switchId": SERIAL, "interfaceName": "Ethernet1/50", "breakoutMap": "25g-4x"}]}
+    # Standard RestSend registers the completed logical commit, not each retry.
+    assert trace.path == [calls[0]["path"], calls[1]["path"], BREAKOUT]
+    assert [entry["RETURN_CODE"] for entry in trace.responses] == [200, 200, 207]
+    assert len(result["api_calls"]) == 3
+    assert result["api_calls"][2]["response_received"] is True
+    assert result["api_calls"][2]["http_status"] == 207
 
 
 def test_verification_is_opt_in_focused_topology_not_map_fetch():
@@ -564,17 +579,18 @@ def test_transport_exception_is_unknown_without_replaying_mutation():
     assert len(writes(calls)) == 1
 
 
-def test_opt_in_get_after_transport_exception_clears_stale_post_payload():
+def test_optional_verification_is_not_attempted_after_aborted_action():
     result, calls = run(
         [summary("Ethernet1/50"), TimeoutError("Controller action response was lost"), summary("Ethernet1/50/1")],
         verify={"enabled": True},
     )
     assert result["failed"] is True
-    assert result["after_status"] == "observed"
-    assert result["verification"]["topology_matches"] is True
-    assert len(calls) == 4
-    assert_family_get(calls[3], "Ethernet1/50")
-    assert calls[3]["payload"] is None
+    assert result["may_have_changed"] is True
+    assert result["after_status"] == "unknown"
+    assert "after" not in result
+    assert result["verification"] == {"enabled": True, "complete": False}
+    assert "Optional topology verification was not attempted because the action request did not complete." in result["msg"]
+    assert len(calls) == 3
     assert len(writes(calls)) == 1
 
 
@@ -713,12 +729,14 @@ def test_http202_accepted_does_not_prove_breakout_action_completed():
 
 
 def test_transport_http500_does_not_trust_success_named_in_error_body():
-    result, calls = run([summary("Ethernet1/50"), action(item("Ethernet1/50"), code=500)])
+    result, calls = run([summary("Ethernet1/50"), action(item("Ethernet1/50"), code=500), TimeoutError("Lost retry response")])
     assert result["failed"] is True
     assert result["changed"] is False
     assert result["may_have_changed"] is True
     assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "unknown"
-    assert len(calls) == 3
+    assert len(calls) == 4
+    assert len(writes(calls)) == 2
+    assert writes(calls)[0] == writes(calls)[1]
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
@@ -1240,7 +1258,7 @@ def test_lost_discovery_response_is_registered_at_read_verbosity():
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
-def test_post_timeout_verification_registers_fresh_get_and_module_context(state):
+def test_post_timeout_preserves_unknown_outcome_without_followup_get(state):
     trace = Results()
     initial = "Ethernet1/50" if state == "merged" else "Ethernet1/50/1"
     final = "Ethernet1/50/1" if state == "merged" else "Ethernet1/50"
@@ -1252,14 +1270,16 @@ def test_post_timeout_verification_registers_fresh_get_and_module_context(state)
         results=trace,
     )
     assert result["failed"] is True
-    assert result["after_status"] == "observed"
-    operations = [OperationType.QUERY, OperationType.QUERY, OperationType.CREATE if state == "merged" else OperationType.DELETE, OperationType.QUERY]
+    assert result["may_have_changed"] is True
+    assert result["after_status"] == "unknown"
+    assert "after" not in result
+    assert result["verification"] == {"enabled": True, "complete": False}
+    operations = [OperationType.QUERY, OperationType.QUERY, OperationType.CREATE if state == "merged" else OperationType.DELETE]
     assert_registered_calls(trace, calls, operations, state=state)
-    assert [entry["RETURN_CODE"] for entry in trace.responses] == [200, 200, -1, 200]
-    assert trace.payload[3] is None
-    assert trace.results[3]["success"] is True
-    assert trace.responses[3]["DATA"]["interfaces"][0]["interfaceName"] == final
-    assert len(calls) == 4
+    assert [entry["RETURN_CODE"] for entry in trace.responses] == [200, 200, -1]
+    assert trace.responses[2]["response_received"] is False
+    assert trace.results[2]["success"] is False
+    assert len(calls) == 3
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
@@ -1352,7 +1372,7 @@ def test_lost_ip_lookup_response_is_registered_as_unanswered_read_in_debug_outpu
     assert output["api_response"][0]["response_received"] is False
 
 
-def test_get_retry_then_transport_loss_registers_last_actual_failure_once():
+def test_get_retry_then_transport_loss_registers_incomplete_commit_without_stale_response():
     trace = Results()
     report, calls = run([response({"message": "Controller unavailable"}, code=500), TimeoutError("Lost retry response")], results=trace)
     assert report["failed"] is True
@@ -1368,12 +1388,13 @@ def test_get_retry_then_transport_loss_registers_last_actual_failure_once():
     assert trace.verbosity_level == [3, 3]
     assert trace.metadata[1]["action"] == OperationType.QUERY.value
     assert trace.metadata[1]["state"] == "merged"
-    assert trace.responses[1]["RETURN_CODE"] == 500
-    assert trace.responses[1]["DATA"] == {"message": "Controller unavailable"}
+    assert trace.responses[1]["RETURN_CODE"] == -1
+    assert trace.responses[1]["DATA"] == {}
+    assert trace.responses[1]["response_received"] is False
     assert trace.results[1]["success"] is False
     assert len(report["api_calls"]) == 2
-    assert report["api_calls"][1]["response_received"] is True
-    assert report["api_calls"][1]["http_status"] == 500
+    assert report["api_calls"][1]["response_received"] is False
+    assert report["api_calls"][1]["http_status"] is None
 
 
 @pytest.mark.parametrize("requested", ["Ethernet1/50/1", "Ethernet1/50/3", " ethernet01/050/003 "])
@@ -1913,13 +1934,13 @@ def test_failed_platform_get_preserves_standard_ndoutput_and_read_diagnostics(fa
     assert report["api_outcomes"] == report["diff"] == []
     assert len(calls) == (2 if failure == "http_failure_then_transport_loss" else 1)
     assert all(call == {"path": BASE + "/switches/" + SERIAL, "verb": HttpVerbEnum.GET, "payload": None} for call in calls)
-    # Shared GET retries retain one logical failed read, not invented replies.
+    # Aborted shared GET commits retain one logical failed read, not intermediate replies.
     assert trace.path == [calls[0]["path"]]
     assert trace.verb == ["GET"] and trace.payload == [None] and trace.verbosity_level == [3]
     assert trace.metadata[0]["action"] == OperationType.QUERY.value
-    expected_code = {"not_found": 404, "transport_loss": -1, "http_failure_then_transport_loss": 500, "iosxe": 200, "unknown_platform": 200}[failure]
+    expected_code = {"not_found": 404, "transport_loss": -1, "http_failure_then_transport_loss": -1, "iosxe": 200, "unknown_platform": 200}[failure]
     assert trace.responses[0]["RETURN_CODE"] == expected_code
-    assert trace.responses[0].get("response_received", True) is (failure != "transport_loss")
+    assert trace.responses[0].get("response_received", True) is (failure not in {"transport_loss", "http_failure_then_transport_loss"})
     if failure in {"iosxe", "unknown_platform"}:
         assert trace.results[0]["success"] is True  # The GET succeeded, but eligibility did not.
         assert "requires NX-OS switches" in report["msg"]

@@ -79,6 +79,7 @@ options:
   verify:
     description:
     - Optional focused controller readback after executed actions. Disabled by default.
+    - Verification is not attempted if the action request aborts before the standard transport completes.
     - This option is specific to this module and does not expose the generic post-write verification prototype's retry settings.
     type: dict
     suboptions:
@@ -101,7 +102,8 @@ notes:
 - Automatic map replacement and overridden state are not supported. No reliable hardware-coupled ownership model is implemented,
   and hardware coupling can affect interfaces outside the requested parents.
 - An explicit deleted-then-merged map change is disruptive and non-atomic. The controller validates the new map when breakout is requested;
-  failure may leave the family native. No automatic rollback or write retry is performed.
+  failure may leave the family native. No automatic rollback or orchestrator-level write retry is performed.
+  Requests use the collection's standard transport retry behavior.
 - After unbreakout, interface-level configuration for restored or otherwise affected interfaces may remain pending
   even when the unbreakout itself has been applied.
 - Manage that interface-level configuration separately with the appropriate Ethernet interface module,

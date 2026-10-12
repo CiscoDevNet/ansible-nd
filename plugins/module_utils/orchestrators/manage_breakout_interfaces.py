@@ -53,7 +53,8 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
 
     Initial discovery is needed for idempotency and child selection. Action results
     describe API acknowledgements, not independently verified topology or running
-    configuration. Missing results remain unknown. No mutation is replayed.
+    configuration. Missing results remain unknown. The orchestrator does not
+    replay actions; requests use the standard RestSend retry behavior.
     """
 
     model_class: ClassVar[type] = BreakoutInterfaceModel
@@ -165,26 +166,20 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         self.results.register_api_call()
 
     def _request(self, path, verb, data=None, not_found_ok=False, operation_type=OperationType.QUERY):
-        """Keep the standard response handler; cap action requests at one send."""
-        previous_limit = self.rest_send.max_attempts
-        generation = self.rest_send.response_generation
+        """Keep standard transport behavior and trace only completed responses."""
+        response_count = self.rest_send.response_count
         registered_before = self.results.task_sequence_number if self.results is not None else None
         started = time.monotonic()
-        if data is None:
-            self.rest_send.clear_payload()
-        if verb != HttpVerbEnum.GET:
-            self.rest_send.max_attempts = 1
         try:
             return super()._request(path, verb, data, not_found_ok, operation_type)
         except Exception as error:
             if self.results is not None and self.results.task_sequence_number == registered_before:
                 self._register_unanswered_request(
-                    path, verb, operation_type, data, error, self.rest_send.response_current if self.rest_send.response_generation > generation else None
+                    path, verb, operation_type, data, error, self.rest_send.response_current if self.rest_send.response_count > response_count else None
                 )
             raise
         finally:
-            self.rest_send.max_attempts = previous_limit
-            fresh = self.rest_send.response_generation > generation
+            fresh = self.rest_send.response_count > response_count
             self._api_calls.append(
                 {
                     "method": verb.value,
@@ -406,7 +401,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         return outcomes, errors
 
     def _execute_action(self, submitted: list[dict[str, Any]], state: str) -> tuple[list[dict[str, Any]], list[str]]:
-        """Send one bulk POST; retain fresh partial results even when shared handling fails."""
+        """Submit a bulk action using standard transport and match completed replies."""
         action = "breakout" if state == "merged" else "unbreakout"
         endpoint_class = EpManageInterfacesBreakout if state == "merged" else EpManageInterfacesRemove
         endpoint = endpoint_class(fabric_name=self.fabric_name)
@@ -416,16 +411,16 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             if state == "merged":
                 wire_item["breakoutMap"] = item["breakout_map"]
             interfaces.append(wire_item)
-        before_generation = self.rest_send.response_generation
+        before_count = self.rest_send.response_count
         request_error = None
         try:
             self._request(
                 endpoint.path, endpoint.verb, {"interfaces": interfaces}, operation_type=OperationType.CREATE if state == "merged" else OperationType.DELETE
             )
-        except Exception as exc:  # Preserve the response; never replay an uncertain action.
+        except Exception as exc:  # Retain completed responses without an orchestrator-level replay.
             request_error = str(exc)
-        if self.rest_send.response_generation == before_generation:
-            message = request_error or "No controller response received."
+        if self.rest_send.response_count == before_count:
+            message = request_error or "No completed controller response is available."
             return [{**item, "action": action, "outcome": "unknown", "message": message} for item in submitted], [message]
         response = self.rest_send.response_current
         outcomes, errors = self.match_action_results(response, submitted, action)
@@ -552,7 +547,17 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             result["after"] = [after[key] for key in keys]
 
         # This GET is opt-in and restricted to the families that were actually submitted.
-        if not check_mode and submitted and (params.get("verify") or {}).get("enabled", False):
+        # An aborted standard transport commit can retain the action payload.
+        # Stop rather than sending that body on a verification GET.
+        verify_requested = not check_mode and submitted and (params.get("verify") or {}).get("enabled", False)
+        if verify_requested and self.rest_send.payload is not None:
+            errors.append("Optional topology verification was not attempted because the action request did not complete.")
+            result["verification"] = {"enabled": True, "complete": False}
+            result.pop("after", None)
+            result["after_status"] = "unknown"
+            result["may_have_changed"] = True
+            failed = True
+        elif verify_requested:
             try:
                 mutation_keys = {(item["switch_id"], item["interface_name"]) for item in submitted}
                 observed = self.discover([model for model in models if (model.switch_id, model.interface_name) in mutation_keys])
