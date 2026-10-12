@@ -9,7 +9,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesSummaryGet,
     ManageInterfacesSummaryEndpointParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet, ManageSwitchesListEndpointParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
@@ -55,12 +56,20 @@ def test_false_include_all_is_not_omitted():
 def test_switch_list_exposes_filtered_pagination_without_legacy_query_changes():
     endpoint = EpManageSwitchesListGet(fabric_name="fab1")
     assert endpoint.path == "/api/v1/manage/fabrics/fab1/switches"
-    endpoint.endpoint_params = ManageSwitchesListEndpointParams(filter="fabricManagementIp:192.0.2.1", max=1000, offset=0)
+    endpoint.lucene_params = LuceneQueryParams(filter="fabricManagementIp:192.0.2.1", max=1000, offset=0)
     assert parse_qs(urlsplit(endpoint.path).query) == {"filter": ["fabricManagementIp:192.0.2.1"], "max": ["1000"], "offset": ["0"]}
 
 
-@pytest.mark.parametrize("params", [ManageSwitchesListEndpointParams, ManageInterfacesSummaryEndpointParams])
-@pytest.mark.parametrize("values", [{"max": 0}, {"offset": -1}, {"filter": ""}])
+@pytest.mark.parametrize(
+    "params, values",
+    [
+        (ManageInterfacesSummaryEndpointParams, {"max": 0}),
+        (ManageInterfacesSummaryEndpointParams, {"offset": -1}),
+        (ManageInterfacesSummaryEndpointParams, {"filter": ""}),
+        (LuceneQueryParams, {"max": 0}),
+        (LuceneQueryParams, {"offset": -1}),
+    ],
+)
 def test_discovery_query_params_validate_values(params, values):
     with pytest.raises(ValueError):
         params(**values)
