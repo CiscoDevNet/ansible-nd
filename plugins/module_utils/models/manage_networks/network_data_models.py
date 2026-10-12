@@ -648,6 +648,7 @@ class VxlanNetworkModel(NetworkBaseModel):
             else:
                 data.pop("l3Data", None)
             return data
+        # TODO(4.2.1) network-get-omits-empty-collections
         if not kwargs.get("exclude_unset", False):
             l3_data = data.setdefault("l3Data", {})
             l3_data.setdefault("secondaryGatewayIpv4Collection", [])
