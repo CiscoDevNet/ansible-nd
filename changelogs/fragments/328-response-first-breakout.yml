@@ -1,4 +1,0 @@
----
-minor_changes:
-  - nd_manage_breakout_interfaces - add parent-oriented merged/deleted breakout management with serial or management-IP switch inputs, response-correlated results and optional focused verification, without separate module save/deploy controls.
-  - nd_manage_breakout_interfaces - validate requested switch platforms before interface discovery or mutation, allowing NX-OS targets including Campus VXLAN switches and rejecting IOS-XE or unverifiable platform metadata with targeted cached switch reads.
