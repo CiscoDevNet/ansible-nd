@@ -15,6 +15,8 @@
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         config: "{{ nd4x_vpc_access_cleanup_config }}"
+        config_actions:
+          deploy: true
         state: deleted
 
     - name: "DELETED SETUP: Create exact vpc101 pre-state"
@@ -23,6 +25,8 @@
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ vpc_access_overridden }}"
+        config_actions:
+          deploy: true
         state: merged
       register: nd4x_deleted_setup
 
@@ -70,6 +74,9 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
         config:
           - switch_ip: "{{ test_switch_ip_peer1 }}"
             interface_name: vpc101
@@ -94,28 +101,35 @@
             | list
             | length == 0
 
-    - name: "DELETED IDEMPOTENT: Wait for convergence"
+    - name: "DELETED RECONCILE: Wait for staged deletion convergence"
       ansible.builtin.pause:
         seconds: 30
 
-    - name: "DELETED IDEMPOTENT: Delete vpc101 again in normal mode"
+    - name: "DELETED RECONCILE: Deploy the exact staged deletion"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_vpc_access
         state: deleted
-        check_mode: false
+        idempotency: true
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
         config:
           - switch_ip: "{{ test_switch_ip_peer1 }}"
             interface_name: vpc101
         expected:
+          check_mode:
+            changed: true
+            failed: false
           apply:
-            changed: false
+            changed: true
             failed: false
           idempotency:
             changed: false
             failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
         nd_queries:
           - name: Validate vpc101 absence on peer 1
             path: >-
@@ -145,37 +159,31 @@
                   @.configData.networkOS.policy.policyType == 'accessVpcHost'
                   )]
                 exists: false
-      register: nd4x_deleted_idempotent
+      register: nd4x_deleted_reconcile
 
-    - name: "DELETED IDEMPOTENT: Verify real no-change result"
+    - name: "DELETED RECONCILE: Verify the staged delete deployed once"
       ansible.builtin.assert:
         that:
-          - not nd4x_deleted_idempotent.first_run_result.changed | bool
-          - not nd4x_deleted_idempotent.second_run_result.changed | bool
-          - nd4x_deleted_idempotent.check_mode_result is none
-          - nd4x_deleted_idempotent.idempotency_attempts == 1
-          - nd4x_deleted_idempotent.nd_query_results | length == 2
+          - nd4x_deleted_reconcile.check_mode_result.changed | bool
+          - nd4x_deleted_reconcile.first_run_result.changed | bool
+          - not nd4x_deleted_reconcile.second_run_result.changed | bool
+          - nd4x_deleted_reconcile.idempotency_attempts == 1
+          - >-
+            nd4x_deleted_reconcile.check_mode_query_results | length
+            == nd4x_vpc_pair_check_mode_queries | length
+          - >-
+            nd4x_deleted_reconcile.check_mode_query_results
+            | selectattr('unchanged', 'equalto', true)
+            | list
+            | length == nd4x_vpc_pair_check_mode_queries | length
+          - nd4x_deleted_reconcile.nd_query_results | length == 2
 
   always:
-    - name: "DELETED CLEANUP: Remove reserved vPC interfaces"
-      cisco.nd.nd_interface_vpc_access:
-        output_level: "{{ nd_info.output_level }}"
-        fabric_name: "{{ test_fabric_name }}"
-        config: "{{ nd4x_vpc_access_cleanup_config }}"
-        state: deleted
-      ignore_errors: true
-      tags:
-        - always
-
-    - name: "DELETED CLEANUP: Remove test vPC pair"
-      cisco.nd.nd_manage_vpc_pair:
-        output_level: "{{ nd_info.output_level }}"
-        fabric_name: "{{ test_fabric_name }}"
-        config:
-          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
-            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
-        state: deleted
-      ignore_errors: true
-      when: test_manage_vpc_pairs | bool
+    - name: Run cleanup and verify reserved resources
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_cleanup.yaml
+        apply:
+          tags:
+            - always
       tags:
         - always

@@ -24,6 +24,26 @@
     seconds: 30
   when: test_manage_vpc_pairs | bool
 
+- name: "PAIR SETUP: Gather the pair after reset"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: gathered
+  register: nd4x_pair_setup_absent
+  when: test_manage_vpc_pairs | bool
+
+- name: "PAIR SETUP: Verify the old pair was removed before recreation"
+  ansible.builtin.assert:
+    that:
+      - nd4x_pair_setup_absent.gathered.vpc_pairs | default([]) | length == 0
+    fail_msg: >-
+      The selected vPC pair still exists after reset. Refusing to create a new
+      pair until the old relationship is confirmed absent.
+  when: test_manage_vpc_pairs | bool
+
 - name: "PAIR SETUP: Create configured test vPC pair"
   cisco.nd.nd_manage_vpc_pair:
     config_actions:

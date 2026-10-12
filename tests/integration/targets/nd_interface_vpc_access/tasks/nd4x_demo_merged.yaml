@@ -15,6 +15,8 @@
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         config: "{{ nd4x_vpc_access_cleanup_config }}"
+        config_actions:
+          deploy: true
         state: deleted
 
     - name: "MERGED CREATE: Create vpc100"
@@ -25,6 +27,9 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
         config:
           - "{{ vpc_access_baseline }}"
         expected:
@@ -79,6 +84,9 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
         config:
           - "{{ vpc_access_baseline }}"
         expected:
@@ -184,26 +192,23 @@
           - nd4x_merged_idempotent.idempotency_attempts == 1
           - nd4x_merged_idempotent.nd_query_results | length == 2
 
-  always:
-    - name: "MERGED CLEANUP: Remove reserved vPC interfaces"
-      cisco.nd.nd_interface_vpc_access:
-        output_level: "{{ nd_info.output_level }}"
-        fabric_name: "{{ test_fabric_name }}"
-        config: "{{ nd4x_vpc_access_cleanup_config }}"
-        state: deleted
-      ignore_errors: true
+    - name: Run original merged-state edge cases with the harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged_edge_cases.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_merged
       tags:
-        - always
+        - nd4x_demo
+        - nd4x_demo_merged
 
-    - name: "MERGED CLEANUP: Remove test vPC pair"
-      cisco.nd.nd_manage_vpc_pair:
-        output_level: "{{ nd_info.output_level }}"
-        fabric_name: "{{ test_fabric_name }}"
-        config:
-          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
-            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
-        state: deleted
-      ignore_errors: true
-      when: test_manage_vpc_pairs | bool
+  always:
+    - name: Run cleanup and verify reserved resources
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_cleanup.yaml
+        apply:
+          tags:
+            - always
       tags:
         - always

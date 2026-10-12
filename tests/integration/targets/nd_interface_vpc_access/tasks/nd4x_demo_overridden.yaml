@@ -232,6 +232,8 @@
         output_level: "{{ nd_info.output_level }}"
         fabric_name: "{{ test_fabric_name }}"
         config: "{{ nd4x_vpc_access_cleanup_config }}"
+        config_actions:
+          deploy: true
         state: deleted
 
     - name: "OVERRIDDEN SETUP: Create baseline vpc100"
@@ -240,6 +242,8 @@
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ vpc_access_baseline }}"
+        config_actions:
+          deploy: true
         state: merged
 
     - name: "OVERRIDDEN SETUP: Wait for baseline convergence"
@@ -252,6 +256,8 @@
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ vpc_access_updated }}"
+        config_actions:
+          deploy: true
         state: replaced
       register: nd4x_overridden_prestate
 
@@ -265,6 +271,8 @@
         fabric_name: "{{ test_fabric_name }}"
         config:
           - "{{ vpc_access_updated }}"
+        config_actions:
+          deploy: true
         state: replaced
       register: nd4x_overridden_prestate_idempotent
 
@@ -282,9 +290,15 @@
           - not nd4x_overridden_prestate_idempotent.changed | bool
           - >-
             nd4x_overridden_prestate_idempotent.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | list
+            | length == 1
+          - >-
+            nd4x_overridden_prestate_idempotent.after
             | selectattr('interface_name', 'equalto', 'vpc101')
             | list
             | length == 0
+          - vpc100_before_override.switch_ip == test_switch_ip_peer1
           - >-
             vpc100_before_override.config_data.network_os.policy.access_vlan
             == 20
@@ -297,6 +311,18 @@
           - >-
             vpc100_before_override.config_data.network_os.policy.peer2_member_ports
             == ['Ethernet1/5']
+          - >-
+            vpc100_before_override.config_data.network_os.policy.peer1_port_channel_id
+            == 100
+          - >-
+            vpc100_before_override.config_data.network_os.policy.peer2_port_channel_id
+            == 100
+          - >-
+            vpc100_before_override.config_data.network_os.policy.port_channel_mode
+            == 'active'
+          - >-
+            vpc100_before_override.config_data.network_os.policy.lacp_rate
+            == 'fast'
 
     - name: "OVERRIDDEN REPLACE SET: Retain only vpc101"
       cisco.nd.nd4x_module_test:
@@ -306,6 +332,9 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
         config:
           - "{{ vpc_access_overridden }}"
         expected:
@@ -362,6 +391,9 @@
         common_args:
           output_level: "{{ nd_info.output_level }}"
           fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
         config:
           - "{{ vpc_access_overridden }}"
         expected:
@@ -386,25 +418,11 @@
             == nd4x_switch_inventory.current.switches | length + 2
 
   always:
-    - name: "OVERRIDDEN CLEANUP: Remove reserved vPC interfaces"
-      cisco.nd.nd_interface_vpc_access:
-        output_level: "{{ nd_info.output_level }}"
-        fabric_name: "{{ test_fabric_name }}"
-        config: "{{ nd4x_vpc_access_cleanup_config }}"
-        state: deleted
-      ignore_errors: true
-      tags:
-        - always
-
-    - name: "OVERRIDDEN CLEANUP: Remove test vPC pair"
-      cisco.nd.nd_manage_vpc_pair:
-        output_level: "{{ nd_info.output_level }}"
-        fabric_name: "{{ test_fabric_name }}"
-        config:
-          - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
-            peer2_switch_id: "{{ test_switch_ip_peer2 }}"
-        state: deleted
-      ignore_errors: true
-      when: test_manage_vpc_pairs | bool
+    - name: Run cleanup and verify reserved resources
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_cleanup.yaml
+        apply:
+          tags:
+            - always
       tags:
         - always

@@ -294,7 +294,7 @@
           /api/v1/manage/fabrics/{{ test_fabric_name
           }}/switches/{{ test_switch_id_peer1 }}/interfaces
         expected_status: 200
-        unordered: true
+        unordered_paths: [/interfaces]
         ignore_keys:
           - operData
       - name: Snapshot complete interface state on vPC peer 2
@@ -302,7 +302,7 @@
           /api/v1/manage/fabrics/{{ test_fabric_name
           }}/switches/{{ test_switch_id_peer2 }}/interfaces
         expected_status: 200
-        unordered: true
+        unordered_paths: [/interfaces]
         ignore_keys:
           - operData
   when: nd4x_supported | bool
@@ -333,7 +333,7 @@
                 ~ '/interfaces'
               ),
               'expected_status': 200,
-              'unordered': true,
+              'unordered_paths': ['/interfaces'],
               'ignore_keys': ['operData']
             }
           ]

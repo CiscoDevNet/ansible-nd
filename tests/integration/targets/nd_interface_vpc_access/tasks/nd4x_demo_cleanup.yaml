@@ -1,0 +1,73 @@
+---
+- name: "HARNESS CLEANUP: Remove reserved vPC interfaces"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ nd4x_vpc_access_cleanup_config }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  failed_when: false
+
+- name: "HARNESS CLEANUP: Wait for interface removal to converge"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "HARNESS CLEANUP: Remove the managed primary vPC pair"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: deleted
+  failed_when: false
+  when: test_manage_vpc_pairs | bool
+
+- name: "HARNESS CLEANUP: Wait for pair removal to converge"
+  ansible.builtin.pause:
+    seconds: 30
+  when: test_manage_vpc_pairs | bool
+
+- name: "HARNESS CLEANUP: Gather the managed primary vPC pair"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: gathered
+  register: nd4x_cleanup_pair_state
+  when: test_manage_vpc_pairs | bool
+
+- name: "HARNESS CLEANUP: Query both vPC peers after cleanup"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ item }}/interfaces
+    method: get
+  loop:
+    - "{{ test_switch_id_peer1 }}"
+    - "{{ test_switch_id_peer2 }}"
+  loop_control:
+    label: "{{ item }}"
+  register: nd4x_cleanup_interface_inventory
+  changed_when: false
+
+- name: "HARNESS CLEANUP: Verify interfaces and managed pair are absent"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_cleanup_interface_inventory.results
+        | map(attribute='current.interfaces')
+        | flatten
+        | selectattr('interfaceType', 'equalto', 'vpc')
+        | selectattr('interfaceName', 'in', nd4x_vpc_access_reserved_interfaces)
+        | list
+        | length == 0
+      - >-
+        not (test_manage_vpc_pairs | bool)
+        or nd4x_cleanup_pair_state.gathered.vpc_pairs | default([]) | length == 0
+    fail_msg: >-
+      Cleanup left reserved access vPC interfaces or the managed primary
+      pair behind. Check the cleanup operations and controller convergence.
