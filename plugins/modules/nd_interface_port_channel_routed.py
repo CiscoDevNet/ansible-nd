@@ -41,9 +41,11 @@ options:
     - Each item specifies the target switch, the port-channel interface name, and its configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Omit for O(state=gathered). This module currently supports gather-all only; gathered filtering is not supported.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
@@ -274,9 +276,11 @@ options:
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the specified port-channels via the C(interfaceActions/remove) API.
       Member ethernet interfaces are released from the port-channel.
+    - Use O(state=gathered) to read all C(l3Po) and C(iosXeL3PortChannel) port-channels
+      across the fabric without making changes. O(config) must be omitted or empty.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -466,6 +470,12 @@ EXAMPLES = r"""
               mtu: 1500
     state: merged
   check_mode: true
+
+- name: Gather all routed port-channels in the fabric
+  cisco.nd.nd_interface_port_channel_routed:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_port_channel_routed
 """
 
 RETURN = r"""
@@ -485,6 +495,7 @@ before:
   - The list can include matching interfaces on the selected switches that were not explicitly listed in O(config); O(state=overridden)
     uses fabric-wide scope.
   - An empty list when no matching interface configuration existed.
+  - Always an empty list for O(state=gathered); retrieved configuration is returned under C(gathered).
   returned: always
   type: list
   elements: dict
@@ -507,6 +518,7 @@ after:
   - The matching port-channel configuration in the same query scope after the module ran, structured like O(config).
   - Successfully deleted interfaces are absent. The list can include matching interfaces not explicitly listed in O(config).
   - In check mode, the configuration that would result had the module run outside of check mode.
+  - Always an empty list for O(state=gathered); retrieved configuration is returned under C(gathered).
   returned: always
   type: list
   elements: dict
@@ -529,13 +541,13 @@ diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
   - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -546,6 +558,28 @@ proposed:
         network_os_type: nx-os
         policy:
           mtu: 1500
+gathered:
+  description:
+  - All C(l3Po) and C(iosXeL3PortChannel) routed port-channels across the fabric.
+  - Returned in reusable Ansible configuration format.
+  - System-provisioned and user-defined routed port-channel policy types are excluded.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.1
+    interface_name: port-channel20
+    config_data:
+      network_os:
+        network_os_type: nx-os
+        policy:
+          policy_type: l3Po
+          admin_state: true
+          ip: 10.1.1.1
+          prefix: 30
+          ports:
+          - Ethernet1/10
+          port_channel_mode: active
 logs:
   description:
   - Reserved for internal diagnostic log messages collected during the run.
@@ -598,10 +632,21 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_port_channel_routed")
+
+    if module.params.get("state") == "gathered" and module.params.get("config"):
+        module.fail_json(
+            msg=("config is not supported when state is gathered because this module currently supports gather-all" " only; omit config or use an empty list.")
+        )
 
     nd_state_machine = None
 
@@ -623,7 +668,7 @@ def main():
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
 
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
