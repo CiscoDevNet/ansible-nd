@@ -1115,8 +1115,12 @@ def test_deleted_ios_xe_port_channel_uses_existing_model_for_canonical_remove(
 ) -> None:
     """An identifier-only workflow delete retains controller-derived platform and member context."""
     current = _wire_interface(
-        "port-channel121", "portChannel", policy_type,
-        network_os_type="ios-xe", mode=mode, **policy,
+        "port-channel121",
+        "portChannel",
+        policy_type,
+        network_os_type="ios-xe",
+        mode=mode,
+        **policy,
     )
     current["operData"] = {"operationalStatus": "down", "portChannelId": -1}
     planner, _recorder = _planner(responses=[{"interfaces": [current]}])
@@ -1135,8 +1139,11 @@ def test_deleted_ios_xe_port_channel_uses_existing_model_for_canonical_remove(
 def test_deleted_ios_xe_foreign_port_channel_uses_observed_platform_proxy() -> None:
     """A cross-policy delete also uses canonical IOS-XE removal without trusting an input hint."""
     current = _wire_interface(
-        "port-channel121", "portChannel", "foreignDeletablePolicy",
-        network_os_type="ios-xe", mode="trunk",
+        "port-channel121",
+        "portChannel",
+        "foreignDeletablePolicy",
+        network_os_type="ios-xe",
+        mode="trunk",
     )
     current["operData"] = {"operationalStatus": "down", "portChannelId": -1}
     planner, _recorder = _planner(
