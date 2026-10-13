@@ -43,6 +43,8 @@ def test_manage_fabric_campus_ibgp_vxlan_orchestrator_00010() -> None:
     assert instance.delete_endpoint is EpManageFabricsDelete
     assert instance.query_one_endpoint is EpManageFabricsGet
     assert instance.query_all_endpoint is EpManageFabricsListGet
+    assert instance.supports_gathered_server_filtering is False
+    assert instance.gathered_lucene_spec is None
 
 
 def test_manage_fabric_campus_ibgp_vxlan_orchestrator_00020(monkeypatch) -> None:
@@ -112,3 +114,69 @@ def test_manage_fabric_campus_ibgp_vxlan_orchestrator_00040(monkeypatch) -> None
 
     with pytest.raises(Exception, match="Query all failed: controller unavailable"):
         instance.query_all()
+
+
+def test_manage_fabric_campus_ibgp_vxlan_orchestrator_00050(
+    monkeypatch,
+) -> None:
+    """Gather-all scans mixed-family pages even when the first has no Campus."""
+    instance = _orchestrator()
+    instance.rest_send.params["state"] = "gathered"
+
+    monkeypatch.setattr(type(instance), "fabric_inventory_page_size", 2)
+
+    pages = [
+        [
+            {
+                "name": "external1",
+                "category": "fabric",
+                "management": {"type": "externalConnectivity"},
+            },
+            {
+                "name": "ibgp1",
+                "category": "fabric",
+                "management": {"type": "vxlanIbgp"},
+            },
+        ],
+        [
+            {
+                "name": "campus1",
+                "category": "fabric",
+                "management": {"type": "vxlanCampus"},
+            },
+            {
+                "name": "ibgp2",
+                "category": "fabric",
+                "management": {"type": "vxlanIbgp"},
+            },
+        ],
+        [
+            {
+                "name": "campus2",
+                "category": "fabric",
+                "management": {"type": "vxlanCampus"},
+            },
+        ],
+    ]
+    requests = []
+
+    def fake_request(**kwargs):
+        requests.append((kwargs["path"], kwargs["verb"]))
+        return {"fabrics": pages[len(requests) - 1]}
+
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    result = instance.query_all()
+
+    assert [item["name"] for item in result] == ["campus1", "campus2"]
+
+    expected_requests = []
+    for offset in (0, 2, 4):
+        endpoint = EpManageFabricsListGet()
+        endpoint.endpoint_params.category = "fabric"
+        endpoint.endpoint_params.max = 2
+        endpoint.endpoint_params.offset = offset
+        endpoint.endpoint_params.sort = "name"
+        expected_requests.append((endpoint.path, endpoint.verb))
+
+    assert requests == expected_requests

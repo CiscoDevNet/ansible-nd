@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from ansible.module_utils.common.arg_spec import ModuleArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_routed_interface import PortChannelRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -78,13 +79,24 @@ class _FakeAnsibleModule:
     """
 
     last_argument_spec: dict[str, Any] = {}
+    last_required_if: list[tuple[str, str, list[str]]] = []
 
-    def __init__(self, *, config_actions: Any, check_mode: bool, argument_spec: dict[str, Any], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        config_actions: Any,
+        check_mode: bool,
+        argument_spec: dict[str, Any],
+        state: str = "merged",
+        config: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> None:
         type(self).last_argument_spec = argument_spec
+        type(self).last_required_if = kwargs.get("required_if", [])
         self.supports_check_mode = kwargs.get("supports_check_mode")
         self.params: dict[str, Any] = {
-            "config": [],
-            "state": "merged",
+            "config": [] if config is None else config,
+            "state": state,
             "config_actions": None if config_actions is OMITTED else config_actions,
             "output_level": "normal",
         }
@@ -201,7 +213,13 @@ class _FakeStateMachine:
 
 
 def _run_main(
-    monkeypatch: pytest.MonkeyPatch, *, config_actions: Any = OMITTED, check_mode: bool = False, failure: Exception | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    config_actions: Any = OMITTED,
+    check_mode: bool = False,
+    failure: Exception | None = None,
+    state: str = "merged",
+    config: list[dict[str, Any]] | None = None,
 ) -> tuple[type[BaseException], dict[str, Any], _FakeStateMachine]:
     """
     # Summary
@@ -220,7 +238,17 @@ def _run_main(
         pass
 
     _StateMachine.failure = failure
-    monkeypatch.setattr(module, "AnsibleModule", lambda **kwargs: _FakeAnsibleModule(config_actions=config_actions, check_mode=check_mode, **kwargs))
+    monkeypatch.setattr(
+        module,
+        "AnsibleModule",
+        lambda **kwargs: _FakeAnsibleModule(
+            config_actions=config_actions,
+            check_mode=check_mode,
+            state=state,
+            config=config,
+            **kwargs,
+        ),
+    )
     monkeypatch.setattr(module, "NDStateMachine", _StateMachine)
     monkeypatch.setattr(module, "require_pydantic", lambda module: None)
     monkeypatch.setattr(module, "setup_logging", lambda module: None)
@@ -261,6 +289,20 @@ def test_nd_interface_port_channel_routed_00000(monkeypatch: pytest.MonkeyPatch)
     assert set(spec["config_actions"]["options"]) == {"deploy"}
     network_os = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]
     assert network_os["network_os_type"]["required"] is True
+    assert _FakeAnsibleModule.last_required_if == [
+        ("state", "merged", ["config"]),
+        ("state", "replaced", ["config"]),
+        ("state", "overridden", ["config"]),
+        ("state", "deleted", ["config"]),
+    ]
+    assert spec["config"]["required"] is False
+    assert spec["state"]["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
 
 
 # =============================================================================
@@ -375,6 +417,170 @@ def test_nd_interface_port_channel_routed_00040(monkeypatch: pytest.MonkeyPatch)
     assert orchestrator._calls == [("remove", [removed]), ("deploy", [ACCEPTED_PAIR, removed])]
     assert orchestrator._pending_removes == []
     assert orchestrator._pending_deploys == []
+
+
+def test_nd_interface_port_channel_routed_00050(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify gathered state never flushes the remove or deploy queues, even outside
+    check mode and when config_actions.deploy is true.
+
+    ## Test
+
+    - State is gathered
+    - Check mode is false
+    - Deploy is explicitly requested
+    - No remove or deploy operation is called
+
+    ## Classes and Methods
+
+    - nd_interface_port_channel_routed.main()
+    """
+    kind, kwargs, state_machine = _run_main(
+        monkeypatch,
+        config_actions={"deploy": True},
+        check_mode=False,
+        state="gathered",
+        config=[],
+    )
+    orchestrator = state_machine.model_orchestrator
+
+    assert kind is _ExitJson
+    assert kwargs == {}
+    assert orchestrator.deploy is True
+    assert orchestrator._calls == []
+    assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
+
+
+def test_nd_interface_port_channel_routed_00060(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify gathered state rejects non-empty config before constructing the state
+    machine because routed port-channel gathered filtering is not supported.
+
+    ## Test
+
+    - State is gathered
+    - Config contains one interface identifier
+    - fail_json is called
+    - NDStateMachine is never initialized
+
+    ## Classes and Methods
+
+    - nd_interface_port_channel_routed.main()
+    """
+    gathered_config = [
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "port-channel20",
+        }
+    ]
+
+    monkeypatch.setattr(
+        module,
+        "AnsibleModule",
+        lambda **kwargs: _FakeAnsibleModule(
+            config_actions=OMITTED,
+            check_mode=False,
+            state="gathered",
+            config=gathered_config,
+            **kwargs,
+        ),
+    )
+    monkeypatch.setattr(module, "require_pydantic", lambda module: None)
+    monkeypatch.setattr(module, "setup_logging", lambda module: None)
+
+    class _MustNotInitializeStateMachine:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pytest.fail("NDStateMachine must not be initialized for invalid gathered config")
+
+    monkeypatch.setattr(module, "NDStateMachine", _MustNotInitializeStateMachine)
+
+    with pytest.raises(_FailJson) as exc_info:
+        module.main()
+
+    result = exc_info.value.args[0]
+
+    assert result["msg"] == (
+        "config is not supported when state is gathered because this module " "currently supports gather-all only; omit config or use an empty list."
+    )
+
+
+@pytest.mark.parametrize(
+    ("params", "expect_error"),
+    (
+        (
+            {
+                "fabric_name": "fabric_1",
+                "state": "gathered",
+            },
+            False,
+        ),
+        (
+            {
+                "fabric_name": "fabric_1",
+                "state": "gathered",
+                "config": [],
+            },
+            False,
+        ),
+        (
+            {
+                "fabric_name": "fabric_1",
+                "state": "merged",
+            },
+            True,
+        ),
+        (
+            {
+                "fabric_name": "fabric_1",
+                "state": "replaced",
+            },
+            True,
+        ),
+        (
+            {
+                "fabric_name": "fabric_1",
+                "state": "overridden",
+            },
+            True,
+        ),
+        (
+            {
+                "fabric_name": "fabric_1",
+                "state": "deleted",
+            },
+            True,
+        ),
+    ),
+)
+def test_nd_interface_port_channel_routed_00070(
+    monkeypatch,
+    params,
+    expect_error,
+):
+    """Validate gathered and write states through the real Ansible contract."""
+
+    def validate_constructor(**kwargs):
+        validation = ModuleArgumentSpecValidator(
+            kwargs["argument_spec"],
+            required_if=kwargs.get("required_if", []),
+        ).validate(params)
+
+        if expect_error:
+            assert validation.error_messages
+            assert "config" in " ".join(validation.error_messages)
+        else:
+            assert validation.error_messages == []
+
+        raise _FailJson({"validation_complete": True})
+
+    monkeypatch.setattr(module, "AnsibleModule", validate_constructor)
+
+    with pytest.raises(_FailJson):
+        module.main()
 
 
 # =============================================================================
