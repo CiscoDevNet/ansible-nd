@@ -670,11 +670,11 @@ def _build_delete_existing_pairs(
     conflicting_keys: set[tuple[str, str]] = set()
     for active_pair in pairs:
         active_key = _vpc_pair_identity_key(active_pair)
-        conflict = next(
-            (key for key in sorted(requested_keys) if active_key and active_key != key and set(active_key) & set(key)),
-            None,
-        )
-        if conflict:
+        if not active_key:
+            continue
+        for conflict in sorted(key for key in requested_keys if active_key != key and set(active_key) & set(key)):
+            if conflict in conflicting_keys:
+                continue
             conflicting_keys.add(conflict)
             if module is not None:
                 module.warn(

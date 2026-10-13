@@ -94,6 +94,23 @@ def test_manage_vpc_pair_query_00026_build_delete_conflict_does_not_block_other_
     module.warn.assert_called_once()
 
 
+def test_manage_vpc_pair_query_00027_build_delete_flags_all_pairs_sharing_switch_with_live_pair():
+    """Every requested delete sharing a switch with the same live pair is skipped, not just the first."""
+    module = MagicMock()
+
+    result = query._build_delete_existing_pairs(
+        [_present_pair(SER_A, SER_C)],
+        [_config_item(SER_A, SER_B), _config_item(SER_C, SER_D)],
+        module=module,
+    )
+
+    assert result == []
+    assert module.warn.call_count == 2
+    warned = " ".join(call[0][0].lower() for call in module.warn.call_args_list)
+    assert "ser-a/ser-b" in warned
+    assert "ser-c/ser-d" in warned
+
+
 def test_manage_vpc_pair_query_00030_build_delete_empty_config_returns_all_pairs():
     """Empty config preserves prior behavior: all queried pairs are returned unchanged."""
     pairs = [_present_pair(SER_A, SER_B), _present_pair(SER_C, SER_D)]
