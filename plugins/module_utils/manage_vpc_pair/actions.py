@@ -16,10 +16,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _is_update_needed,
     _raise_vpc_error,
+    get_config_actions,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query import (
+    _is_switch_config_in_sync,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validation import (
     _get_pairing_support_details,
     _validate_fabric_peering_support,
+    _validate_fabric_switches,
     _validate_switch_conflicts,
     _validate_switches_exist_in_fabric,
     _validate_vpc_pair_deletion,
@@ -518,6 +523,78 @@ def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
         )
 
 
+def _fabric_switches_cached(nrm: Any, nd_v2: NDModuleV2, fabric_name: str) -> dict[str, dict[str, Any]]:
+    """
+    Return the fabric switch inventory, reading it at most once per run.
+
+    ``custom_vpc_delete`` builds a fresh ``NDModuleV2`` per pair, so deleting
+    several already-unpaired pairs would otherwise issue one identical inventory
+    GET per pair. Cache the snapshot on ``module.params`` (keyed by fabric) so the
+    delete phase reads it once. The deploy phase deliberately re-reads inventory
+    after configSave and is not served from this cache.
+    """
+    cache = nrm.module.params.get("_fabric_switches_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        nrm.module.params["_fabric_switches_cache"] = cache
+    if fabric_name not in cache:
+        cache[fabric_name] = _validate_fabric_switches(nd_v2, fabric_name)
+    return cache[fabric_name]
+
+
+def _flag_pending_member_switches_for_deploy(
+    nrm: Any,
+    nd_v2: NDModuleV2,
+    fabric_name: str,
+    switch_id: str,
+    peer_switch_id: str | None,
+) -> None:
+    """
+    Flush a staged delete even when the pair is already unpaired on the controller.
+
+    A prior save=false delete unpairs the pair on the controller but leaves the
+    member switches out-of-sync. When a later save/deploy delete finds the pair
+    already gone, record any still out-of-sync member switch in
+    ``_not_in_sync_pairs`` so the deploy step runs configSave + switchActions/deploy.
+    Only switches explicitly reported out-of-sync are flagged, so the run stays
+    idempotent once the switches are back in sync.
+    """
+    config_actions = get_config_actions(nrm.module)
+    if not (config_actions.get("save") or config_actions.get("deploy")):
+        # Neither save nor deploy is requested, so the deploy step will not flush
+        # a staged removal. Skip the inventory read and the misleading warning.
+        return
+
+    try:
+        switches = _fabric_switches_cached(nrm, nd_v2, fabric_name)
+    except Exception as switch_query_error:
+        nrm.module.warn(
+            f"Could not verify member switch sync state after idempotent unpair of "
+            f"{nrm.current_identifier}: {_first_exception_line(switch_query_error)}. "
+            f"A pending staged delete may require a manual save/deploy."
+        )
+        return
+
+    pending_switch_ids = [serial for serial in (switch_id, peer_switch_id) if serial and _is_switch_config_in_sync(switches.get(serial)) is False]
+    if not pending_switch_ids:
+        return
+
+    not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs") or []
+    not_in_sync_pairs.append(
+        {
+            VpcFieldNames.SWITCH_ID: switch_id,
+            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+            "pending_switch_ids": pending_switch_ids,
+        }
+    )
+    nrm.module.params["_not_in_sync_pairs"] = not_in_sync_pairs
+    nrm.module.warn(
+        f"vPC pair {nrm.current_identifier} is already unpaired on the controller, but member "
+        f"switch(es) {', '.join(pending_switch_ids)} remain out-of-sync from a prior staged "
+        f"delete. Flushing the pending removal via save/deploy."
+    )
+
+
 def custom_vpc_delete(nrm: Any) -> bool:
     """
     Custom delete function for VPC pairs using RestSend with PUT + discriminator.
@@ -573,8 +650,10 @@ def custom_vpc_delete(nrm: Any) -> bool:
 
     except ValueError as already_unpaired:
         # Sentinel from _validate_vpc_pair_deletion: pair no longer exists.
-        # Treat as idempotent success — nothing to delete.
+        # Treat as idempotent success — nothing to delete, but still flush any
+        # staged removal left out-of-sync on the member switches (issue #467).
         nrm.module.warn(str(already_unpaired))
+        _flag_pending_member_switches_for_deploy(nrm, nd_v2, fabric_name, switch_id, peer_switch_id)
         return False
 
     except (NDModuleError, Exception) as validation_error:
@@ -626,6 +705,8 @@ def custom_vpc_delete(nrm: Any) -> bool:
             nrm.module.warn(
                 f"VPC pair {nrm.current_identifier} is already unpaired on the controller. " f"Treating as idempotent success. API response: {error.msg}"
             )
+            # Still flush any staged removal left out-of-sync on the switches (issue #467).
+            _flag_pending_member_switches_for_deploy(nrm, nd_v2, fabric_name, switch_id, peer_switch_id)
             return False
 
         error_dict = error.to_dict()
