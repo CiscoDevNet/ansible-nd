@@ -66,6 +66,12 @@ class InterfaceNameMixin(BaseModel):
     interface_name: str | None = Field(default=None, min_length=1, description="Interface name")
 
 
+class InterfaceGroupNameMixin(BaseModel):
+    """Mixin for endpoints that require interface_group_name parameter."""
+
+    interface_group_name: str | None = Field(default=None, min_length=1, description="Interface group name")
+
+
 class LinkUuidMixin(BaseModel):
     """Mixin for endpoints that require link_uuid parameter."""
 

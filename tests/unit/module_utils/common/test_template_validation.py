@@ -470,6 +470,69 @@ def test_template_validation_00330() -> None:
     assert errors == []
 
 
+def test_template_validation_00340() -> None:
+    """
+    # Summary
+
+    Verify live NDFC parameter metadata accepts null for an optional value.
+
+    ## Test
+
+    - ``annotations.IsMandatory=false`` with a null integer value is unset
+      and valid.
+    - ``annotations.IsMandatory=true`` with a null value is reported missing.
+
+    ## Classes and Methods
+
+    - ``validate_template_inputs``
+    """
+    optional_params = [
+        {
+            "name": "NATIVE_VLAN",
+            "parameterType": "integer",
+            "annotations": {"IsMandatory": "false"},
+            "metaProperties": {"min": "1", "max": "4094"},
+        }
+    ]
+    assert (
+        validate_template_inputs(
+            "dupe_int_shared_trunk_host",
+            {"NATIVE_VLAN": None},
+            optional_params,
+            input_label="template_config",
+        )
+        == []
+    )
+
+    required_params = [
+        {
+            "name": "REQUIRED_ID",
+            "parameterType": "integer",
+            "annotations": {"IsMandatory": "true"},
+        }
+    ]
+    errors = validate_template_inputs(
+        "required_template",
+        {"REQUIRED_ID": None},
+        required_params,
+    )
+    assert len(errors) == 1
+    assert "Required templateInput 'REQUIRED_ID'" in errors[0]
+
+
+def test_template_validation_00350() -> None:
+    """Verify live ``metaProperties.defaultValue`` satisfies a mandatory input."""
+    params = [
+        {
+            "name": "ADMIN_STATE",
+            "parameterType": "boolean",
+            "annotations": {"IsMandatory": "true"},
+            "metaProperties": {"defaultValue": "true"},
+        }
+    ]
+    assert validate_template_inputs("tpl_a", {}, params) == []
+
+
 # =============================================================================
 # Test: validate_template_inputs -- Check 3 (per-type validation)
 # =============================================================================
