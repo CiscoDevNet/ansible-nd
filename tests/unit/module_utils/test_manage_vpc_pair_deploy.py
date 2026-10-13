@@ -120,6 +120,17 @@ def test_manage_vpc_pair_deploy_00020_save_only_runs_without_declarative_change(
     assert out["changed"] is False
 
 
+def test_manage_vpc_pair_deploy_00030_check_mode_save_only_without_declarative_change_is_unchanged():
+    # Check mode must match normal execution for a bare, idempotent configSave.
+    nrm = _make_nrm("switch", save=True, deploy_flag=False, check_mode=True)
+
+    with patch.object(deploy, "NDModuleV2", _boom):
+        out = deploy.custom_vpc_deploy(nrm, "fab1", {"changed": False})
+
+    assert out["deployment_needed"] is True
+    assert out["changed"] is False
+
+
 def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_endpoint():
     # check_mode must be side-effect free: no NDModuleV2 is constructed and the
     # preview names the switch-scoped endpoint.
@@ -129,6 +140,7 @@ def test_manage_vpc_pair_deploy_00040_check_mode_switch_scope_previews_switch_en
         out = deploy.custom_vpc_deploy(nrm, "fab1", {"changed": True})
 
     assert out["deployment_needed"] is True
+    assert out["changed"] is True
     planned = out["planned_actions"]
     assert any(SAVE_PATH in action for action in planned)
     assert any(SWITCH_DEPLOY_PATH in action for action in planned)
@@ -481,35 +493,3 @@ def test_manage_vpc_pair_deploy_00215_staged_pair_deploys_when_inventory_reads_i
     assert SWITCH_DEPLOY_PATH in fake_nd.paths()
     assert fake_nd.payloads_for(SWITCH_DEPLOY_PATH) == [{"switchIds": ["FOX111AAA", "FOX222AAA"]}]
     assert out["changed"] is True
-
-
-def test_manage_vpc_pair_deploy_00235_switch_scope_accepts_notexecuted_207_error():
-    nrm = _make_switch_nrm(config=[{"switch_id": "LEAF-A", "peer_switch_id": "LEAF-B"}])
-    switches_response = {
-        "switches": [
-            {"serialNumber": "LEAF-A", "configSyncStatus": "Out-of-Sync"},
-            {"serialNumber": "LEAF-B", "configSyncStatus": "Out-of-Sync"},
-        ]
-    }
-    response_payload = {
-        "switchIds": [
-            {"switchId": "LEAF-A", "status": "notExecuted", "message": "No Commands to execute"},
-            {"switchId": "LEAF-B", "status": "notExecuted", "message": "No Commands to execute"},
-        ]
-    }
-    fake_nd = _FakeNDModuleV2(
-        nrm.module,
-        switches_response=switches_response,
-        fail_on="/switchActions/deploy",
-        fail_exception=NDModuleError(
-            msg="LEAF-A: No Commands to execute; LEAF-B: No Commands to execute",
-            status=207,
-            response_payload=response_payload,
-        ),
-    )
-
-    out = _run_deploy(nrm, fake_nd)
-
-    assert SWITCH_DEPLOY_PATH in fake_nd.paths()
-    assert out["changed"] is False
-    assert out["config_actions"]["type"] == "switch"

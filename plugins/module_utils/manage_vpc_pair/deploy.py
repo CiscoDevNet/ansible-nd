@@ -38,9 +38,6 @@ except Exception:
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
-_SWITCH_DEPLOY_NO_ERROR_STATUSES = frozenset({"success", "notexecuted"})
-
-
 def _needs_deployment(result: dict[str, Any], nrm: Any) -> bool:
     """
     Determine if save/deploy actions are needed based on changes/signals.
@@ -91,17 +88,6 @@ def _has_explicit_diff_changes(result: dict[str, Any]) -> bool:
 
     diff = result.get("diff")
     return bool(diff)
-
-
-def _is_non_fatal_switch_deploy_207(error: NDModuleError) -> bool:
-    """Return True when a raised switch-deploy 207 contains no failed rows."""
-    if error.status != 207 or not isinstance(error.response_payload, dict):
-        return False
-    per_switch = error.response_payload.get("switchIds")
-    if not isinstance(per_switch, list) or not per_switch:
-        return False
-    statuses = [str(entry.get("status", "")).strip().lower() for entry in per_switch if isinstance(entry, dict)]
-    return len(statuses) == len(per_switch) and all(status in _SWITCH_DEPLOY_NO_ERROR_STATUSES for status in statuses)
 
 
 def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
@@ -288,10 +274,15 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             "config_actions": config_actions,
         }
 
+    # Compute the save contribution once so check mode and normal execution use
+    # the same changed-reporting rule.
+    diff_has_changes = _has_explicit_diff_changes(result)
+    pending_create = nrm.module.params.get("_pending_create", [])
+    pending_delete = nrm.module.params.get("_pending_delete", [])
+    save_changed = diff_has_changes or bool(pending_create) or bool(pending_delete)
+
     if nrm.module.check_mode:
         # check_mode deployment preview
-        pending_create = nrm.module.params.get("_pending_create", [])
-        pending_delete = nrm.module.params.get("_pending_delete", [])
         not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
         planned_actions = []
         if save_enabled:
@@ -315,12 +306,12 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             "msg": preview_msg,
             "fabric": fabric_name,
             "deployment_needed": True,
-            "changed": True,
+            "changed": deploy_enabled or save_changed,
             "would_save": save_enabled,
             "would_deploy": deploy_enabled,
             "config_actions": config_actions,
             "deployment_decision_factors": {
-                "diff_has_changes": _has_explicit_diff_changes(result),
+                "diff_has_changes": diff_has_changes,
                 "pending_create_operations": len(pending_create),
                 "pending_delete_operations": len(pending_delete),
                 "not_in_sync_pairs": len(not_in_sync_pairs),
@@ -345,8 +336,6 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
         # itself, drive module-level changed (otherwise repeated save=true,
         # deploy=false runs report changed=true forever). Only a declarative
         # delta (create/update/delete) or an actual deploy (Step 2) is a change.
-        save_changed = _has_explicit_diff_changes(result) or bool(nrm.module.params.get("_pending_create")) or bool(nrm.module.params.get("_pending_delete"))
-
         try:
             response = fabric_utils.save_config()
             register_action_api_call(
@@ -453,21 +442,6 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
                 )
 
         except NDModuleError as error:
-            if action_type in SWITCH_DEPLOY_ACTION_TYPES and _is_non_fatal_switch_deploy_207(error):
-                register_action_api_call(
-                    results=results,
-                    request_path=deploy_path,
-                    payload=error.request_payload,
-                    return_code=error.status,
-                    message=error.msg,
-                    success=True,
-                    changed=False,
-                )
-                results.build_final_result()
-                final_result = dict(results.final_result)
-                final_result["config_actions"] = config_actions
-                return final_result
-
             error_payload = {"switchIds": []} if action_type in SWITCH_DEPLOY_ACTION_TYPES else action_payload
             register_action_api_call(
                 results=results,
