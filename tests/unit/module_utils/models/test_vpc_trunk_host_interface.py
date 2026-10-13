@@ -26,8 +26,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_tru
     TrunkVpcHostInterfaceModel,
     TrunkVpcHostNetworkOSModel,
     TrunkVpcHostPolicyModel,
-    TrunkVpcHostVlanMappingEntryModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import VlanMappingEntryModel
 from pydantic import ValidationError
 
 
@@ -282,7 +282,7 @@ def test_vpc_trunk_host_interface_00150_allowed_vlans_accepts(value, expected):
 
     ## Classes and Methods
 
-    - TrunkVpcHostPolicyModel._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     with does_not_raise():
         instance = TrunkVpcHostPolicyModel(allowed_vlans=value)
@@ -330,7 +330,7 @@ def test_vpc_trunk_host_interface_00155_allowed_vlans_rejects(value):
 
     ## Classes and Methods
 
-    - TrunkVpcHostPolicyModel._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     with pytest.raises(ValidationError):
         TrunkVpcHostPolicyModel(allowed_vlans=value)
@@ -481,7 +481,7 @@ def test_vpc_trunk_host_interface_00210_policy_type_frozen():
 
 
 # =============================================================================
-# Test: TrunkVpcHostVlanMappingEntryModel
+# Test: VlanMappingEntryModel
 # =============================================================================
 
 
@@ -498,9 +498,9 @@ def test_vpc_trunk_host_interface_00250_vlan_mapping_entry_construction():
 
     ## Classes and Methods
 
-    - TrunkVpcHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
-    entry = TrunkVpcHostVlanMappingEntryModel(
+    entry = VlanMappingEntryModel(
         customer_vlan_id=["100", "200-300"],
         provider_vlan_id=1000,
         dot1q_tunnel=True,
@@ -536,10 +536,36 @@ def test_vpc_trunk_host_interface_00255_customer_vlan_id_rejects(value):
 
     ## Classes and Methods
 
-    - TrunkVpcHostPolicyModel._validate_customer_vlan_id_list()
+    - types.validate_customer_vlan_id_list()
     """
     with pytest.raises(ValidationError):
-        TrunkVpcHostVlanMappingEntryModel(customer_vlan_id=value)
+        VlanMappingEntryModel(customer_vlan_id=value)
+
+
+def test_vpc_trunk_host_interface_00256_customer_vlan_id_int_coercion():
+    """
+    # Summary
+
+    Verify a JSON-int `customer_vlan_id` entry (ND GET echo of a single id) is coerced to its string form through the full interface model, so a
+    GET response round-trips against the string the user supplied and idempotency comparisons stay stable. Before issue #347 the vPC copy of the
+    validator rejected ints while the ethernet copy coerced them; the shared `CustomerVlanIdList` type now coerces for every trunk model.
+
+    ## Test
+
+    - `vlan_mapping_entries: [{customer_vlan_id: [100, "200-300"]}]` -> payload `customerVlanId == ["100", "200-300"]`
+
+    ## Classes and Methods
+
+    - TrunkVpcHostInterfaceModel.to_payload()
+    - types.CustomerVlanIdList
+    """
+    cfg = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    cfg["config_data"]["network_os"]["policy"]["vlan_mapping"] = True
+    cfg["config_data"]["network_os"]["policy"]["vlan_mapping_entries"] = [{"customer_vlan_id": [100, "200-300"], "provider_vlan_id": 1000}]
+    with does_not_raise():
+        instance = TrunkVpcHostInterfaceModel(**cfg)
+    entry = instance.to_payload()["configData"]["networkOS"]["policy"]["vlanMappingEntries"][0]
+    assert entry["customerVlanId"] == ["100", "200-300"]
 
 
 # =============================================================================
@@ -750,7 +776,7 @@ def test_vpc_trunk_host_interface_00430_payload_with_vlan_mapping():
     ## Classes and Methods
 
     - TrunkVpcHostInterfaceModel.to_payload()
-    - TrunkVpcHostVlanMappingEntryModel
+    - VlanMappingEntryModel
     """
     cfg = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
     cfg["config_data"]["network_os"]["policy"]["vlan_mapping"] = True
