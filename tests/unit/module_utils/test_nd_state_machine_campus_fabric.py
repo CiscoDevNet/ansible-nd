@@ -281,3 +281,49 @@ def test_nd_state_machine_campus_fabric_00100() -> None:
     assert instance.existing.get("campus2").management.dhcp_start_address == "2001:db8::10"
     assert instance.existing.get("campus2").management.dhcp_end_address == "2001:db8::20"
     assert instance.existing.get("campus2").management.management_gateway == "2001:db8::1"
+
+
+@pytest.mark.parametrize("check_mode", (False, True))
+@pytest.mark.parametrize(
+    "existing",
+    (
+        [],
+        [_fabric_response("campus1"), _fabric_response("campus2")],
+    ),
+    ids=("empty_inventory", "two_fabrics"),
+)
+def test_nd_state_machine_campus_fabric_00110(
+    check_mode: bool,
+    existing: list[dict],
+) -> None:
+    """Gathered returns public Campus configuration without mutations."""
+    module = _module("gathered", [])
+    module.check_mode = check_mode
+
+    orchestrator = _spy(existing)
+    instance = NDStateMachine(
+        module=module,
+        model_orchestrator=orchestrator,
+    )
+    instance.manage_state()
+
+    result = instance.output.format()
+
+    assert instance.gathered_filtering_enabled is False
+    assert orchestrator._calls == []
+    assert len(instance.sent) == 0
+    assert len(instance.removed) == 0
+
+    assert result["changed"] is False
+    assert result["before"] == []
+    assert result["after"] == []
+    assert "diff" not in result
+    assert "proposed" not in result
+
+    assert [item["fabric_name"] for item in result["gathered"]] == [item["name"] for item in existing]
+
+    for item in result["gathered"]:
+        assert item["management"]["bgp_asn"] == "65001"
+        assert "category" not in item
+        assert "type" not in item["management"]
+        assert "name" not in item["management"]

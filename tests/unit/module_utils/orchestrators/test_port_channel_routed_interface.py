@@ -415,6 +415,44 @@ def test_port_channel_routed_orchestrator_00100() -> None:
     assert {model.policy_type for model in models} == {"l3Po", "iosXeL3PortChannel"}
 
 
+def test_port_channel_routed_orchestrator_00110() -> None:
+    """
+    Verify query_all scans every switch for state=gathered, returns only
+    l3Po/iosXeL3PortChannel port-channels, and injects switchIp.
+    """
+
+    def responses():
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_00110a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_00110b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_00110c")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_00110d")
+
+    instance = PortChannelRoutedInterfaceOrchestrator(
+        rest_send=_build_rest_send(
+            ResponseGenerator(responses()),
+            state="gathered",
+        )
+    )
+    assert instance.supports_gathered_server_filtering is False
+    assert instance.gathered_lucene_spec is None
+
+    with does_not_raise():
+        result = instance.query_all()
+        models = [PortChannelRoutedInterfaceModel.from_response(item) for item in result]
+
+    by_name = {(item["switchIp"], item["interfaceName"]): item for item in result}
+
+    assert set(by_name) == {
+        ("192.168.1.1", "port-channel20"),
+        ("192.168.1.2", "port-channel120"),
+    }
+
+    assert {model.policy_type for model in models} == {
+        "l3Po",
+        "iosXeL3PortChannel",
+    }
+
+
 # =============================================================================
 # Test: preflight -- IOS-XE member-mode rule for iosXeL3PortChannel
 #

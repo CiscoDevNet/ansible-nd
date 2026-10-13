@@ -213,6 +213,163 @@
             ]
         }
     },
+    "test_port_channel_routed_orchestrator_00110a": {
+        "TEST_NOTES": [
+            "gathered query_all: fabric summary"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_port_channel_routed_orchestrator_00110b": {
+        "TEST_NOTES": [
+            "gathered query_all: two-switch fabric inventory"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00110c": {
+        "TEST_NOTES": [
+            "gathered query_all: first-switch interface inventory",
+            "l3Po is retained; l3PoInternal and accessPoHost are filtered out"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel20",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "adminState": true,
+                                "description": "NX-OS routed port-channel",
+                                "ip": "10.1.1.1",
+                                "prefix": 30,
+                                "policyType": "l3Po",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "Ethernet1/10"
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel21",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "l3PoInternal",
+                                "ports": [
+                                    "Ethernet1/11"
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel501",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO11111AAA",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessPoHost",
+                                "ports": [
+                                    "Ethernet1/12"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_port_channel_routed_orchestrator_00110d": {
+        "TEST_NOTES": [
+            "gathered query_all: second-switch interface inventory",
+            "iosXeL3PortChannel is retained; iosXeTrunkPoHost is filtered out"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "port-channel120",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "description": "IOS-XE routed port-channel",
+                                "ip": "10.49.0.1",
+                                "prefix": 30,
+                                "policyType": "iosXeL3PortChannel",
+                                "portChannelMode": "active",
+                                "ports": [
+                                    "GigabitEthernet1/0/3"
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "port-channel121",
+                    "interfaceType": "portChannel",
+                    "switchId": "FDO22222BBB",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeTrunkPoHost",
+                                "ports": [
+                                    "GigabitEthernet1/0/4"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
     "test_port_channel_routed_orchestrator_00200a": {
         "TEST_NOTES": [
             "preflight refusal: switches list"
