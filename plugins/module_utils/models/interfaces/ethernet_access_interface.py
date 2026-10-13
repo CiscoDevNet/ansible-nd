@@ -60,7 +60,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, VlanId
 
 # Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
 # The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
@@ -109,7 +109,7 @@ class EthernetAccessPolicyModel(StormControlMutexMixin):
     }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for this access port")
+    access_vlan: VlanId | None = Field(default=None, alias="accessVlan", description="VLAN for this access port")
     bandwidth: int | None = Field(default=None, alias="bandwidth", ge=1, le=100000000, description="Bandwidth in kilobits")
     bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
     bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
@@ -254,7 +254,7 @@ class XeEthernetAccessPolicyModel(InterfacePolicyStrictBase):
         """
         return default_policy_type(data, XeAccessHostPolicyTypeEnum.IOS_XE_ACCESS.value)
 
-    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for this access port")
+    access_vlan: VlanId | None = Field(default=None, alias="accessVlan", description="VLAN for this access port")
     bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")

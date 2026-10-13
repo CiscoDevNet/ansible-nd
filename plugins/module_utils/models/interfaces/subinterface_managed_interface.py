@@ -71,7 +71,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4HostStrict, IPv6HostStrict
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4HostStrict, IPv6HostStrict, VlanId
 
 # Alphabetic (hyphen-tolerant) parent prefix + the numeric remainder of a parent interface name (`Port-channel10` -> `Port-channel`, `10`).
 _PARENT_NAME_RE = re.compile(r"^([A-Za-z][A-Za-z-]*)(\d.*)$")
@@ -312,7 +312,7 @@ class XeSubinterfacePolicyModel(InterfacePolicyStrictBase):
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Subinterface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the subinterface")
-    vlan_id: int | None = Field(default=None, alias="vlanId", ge=1, le=4094, description="802.1Q VLAN tag for the subinterface")
+    vlan_id: VlanId | None = Field(default=None, alias="vlanId", description="802.1Q VLAN tag for the subinterface")
     vrf_interface: str | None = Field(
         default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name; use `default` for default VRF"
     )
