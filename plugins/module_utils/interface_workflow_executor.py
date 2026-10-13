@@ -1209,6 +1209,9 @@ class InterfaceWorkflowExecutor:
                 path = str(response.get("REQUEST_PATH") or "")
                 if "interfaceActions/deploy" in path:
                     deploy_requests += 1
+                elif "interfaceActions/preview" in path:
+                    # The preview endpoint is a read-only POST, not an intent mutation.
+                    continue
                 else:
                     mutation_requests += 1
                     mutation_changed = mutation_changed or result.get("changed") is True
@@ -1299,6 +1302,10 @@ class InterfaceWorkflowExecutor:
         mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
         execution_failed = not phases_ok or bool(self._errors)
         mutation_attempted = bool(mutation_requests) or any(item.status in {"succeeded", "failed", "uncertain"} for item in self._items)
+        # A deployment-only replay still needs a fresh observation when the
+        # caller requested verification, even when its preview POST is no
+        # longer (incorrectly) counted as an intent mutation.
+        mutation_attempted = mutation_attempted or (self.verify and bool(deploy_requests))
         actual = self._reconcile(
             plan,
             mutation_attempted=mutation_attempted,

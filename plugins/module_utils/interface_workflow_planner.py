@@ -771,6 +771,37 @@ class InterfaceWorkflowPlanner:
             )
         return tuple(platform_deletes)
 
+    def _port_channel_delete_model(
+        self,
+        resource: InterfaceResourcePlan,
+        desired: NDBaseModel,
+        current_records: tuple[tuple[str, dict[str, Any]], ...],
+    ) -> NDBaseModel:
+        """Keep the observed IOS-XE type and members when planning an explicit port-channel delete.
+
+        An identifier-only delete proposal has no network OS discriminator. The
+        shared port-channel orchestrator needs that discriminator to use the
+        switch-canonical ``Port-channel<N>`` identity for both remove and deploy.
+        Prefer the parsed current model so its member context is preserved;
+        cross-policy deletes have no selected-family model, so use only the
+        controller-observed platform to construct their delete proxy.
+        """
+        if resource.adapter.ownership_domain != "port_channel":
+            return desired
+        switch_id = self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
+        current = dict(current_records).get(switch_id)
+        if self._wire_network_os_type(current or {}) != "ios-xe":
+            return desired
+        existing = resource.before.get(desired.get_identifier_value())
+        network_os = getattr(getattr(existing, "config_data", None), "network_os", None)
+        if getattr(network_os, "network_os_type", None) == "ios-xe":
+            return existing
+        return resource.adapter.model_class(
+            switch_ip=getattr(desired, "switch_ip"),
+            interface_name=getattr(desired, "interface_name"),
+            config_data={"network_os": {"network_os_type": "ios-xe"}},
+        )
+
     def _register_ethernet_orchestrator(self, orchestrator: EthernetBaseOrchestrator) -> None:
         """Share one lazy fabric-link cache across every Ethernet family in this workflow."""
         if self._ethernet_link_cache_owner is None:
@@ -1077,7 +1108,7 @@ class InterfaceWorkflowPlanner:
                 )
                 current_policy_type = InterfaceStateSnapshot.policy_type(current_records[0][1])
                 if current_policy_type in resource.adapter.policy_types:
-                    deletes_by_index[resource.resource_index].append(desired)
+                    deletes_by_index[resource.resource_index].append(self._port_channel_delete_model(resource, desired, current_records))
                     continue
                 candidate = _PolicyRewriteCandidate(resource.resource_index, desired, current_records)
                 delete_candidates.append(candidate)
@@ -1130,7 +1161,8 @@ class InterfaceWorkflowPlanner:
                 )
             )
         for candidate in delete_candidates:
-            deletes_by_index[candidate.resource_index].append(candidate.desired)
+            resource = resources_by_index[candidate.resource_index]
+            deletes_by_index[candidate.resource_index].append(self._port_channel_delete_model(resource, candidate.desired, candidate.current_records))
 
         updated_resources: list[InterfaceResourcePlan] = []
         for resource in resources:

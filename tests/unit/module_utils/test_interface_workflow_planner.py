@@ -1099,6 +1099,74 @@ def test_deleted_is_policy_independent_within_the_selected_structure(
     assert resource.mutation_count == 1
 
 
+@pytest.mark.parametrize(
+    ("resource_type", "policy_type", "mode", "policy"),
+    [
+        ("port_channel_access", "iosXeAccessPoHost", "access", {"accessVlan": 10, "ports": ["GigabitEthernet1/0/11"]}),
+        ("port_channel_trunk_host", "iosXeTrunkPoHost", "trunk", {"allowedVlans": "none", "ports": ["GigabitEthernet1/0/11"]}),
+        ("port_channel_routed", "iosXeL3PortChannel", "routed", {"ip": "198.51.100.1", "prefix": 30, "ports": ["GigabitEthernet1/0/11"]}),
+    ],
+)
+def test_deleted_ios_xe_port_channel_uses_existing_model_for_canonical_remove(
+    resource_type: str,
+    policy_type: str,
+    mode: str,
+    policy: dict[str, Any],
+) -> None:
+    """An identifier-only workflow delete retains controller-derived platform and member context."""
+    current = _wire_interface(
+        "port-channel121", "portChannel", policy_type,
+        network_os_type="ios-xe", mode=mode, **policy,
+    )
+    current["operData"] = {"operationalStatus": "down", "portChannelId": -1}
+    planner, _recorder = _planner(responses=[{"interfaces": [current]}])
+    config = {"switch_ip": "192.0.2.1", "interface_name": "port-channel121"}
+
+    plan = planner.plan([{"type": resource_type, "state": "deleted", "config": [config]}])
+
+    resource = plan.resources[0]
+    assert len(resource.operations.deletes) == 1
+    delete_model = resource.operations.deletes[0]
+    assert delete_model.config_data.network_os.network_os_type == "ios-xe"
+    assert delete_model.config_data.network_os.policy.ports == ["GigabitEthernet1/0/11"]
+    assert resource.orchestrator._delete_side_name(delete_model) == "Port-channel121"
+
+
+def test_deleted_ios_xe_foreign_port_channel_uses_observed_platform_proxy() -> None:
+    """A cross-policy delete also uses canonical IOS-XE removal without trusting an input hint."""
+    current = _wire_interface(
+        "port-channel121", "portChannel", "foreignDeletablePolicy",
+        network_os_type="ios-xe", mode="trunk",
+    )
+    current["operData"] = {"operationalStatus": "down", "portChannelId": -1}
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    config = {"switch_ip": "192.0.2.1", "interface_name": "port-channel121"}
+
+    plan = planner.plan([{"type": "port_channel_trunk_host", "state": "deleted", "config": [config]}])
+
+    resource = plan.resources[0]
+    assert len(resource.operations.deletes) == 1
+    delete_model = resource.operations.deletes[0]
+    assert delete_model.config_data.network_os.network_os_type == "ios-xe"
+    assert resource.orchestrator._delete_side_name(delete_model) == "Port-channel121"
+
+
+def test_deleted_nx_os_port_channel_retains_lowercase_remove_identity() -> None:
+    """The IOS-XE workaround must not change NX-OS explicit-delete behavior."""
+    current = _wire_interface("port-channel121", "portChannel", "trunkPoHost", mode="trunk", ports=["Ethernet1/1"])
+    planner, _recorder = _planner(responses=[{"interfaces": [current]}])
+    config = {"switch_ip": "192.0.2.1", "interface_name": "port-channel121"}
+
+    plan = planner.plan([{"type": "port_channel_trunk_host", "state": "deleted", "config": [config]}])
+
+    delete_model = plan.resources[0].operations.deletes[0]
+    assert delete_model.config_data is None
+    assert plan.resources[0].orchestrator._delete_side_name(delete_model) == "port-channel121"
+
+
 def test_deleted_rejects_fabric_owned_ethernet_policy_before_writes() -> None:
     """Explicit physical delete cannot normalize a fabric link carrying a system-owned policy."""
     current = _wire_interface("Ethernet1/1", "ethernet", "numbered", ip="198.51.100.1", prefix=30)

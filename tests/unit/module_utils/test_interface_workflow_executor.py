@@ -1368,6 +1368,45 @@ def test_deployment_only_execution_sends_one_exact_target_without_mutation_or_re
     ]
 
 
+def test_read_only_interface_preview_post_is_not_counted_as_mutation():
+    """POST is not sufficient to classify an interface preview as a configuration write."""
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    orchestrator.rest_send.record("/api/v1/manage/fabrics/fabric_1/interfaceActions/preview")
+    workflow_plan = plan(resource(0, orchestrator, actual=("before",)))
+
+    assert InterfaceWorkflowExecutor._write_observations(workflow_plan) == (0, 0, False)
+
+
+def test_verified_deployment_only_preview_keeps_refresh_without_false_mutation():
+    """A no-diff replay counts the deploy, not its read-only verification preview."""
+
+    class PreviewingDeployOrchestrator(FakeOrchestrator):
+        def deploy_targets(self, targets):
+            super().deploy_targets(targets)
+            self.rest_send.record("/api/v1/manage/fabrics/fabric_1/interfaceActions/preview", changed=False)
+
+    events = []
+    orchestrator = PreviewingDeployOrchestrator("only", events)
+    workflow_plan = plan(resource(0, orchestrator, actual=("before",)))
+    snapshot = FakeSnapshot(events)
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True, verify=True).execute(
+        workflow_plan,
+        deployment_targets=(("loopback1", "SERIAL1"),),
+    )
+
+    assert result.failed is False
+    assert result.mutation_requests == 0
+    assert result.deploy_requests == 1
+    assert result.changed is True
+    assert result.items == ()
+    assert result.affected_switch_ids == workflow_plan.target_switch_ids
+    assert result.actual_after_by_resource[0].values == ["before"]
+    assert ("dirty", workflow_plan.target_switch_ids) in events
+    assert ("refresh", workflow_plan.target_switch_ids) in events
+
+
 def test_consolidated_deploy_previews_only_selected_vpc_parent_targets():
     """VPC create/delete and no-diff replay retain pair-aware preview context."""
 
