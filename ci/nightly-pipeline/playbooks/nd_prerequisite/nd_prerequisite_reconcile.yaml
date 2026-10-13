@@ -32,6 +32,8 @@
       vxlan_leaf_2: 192.0.2.196
       vxlan_spine_1: 192.0.2.194
       vxlan_border_1: 192.0.2.88
+      vxlan_leaf_3: 192.0.2.85
+      vxlan_leaf_4: 192.0.2.86
       external_edge_1: 192.0.2.89
       external_edge_2: 192.0.2.90
     _ndp_switch_serial:
@@ -39,6 +41,8 @@
       vxlan_leaf_2: SERIAL00002
       vxlan_spine_1: SERIAL00003
       vxlan_border_1: SERIAL00004
+      vxlan_leaf_3: SERIAL00008
+      vxlan_leaf_4: SERIAL00009
       external_edge_1: SERIAL00005
       external_edge_2: SERIAL00006
   run_once: true

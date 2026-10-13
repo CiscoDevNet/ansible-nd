@@ -5,10 +5,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import pathlib
 import re
 import argparse
 import sys
+import tempfile
+import types
 
 import yaml
 
@@ -58,6 +61,8 @@ CANONICAL_SWITCHES = {
     "vxlan_leaf_2": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00002", "seed_ip": "192.0.2.196"},
     "vxlan_spine_1": {"baseline_fabric_ref": "advanced", "baseline_role": "spine", "serial": "SERIAL00003", "seed_ip": "192.0.2.194"},
     "vxlan_border_1": {"baseline_fabric_ref": "advanced", "baseline_role": "border", "serial": "SERIAL00004", "seed_ip": "192.0.2.88"},
+    "vxlan_leaf_3": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00008", "seed_ip": "192.0.2.85"},
+    "vxlan_leaf_4": {"baseline_fabric_ref": "advanced", "baseline_role": "leaf", "serial": "SERIAL00009", "seed_ip": "192.0.2.86"},
     "external_edge_1": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "SERIAL00005", "seed_ip": "192.0.2.89"},
     "external_edge_2": {"baseline_fabric_ref": "external", "baseline_role": "edge_router", "serial": "SERIAL00006", "seed_ip": "192.0.2.90"},
 }
@@ -68,6 +73,8 @@ CANONICAL_RUNTIME_DEFAULTS = {
             {"name": "vxlan_leaf_2", "seed_ip": "192.0.2.196", "serial": "SERIAL00002", "role": "leaf"},
             {"name": "vxlan_spine_1", "seed_ip": "192.0.2.194", "serial": "SERIAL00003", "role": "spine"},
             {"name": "vxlan_border_1", "seed_ip": "192.0.2.88", "serial": "SERIAL00004", "role": "border"},
+            {"name": "vxlan_leaf_3", "seed_ip": "192.0.2.85", "serial": "SERIAL00008", "role": "leaf"},
+            {"name": "vxlan_leaf_4", "seed_ip": "192.0.2.86", "serial": "SERIAL00009", "role": "leaf"},
         ],
         "External_Connectivity_Fabric": [
             {"name": "external_edge_1", "seed_ip": "192.0.2.89", "serial": "SERIAL00005", "role": "edge_router"},
@@ -92,6 +99,15 @@ CANONICAL_INTERFACE_ALLOWLIST = {
     ],
     "vxlan_spine_1": [],
     "vxlan_border_1": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/4", "Ethernet1/30", "Ethernet1/31", "Ethernet1/32"],
+    # Second vPC pair (peer-links Eth1/1 and Eth1/2 on both) plus the vPC interface member ports Eth1/5-1/10.
+    "vxlan_leaf_3": [
+        "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
+        "Ethernet1/5", "Ethernet1/6", "Ethernet1/7", "Ethernet1/8", "Ethernet1/9", "Ethernet1/10",
+    ],
+    "vxlan_leaf_4": [
+        "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
+        "Ethernet1/5", "Ethernet1/6", "Ethernet1/7", "Ethernet1/8", "Ethernet1/9", "Ethernet1/10",
+    ],
     "external_edge_1": ["Ethernet1/2", "Ethernet1/3", "Ethernet1/4"],
     "external_edge_2": [],
 }
@@ -267,7 +283,7 @@ def validate_registry(registry):
     if registry.get("schema_version") != 2:
         errors.append("schema_version must equal 2")
     if registry.get("runtime_defaults") != CANONICAL_RUNTIME_DEFAULTS:
-        errors.append("runtime defaults must contain the exact canonical 4+2 fabric membership")
+        errors.append("runtime defaults must contain the exact canonical 6+2 fabric membership")
     lab = registry.get("lab", {})
     fabrics = lab.get("fabrics", {})
     switches = lab.get("switches", {})
@@ -849,9 +865,212 @@ def validate_tree(
     return errors
 
 
+# ---------------------------------------------------------------------------------------------------
+# Fabric rounds. The nightly runs the whole suite once per VXLAN fabric: round 1 on the canonical
+# `advanced` fabric (VXLAN iBGP), round 2 on the preserved `network_ebgp` fabric. `render-round`
+# re-targets the installed Consul-sourced lab files so the preserved fabric takes the canonical
+# `advanced` role for one round and the canonical fabric becomes the preserved one. The six VXLAN
+# switches are moved between the two fabrics by nd_ensure_switches.yaml.
+#
+# The files are swapped in text, so every transformation is exact: a swap that finds nothing, or a
+# targeted edit that does not match exactly once, aborts without writing anything, and the rendered
+# set must pass the RENDERED validator before a single file is replaced.
+# ---------------------------------------------------------------------------------------------------
+ROUND_RENDER_FILES = (
+    "integration_config.yml",
+    "nd_prerequisite_profiles.yaml",
+    "run_integration_module.yaml",
+    "reset_fabric.yaml",
+    "nd_prerequisite/nd_prerequisite_reconcile.yaml",
+    "fixtures/nd_prerequisite/valid_state.yaml",
+    "validate_nd_prerequisites.py",
+)
+# Untouched copy of the canonical roster, kept so the lab can be returned to its home fabric after the last round.
+HOME_ROSTER_COPY = "integration_config.home.yml"
+_FABRIC_TYPE_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+
+
+def _swap_fabric_names(text, first, second):
+    """Exchange two fabric names in one pass; whole identifiers only, so one may prefix the other."""
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(name) for name in (first, second)) + r")(?![A-Za-z0-9_])"
+    )
+    return pattern.subn(lambda match: second if match.group(0) == first else first, text)
+
+
+def _replace_once(text, old, new, label):
+    count = text.count(old)
+    if count != 1:
+        raise ValidationError(f"{label}: expected exactly one occurrence of {old!r}, found {count}")
+    return text.replace(old, new)
+
+
+def render_round_texts(texts, round_fabric, round_type=None):
+    """Re-target the canonical lab files (relative path -> text) for a round on the preserved fabric.
+
+    Pure: nothing is read or written. The canonical (home) and preserved fabrics are taken from this
+    module's own constants, so rendering an already-rendered file set is refused instead of swapping back.
+    """
+    home = CANONICAL_FABRICS["advanced"]
+    peer = CANONICAL_FABRICS["network_ebgp"]
+    external = CANONICAL_FABRICS["external"]
+    if home["lifecycle"] != "retained" or peer["lifecycle"] != "preserved":
+        raise ValidationError("fabric round rendering needs the canonical retained/preserved fabric pair")
+    if round_fabric != peer["name"]:
+        raise ValidationError(
+            f"the round fabric must be the preserved fabric {peer['name']}, not {round_fabric}; "
+            "these files are not in their canonical state if they were already rendered"
+        )
+    round_type = round_type or peer["type"]
+    if not _FABRIC_TYPE_TOKEN.fullmatch(round_type):
+        raise ValidationError(f"invalid fabric type: {round_type}")
+    missing = sorted(set(ROUND_RENDER_FILES) - set(texts))
+    if missing:
+        raise ValidationError(f"round files are missing: {missing}")
+
+    home_name, home_type = home["name"], home["type"]
+    peer_name, peer_type = peer["name"], peer["type"]
+    rendered = {}
+    for relative in ROUND_RENDER_FILES:
+        text = texts[relative]
+        if relative == "validate_nd_prerequisites.py":
+            # Targeted edits only: the disposable-cleanup guard regex further down describes the collection's own
+            # test files, which are identical in every round, so a blanket swap would corrupt it.
+            ext_name = external["name"]
+            for old, new in (
+                ('RETAINED = {"%s", "%s"}' % (home_name, ext_name), 'RETAINED = {"%s", "%s"}' % (peer_name, ext_name)),
+                ('PRESERVED = {"%s"}' % peer_name, 'PRESERVED = {"%s"}' % home_name),
+                (
+                    '"advanced": {"ref": "advanced", "name": "%s", "type": "%s", "lifecycle": "retained"}' % (home_name, home_type),
+                    '"advanced": {"ref": "advanced", "name": "%s", "type": "%s", "lifecycle": "retained"}' % (peer_name, round_type),
+                ),
+                (
+                    '"network_ebgp": {"ref": "network_ebgp", "name": "%s", "type": "%s", "lifecycle": "preserved"}' % (peer_name, peer_type),
+                    '"network_ebgp": {"ref": "network_ebgp", "name": "%s", "type": "%s", "lifecycle": "preserved"}' % (home_name, home_type),
+                ),
+                ('        "%s": [\n' % home_name, '        "%s": [\n' % peer_name),
+            ):
+                text = _replace_once(text, old, new, relative)
+        else:
+            text, swapped = _swap_fabric_names(text, home_name, peer_name)
+            if not swapped:
+                raise ValidationError(f"{relative}: no fabric name to re-target")
+            if relative == "nd_prerequisite_profiles.yaml":
+                text = _replace_once(
+                    text,
+                    "{ref: advanced, name: %s, type: %s, lifecycle: retained}" % (peer_name, home_type),
+                    "{ref: advanced, name: %s, type: %s, lifecycle: retained}" % (peer_name, round_type),
+                    relative,
+                )
+                text = _replace_once(
+                    text,
+                    "{ref: network_ebgp, name: %s, type: %s, lifecycle: preserved}" % (home_name, peer_type),
+                    "{ref: network_ebgp, name: %s, type: %s, lifecycle: preserved}" % (home_name, home_type),
+                    relative,
+                )
+            elif relative == "run_integration_module.yaml":
+                # The L3Out VRF pre-create on the primary fabric must carry that fabric's VRF type.
+                text = _replace_once(text, "vrfType: %s" % home_type, "vrfType: %s" % round_type, relative)
+            elif relative == "nd_prerequisite/nd_prerequisite_reconcile.yaml":
+                text = _replace_once(
+                    text,
+                    "    _ndp_fabric_type_by_ref:\n      advanced: %s\n" % home_type,
+                    "    _ndp_fabric_type_by_ref:\n      advanced: %s\n" % round_type,
+                    relative,
+                )
+            elif relative == "fixtures/nd_prerequisite/valid_state.yaml":
+                text = _replace_once(
+                    text,
+                    "advanced: {name: %s, type: %s, lifecycle: retained, bfd_enabled: true}" % (peer_name, home_type),
+                    "advanced: {name: %s, type: %s, lifecycle: retained, bfd_enabled: true}" % (peer_name, round_type),
+                    relative,
+                )
+        rendered[relative] = text
+    return rendered
+
+
+def _verify_rendered_round(rendered, round_fabric, round_type):
+    """Prove the rendered set is internally consistent before anything on disk is replaced."""
+    for relative, text in rendered.items():
+        if relative.endswith((".yml", ".yaml")):
+            try:
+                list(yaml.safe_load_all(text))
+            except yaml.YAMLError as exc:
+                raise ValidationError(f"{relative}: rendered file is not valid YAML: {exc}") from exc
+    module = types.ModuleType("nd_rendered_round_validator")
+    try:
+        exec(compile(rendered["validate_nd_prerequisites.py"], "<rendered validate_nd_prerequisites.py>", "exec", dont_inherit=True), module.__dict__)
+    except Exception as exc:  # noqa: BLE001 - any failure to load means the rendered validator is unusable
+        raise ValidationError(f"rendered validator does not load: {exc}") from exc
+    primary = module.CANONICAL_FABRICS["advanced"]
+    if primary["name"] != round_fabric or primary["type"] != round_type or primary["lifecycle"] != "retained":
+        raise ValidationError("rendered validator does not name the round fabric as the primary fabric")
+    registry = yaml.safe_load(rendered["nd_prerequisite_profiles.yaml"])
+    errors = module.validate_registry(registry)
+    if errors:
+        raise ValidationError(f"rendered registry fails the rendered validator: {errors[0]}")
+    roster = yaml.safe_load(rendered["integration_config.yml"]).get("nd_test_fabric_switches")
+    if roster != module.CANONICAL_RUNTIME_DEFAULTS["nd_test_fabric_switches"]:
+        raise ValidationError("rendered roster does not match the rendered canonical fabric membership")
+
+
+def _stage_text(path, text, mode):
+    """Write text to a temp file beside path; returns the temp path (replace it into place later)."""
+    descriptor, temp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(temp_name, mode)
+    except BaseException:
+        pathlib.Path(temp_name).unlink(missing_ok=True)
+        raise
+    return pathlib.Path(temp_name)
+
+
+def render_fabric_round(root, round_fabric, round_type=None):
+    """Re-target the installed lab files under root for a round on the preserved fabric.
+
+    Reads and verifies everything first, stages every output beside its target, then replaces them, so a
+    failure leaves the canonical files untouched. Also writes HOME_ROSTER_COPY (the untouched canonical
+    roster) for the post-run return to the home fabric. Returns the re-targeted relative paths.
+    """
+    root = pathlib.Path(root)
+    texts = {}
+    modes = {}
+    for relative in ROUND_RENDER_FILES:
+        path = root / relative
+        if path.is_symlink() or not path.is_file():
+            raise ValidationError(f"round file is missing or unsafe: {path}")
+        texts[relative] = path.read_text(encoding="utf-8")
+        modes[relative] = path.stat().st_mode & 0o777
+    round_type = round_type or CANONICAL_FABRICS["network_ebgp"]["type"]
+    rendered = render_round_texts(texts, round_fabric, round_type)
+    _verify_rendered_round(rendered, round_fabric, round_type)
+
+    staged = []
+    try:
+        home_copy = root / HOME_ROSTER_COPY
+        if home_copy.is_symlink():
+            raise ValidationError(f"home roster copy is unsafe: {home_copy}")
+        staged.append((home_copy, _stage_text(home_copy, texts["integration_config.yml"], modes["integration_config.yml"])))
+        for relative, text in rendered.items():
+            staged.append((root / relative, _stage_text(root / relative, text, modes[relative])))
+    except BaseException:
+        for _, temp_path in staged:
+            temp_path.unlink(missing_ok=True)
+        raise
+    for target, temp_path in staged:
+        os.replace(temp_path, target)
+    return sorted(rendered)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    render = sub.add_parser("render-round")
+    render.add_argument("--root", required=True, help="directory holding the installed lab files")
+    render.add_argument("--round-fabric", required=True, help="the preserved fabric that becomes the primary fabric")
+    render.add_argument("--round-type", help="ND management.type that fabric must report (default: its canonical type)")
     validate = sub.add_parser("validate")
     validate.add_argument("--root", required=True)
     validate.add_argument("--jenkinsfile", required=True)
@@ -875,6 +1094,18 @@ def main(argv=None):
         help="comma-separated effective Jenkins integration modules",
     )
     args = parser.parse_args(argv)
+    if args.command == "render-round":
+        try:
+            files = render_fabric_round(args.root, args.round_fabric, args.round_type)
+        except (OSError, ValidationError, yaml.YAMLError) as exc:
+            print(f"NDP_FABRIC_ROUND_RENDER_FAILED: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"NDP_FABRIC_ROUND_RENDERED: {args.round_fabric} is now the primary fabric "
+            f"({args.round_type or CANONICAL_FABRICS['network_ebgp']['type']}); "
+            f"re-targeted {len(files)} file(s); canonical roster kept as {HOME_ROSTER_COPY}"
+        )
+        return 0
     if args.command == "validate":
         errors = validate_tree(
             args.root,

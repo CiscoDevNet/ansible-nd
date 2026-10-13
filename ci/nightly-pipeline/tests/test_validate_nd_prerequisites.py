@@ -1,15 +1,20 @@
 import copy
 import json
+import os
 import pathlib
 import re
+import subprocess
 import sys
 
 import pytest
 import yaml
+from jinja2 import StrictUndefined
+from jinja2.nativetypes import NativeEnvironment
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
+from patch_nd_switch_removal import ensure_switch_removal_status_handling
 from validate_nd_prerequisites import (
     expand_profile_executions,
     jenkins_targets,
@@ -34,6 +39,7 @@ EXPECTED_INTEGRATION = {
     "nd_interface_vpc_trunk_host", "nd_manage_switches", "nd_manage_fabric", "nd_resource_manager", "nd_vpc_pair",
     "nd_interface_ethernet_routed", "nd_manage_links", "nd_manage_fabric_group_vxlan",
     "nd_manage_fabric_group_members", "nd_manage_tor",
+    "nd_local_user", "nd_maintenance_mode", "nd_fabric_update_group", "nd_interface_port_channel_routed",
     "nd_interface_loopback", "nd_interface_svi", "nd_interface_ethernet_access",
     "nd_interface_ethernet_trunk_host", "nd_interface_port_channel_access",
     "nd_interface_port_channel_trunk_host", "nd_interface_subinterface_managed",
@@ -54,9 +60,12 @@ def registry():
 
 
 def test_registry_has_every_profile_and_distinct_lab_switches(registry):
-    assert set(registry["lab"]["switches"]) == {"vxlan_leaf_1", "vxlan_leaf_2", "vxlan_spine_1", "vxlan_border_1", "external_edge_1", "external_edge_2"}
+    assert set(registry["lab"]["switches"]) == {
+        "vxlan_leaf_1", "vxlan_leaf_2", "vxlan_spine_1", "vxlan_border_1", "vxlan_leaf_3", "vxlan_leaf_4",
+        "external_edge_1", "external_edge_2",
+    }
     serials = [value["serial"] for value in registry["lab"]["switches"].values()]
-    assert len(serials) == len(set(serials)) == 6
+    assert len(serials) == len(set(serials)) == 8
     ids = set(registry["profiles"])
     assert {f"integration.{name}" for name in EXPECTED_INTEGRATION} <= ids
     assert {f"smoke.{name}" for name in EXPECTED_SMOKE} == {name for name in ids if name.startswith("smoke.")}
@@ -178,6 +187,13 @@ def test_integration_vpc_pair_expands_to_two_blocked_executions(registry):
     # the lab owner cables and records the peer-links.
     assert all(item["pair_mode"] == "physical" for item in executions)
     assert all(item["physical_peer_links"] == [] for item in executions)
+    advanced_reason = " ".join(executions[0]["confirmation"]["reasons"])
+    external_reason = " ".join(executions[1]["confirmation"]["reasons"])
+    assert "leaf_1 Ethernet1/2 <-> leaf_2 Ethernet1/1" in advanced_reason
+    assert "never repurpose leaf_1 Ethernet1/3" in advanced_reason
+    assert "edge_1 Ethernet1/5 <-> edge_2 Ethernet1/6" in external_reason
+    assert "edge_1 Ethernet1/7 <-> edge_2 Ethernet1/8" in external_reason
+    assert "never repurpose edge_1 Ethernet1/2 or Ethernet1/3" in external_reason
 
 
 def test_selected_pending_profile_is_an_execution_blocker(registry):
@@ -274,6 +290,7 @@ def test_interface_profiles_declare_typed_checks_and_reversible_parents(registry
         "integration.nd_interface_ethernet_trunk_host": {f"Ethernet1/{port}" for port in range(41, 49)},
         "integration.nd_interface_port_channel_access": {f"Ethernet1/{port}" for port in range(10, 14)},
         "integration.nd_interface_port_channel_trunk_host": {f"Ethernet1/{port}" for port in range(10, 14)},
+        "integration.nd_interface_port_channel_routed": {f"Ethernet1/{port}" for port in range(10, 14)},
     }.items():
         resource = registry["profiles"][profile_id]["resources"][0]
         assert resource["kind"] == "verify_free_interfaces"
@@ -318,18 +335,15 @@ def test_existing_link_parent_must_join_two_registered_fabrics(registry):
         assert any(expected in error for error in validate_registry(candidate)), peer
 
 
-def test_physical_topology_profiles_fail_closed_until_lab_is_available(registry):
-    # nd_manage_links now targets live-verified free ports on the shared fabric; ToR still needs a
-    # dedicated seven-switch topology the lab does not have.
+def test_nd_manage_links_and_nd_manage_tor_profiles_are_ready(registry):
+    # nd_manage_links targets live-verified free ports on the shared fabric; nd_manage_tor runs a reduced single-association
+    # test on vxlan_leaf_3/vxlan_leaf_4, so neither declares an unavailable substrate any more.
     assert validate_selected_profiles(
         registry, ["integration.nd_manage_links"], allow_auto_confirm=True
     ) == []
     assert validate_selected_profiles(
         registry, ["integration.nd_manage_tor"], allow_auto_confirm=True
-    ) == [
-        "integration.nd_manage_tor: prerequisite resource "
-        "dedicated_tor_topology is unavailable"
-    ]
+    ) == []
 
 
 def test_logical_multi_execution_selection_requires_every_child(registry):
@@ -371,6 +385,9 @@ def test_jenkins_target_parser_ignores_commented_entries():
         "nd_manage_fabric_group_vxlan",
         "nd_manage_fabric_group_members",
         "nd_manage_tor",
+        "nd_local_user",
+        "nd_maintenance_mode",
+        "nd_fabric_update_group",
         "nd_manage_community_list",
         "nd_manage_extended_community_list",
     } <= set(targets["INTEGRATION_MODULES"])
@@ -382,6 +399,7 @@ def test_jenkins_target_parser_ignores_commented_entries():
         "nd_interface_ethernet_routed",
         "nd_interface_port_channel_access",
         "nd_interface_port_channel_trunk_host",
+        "nd_interface_port_channel_routed",
         "nd_interface_subinterface_managed",
         "nd_interface_subinterface_unmanaged",
         "nd_interface_vpc_access",
@@ -395,9 +413,23 @@ def test_jenkins_target_parser_ignores_commented_entries():
         "nd_manage_links",
         "nd_manage_switches",
     } == set(targets["EFFECTIVE_INTEGRATION_MODULES"])
-    assert "ND_TOR_ENABLED" in jenkins_text
-    assert "def effectiveIntegrationModulesForResults = effectiveIntegrationModules" in jenkins_text
+    assert "ND_TOR_ENABLED" not in jenkins_text
+    assert "def effectiveIntegrationModulesForResults = orderedIntegrationTargets" in jenkins_text
     assert targets["STANDALONE_INTEGRATION_MODULES"] == ["nd_vpc_pair"]
+
+
+def test_jenkins_runs_vpc_pairs_immediately_after_policy_groups():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    ordering = jenkins_text.split("def orderedIntegrationTargets = []", 1)[1].split("def integrationForShell", 1)[0]
+    assert "effectiveIntegrationModules.each { moduleName ->" in ordering
+    assert ordering.index("orderedIntegrationTargets.add(moduleName)") < ordering.index("orderedIntegrationTargets.addAll(standaloneTargets)")
+    assert "moduleName == 'nd_manage_policy_group' && env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true'" in ordering
+    assert "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}" in jenkins_text
+    assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in jenkins_text
+    assert 'run_standalone_integration "${m}"' in jenkins_text
+    assert 'for m in ${STANDALONE_INTEGRATION_LIST}; do' not in jenkins_text
+    assert 'for sm in ${ORDERED_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do' in jenkins_text
+    assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
 
 
 def test_jenkins_exposes_only_debug_and_git_branch_parameters():
@@ -419,6 +451,48 @@ def test_jenkins_always_runs_nd_vpc_pair_and_never_skips_it():
     assert '"${TARGET_PLAYBOOK}"' in standalone
 
 
+@pytest.mark.parametrize("links, expected", [
+    ([], "ABSENT"),
+    ([{"srcSwitchId": "peer1", "dstSwitchId": "peer2", "linkPresent": False}], "ABSENT"),
+    ([{"srcSwitchId": "peer1", "dstSwitchId": "peer2"}], "ABSENT"),
+    ([{"srcSwitchId": "peer1", "dstSwitchId": "other", "linkPresent": True}], "ABSENT"),
+    ([{"srcSwitchId": "peer1", "dstSwitchId": "peer2", "linkPresent": True}], "PRESENT"),
+    ([{"srcSwitchId": "peer2", "dstSwitchId": "peer1", "linkPresent": True}], "PRESENT"),
+])
+def test_jenkins_vpc_peerlink_probe_requires_a_present_link(links, expected):
+    from jinja2 import Environment
+
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    probe_text = jenkins_text.split("<<'PEERLINK_PROBE_EOF'\n", 1)[1].split("\nPEERLINK_PROBE_EOF", 1)[0]
+    probe = yaml.safe_load(probe_text)[0]
+    message = probe["tasks"][-1]["ansible.builtin.debug"]["msg"]
+    result = Environment().from_string(message).render(
+        _probe_links={"current": {"links": links}}, probe_s1="peer1", probe_s2="peer2",
+    )
+    assert result == f"NDP_VPC_PEERLINK_{expected}"
+
+
+def test_jenkins_vpc_peerlink_prepares_only_known_leaf_ports_and_reports_probe_errors():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    probe_text = jenkins_text.split("<<'PEERLINK_PROBE_EOF'\n", 1)[1].split("\nPEERLINK_PROBE_EOF", 1)[0]
+    prepare = yaml.safe_load(probe_text)[0]["tasks"][0]
+    assert prepare["ansible.builtin.include_tasks"].endswith("/nd_prerequisite/admin_up_interface.yaml")
+    assert [port["ifname"] for port in prepare["loop"]] == ["Ethernet1/2", "Ethernet1/1"]
+    assert prepare["when"] == "probe_prepare_peerlink | default(false) | bool"
+    assert '"${VPC_RUN_ID}" = "advanced"' in jenkins_text
+    # The advanced pair is the round's primary-fabric pair (iBGP in round 1, eBGP in round 2), never a hard-coded name.
+    assert '"${VPC_FABRIC}" = "${FABRIC_NAME}"' in jenkins_text
+    assert '"${VPC_FABRIC}" = "VXLAN_EVPN_Fabric"' not in jenkins_text
+    assert 'PREPARE_PEERLINK=false' in jenkins_text
+    assert '|| PEERLINK_STATUS=$?' in jenkins_text
+    assert 'NDP_VPC_PEERLINK_PROBE_FAILED [${m}]' in jenkins_text
+
+
+def test_jenkins_switch_guard_allows_greenfield_reload_time():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    assert 'SWITCH_GUARD_TIMEOUT="${ND_SWITCH_GUARD_TIMEOUT:-1800}"' in jenkins_text
+
+
 def test_runner_drops_the_unsupported_timeout_default_for_community_list_targets():
     runner = (ROOT / "tests/run_integration_module.yaml").read_text()
     assert "drop the unsupported timeout module default from the target" in runner
@@ -438,21 +512,46 @@ def test_vpc_interface_targets_use_the_runner_formed_physical_pair(registry):
     allowlist = registry["lab"]["interface_allowlist"]
     for module in ("nd_interface_vpc_access", "nd_interface_vpc_trunk_host"):
         profile = registry["profiles"][f"integration.{module}"]
-        (pair,) = profile["vpc_pairs"]
-        assert pair["mode"] == "physical"
-        assert pair["required_path"] == "module_creates_pair"
-        assert pair["physical_peer_links"]
+        # Pair 1 (leaf_1/leaf_2) is what the target works on; pair 2 (leaf_3/leaf_4) is the pre-existing second pair its
+        # multi-pair scenario asserts, so the runner forms both and the profile declares both peer-links.
+        pair1, pair2 = profile["vpc_pairs"]
+        assert pair1["peer_refs"] == ["vxlan_leaf_1", "vxlan_leaf_2"]
+        assert pair2["peer_refs"] == ["vxlan_leaf_3", "vxlan_leaf_4"]
+        for pair in (pair1, pair2):
+            assert pair["mode"] == "physical"
+            assert pair["required_path"] == "module_creates_pair"
+            assert pair["physical_peer_links"]
+        assert len(pair1["physical_peer_links"]) == 1
+        assert [
+            (link["src"]["interface"], link["dst"]["interface"]) for link in pair2["physical_peer_links"]
+        ] == [("Ethernet1/1", "Ethernet1/1"), ("Ethernet1/2", "Ethernet1/2")]
         assert profile["runtime_vars"]["nd_test_manage_vpc_pairs"] is False
-        # Member ports are verified free on BOTH leaves, and every reserved port is on the lab allowlist.
+        # The target resolves the second pair through these two management IPs, so they must be the leaf_3/leaf_4 seed IPs.
+        assert (
+            profile["runtime_vars"]["nd_test_vpc_pair2_peer1_ip"],
+            profile["runtime_vars"]["nd_test_vpc_pair2_peer2_ip"],
+        ) == (
+            registry["lab"]["switches"]["vxlan_leaf_3"]["seed_ip"],
+            registry["lab"]["switches"]["vxlan_leaf_4"]["seed_ip"],
+        )
+        # Member ports are verified free on ALL FOUR leaves, and every reserved port is on the lab allowlist.
         reserved = {
             resource["switch_ref"]: set(resource["interfaces"])
             for resource in profile["resources"]
             if resource["kind"] == "verify_free_interfaces"
         }
-        assert set(reserved) == {"vxlan_leaf_1", "vxlan_leaf_2"}
-        assert reserved["vxlan_leaf_1"] == reserved["vxlan_leaf_2"]
+        assert set(reserved) == {"vxlan_leaf_1", "vxlan_leaf_2", "vxlan_leaf_3", "vxlan_leaf_4"}
+        assert len({frozenset(interfaces) for interfaces in reserved.values()}) == 1
         for switch_ref, interfaces in reserved.items():
             assert interfaces <= set(allowlist[switch_ref])
+        # Every declared peer-link port is on the allowlist and admin-up readiness is requested for it.
+        link_ports = {(link["switch_ref"], interface) for link in profile["links"] for interface in link["interfaces"]}
+        for pair in (pair1, pair2):
+            for peer_link in pair["physical_peer_links"]:
+                for side in ("src", "dst"):
+                    endpoint = peer_link[side]
+                    assert endpoint["interface"] in allowlist[endpoint["switch_ref"]]
+                    assert (endpoint["switch_ref"], endpoint["interface"]) in link_ports
 
 
 def test_effective_module_profile_coverage_reports_all_missing_profiles_once():
@@ -545,17 +644,14 @@ def test_subinterface_parent_lifecycle_is_owned_by_typed_prerequisites():
         assert f"nd_prerequisite/{filename}" in jenkins_text
 
 
-def test_runner_maps_and_validates_dedicated_physical_topologies():
+def test_runner_maps_and_validates_the_numbered_link_and_reduced_tor_topologies():
     runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
     for token in (
         "ND_LINKS_FABRIC",
         "ND_LINKS_SWITCH_A",
         "ND_LINKS_SWITCH_B",
-        "ND_TOR_FABRIC",
-        "ND_TOR_SWITCH_SERIAL",
-        "ND_VPC_TOR_PEER_SERIAL",
-        "ND_VPC_LEAF_PEER_SERIAL",
-        "ND_TOR2_SWITCH_SERIAL",
+        "nd_tor_switch_name: vxlan_leaf_3",
+        "nd_tor_leaf_name: vxlan_leaf_4",
     ):
         assert token in runner_text
     # nd_manage_links no longer demands a dedicated fabric: its inputs must be roster members and, with
@@ -563,8 +659,11 @@ def test_runner_maps_and_validates_dedicated_physical_topologies():
     assert "validate dedicated numbered-link topology" not in runner_text
     assert "_ndp_result.runtime_vars.nd_test_switch_a" in runner_text
     assert "nd_test_fabric_numbered in nd_test_fabric_switches" in runner_text
-    assert "validate dedicated seven-switch ToR topology" in runner_text
-    assert "The current six-switch shared lab cannot satisfy it" in runner_text
+    # nd_manage_tor no longer needs a dedicated seven-switch fabric or seven Jenkins-supplied serials.
+    assert "validate dedicated seven-switch ToR topology" not in runner_text
+    assert "validate the reduced ToR roster" in runner_text
+    for removed in ("ND_TOR_FABRIC", "ND_TOR_SWITCH_SERIAL", "ND_VPC_TOR_PEER_SERIAL", "ND_TOR2_SWITCH_SERIAL", "test_tor_fabric_name"):
+        assert removed not in runner_text
 
 
 def test_jenkins_derives_every_switch_alias_from_canonical_names(registry):
@@ -590,6 +689,8 @@ def test_jenkins_derives_every_switch_alias_from_canonical_names(registry):
         "nd_test_switch2_id": ("external_edge_1", "serial"),
         "nd_test_switch1_mgmt_ip": ("vxlan_border_1", "ip"),
         "nd_test_switch2_mgmt_ip": ("external_edge_1", "ip"),
+        "nd_test_vpc_pair2_peer1_ip": ("vxlan_leaf_3", "ip"),
+        "nd_test_vpc_pair2_peer2_ip": ("vxlan_leaf_4", "ip"),
     }
     for alias, (name, field) in alias_sources.items():
         assert f'"{alias}": by_name["{name}"]["{field}"]' in jenkins_text, alias
@@ -749,19 +850,104 @@ def test_switch_adds_wipe_the_switch_except_on_external_fabrics():
         assert "preserve_config: true" not in prerequisite
 
 
+@pytest.mark.parametrize("environment_value, expected", [("", "inventory"), ("bound", "bound")])
+def test_switch_onboarding_credentials_resolve_inventory_fallback(environment_value, expected):
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    environment = NativeEnvironment(undefined=StrictUndefined)
+    environment.globals["lookup"] = lambda *args, **kwargs: environment_value
+    context = {"switch_username": "inventory", "switch_password": "inventory"}
+    for name in ("nd_switch_username", "nd_switch_password"):
+        assert environment.from_string(play["vars"][name]).render(**context) == expected
+
+
+def test_switch_removal_runtime_patch_is_narrow_and_idempotent(tmp_path):
+    target = tmp_path / "plugins/module_utils/rest/response_strategies/nd_v1_strategy.py"
+    target.parent.mkdir(parents=True)
+    source = 'BEFORE = "untouched"\n_MULTISTATUS_ITEM_KEYS = ("results", "switchIds", "links")\nAFTER = "untouched"\n'
+    target.write_text(source)
+    assert ensure_switch_removal_status_handling(tmp_path) is True
+    updated = target.read_text()
+    assert updated == source.replace('"switchIds", "links")', '"switchIds", "links", "items")')
+    assert ensure_switch_removal_status_handling(tmp_path) is False
+    assert target.read_text() == updated
+    jenkins = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    assert "def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'patch_nd_switch_removal.py']" in jenkins
+    assert 'python "${COLLECTIONS_DIRECTORY}/patch_nd_switch_removal.py" --collection-root "${COLLECTIONS_DIRECTORY}"' in jenkins
+
+
+def test_switch_removal_runtime_patch_rejects_unknown_layout_without_writing(tmp_path):
+    target = tmp_path / "plugins/module_utils/rest/response_strategies/nd_v1_strategy.py"
+    target.parent.mkdir(parents=True)
+    source = '_MULTISTATUS_ITEM_KEYS = ("unknown",)\n'
+    target.write_text(source)
+    with pytest.raises(ValueError, match="unsupported layout"):
+        ensure_switch_removal_status_handling(tmp_path)
+    assert target.read_text() == source
+
+
+def test_switch_move_checks_credentials_before_removing_any_switch():
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    names = [task["name"] for task in play["tasks"]]
+    prerequisite = next(index for index, task in enumerate(play["tasks"])
+                        if task["name"] == "Require switch discovery credentials before onboarding")
+    removal = next(index for index, name in enumerate(names) if name.startswith("Move the roster switches out"))
+    onboard = next(index for index, name in enumerate(names) if name.startswith("Onboard the missing switches"))
+    assert prerequisite < removal < onboard
+    task = play["tasks"][prerequisite]
+    assert "nd_switch_apply | bool" in task["when"]
+    assert "nd_missing_switches | length > 0" in task["when"]
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_switch_removal_reports_the_requested_scope_and_module_verdict(changed):
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    move = next(task for task in play["tasks"] if task["name"].startswith("Move the roster switches out"))
+    removal = next(task for task in move["block"] if task["name"] == "Remove each switch from the fabric it is leaving")
+    report = next(task for task in move["block"] if task["name"] == "Report the scoped switch removal result")
+    assert removal["register"] == "nd_rehome_removed"
+    assert report["loop"] == "{{ nd_rehome_removed.results }}"
+    requested = [{"seed_ip": "192.0.2.85"}, {"seed_ip": "192.0.2.86"}]
+    result = {"_rm": {"key": "VXLAN_EVPN_Fabric", "value": requested}, "changed": changed,
+              "diff": [dict(item, _action="deleted") for item in requested] if changed else [],
+              "msg": "" if changed else "No switches to delete - fabric already matches desired config",
+              "response": [{"RETURN_CODE": 200, "MESSAGE": "OK"}]}
+    rendered = NativeEnvironment(undefined=StrictUndefined).from_string(report["ansible.builtin.debug"]["msg"]).render(_removal=result)
+    assert "NDP_SWITCH_REMOVE fabric=VXLAN_EVPN_Fabric" in rendered
+    assert "requested=['192.0.2.85', '192.0.2.86']" in rendered
+    assert ("selected=['192.0.2.85', '192.0.2.86']" in rendered) == changed
+    assert ("selected=[]" in rendered) != changed
+    assert ("No switches to delete" in rendered) != changed
+    assert "api_codes=[200]" in rendered
+    assert "api_messages=['OK']" in rendered
+
+
+@pytest.mark.parametrize("name", ["apply_ensure_switch_membership.yaml", "apply_membership_move.yaml"])
+def test_prerequisite_switch_onboarding_validates_credentials_before_mutation(name):
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite" / name).read_text())
+    assertion = tasks[0]["ansible.builtin.assert"]
+    environment = NativeEnvironment(undefined=StrictUndefined)
+    context = {"nd_switch_username": "", "nd_switch_password": "", "switch_username": "inventory", "switch_password": "inventory"}
+    assert all(environment.compile_expression(condition)(**context) for condition in assertion["that"])
+    assert not all(environment.compile_expression(condition)(**(context | {"switch_password": ""})) for condition in assertion["that"])
+    add = next(task["cisco.nd.nd_manage_switches"] for task in tasks
+               if task.get("cisco.nd.nd_manage_switches", {}).get("state") == "merged")
+    for field in ("username", "password"):
+        assert environment.from_string(add["config"][0][field]).render(**context) == "inventory"
+
+
 def test_integration_config_declares_complete_canonical_fabric_membership():
     config = yaml.safe_load((ROOT / "tests/integration_config.yml").read_text())
     fabrics = config["nd_test_fabric_switches"]
     assert [item["name"] for item in fabrics["VXLAN_EVPN_Fabric"]] == [
-        "vxlan_leaf_1", "vxlan_leaf_2", "vxlan_spine_1", "vxlan_border_1",
+        "vxlan_leaf_1", "vxlan_leaf_2", "vxlan_spine_1", "vxlan_border_1", "vxlan_leaf_3", "vxlan_leaf_4",
     ]
     assert [item["name"] for item in fabrics["External_Connectivity_Fabric"]] == [
         "external_edge_1", "external_edge_2",
     ]
     # nd_manage_switches upstream (targets/nd_manage_switches/tasks/base_tasks.yaml) reads exactly
     # THREE positional seed IPs: ansible_switch1->leaf, ansible_switch2->spine, ansible_switch3->border.
-    # No ansible_switch4 exists, so this is a deliberate leaf/spine/border 3-of-4 subset; vxlan_leaf_2
-    # is carried by the full nd_test_fabric_switches roster above + the prerequisite reconcile step.
+    # No ansible_switch4 exists, so this is a deliberate leaf/spine/border 3-of-8 subset; vxlan_leaf_2, vxlan_leaf_3
+    # and vxlan_leaf_4 are carried by the full nd_test_fabric_switches roster above + the prerequisite reconcile step.
     vxlan_seed_ip = {item["name"]: item["seed_ip"] for item in fabrics["VXLAN_EVPN_Fabric"]}
     assert config["nd_manage_switches_test_projection"] == {
         "ansible_switch1": vxlan_seed_ip["vxlan_leaf_1"],    # role leaf
@@ -773,6 +959,187 @@ def test_integration_config_declares_complete_canonical_fabric_membership():
     inventory = yaml.safe_load((ROOT / "consul/inventory.yaml").read_text())
     assert registry["runtime_defaults"]["nd_test_fabric_switches"] == fabrics
     assert inventory["all"]["vars"]["nd_test_fabric_switches"] == fabrics
+
+
+LAB_SWITCH_IDENTITIES = {
+    "vxlan_leaf_1": ("192.0.2.195", "SERIAL00001"),
+    "vxlan_leaf_2": ("192.0.2.196", "SERIAL00002"),
+    "vxlan_spine_1": ("192.0.2.194", "SERIAL00003"),
+    "vxlan_border_1": ("192.0.2.88", "SERIAL00004"),
+    "vxlan_leaf_3": ("192.0.2.85", "SERIAL00008"),
+    "vxlan_leaf_4": ("192.0.2.86", "SERIAL00009"),
+    "external_edge_1": ("192.0.2.89", "SERIAL00005"),
+    "external_edge_2": ("192.0.2.90", "SERIAL00006"),
+}
+
+
+def test_every_roster_file_carries_all_eight_lab_switches(registry):
+    # One entry per file that enumerates the lab: a switch missing from any of them is how a stale roster slips in.
+    assert {
+        name: (switch["seed_ip"], switch["serial"]) for name, switch in registry["lab"]["switches"].items()
+    } == LAB_SWITCH_IDENTITIES
+    roster_files = (
+        "tests/integration_config.yml",
+        "tests/nd_prerequisite_profiles.yaml",
+        "tests/validate_nd_prerequisites.py",
+        "tests/fixtures/nd_prerequisite/valid_state.yaml",
+        "consul/inventory.yaml",
+        "consul/reset_fabric.yaml",
+        "playbooks/nd_prerequisite/nd_prerequisite_reconcile.yaml",
+        "Jenkinsfile_nd_jenkins_script",
+    )
+    for relative in roster_files:
+        text = (ROOT / relative).read_text()
+        for name, (seed_ip, serial) in LAB_SWITCH_IDENTITIES.items():
+            assert serial in text, f"{relative} is missing the serial of {name}"
+            assert seed_ip in text, f"{relative} is missing the IP of {name}"
+    # The workspace-root copies sit outside nd_pipeline; check them whenever they are present.
+    for relative in (
+        "reset_fabric.yaml", "nd_readonly_diagnostic.yaml",
+        "Final_Jenkins_Stage/Mike_s_setup_-_used_for_Ansible_ND_Nightly_Setup.yaml",
+    ):
+        path = ROOT.parent / relative
+        if path.exists():
+            text = path.read_text()
+            for name, (_, serial) in LAB_SWITCH_IDENTITIES.items():
+                assert serial in text, f"{relative} is missing the serial of {name}"
+
+
+def serial_check_context(live_switches):
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    guard = next(task for task in play["tasks"] if task["name"].startswith("Verify live switch serials"))
+    compare = next(task for task in guard["block"] if task["name"].startswith("Compare each roster IP"))
+    roster = yaml.safe_load((ROOT / "tests/integration_config.yml").read_text())["nd_test_fabric_switches"]
+    environment = NativeEnvironment(undefined=StrictUndefined)
+    context = {"nd_switch_identity_inventory": {"current": {"switches": live_switches}}, "nd_switch_serial_rows": []}
+    for fabric, switches in roster.items():
+        for switch in switches:
+            row_context = dict(context, _identity=({"key": fabric}, switch))
+            for name, value in compare["vars"].items():
+                if isinstance(value, dict):
+                    row_context[name] = {key: environment.from_string(item).render(**row_context) for key, item in value.items()}
+                else:
+                    row_context[name] = environment.from_string(value).render(**row_context)
+            context["nd_switch_serial_rows"] = environment.from_string(
+                compare["ansible.builtin.set_fact"]["nd_switch_serial_rows"]
+            ).render(**row_context)
+    assertion = guard["block"][-1]["ansible.builtin.assert"]
+    passed = environment.compile_expression(assertion["that"][0])(**context)
+    report = environment.from_string(assertion["fail_msg"]).render(**context)
+    return passed, context["nd_switch_serial_rows"], report
+
+
+@pytest.mark.parametrize("change, expected_status", [
+    ({"serialNumber": "STALE_SERIAL", "switchId": "STALE_SERIAL"}, "DRIFT"),
+    ({"serialNumber": "", "switchId": ""}, "UNVERIFIED"),
+    ({"serialNumber": "SERIAL00001", "switchId": "OTHER_SERIAL"}, "UNVERIFIED"),
+])
+def test_switch_serial_drift_fails_with_an_ip_to_serial_table(change, expected_status):
+    live = [{"fabricManagementIp": ip, "serialNumber": serial, "switchId": serial} for ip, serial in LAB_SWITCH_IDENTITIES.values()]
+    leaf = next(switch for switch in live if switch["fabricManagementIp"] == "192.0.2.195")
+    leaf.update(change)
+    passed, rows, report = serial_check_context(live)
+    assert not passed
+    assert next(row for row in rows if row["name"] == "vxlan_leaf_1")["status"] == expected_status
+    assert "NDP_SWITCH_SERIAL_DRIFT" in report
+    assert "192.0.2.195 | vxlan_leaf_1 | VXLAN_EVPN_Fabric | SERIAL00001 |" in report
+    assert len(rows) == 8
+
+
+def test_switch_serial_check_accepts_matching_identities_in_either_round_fabric():
+    live = [{"fabricManagementIp": ip, "switchId": serial, "fabricName": "VXLAN_EVPN_Fabric_eBGP"}
+            for ip, serial in LAB_SWITCH_IDENTITIES.values()]
+    live.append({"fabricManagementIp": "192.0.2.181", "serialNumber": "UNRELATED_SWITCH"})
+    passed, rows, _ = serial_check_context(live)
+    assert passed
+    assert all(row["status"] == "MATCH" for row in rows)
+
+
+def test_switch_serial_check_leaves_absent_ips_eligible_for_onboarding():
+    passed, rows, _ = serial_check_context([])
+    assert passed
+    assert len(rows) == 8
+    assert all(row["status"] == "MISSING" for row in rows)
+
+
+def test_switch_serial_check_rejects_ambiguous_ip_identity():
+    passed, rows, _ = serial_check_context([
+        {"fabricManagementIp": "192.0.2.195", "serialNumber": "SERIAL00001"},
+        {"fabricManagementIp": "192.0.2.195", "serialNumber": "OTHER_SERIAL"},
+    ])
+    assert not passed
+    assert next(row for row in rows if row["name"] == "vxlan_leaf_1")["status"] == "AMBIGUOUS"
+
+
+def test_switch_serial_check_precedes_mutation_and_has_no_polling():
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    names = [task["name"] for task in play["tasks"]]
+    index = next(index for index, name in enumerate(names) if name.startswith("Verify live switch serials"))
+    assert index < names.index("Gather current inventory for each fabric in the roster")
+    guard = play["tasks"][index]["block"]
+    read = guard[0]
+    assert read["cisco.nd.nd_rest"]["method"] == "get"
+    assert read["cisco.nd.nd_rest"]["path"].startswith("/api/v1/manage/inventory/switches")
+    assert read["check_mode"] is False
+    for task in guard:
+        assert not {"retries", "delay", "until", "ignore_errors", "failed_when", "when"} & set(task)
+    assertion = guard[1]["ansible.builtin.assert"]
+    environment = NativeEnvironment(undefined=StrictUndefined)
+    for current in ({}, {"switches": None}, {"switches": "not-a-list"}, {"switches": {}}):
+        assert not all(environment.compile_expression(condition)(nd_switch_identity_inventory={"current": current})
+                       for condition in assertion["that"])
+
+
+@pytest.mark.parametrize("live_serial, expected_returncode", [("SERIAL00001", 0), ("STALE_SERIAL", 2)])
+def test_switch_serial_gate_aborts_ansible_before_followup_tasks(tmp_path, live_serial, expected_returncode):
+    executable = pathlib.Path(sys.executable).with_name("ansible-playbook")
+    if not executable.exists():
+        pytest.skip("ansible-playbook is not installed in the test interpreter environment")
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    guard = next(task for task in play["tasks"] if task["name"].startswith("Verify live switch serials"))
+    guard["block"][0] = {
+        "name": "Provide read-only mock inventory",
+        "ansible.builtin.set_fact": {"nd_switch_identity_inventory": {"current": {"switches": [
+            {"fabricManagementIp": "192.0.2.195", "serialNumber": live_serial, "switchId": live_serial},
+        ]}}},
+    }
+    roster = yaml.safe_load((ROOT / "tests/integration_config.yml").read_text())["nd_test_fabric_switches"]
+    playbook = tmp_path / "serial-check.yaml"
+    playbook.write_text(yaml.safe_dump([{
+        "name": "Verify the serial gate without ND mutation", "hosts": "localhost", "gather_facts": False,
+        "vars": {"nd_test_fabric_switches": roster},
+        "tasks": [guard, {"name": "Followup", "ansible.builtin.debug": {"msg": "SERIAL_GATE_FOLLOWUP_REACHED"}}],
+    }], sort_keys=False))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_HOME=str(tmp_path / "ansible-home"),
+                       ANSIBLE_LOCAL_TEMP=str(tmp_path / "ansible-tmp"), ANSIBLE_STDOUT_CALLBACK="default",
+                       ANSIBLE_NOCOLOR="1", ANSIBLE_FORCE_COLOR="0")
+    environment.pop("ANSIBLE_CALLBACKS_ENABLED", None)
+    result = subprocess.run([sys.executable, str(executable), "-i", "localhost,", "-c", "local", str(playbook)],
+                            env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == expected_returncode, result.stdout + result.stderr
+    assert ("SERIAL_GATE_FOLLOWUP_REACHED" in result.stdout) == (expected_returncode == 0)
+    if expected_returncode:
+        assert "NDP_SWITCH_SERIAL_DRIFT" in result.stdout
+        assert "192.0.2.195 | vxlan_leaf_1 | VXLAN_EVPN_Fabric | SERIAL00001 | STALE_SERIAL | DRIFT" in result.stdout
+
+
+def test_vpc_interface_runner_forms_and_removes_the_second_leaf_pair():
+    runner = (ROOT / "tests/run_integration_module.yaml").read_text()
+    ensure_text = (ROOT / "playbooks/nd_ensure_switches.yaml").read_text()
+    # The multi-pair scenario never creates its second pair, so the runner forms leaf_3/leaf_4 like the first pair and
+    # looks the pair up in the roster by the same management IPs the target reads.
+    assert "nd_test_vpc_pair2_peer1_ip: 192.0.2.85" in runner
+    assert "nd_test_vpc_pair2_peer2_ip: 192.0.2.86" in runner
+    assert "selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer1_ip)" in runner
+    assert "selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer2_ip)" in runner
+    assert "SETUP - create the second physical vPC pair" in runner
+    assert runner.count("use_virtual_peer_link: false") >= 2
+    assert "CLEANUP - unpair the second vPC pair the runner formed for the vPC interface target" in runner
+    assert "_ndp_vpcif2_pair_preexisting is defined" in runner
+    # The read-only heal removes the second pair as well, so a stuck leaf_3/leaf_4 cannot block a Recalculate & Deploy.
+    assert "Unpair the second vPC leaf pair on each fabric with a read-only leaf" in ensure_text
 
 
 def test_border_and_external_edge_counts_match_canonical_lab(registry):

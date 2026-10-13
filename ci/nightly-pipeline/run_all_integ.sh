@@ -35,11 +35,11 @@
 #   The handpicked cleanups the pipeline runs AROUND the tests are preserved too:
 #     * switch-membership pre-flight (before) + post-restore (after) via
 #       nd_ensure_switches.yaml -- pre-flight is an ENFORCED gate (add +
-#       recalculate & deploy + confirm the full 4+2 topology; aborts on failure),
+#       recalculate & deploy + confirm the full 6+2 topology; aborts on failure),
 #       post-restore is best-effort; both auto-skip locally when the playbook or
 #       integration_config.yml roster is absent (Consul-only files)
 #     * a per-module switch guard runs the SAME confirm+add before EVERY module
-#       (add missing + recalculate & deploy + confirm 4+2), bounded by
+#       (add missing + recalculate & deploy + confirm 6+2), bounded by
 #       ND_SWITCH_GUARD_TIMEOUT; non-fatal to the loop but a heal failure marks
 #       the run failed -- so no module runs on a fabric missing a switch
 #     * reset_fabric.yaml (after the suite) -- opt-in (ND_RESET_FABRIC=true),
@@ -109,6 +109,15 @@ DEFAULT_MODULES=(
   nd_manage_l3out
   nd_manage_vrfs
   nd_manage_networks
+  # nd_manage_tor runs the runner's REDUCED ToR test (vxlan_leaf_3 as ToR, paired with vxlan_leaf_4), not the upstream
+  # seven-switch target; it needs no extra -e vars.
+  nd_manage_tor
+  # nd_local_user (controller-level) and nd_maintenance_mode / nd_fabric_update_group (idle leaves .85/.86, plus the spine .194 for
+  # the update groups) need no extra -e vars either; the runner supplies the switches and guards them: nd_local_user and
+  # nd_fabric_update_group end with NDP_MODULE_SKIPPED when the controller holds other local users / the fabric other update groups.
+  nd_local_user
+  nd_maintenance_mode
+  nd_fabric_update_group
   nd_manage_fabric
   nd_manage_switches
   nd_resource_manager
@@ -132,8 +141,9 @@ fi
 # substrate (free ports, NO cabling) on ND_INTERFACE_TEST_SWITCH_IP (default
 # 192.0.2.195 = vxlan_leaf_1); that switch must be in normal (not migration/read-only)
 # mode for deploys to land. The two nd_interface_vpc_* targets additionally need the
-# leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link cable and free member ports on BOTH leaves; the
-# runner (run_integration_module.yaml) forms the physical leaf pair around them. Enable:
+# leaf_1 Eth1/2 <-> leaf_2 Eth1/1 and leaf_3 <-> leaf_4 Eth1/1 + Eth1/2 peer-link cables and free
+# member ports on ALL FOUR leaves; the runner (run_integration_module.yaml) forms both physical
+# leaf pairs around them (leaf_3/leaf_4 = nd_test_vpc_pair2_peer*_ip, .85/.86). Enable:
 # ND_INTERFACE_ENABLE=true ./run_all_integ.sh
 # (or run any explicitly, e.g. ./run_all_integ.sh nd_interface_loopback).
 ND_INTERFACE_ENABLE="${ND_INTERFACE_ENABLE:-false}"
@@ -147,6 +157,7 @@ if [ "${ND_INTERFACE_ENABLE}" = "true" ]; then
     nd_interface_ethernet_routed
     nd_interface_port_channel_access
     nd_interface_port_channel_trunk_host
+    nd_interface_port_channel_routed
     nd_interface_subinterface_managed
     nd_interface_subinterface_unmanaged
     nd_interface_vpc_access
@@ -244,7 +255,7 @@ module_extra_vars() {
       # Parents must PRE-EXIST (setup never creates them): routed Eth1/1 (the existing leaf_1<->external_edge_1
       # cable; Eth1/2-1/3 are underlay, never use them) + Port-channel10. The nightly gets both from the prerequisite lifecycle.
       printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_ethernet_parent=Ethernet1/1 -e nd_test_port_channel_parent=Port-channel10" ;;
-    nd_interface_port_channel_access|nd_interface_port_channel_trunk_host)
+    nd_interface_port_channel_access|nd_interface_port_channel_trunk_host|nd_interface_port_channel_routed)
       printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13" ;;
     nd_interface_*)
       printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195}" ;;
@@ -253,7 +264,7 @@ module_extra_vars() {
 }
 
 # Switch-membership sync (pre/post) -> nd_ensure_switches.yaml (nightly runSwitchMembershipSync).
-# pre = ENFORCED gate: add + recalculate & deploy + confirm the full 4+2 topology; a failure
+# pre = ENFORCED gate: add + recalculate & deploy + confirm the full 6+2 topology; a failure
 # aborts the suite (exit 1) so it never starts on a broken topology. post = best-effort restore
 # (never aborts). Both auto-skip when the playbook/roster are absent locally (Consul-only).
 run_switch_sync() {
@@ -282,7 +293,7 @@ run_switch_sync() {
     if [ "$phase" = "post" ]; then
       echo "WARN: switch post-sync did not complete cleanly (best-effort, continuing)."
     else
-      echo "ERROR: switch pre-flight did not confirm the full 4+2 topology (rc=$rc)." >&2
+      echo "ERROR: switch pre-flight did not confirm the full 6+2 topology (rc=$rc)." >&2
       echo "ERROR: refusing to start the suite on a broken topology; check the switch(es) and grep the log for NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL." >&2
       exit 1
     fi
@@ -290,7 +301,7 @@ run_switch_sync() {
 }
 
 # Per-module switch-availability guard (mirrors the nightly's ensure_switches_ready).
-# Confirm the canonical 4+2 switches before EVERY module and re-add any a prior
+# Confirm the canonical 6+2 switches before EVERY module and re-add any a prior
 # destructive module (e.g. nd_manage_switches) removed, then recalculate & deploy,
 # so a module never runs on a fabric missing a switch. Enforced add (apply=true)
 # except in a prerequisite-only run. Bounded by ND_SWITCH_GUARD_TIMEOUT (default
@@ -305,7 +316,7 @@ ensure_switches_ready() {
   fi
   if [ "$ND_PREREQUISITE_ONLY" = "true" ]; then _apply="false"; else _apply="${ND_SWITCH_AUTO_ONBOARD:-true}"; fi
   _gt="${ND_SWITCH_GUARD_TIMEOUT:-900}"; [ -n "$TIMEOUT_BIN" ] && _gt="$TIMEOUT_BIN -k 30 $_gt" || _gt=""
-  echo "🔎 [switch-guard] Confirming canonical 4+2 switches before ${_label} (apply=${_apply}, timeout=${ND_SWITCH_GUARD_TIMEOUT:-900}s)"
+  echo "🔎 [switch-guard] Confirming canonical 6+2 switches before ${_label} (apply=${_apply}, timeout=${ND_SWITCH_GUARD_TIMEOUT:-900}s)"
   if [ -n "${DRY_RUN:-}" ]; then
     echo "DRY_RUN: ${_gt} ansible-playbook -i $INVENTORY $SWITCH_PLAYBOOK -e nd_switch_roster_file=$COLLECTION_ROOT/$SWITCH_ROSTER -e nd_switch_apply=${_apply} -e nd_switch_deploy=true -e nd_switch_require_full_roster=true -e nd_switch_fail_on_missing=false"
     return 0
@@ -364,7 +375,7 @@ for m in "${MODULES[@]}"; do
     continue
   fi
 
-  # Per-module switch guard: confirm/re-add the canonical 4+2 before this module.
+  # Per-module switch guard: confirm/re-add the canonical 6+2 before this module.
   ensure_switches_ready "$m"
 
   cap=""

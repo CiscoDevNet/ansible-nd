@@ -46,6 +46,7 @@ TESTS_KEYS = {
     "integration_config.yml", "run_integration_module.yaml",
     "nd_prerequisite_profiles.yaml", "nd_prerequisite_orchestrator.py",
     "validate_nd_prerequisites.py", "test_validate_nd_prerequisites.py",
+    "patch_nd_switch_removal.py",
 }
 
 

@@ -41,6 +41,61 @@ def test_snapshot_decodes_bytes_and_records_revision(tmp_path):
     assert ((tmp_path / "ansible-nd" / "nd_manage_acl.yaml").stat().st_mode & 0o777) == 0o600
 
 
+def test_consul_transaction_publishes_all_keys_in_one_compare_and_set(monkeypatch):
+    requests = []
+    def respond(request, **kwargs):
+        requests.append(request)
+        return FakeResponse(json.dumps({"Results": [{"KV": {}}, {"KV": {}}]}))
+    monkeypatch.setattr(release.urllib.request, "urlopen", respond)
+    records = {
+        "ansible-nd/inventory.yaml": KVRecord("ansible-nd/inventory.yaml", b"before", 41),
+        "ansible-nd/nd_ensure_switches.yaml": KVRecord("ansible-nd/nd_ensure_switches.yaml", b"before", 52),
+    }
+    values = {"ansible-nd/inventory.yaml": b"inventory\n", "ansible-nd/nd_ensure_switches.yaml": b"guard\xff\n"}
+    ConsulKV("http://consul").compare_and_set(records, values)
+    assert len(requests) == 1
+    assert requests[0].full_url == "http://consul/v1/txn"
+    assert requests[0].get_method() == "PUT"
+    for operation in json.loads(requests[0].data):
+        entry = operation["KV"]
+        assert entry["Verb"] == "cas"
+        assert entry["Index"] == records[entry["Key"]].modify_index
+        assert base64.b64decode(entry["Value"]) == values[entry["Key"]]
+
+
+def test_consul_transaction_conflict_does_not_retry_or_partially_publish(monkeypatch):
+    requests = []
+    def conflict(request, **kwargs):
+        requests.append(request)
+        raise urllib.error.HTTPError(request.full_url, 409, "conflict", {}, None)
+    monkeypatch.setattr(release.urllib.request, "urlopen", conflict)
+    key = "ansible-nd/inventory.yaml"
+    with pytest.raises(ReleaseError, match="conflict; no keys changed"):
+        ConsulKV("http://consul").compare_and_set({key: KVRecord(key, b"before", 41)}, {key: b"after"})
+    assert len(requests) == 1
+
+
+def test_consul_transaction_requires_all_before_images_and_fits_the_server_limit(monkeypatch):
+    requests = []
+    monkeypatch.setattr(release.urllib.request, "urlopen", lambda *args, **kwargs: requests.append(args))
+    key = "ansible-nd/inventory.yaml"
+    client = ConsulKV("http://consul")
+    with pytest.raises(ReleaseError, match="before-image"):
+        client.compare_and_set({}, {key: b"after"})
+    with pytest.raises(ReleaseError, match="limit is 10"):
+        client.compare_and_set({key: KVRecord(key, b"before", 41)}, {key: b"after"}, max_request_bytes=10)
+    assert requests == []
+
+
+def test_consul_transaction_rejects_empty_values_before_sending(monkeypatch):
+    requests = []
+    monkeypatch.setattr(release.urllib.request, "urlopen", lambda *args, **kwargs: requests.append(args))
+    key = "ansible-nd/inventory.yaml"
+    with pytest.raises(ReleaseError, match="invalid transaction value"):
+        ConsulKV("http://consul").compare_and_set({key: KVRecord(key, b"before", 41)}, {key: b""})
+    assert requests == []
+
+
 def test_snapshot_rejects_empty_or_missing_key(tmp_path):
     client = FakeConsul({"ansible-nd/empty.yaml": (9, b"")})
     with pytest.raises(ReleaseError, match="empty"):

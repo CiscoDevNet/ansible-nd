@@ -27,8 +27,8 @@
     # fabric so the external fabric uses its own switches, not the main pair.
     reset_fabric_switches:
       - fabric: VXLAN_EVPN_Fabric
-        serials: [SERIAL00001, SERIAL00002, SERIAL00003, SERIAL00004]
-        ips: [192.0.2.195, 192.0.2.196, 192.0.2.194, 192.0.2.88]
+        serials: [SERIAL00001, SERIAL00002, SERIAL00003, SERIAL00004, SERIAL00008, SERIAL00009]
+        ips: [192.0.2.195, 192.0.2.196, 192.0.2.194, 192.0.2.88, 192.0.2.85, 192.0.2.86]
       - fabric: External_Connectivity_Fabric
         serials: [SERIAL00005, SERIAL00006]
         ips: [192.0.2.89, 192.0.2.90]

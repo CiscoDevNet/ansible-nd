@@ -278,6 +278,9 @@ def test_typed_interface_verification_operations_are_planned(registry, valid_sta
         "integration.nd_interface_port_channel_trunk_host": [
             "verify_free_interfaces", "verify_logical_interface_namespace",
         ],
+        "integration.nd_interface_port_channel_routed": [
+            "verify_free_interfaces", "verify_logical_interface_namespace", "verify_logical_interface_namespace",
+        ],
     }.items():
         confirmed = confirm(registry, profile_id)
         resolved = resolve_execution(confirmed, profile_id)
@@ -580,21 +583,25 @@ def test_resource_manager_runs_on_a_cabled_physical_peer_link_and_recovers_shut_
 
 
 @pytest.mark.parametrize("module", ["nd_interface_vpc_access", "nd_interface_vpc_trunk_host"])
-def test_vpc_interface_targets_need_the_cabled_peer_link_and_free_member_ports_on_both_leaves(registry, valid_state, module):
+def test_vpc_interface_targets_need_the_cabled_peer_links_and_free_member_ports_on_all_four_leaves(registry, valid_state, module):
     confirmed = confirm(registry, f"integration.{module}")
     resolved = resolve_execution(confirmed, f"integration.{module}")
     no_pair = copy.deepcopy(valid_state)
     no_pair["vpc_pairs"] = []
-    # The runner forms the physical pair itself, so a cabled peer-link plus free member ports needs no apply work
-    # beyond the read-only member-port verification on each leaf.
+    # The runner forms both physical pairs itself (leaf_1/leaf_2 and the multi-pair scenario's leaf_3/leaf_4), so cabled
+    # peer-links plus free member ports need no apply work beyond the read-only member-port verification on each leaf.
     operations = plan_topology_delta(confirmed, resolved, no_pair)
     assert [(op["operation"], op["switch_ref"]) for op in operations] == [
         ("verify_free_interfaces", "vxlan_leaf_1"),
         ("verify_free_interfaces", "vxlan_leaf_2"),
+        ("verify_free_interfaces", "vxlan_leaf_3"),
+        ("verify_free_interfaces", "vxlan_leaf_4"),
     ]
     assert not any(op["operation"] == "ensure_virtual_vpc" for op in operations)
+    runtime = runtime_vars_for_execution(resolved, "run-1", "phase-1")
+    assert (runtime["nd_test_vpc_pair2_peer1_ip"], runtime["nd_test_vpc_pair2_peer2_ip"]) == ("192.0.2.85", "192.0.2.86")
 
-    # Both peer-link ports administratively shut: admin-up them first, then verify the member ports.
+    # Both peer-link ports administratively shut on the first pair: admin-up them first, then verify the member ports.
     shut = copy.deepcopy(no_pair)
     for switch_ref, interface in (("vxlan_leaf_1", "Ethernet1/2"), ("vxlan_leaf_2", "Ethernet1/1")):
         shut["interfaces"][switch_ref][interface] = {"admin_state": False, "operational_state": "down"}
@@ -602,7 +609,21 @@ def test_vpc_interface_targets_need_the_cabled_peer_link_and_free_member_ports_o
         if item["srcSwitchId"] == "SERIAL00001" and item["dstSwitchId"] == "SERIAL00002":
             item["linkPresent"] = False
     assert [op["operation"] for op in plan_topology_delta(confirmed, resolved, shut)] == [
-        "ensure_interface", "ensure_interface", "verify_free_interfaces", "verify_free_interfaces",
+        "ensure_interface", "ensure_interface",
+        "verify_free_interfaces", "verify_free_interfaces", "verify_free_interfaces", "verify_free_interfaces",
+    ]
+
+    # The second pair's peer-link ports (two cables each side) are admin-upped the same way.
+    shut_pair2 = copy.deepcopy(no_pair)
+    for switch_ref in ("vxlan_leaf_3", "vxlan_leaf_4"):
+        for interface in ("Ethernet1/1", "Ethernet1/2"):
+            shut_pair2["interfaces"][switch_ref][interface] = {"admin_state": False, "operational_state": "down"}
+    operations = plan_topology_delta(confirmed, resolved, shut_pair2)
+    assert [(op["operation"], op["switch_ref"], op["interface"]) for op in operations if op["operation"] == "ensure_interface"] == [
+        ("ensure_interface", "vxlan_leaf_3", "Ethernet1/1"),
+        ("ensure_interface", "vxlan_leaf_3", "Ethernet1/2"),
+        ("ensure_interface", "vxlan_leaf_4", "Ethernet1/1"),
+        ("ensure_interface", "vxlan_leaf_4", "Ethernet1/2"),
     ]
 
     # No leaf_1 <-> leaf_2 cable: the module is reported unavailable with the ports to cable.
@@ -614,11 +635,35 @@ def test_vpc_interface_targets_need_the_cabled_peer_link_and_free_member_ports_o
     with pytest.raises(UnavailableError, match=r"required physical vPC peer-link is missing: vxlan_leaf_1/Ethernet1/2 <-> vxlan_leaf_2/Ethernet1/1"):
         plan_topology_delta(confirmed, resolved, uncabled)
 
+    # No leaf_3 <-> leaf_4 cable (either of the two): the multi-pair scenario's second pair cannot form, so it is unavailable too.
+    for dropped in ("Ethernet1/1", "Ethernet1/2"):
+        uncabled_pair2 = copy.deepcopy(no_pair)
+        uncabled_pair2["links"] = [
+            item for item in uncabled_pair2["links"]
+            if not (item["srcSwitchId"] == "SERIAL00008" and item["srcInterfaceName"] == dropped)
+        ]
+        with pytest.raises(
+            UnavailableError,
+            match=rf"required physical vPC peer-link is missing: vxlan_leaf_3/{dropped} <-> vxlan_leaf_4/{dropped}",
+        ):
+            plan_topology_delta(confirmed, resolved, uncabled_pair2)
+
+    # An already formed second pair needs nothing from the planner, even with its cables not reported.
+    formed = copy.deepcopy(uncabled_pair2)
+    formed["vpc_pairs"] = [{"fabric_ref": "advanced", "peer_refs": ["vxlan_leaf_3", "vxlan_leaf_4"], "mode": "physical"}]
+    assert [op["operation"] for op in plan_topology_delta(confirmed, resolved, formed)] == ["verify_free_interfaces"] * 4
+
     # A reserved member port that does not exist on the second leaf is reported before anything runs.
     missing_port = copy.deepcopy(no_pair)
     missing_port["interfaces"]["vxlan_leaf_2"]["Ethernet1/10"] = {"exists": False}
     with pytest.raises(UnavailableError, match="required physical interface is missing: vxlan_leaf_2/Ethernet1/10"):
         plan_topology_delta(confirmed, resolved, missing_port)
+
+    # ...and so is one on the second pair, which the multi-pair scenario also needs.
+    missing_pair2_port = copy.deepcopy(no_pair)
+    missing_pair2_port["interfaces"]["vxlan_leaf_4"]["Ethernet1/10"] = {"exists": False}
+    with pytest.raises(UnavailableError, match="required physical interface is missing: vxlan_leaf_4/Ethernet1/10"):
+        plan_topology_delta(confirmed, resolved, missing_pair2_port)
 
 
 def test_l3out_needs_one_cable_and_plans_config_only_links_for_the_other_types(registry, valid_state):
@@ -785,7 +830,7 @@ def test_runtime_vars_are_fresh_and_execution_specific(registry):
     runtime = runtime_vars_for_execution(resolved, "run-22", "phase-baseline-3")
     assert runtime["fabric_name"] == "VXLAN_EVPN_Fabric"
     assert [item["name"] for item in runtime["nd_test_fabric_switches"]["VXLAN_EVPN_Fabric"]] == [
-        "vxlan_leaf_1", "vxlan_leaf_2", "vxlan_spine_1", "vxlan_border_1",
+        "vxlan_leaf_1", "vxlan_leaf_2", "vxlan_spine_1", "vxlan_border_1", "vxlan_leaf_3", "vxlan_leaf_4",
     ]
     assert [item["name"] for item in runtime["nd_test_fabric_switches"]["External_Connectivity_Fabric"]] == [
         "external_edge_1", "external_edge_2",

@@ -74,14 +74,26 @@ def INTEGRATION_MODULES = [
     // groups/member fabrics. They do not consume physical switches.
     'nd_manage_fabric_group_vxlan',
     'nd_manage_fabric_group_members',
-    // nd_manage_tor is filtered by ND_TOR_ENABLED (on hold, see the constants below). The
-    // numbered-link target is appended near the end, immediately before the
-    // destructive nd_manage_switches target, so it can use its dedicated fabric
+    // nd_local_user is controller-level (no fabric or switch). Its overridden step removes every local user that is not in its config,
+    // so the runner only starts it while admin is the sole local user (leftovers of its own ansible_local_user* logins are fine) and
+    // ends the play with NDP_MODULE_SKIPPED, reported as a SKIP row with the reason, when any other login exists.
+    'nd_local_user',
+    // nd_manage_tor always runs the pipeline-owned REDUCED ToR test in run_integration_module.yaml, not the upstream target (that one
+    // needs six or seven switches in one fabric, three ToR-role and three leaf-role, plus two vPC pairs): vxlan_leaf_3 takes the ToR
+    // role for the test only and pairs with vxlan_leaf_4, and the role is restored afterwards. The numbered-link target is appended
+    // near the end, immediately before the destructive nd_manage_switches target, so it can use its dedicated fabric
     // without being affected by the switch-membership lifecycle.
     'nd_manage_tor',
+    // nd_maintenance_mode and nd_fabric_update_group use the idle leaves vxlan_leaf_3 (.85) and vxlan_leaf_4 (.86); the update-group
+    // suite adds vxlan_spine_1 (.194) as its third, disjoint switch. Both change ND-side intent only (system-mode intent without a
+    // deploy; software-update groups without any image) and restore it. The runner starts nd_fabric_update_group only while the fabric
+    // holds no update group besides ND's built-in default group named None, because its overridden and auto-assign steps act on every
+    // group (otherwise NDP_MODULE_SKIPPED), and verifies normal mode and configuration sync again after nd_maintenance_mode.
+    'nd_maintenance_mode',
+    'nd_fabric_update_group',
     // nd_manage_vpc_pair coverage lives in standalone target nd_vpc_pair, which runs against the
     // fixed lab pairs in VPC_PAIR_EXECUTIONS. The two nd_interface_vpc_* targets run from
-    // INTERFACE_INTEGRATION_MODULES (the runner forms the physical leaf pair around them).
+    // INTERFACE_INTEGRATION_MODULES (the runner forms both physical leaf pairs, leaf_1/leaf_2 and leaf_3/leaf_4, around them).
     // 'nd_manage_vpc_pair',
     // nd_manage_switches is part of the nightly suite. Its device credentials are
     // validated before any module runs, and the canonical fabric roster is restored
@@ -101,25 +113,37 @@ def STANDALONE_INTEGRATION_MODULES = [
     'nd_vpc_pair',
 ]
 
+// The whole suite runs once per entry, in order: round 1 on the canonical iBGP VXLAN fabric, round 2 on the eBGP VXLAN
+// fabric. A switch belongs to one fabric, so the six VXLAN switches are re-homed into each round's fabric by the switch
+// pre-flight (nd_ensure_switches.yaml; greenfield, ND erases and reloads them) and returned to the FIRST round's fabric
+// after the last round. Round 1 runs the Consul files exactly as downloaded; every later round first re-targets them with
+// `validate_nd_prerequisites.py render-round` (its fabric must be the registry's preserved fabric).
+//   fabric    fabric the round runs on                          type      ND management.type that fabric must report
+//   vpcType   nd_vpc_pair fabric_type used for the round's pair   label     shown in stage names and the Webex table
+//   idSuffix  appended to the version id (output files, dynamic inventory, failure flag); empty keeps round 1 unchanged
+// The eBGP destination must report vxlanEbgp, not routed; nd_manage_switches cannot onboard switches into a routed
+// fabric. The round checks this before moving any switch.
+@Field
+def FABRIC_ROUNDS = [
+    [fabric: 'VXLAN_EVPN_Fabric', type: 'vxlanIbgp', vpcType: 'vxlanIbgp', label: 'iBGP', idSuffix: ''],
+    [fabric: 'VXLAN_EVPN_Fabric_eBGP', type: 'vxlanEbgp', vpcType: 'vxlanEbgp', label: 'eBGP', idSuffix: '_EBGP'],
+]
+
 // nd_vpc_pair runs once per fixed lab pair: the leaf pair of the VXLAN fabric and the edge pair of the external
 // fabric (names resolve to serials through the ND version's switch roster). Each run writes its own
 // test_output_*_nd_vpc_pair.<id>.txt and always executes; a missing physical peer-link is logged, never skipped.
+// The 'advanced' pair always runs on the current round's primary fabric (fabric/type below are the first round's;
+// runFabricTest substitutes the round's fabric and vpcType).
 @Field
 def VPC_PAIR_EXECUTIONS = [
     [id: 'advanced', fabric: 'VXLAN_EVPN_Fabric', type: 'vxlanIbgp', switch1: 'vxlan_leaf_1', switch2: 'vxlan_leaf_2'],
     [id: 'external', fabric: 'External_Connectivity_Fabric', type: 'externalConnectivity', switch1: 'external_edge_1', switch2: 'external_edge_2'],
 ]
 
-// nd_manage_tor is ON HOLD: it needs a dedicated fabric holding seven switches and the registered lab has six.
-// To enable it, list the seven serials in ND_TOR_SWITCH_SERIALS in this order: standalone ToR, standalone leaf,
-// vPC ToR, vPC ToR peer, vPC leaf, vPC leaf peer, second standalone ToR; make sure ND_TOR_FABRIC contains them;
-// then set ND_TOR_ENABLED = true.
-@Field
-def ND_TOR_ENABLED = false
-@Field
-def ND_TOR_FABRIC = 'ansible_tor_test_fabric'
-@Field
-def ND_TOR_SWITCH_SERIALS = []
+// nd_manage_tor is not the upstream target: that one needs six or seven switches in one fabric (three ToR-role, three leaf-role,
+// two vPC pairs) which the lab cannot provide. The runner executes a reduced single-association test instead, on vxlan_leaf_3
+// (ToR role for the test only) and vxlan_leaf_4 in the round's primary fabric. Both must be normal and not vPC paired; their serials
+// are resolved live from ND by management IP. Run the upstream target again once the lab has the extra ToR/leaf switches.
 
 // ND 4.2 interface integration targets. Each is a role target run through
 // run_integration_module.yaml (like INTEGRATION_MODULES) via include_role, so its
@@ -128,26 +152,28 @@ def ND_TOR_SWITCH_SERIALS = []
 // overrides each needs). These targets always run (non-optional): they are appended to
 // the run AND the result parser unconditionally, so the lab must keep the nd_interface_*
 // substrate provisioned or the tests fail on a missing test-output file.
-// Per-target prerequisites (NO cabling for any of the first nine below):
+// Per-target prerequisites (NO cabling for any of the first eight below):
 //   - loopback / svi                 : logical only; need just the target switch present.
 //   - ethernet_access / trunk_host   : need free physical ports Eth1/41-1/50 on the switch
 //                                      (must exist + NOT be port-channel members).
 //   - ethernet_routed                : needs free routed-capable ports Eth1/31-1/34
 //                                      (must exist + NOT be port-channel members).
-//   - port_channel_access/trunk_host : need free member ports Eth1/10-1/13 (not in a PC).
+//   - port_channel_access/trunk_host/routed : need free member ports Eth1/10-1/13 (not in a PC); routed also reserves
+//                                      Port-channel520-523 and the Port-channel523.5 sub-interface (its optional IOS-XE
+//                                      scenario stays off because nd_test_xe_switch_ip is never supplied).
 //   - subinterface_managed/unmanaged : the prerequisite lifecycle verifies the existing leaf_1 Eth1/1 <->
 //                                      external_edge_1 Eth1/1 cable (module is SKIP if it is absent),
 //                                      creates a temporary routed Eth1/1 + memberless L3 Port-channel10
 //                                      parent when absent, journals them, and restores the pre-test
 //                                      state after target cleanup.
-//   - vpc_access / vpc_trunk_host    : need the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link cable and free member
-//                                      ports on BOTH leaves (Eth1/5-1/7 + 1/10 access, Eth1/8-1/10 trunk-host). The
-//                                      runner forms the PHYSICAL leaf pair around the target (the target's own
-//                                      virtual-peer-link pair is rejected by ND 4.3 on this fabric) and unpairs it
-//                                      afterwards. The targets' multi-pair scenario additionally needs a SECOND
-//                                      reciprocal vPC pair (nd_test_vpc_pair2_peer*_ip) and Eth1/10 free on all four
-//                                      leaves; while the lab has one pair that scenario fails with its own
-//                                      precondition message after the other states have run.
+//   - vpc_access / vpc_trunk_host    : need the leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link cable and the leaf_3 <-> leaf_4
+//                                      Eth1/1 + Eth1/2 peer-link cables, and free member ports on ALL FOUR leaves
+//                                      (Eth1/5-1/7 + 1/10 access, Eth1/8-1/10 trunk-host). The runner forms the PHYSICAL
+//                                      leaf pairs around the target (the target's own virtual-peer-link pair is rejected by
+//                                      ND 4.3 on this fabric) and unpairs them afterwards. The targets' multi-pair scenario
+//                                      asserts the leaf_3/leaf_4 pair as its SECOND reciprocal vPC pair
+//                                      (nd_test_vpc_pair2_peer*_ip = 192.0.2.85/.86) and Eth1/10 (Eth1/9 for trunk-host)
+//                                      free on all four leaves.
 @Field
 def INTERFACE_INTEGRATION_MODULES = [
     'nd_interface_loopback',
@@ -157,6 +183,7 @@ def INTERFACE_INTEGRATION_MODULES = [
     'nd_interface_ethernet_routed',
     'nd_interface_port_channel_access',
     'nd_interface_port_channel_trunk_host',
+    'nd_interface_port_channel_routed',
     'nd_interface_subinterface_managed',
     'nd_interface_subinterface_unmanaged',
     'nd_interface_vpc_access',
@@ -195,7 +222,7 @@ def SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'
 // Switch-membership pre-flight / self-heal playbook. Always downloaded and installed;
 // a missing Consul key is non-fatal (the pre-flight is skipped, never failing the build).
 @Field
-def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml']
+def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'patch_nd_switch_removal.py']
 
 @Field
 def CONSUL_PREREQUISITE_FILES = [
@@ -380,7 +407,10 @@ pipeline {
     
     options {
         disableConcurrentBuilds(abortPrevious: false)
-        timeout(time: 10, unit: 'HOURS')
+        // The whole suite runs once per VXLAN fabric (FABRIC_ROUNDS: iBGP, then eBGP) and the six
+        // VXLAN switches are wiped and re-homed between the rounds, so the build needs roughly twice
+        // the single-round budget (a round takes 2.5-5.5 hours).
+        timeout(time: 20, unit: 'HOURS')
     }
 
     stages {
@@ -837,7 +867,8 @@ pipeline {
                     echo "⏱ Stage 'Test ND' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
                     
                     
-                    def ndfcVersions = [
+                    // One entry per ND version; every entry is expanded below into one run per fabric round.
+                    def baseNdfcVersions = [
                         // [
                         //     version: '3.2',
                         //     versionId: 'NDFC32',
@@ -859,6 +890,8 @@ pipeline {
                                 [name: 'vxlan_leaf_2', ip: '192.0.2.196', serial: 'SERIAL00002', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
                                 [name: 'vxlan_spine_1', ip: '192.0.2.194', serial: 'SERIAL00003', fabric: 'VXLAN_EVPN_Fabric', role: 'spine'],
                                 [name: 'vxlan_border_1', ip: '192.0.2.88', serial: 'SERIAL00004', fabric: 'VXLAN_EVPN_Fabric', role: 'border'],
+                                [name: 'vxlan_leaf_3', ip: '192.0.2.85', serial: 'SERIAL00008', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'vxlan_leaf_4', ip: '192.0.2.86', serial: 'SERIAL00009', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
                                 [name: 'external_edge_1', ip: '192.0.2.89', serial: 'SERIAL00005', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
                                 [name: 'external_edge_2', ip: '192.0.2.90', serial: 'SERIAL00006', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
                             ],
@@ -868,14 +901,24 @@ pipeline {
                         ]
                     ]
 
+                    // Every ND version runs the whole suite once per fabric round (FABRIC_ROUNDS: iBGP, then eBGP).
+                    def ndfcVersions = []
+                    baseNdfcVersions.each { baseConfig ->
+                        FABRIC_ROUNDS.each { fabricRound ->
+                            ndfcVersions.add(buildRoundConfig(baseConfig, fabricRound))
+                        }
+                    }
+
                     // Set environment variable with active ND versions for build start notification
-                    def activeVersions = ndfcVersions.collect { it.version }.join(', ')
+                    def activeVersions = ndfcVersions.collect { it.version }.unique().join(', ')
+                    env.ACTIVE_FABRIC_ROUNDS = (FABRIC_ROUNDS.size() > 1) ? FABRIC_ROUNDS.collect { it.label }.join(' + ') : ''
                     // DEBUG: Used for sample testing. def pb = 'dcnm_policy.yaml'
                     env.ACTIVE_DCNM_VERSIONS = activeVersions
                     echo "🎯 Active ND versions for this run: ${activeVersions}"
 
                     // Initialize global failure tracking
                     env.PIPELINE_FAILED = 'false'
+                    env.ND_SWITCH_RESTORE_FAILED = 'false'
                     env.TEST_RESULT_SUMMARY = ''
                     env.TEST_RESULT_ARTIFACTS = ''
                     env.SKIPLIST_FILES = ''
@@ -908,7 +951,8 @@ pipeline {
                         env.PIPELINE_FAILED = 'true'
                     }
 
-                    // Loop through each ND version sequentially
+                    // Loop through every ND version and fabric round sequentially (iBGP first, then eBGP)
+                    try {
                     for (ndfcConfig in ndfcVersions) {
                         // Define failure flag for this NDFC version
                         def failureFlagName = "NDFC_${ndfcConfig.versionId}_FAILED"
@@ -917,10 +961,10 @@ pipeline {
                         env.REQUIRED_FILES_READY = 'false'
                         
                         try {
-                            echo "🚀 Starting tests for Nexus Dashboard/NDFC ${ndfcConfig.version}"
+                            echo "🚀 Starting tests for Nexus Dashboard/NDFC ${ndfcConfig.version}${ndfcConfig.round_tag ?: ''} on ${ndfcConfig.fabric_name}"
                             runNDFCVersionTests(ndfcConfig)
                             //DEBUG: Used for sample testing. parseTestResults(ndfcConfig, failureFlagName, pb)
-                            echo "✅ Completed tests for Nexus Dashboard/NDFC ${ndfcConfig.version}"
+                            echo "✅ Completed tests for Nexus Dashboard/NDFC ${ndfcConfig.version}${ndfcConfig.round_tag ?: ''}"
                             
                             // Check if this version failed
                             if (isFailureFlagSet(failureFlagName)) {
@@ -929,12 +973,22 @@ pipeline {
                         } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
                             throw e
                         } catch (Exception e) {
-                            echo "❌ NDFC ${ndfcConfig.version} testing failed: ${e.getMessage()}"
+                            echo "❌ NDFC ${ndfcConfig.version}${ndfcConfig.round_tag ?: ''} testing failed: ${e.getMessage()}"
                             setFailureFlag(failureFlagName, true)
                             env.PIPELINE_FAILED = 'true'
+                            // A round that stops before (or while) producing results must still be visible in the
+                            // Webex table, with the reason, instead of silently missing from it.
+                            def abortReason = (e.getMessage() ?: e.toString()).replace('\n', ' ').replace('|', '/')
+                            if (abortReason.length() > 170) {
+                                abortReason = abortReason.substring(0, 170)
+                            }
+                            env.TEST_RESULT_SUMMARY += "\nABORT|round stopped${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|${abortReason}"
                             if (env.CONSUL_SYNC_FAILED == 'true' || env.REQUIRED_FILES_READY != 'true') {
                                 echo "🛑 Required runtime files were not freshly synchronized; aborting before reset or further tests"
                                 throw e
+                            }
+                            if (env.ND_SWITCH_RESTORE_FAILED == 'true') {
+                                error("Switch restore failed; refusing to start another fabric round: ${e.getMessage()}")
                             }
                             echo "🔄 Continuing to next NDFC version..."
                         }
@@ -946,12 +1000,18 @@ pipeline {
                         } else {
                             // Reset fabric after each ND version (including the last one) - best effort
                             try {
-                                resetFabricBetweenVersions()
+                                resetFabricBetweenVersions(ndfcConfig.round_tag ?: '')
                             } catch (Exception e) {
                                 echo "❌ resetFabricBetweenVersions() failed: ${e.getMessage()}"
                                 env.PIPELINE_FAILED = 'true'
                                 throw e
                             }
+                        }
+                    }
+
+                    } finally {
+                        if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
+                            restoreHomeFabric(ndfcVersions)
                         }
                     }
 
@@ -991,7 +1051,10 @@ pipeline {
                     // The current pipeline runs ND 4.3; use the active-version
                     // environment value so the version is shown once in the title.
                     def activeNdVersions = (env.ACTIVE_DCNM_VERSIONS ?: '4.3').trim()
-                    def notificationTitle = "ND ${activeNdVersions} NIGHTLY NOTIFICATION"
+                    // The suite runs once per fabric round (e.g. "iBGP + eBGP"); show them in the title.
+                    def activeRounds = (env.ACTIVE_FABRIC_ROUNDS ?: '').trim()
+                    def roundsSuffix = activeRounds ? " (${activeRounds})" : ''
+                    def notificationTitle = "ND ${activeNdVersions}${roundsSuffix} NIGHTLY NOTIFICATION"
                     def selectedBranch = (env.ND_GIT_BRANCH ?: 'develop').trim() ?: 'develop'
                     def totalPassed = env.TOTAL_PASSED_COUNT ?: '0'
                     def totalFailed = env.TOTAL_FAILED_COUNT ?: '0'
@@ -1069,47 +1132,48 @@ pipeline {
                         echo "📏 Webex message length: ${message.length()} characters"
                     }
 
-                    // Send a plain Markdown message. No Adaptive Card attachment is
-                    // included, so Webex renders the table and links in the message body.
-                    def markdownJson = message
-                        .replace('\\', '\\\\')
-                        .replace('"', '\\"')
-                        .replace('\r', '\\r')
-                        .replace('\n', '\\n')
-                        .replace('\t', '\\t')
-                    // Emojis reach the console fine but Webex showed '?' because the httpRequest
-                    // client encodes the body as ISO-8859-1. Escape every non-ASCII char to a JSON
-                    // unicode escape so the payload is pure ASCII and the wire charset cannot matter.
-                    def asciiSafe = new StringBuilder()
-                    for (int i = 0; i < markdownJson.length(); i++) {
-                        char ch = markdownJson.charAt(i)
-                        if (ch > 0x7E || ch < 0x20) {
-                            asciiSafe.append(String.format('\\u%04x', (int) ch))
-                        } else {
-                            asciiSafe.append(ch)
+                    // Two fabric rounds can make even the compact message too long for one Webex message. Rather than
+                    // drop result rows, send one message per fabric round: the first carries the header and totals,
+                    // the last the links, lint summary, skip list and duration.
+                    def webexMessages = [message]
+                    if (message.length() > WEBEX_SAFE_MESSAGE_LIMIT) {
+                        def roundGroups = groupResultRowsByFabric(env.TEST_RESULT_SUMMARY)
+                        if (roundGroups.size() > 1) {
+                            webexMessages = []
+                            roundGroups.eachWithIndex { roundGroup, index ->
+                                def part = new StringBuilder()
+                                if (index == 0) {
+                                    part.append("${notificationTitle}\n")
+                                    part.append("📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n")
+                                    part.append("🌿 ansible-nd branch: ${selectedBranch}\n")
+                                    part.append("\n")
+                                    part.append("Total Passed: ${totalPassed}\n")
+                                    part.append("Total Failed: ${totalFailed}\n")
+                                }
+                                part.append("\n📝 DETAILED TEST RESULTS - ${roundGroup.fabric} (${index + 1}/${roundGroups.size()}):\n\n${formatResultsTable(roundGroup.rows)}\n")
+                                if (index == roundGroups.size() - 1) {
+                                    part.append("\n**Artifact links:**\n")
+                                    part.append("- Individual module links were omitted only because the results needed more than one Webex message.\n")
+                                    part.append("- [Build artifacts (file list)](${JOB_URL}${BUILD_NUMBER}/artifact/)\n")
+                                    if (lintSummary) {
+                                        part.append("\n─────────\n")
+                                        part.append("🧹 **Ansible-lint Results:**\n${lintSummary}\n")
+                                    }
+                                    if (skippedTestLinks) {
+                                        part.append("${skippedTestLinks}\n")
+                                    }
+                                    if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
+                                        part.append("📦 [All logs (zip)](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})\n")
+                                    }
+                                    part.append("⏱️ **Total run duration:** ${runDuration}")
+                                }
+                                webexMessages.add(part.toString())
+                            }
+                            echo "⚠️ The results do not fit one Webex message; sending ${webexMessages.size()} messages, one per fabric round"
                         }
                     }
-                    def payload = '{"roomId":"' + env.WEBEX_ROOM_ID +
-                        '","markdown":"' + asciiSafe.toString() + '"}'
-                    int payloadBytes = payload.getBytes('UTF-8').length
-                    echo "📦 Webex Markdown payload size: ${payloadBytes} bytes (${payload.length()} characters)"
-
-                    withCredentials([string(credentialsId: 'ANSIBLE_WEBEX_TOKEN', variable: 'WEBEX_TOKEN')]) {
-                        // Build a plain String without Groovy interpolation of the secret.
-                        def authorizationHeader = 'Bearer ' + env.WEBEX_TOKEN
-                        def resp = httpRequest(
-                            url: 'https://webexapis.com/v1/messages',
-                            httpMode: 'POST',
-                            contentType: 'APPLICATION_JSON_UTF8',
-                            customHeaders: [[name: 'Authorization', value: authorizationHeader, maskValue: true]],
-                            requestBody: payload,
-                            validResponseCodes: '100:599'
-                        )
-                        if (resp.status == 200) {
-                            echo "📊 Pipeline summary notification sent to Webex (HTTP ${resp.status})"
-                        } else {
-                            echo "⚠️ Webex notification returned HTTP ${resp.status} (ignored to keep pipeline running): ${resp.content}"
-                        }
+                    webexMessages.each { webexMessage ->
+                        postWebexMarkdown(webexMessage)
                     }
                 } catch (Exception e) {
                     rethrowIfInterrupt(e)
@@ -1414,7 +1478,80 @@ def formatResultsTable(rawSummary) {
         .findAll { f -> f.size() > 8 && f[0].trim() == 'SKIP' && f[8].trim() }
         .collect { f -> "  ${f[1].trim()}: ${cleanCell(f[8]).trim()}" }
     def skipBlock = skipNotes ? "\n\nSKIPPED - lab substrate unavailable:\n${skipNotes.join('\n')}" : ''
-    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${renderedRows}${skipBlock}\n```"
+    // A fabric round that stopped before it could finish (pre-flight, preparation) is listed with its reason.
+    def abortNotes = lines.collect { ln -> ln.split('\\|', -1) }
+        .findAll { f -> f.size() > 8 && f[0].trim() == 'ABORT' && f[8].trim() }
+        .collect { f -> "  ${f[1].trim()}: ${cleanCell(f[8]).trim()}" }
+    def abortBlock = abortNotes ? "\n\nROUND NOT COMPLETED:\n${abortNotes.join('\n')}" : ''
+    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${renderedRows}${skipBlock}${abortBlock}\n```"
+}
+
+/**
+ * Splits the accumulated result rows into one group per fabric (one per fabric round), keeping their order.
+ * Each group's rows are returned as a raw summary string that formatResultsTable can render, so a result
+ * table too long for one Webex message can be sent one fabric round at a time.
+ */
+def groupResultRowsByFabric(rawSummary) {
+    def groups = []
+    def current = null
+    (rawSummary ?: '').split('\n').findAll { it.trim() }.each { ln ->
+        def fields = ln.split('\\|', -1)
+        def fabric = fields.size() > 2 ? fields[2].trim() : ''
+        if (current == null || current.fabric != fabric) {
+            current = [fabric: fabric, rows: []]
+            groups.add(current)
+        }
+        current.rows.add(ln)
+    }
+    return groups.collect { group -> [fabric: group.fabric, rows: group.rows.join('\n')] }
+}
+
+/**
+ * Posts one plain Markdown message to the Webex space. No Adaptive Card attachment is included, so Webex
+ * renders the table and links in the message body. Never throws for a non-200 reply (a notification must
+ * not break the pipeline); the caller wraps unexpected errors.
+ */
+def postWebexMarkdown(message) {
+    def markdownJson = message.toString()
+        .replace('\\', '\\\\')
+        .replace('"', '\\"')
+        .replace('\r', '\\r')
+        .replace('\n', '\\n')
+        .replace('\t', '\\t')
+    // Emojis reach the console fine but Webex showed '?' because the httpRequest
+    // client encodes the body as ISO-8859-1. Escape every non-ASCII char to a JSON
+    // unicode escape so the payload is pure ASCII and the wire charset cannot matter.
+    def asciiSafe = new StringBuilder()
+    for (int i = 0; i < markdownJson.length(); i++) {
+        char ch = markdownJson.charAt(i)
+        if (ch > 0x7E || ch < 0x20) {
+            asciiSafe.append(String.format('\\u%04x', (int) ch))
+        } else {
+            asciiSafe.append(ch)
+        }
+    }
+    def payload = '{"roomId":"' + env.WEBEX_ROOM_ID +
+        '","markdown":"' + asciiSafe.toString() + '"}'
+    int payloadBytes = payload.getBytes('UTF-8').length
+    echo "📦 Webex Markdown payload size: ${payloadBytes} bytes (${payload.length()} characters)"
+
+    withCredentials([string(credentialsId: 'ANSIBLE_WEBEX_TOKEN', variable: 'WEBEX_TOKEN')]) {
+        // Build a plain String without Groovy interpolation of the secret.
+        def authorizationHeader = 'Bearer ' + env.WEBEX_TOKEN
+        def resp = httpRequest(
+            url: 'https://webexapis.com/v1/messages',
+            httpMode: 'POST',
+            contentType: 'APPLICATION_JSON_UTF8',
+            customHeaders: [[name: 'Authorization', value: authorizationHeader, maskValue: true]],
+            requestBody: payload,
+            validResponseCodes: '100:599'
+        )
+        if (resp.status == 200) {
+            echo "📊 Pipeline summary notification sent to Webex (HTTP ${resp.status})"
+        } else {
+            echo "⚠️ Webex notification returned HTTP ${resp.status} (ignored to keep pipeline running): ${resp.content}"
+        }
+    }
 }
 
 /**
@@ -1844,9 +1981,10 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
             echo "📊 Playbook failed count: ${failedCount} | Total accumulated failures: ${env.TOTAL_FAILED_COUNT} | Duration: ${durationStr} | Playbook: ${pb} | Fabric: ${ndfcConfig.fabric_name}"
 
             // Per-module result ROW (pipe-delimited; rendered as an aligned table by
-            // formatResultsTable). All runs are shown; smoke playbooks are tagged "(smoke)".
+            // formatResultsTable). All runs are shown; smoke playbooks are tagged "(smoke)" and, when the
+            // suite runs more than once, every row carries its fabric round, e.g. "(eBGP)".
             // Fields: status|playbook|fabric|nd|passed|failed|skipped|duration|note
-            def pbLabel = (testType == 'smoke') ? "${pb} (smoke)" : pb
+            def pbLabel = ((testType == 'smoke') ? "${pb} (smoke)" : pb) + (ndfcConfig.round_tag ?: '')
             def rowStatus = moduleSkipped ? 'SKIP' : ((failedCount > 0) ? 'FAIL' : 'OK')
             if (moduleSkipped) {
                 echo "Module ${pb} skipped because its declared lab substrate is unavailable: ${skipNote}"
@@ -1909,7 +2047,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
                 // No PLAY RECAP and no generic pattern -> the target errored before
                 // any task ran (e.g. a playbook-style target run via include_role, or
                 // a parse error). Surface it instead of silently dropping the module.
-                def pbLabelErr = (testType == 'smoke') ? "${pb} (smoke)" : pb
+                def pbLabelErr = ((testType == 'smoke') ? "${pb} (smoke)" : pb) + (ndfcConfig.round_tag ?: '')
                 env.TEST_RESULT_SUMMARY += "\nERR|${pbLabelErr}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|did not run (no PLAY RECAP -- see console)"
                 setFailureFlag(failureFlagName, true)
             }
@@ -1920,7 +2058,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
         setFailureFlag(failureFlagName, true)
         // Keep the DETAILED table consistent: show this module as an ERROR row
         // (same shape as the pass/fail rows) instead of leaving the section empty.
-        env.TEST_RESULT_SUMMARY += "\nERR|${pb}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|no test output (see console)"
+        env.TEST_RESULT_SUMMARY += "\nERR|${pb}${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|no test output (see console)"
         if (env.BUILD_FAILURE_REASON) {
             env.BUILD_FAILURE_REASON += "\n"
         }
@@ -1936,7 +2074,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
             setFailureFlag(failureFlagName, true)
             // Keep the DETAILED table consistent: show this module as an ERROR row
             // (same shape as the pass/fail rows) instead of leaving the section empty.
-            env.TEST_RESULT_SUMMARY += "\nERR|${pb}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|could not parse test output (see console)"
+            env.TEST_RESULT_SUMMARY += "\nERR|${pb}${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|could not parse test output (see console)"
             if (env.BUILD_FAILURE_REASON) {
                 env.BUILD_FAILURE_REASON += "\n"
             }
@@ -1947,13 +2085,165 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
 }
 
 /**
+ * Builds the configuration of one fabric round of one ND version from that version's base entry. The base entry
+ * describes the canonical (first round) fabric; every switch that belongs to it (the six VXLAN switches) is assigned
+ * to the round's fabric instead, while the external switches never move. The first round keeps the base version id,
+ * so its output files, dynamic inventory and failure flag are exactly what they were before rounds existed.
+ */
+def buildRoundConfig(baseConfig, fabricRound) {
+    def homeRound = FABRIC_ROUNDS[0]
+    if (baseConfig.fabric_name != homeRound.fabric) {
+        error("The base fabric ${baseConfig.fabric_name} must be the first round's fabric ${homeRound.fabric}")
+    }
+    // These values end up in shell command lines and file names, so refuse anything that is not a plain token.
+    [fabricRound.fabric, fabricRound.type, fabricRound.vpcType, fabricRound.label, fabricRound.idSuffix].each { value ->
+        if (value && !(value.toString() ==~ /^[A-Za-z0-9_.-]+$/)) {
+            error("Unsafe fabric round value: ${value}")
+        }
+    }
+    def roundConfig = [:]
+    roundConfig.putAll(baseConfig)
+    roundConfig.versionId = "${baseConfig.versionId}${fabricRound.idSuffix}".toString()
+    roundConfig.fabric_name = fabricRound.fabric
+    roundConfig.switches = baseConfig.switches.collect { sw ->
+        [name: sw.name, ip: sw.ip, serial: sw.serial,
+         fabric: (sw.fabric == baseConfig.fabric_name) ? fabricRound.fabric : sw.fabric,
+         role: sw.role]
+    }
+    roundConfig.vpc_pair_fabric_type = fabricRound.vpcType
+    roundConfig.primary_fabric_type = fabricRound.type
+    roundConfig.round_label = fabricRound.label
+    roundConfig.round_tag = (FABRIC_ROUNDS.size() > 1) ? " (${fabricRound.label})".toString() : ''
+    // Only a round that leaves the canonical fabric needs the Consul lab files re-targeted.
+    roundConfig.round_render = (fabricRound.fabric != homeRound.fabric)
+    // Every fabric a VXLAN switch may be moved out of when it is re-homed into this round's fabric.
+    roundConfig.rehome_fabrics = FABRIC_ROUNDS.collect { it.fabric }.unique()
+    return roundConfig
+}
+
+/**
+ * Re-targets the freshly installed Consul lab files (profile registry, validator, runner, reset playbook, switch
+ * roster, ...) for a round whose primary fabric is not the canonical one. The validator's render-round command checks
+ * the whole rendered set against the rendered validator before it replaces a single file, and keeps the untouched
+ * canonical roster as integration_config.home.yml for the return to the home fabric. A failure leaves the canonical
+ * files in place and fails the round.
+ */
+def applyFabricRound(ndfcConfig) {
+    if (!ndfcConfig.round_render) {
+        return
+    }
+    stage("NDFC ${ndfcConfig.version}${ndfcConfig.round_tag ?: ''} - Prepare ${ndfcConfig.round_label} fabric round") {
+        echo "⏱ Preparing the ${ndfcConfig.round_label} round on ${ndfcConfig.fabric_name} (type ${ndfcConfig.primary_fabric_type}) at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        withEnv(["ROUND_FABRIC=${ndfcConfig.fabric_name}",
+                 "ROUND_FABRIC_TYPE=${ndfcConfig.primary_fabric_type}",
+                 "ROUND_ND_HOST=${env.ANSIBLE_HOST}"]) {
+            // Read-only check first, before any file is touched or any switch is moved: the round fabric must exist and
+            // report the type this round is built for. The registry, the validator and nd_manage_switches all depend on
+            // it (nd_manage_switches cannot onboard switches into, for example, an ND 'routed' fabric).
+            def reportedType = sh(returnStdout: true, script: '''#!/bin/bash
+                set -euo pipefail
+                source $HOME/ansible/venv/bin/activate
+                python - <<'PY'
+import json
+import os
+import ssl
+import urllib.request
+
+host = os.environ["ROUND_ND_HOST"]
+fabric = os.environ["ROUND_FABRIC"]
+context = ssl._create_unverified_context()
+
+
+def call(path, body=None, token=None):
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request("https://%s%s" % (host, path), data=data, method="POST" if body is not None else "GET")
+    request.add_header("Content-Type", "application/json")
+    if token:
+        request.add_header("Authorization", "Bearer " + token)
+    with urllib.request.urlopen(request, context=context, timeout=60) as response:
+        return json.loads(response.read().decode())
+
+
+try:
+    login = {"userName": os.environ["NDFC_USER"], "userPasswd": os.environ["NDFC_PASSWORD"], "domain": "local"}
+    token = call("/login", login)["jwttoken"]
+    body = call("/api/v1/manage/fabrics/" + fabric, token=token)
+    print((body.get("current", body).get("management") or {}).get("type", ""))
+except Exception as exc:
+    print("UNREADABLE: %s" % exc)
+PY
+            ''').trim()
+            if (reportedType.startsWith('UNREADABLE')) {
+                error("Cannot read ${ndfcConfig.fabric_name} from ND to verify its type (${reportedType})")
+            }
+            if (reportedType.toLowerCase() != ndfcConfig.primary_fabric_type.toLowerCase()) {
+                echo "❌ ${ndfcConfig.fabric_name} reports ND type '${reportedType}'. The ${ndfcConfig.round_label} round runs on a '${ndfcConfig.primary_fabric_type}' fabric: the profile registry and validator pin that type, and nd_manage_switches cannot onboard switches into other fabric types (for example 'routed'). Recreate the fabric as a VXLAN EVPN ${ndfcConfig.round_label} fabric under the same name."
+                error("${ndfcConfig.fabric_name} is a '${reportedType}' fabric in ND but this round needs '${ndfcConfig.primary_fabric_type}'; nothing was moved")
+            }
+            echo "✅ ${ndfcConfig.fabric_name} reports ND type '${reportedType}'"
+            sh '''#!/bin/bash
+                set -euo pipefail
+                cd ${COLLECTIONS_DIRECTORY}
+                source $HOME/ansible/venv/bin/activate
+                if ! grep -q 'render-round' validate_nd_prerequisites.py; then
+                    echo "❌ The Consul validate_nd_prerequisites.py predates fabric-round support (no render-round command); publish the updated file to Consul before running more than one round" >&2
+                    exit 1
+                fi
+                python validate_nd_prerequisites.py render-round \
+                    --root "${COLLECTIONS_DIRECTORY}" \
+                    --round-fabric "${ROUND_FABRIC}" \
+                    --round-type "${ROUND_FABRIC_TYPE}"
+            '''
+        }
+        env.HOME_ROSTER_COPY_READY = 'true'
+    }
+}
+
+/**
+ * Returns the lab to its canonical (first round) fabric after the last round: the VXLAN switches are moved back out of
+ * the round fabric by the same switch sync, using the untouched roster copy the renderer saved. It runs AFTER the final
+ * fabric reset (ND refuses to remove a switch that is still half of a vPC pair). Failure stops the build.
+ */
+def restoreHomeFabric(ndfcVersions) {
+    def firstConfig = ndfcVersions[0]
+    def lastConfig = ndfcVersions[ndfcVersions.size() - 1]
+    def needsRecovery = (env.ND_SWITCH_RESTORE_FAILED == 'true')
+    def hasHomeCopy = (env.HOME_ROSTER_COPY_READY == 'true')
+    if (lastConfig.fabric_name == firstConfig.fabric_name && !needsRecovery) {
+        return
+    }
+    if (!hasHomeCopy && !needsRecovery) {
+        echo "No round re-targeted the roster and no switch restore failed; home restore is not required"
+        return
+    }
+    if (env.REQUIRED_FILES_READY != 'true') {
+        env.ND_SWITCH_RESTORE_FAILED = 'true'
+        env.PIPELINE_FAILED = 'true'
+        error("NDP_SWITCH_RESTORE_FAILED: required files are unavailable for home-fabric recovery")
+    }
+    def homeRoster = hasHomeCopy ? "${COLLECTIONS_DIRECTORY}/integration_config.home.yml" : "${COLLECTIONS_DIRECTORY}/integration_config.yml"
+    try {
+        withCredentials([usernamePassword(credentialsId: SWITCH_CREDENTIALS_ID,
+                                          usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME',
+                                          passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD')]) {
+            runSwitchMembershipSync(lastConfig, 'home', homeRoster)
+        }
+    } catch (Exception e) {
+        rethrowIfInterrupt(e)
+        env.ND_SWITCH_RESTORE_FAILED = 'true'
+        env.PIPELINE_FAILED = 'true'
+        throw e
+    }
+}
+
+/**
  * Resets the network fabric between NDFC versions.
  * Runs ansible-playbook to reset specified fabrics.
  */
-def resetFabricBetweenVersions() {
-    stage('Reset Fabric Between NDFC Versions') {
+def resetFabricBetweenVersions(roundTag = '') {
+    stage("Reset Fabric Between NDFC Versions${roundTag}") {
         // echo timestamp when stage starts
-        echo "⏱ Stage 'Reset Fabric Between NDFC Versions' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        echo "⏱ Stage 'Reset Fabric Between NDFC Versions${roundTag}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
         try {
             // Use dynamic inventory if available, otherwise fallback to default inventory in collections dir
             def currentInventory = env.CURRENT_NDFC_INVENTORY ?: "${COLLECTIONS_DIRECTORY}/inventory.yaml"
@@ -2002,9 +2292,10 @@ def resetFabricBetweenVersions() {
 }
 
 def runNDFCVersionTests(ndfcConfig) {
-    stage(" NDFC ${ndfcConfig.version} - Run NDFCVersion Tests") {
+    def roundTag = ndfcConfig.round_tag ?: ''
+    stage(" NDFC ${ndfcConfig.version}${roundTag} - Run NDFCVersion Tests") {
         // echo timestamp when stage starts
-        echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Run NDFCVersion Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        echo "⏱ Stage 'NDFC ${ndfcConfig.version}${roundTag} - Run NDFCVersion Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
         env.NDFC_HOST = env.NDFC_HOST_CURRENT
         script {
             echo "📥 Downloading configuration files from Consul..."
@@ -2052,9 +2343,9 @@ def runNDFCVersionTests(ndfcConfig) {
     }
 
     // Install version-specific dependencies
-    stage("NDFC ${ndfcConfig.version} - Install version-specific Dependencies") {
+    stage("NDFC ${ndfcConfig.version}${roundTag} - Install version-specific Dependencies") {
         // echo timestamp when stage starts
-        echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Install version-specific Dependencies' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        echo "⏱ Stage 'NDFC ${ndfcConfig.version}${roundTag} - Install version-specific Dependencies' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
         // Install every Consul-sourced playbook into the collection. The list is
         // derived from the active playbooks plus the required integration runner.
         def preflightInstallFiles = (env.ND_SWITCH_PREFLIGHT_READY == 'true') ? CONSUL_PREFLIGHT_FILES : []
@@ -2117,7 +2408,10 @@ def runNDFCVersionTests(ndfcConfig) {
         // The requested branch was validated and installed in the Clone Repository stage.
     }
 
-    echo "⏱ Stage 'NDFC ${ndfcConfig.version} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+    // A round on a fabric other than the canonical one runs on re-targeted copies of the lab files just installed.
+    applyFabricRound(ndfcConfig)
+
+    echo "⏱ Stage 'NDFC ${ndfcConfig.version}${roundTag} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
     // The Consul runner and nd_ensure_switches.yaml read these exact environment
     // variables. Bind them around the complete lifecycle so switch onboarding and
     // the included nd_manage_switches test receive the masked device credential.
@@ -2142,12 +2436,12 @@ def runNDFCVersionTests(ndfcConfig) {
         generateDynamicInventory(ndfcConfig)
         // Switch availability is confirmed at three points so no module ever runs on a
         // fabric that is missing a canonical switch: (1) an ENFORCED pre-flight here that
-        // FAILS the build if the full 4+2 topology cannot be added/confirmed before the
+        // FAILS the build if the full 6+2 topology cannot be added/confirmed before the
         // suite starts; (2) a per-module guard inside runFabricTest that re-confirms and
         // re-adds any switch a prior destructive module removed, before EVERY module; and
         // (3) a post-suite restore in the finally below that re-adds + confirms at the end.
-        runSwitchPreflight(ndfcConfig)
         try {
+            runSwitchPreflight(ndfcConfig)
             runFabricTest(ndfcConfig)
         } finally {
             // This test deletes every switch from VXLAN_EVPN_Fabric. Restore the
@@ -2161,7 +2455,7 @@ def runNDFCVersionTests(ndfcConfig) {
  * Enforced switch-membership pre-flight. Before the module suite runs it confirms
  * every canonical fabric switch is present in ND and, for any that are missing,
  * adds them (ND erases and reloads each switch first) then recalculates & deploys the fabric,
- * and finally REQUIRES the full 4+2 topology to be confirmed present. A failure
+ * and finally REQUIRES the full 6+2 topology to be confirmed present. A failure
  * FAILS the build so the suite never starts on a broken topology. Audit-only (no
  * mutation) during a prerequisite-only run.
  */
@@ -2177,45 +2471,54 @@ def runSwitchPreflight(ndfcConfig) {
  * emptied (most visibly 192.0.2.196 / vxlan_leaf_2). Re-run the same
  * self-healing onboard AFTER the suite so the canonical switches are restored at
  * the end of the run instead of staying missing until the next night's
- * pre-flight. Always onboards (that is the whole point) and never fails the build.
+ * pre-flight. Always onboards and fails the build if the roster cannot be restored.
  */
 def runSwitchPostRestore(ndfcConfig) {
     runSwitchMembershipSync(ndfcConfig, 'post')
 }
 
 /**
- * Shared switch-membership sync used by both the pre-flight and the post-suite
- * restore. phase 'pre' is an ENFORCED gate: it adds every missing canonical
- * switch, recalculates & deploys its fabric, then requires the full 4+2 topology
+ * Shared switch-membership sync used by the pre-flight, the post-suite restore and the
+ * final return to the home fabric. phase 'pre' is an ENFORCED gate: it adds every missing canonical
+ * switch, recalculates & deploys its fabric, then requires the full 6+2 topology
  * to be confirmed present — a failure here FAILS the build so the suite never
  * starts on a broken topology. phase 'post' restores switches a destructive module
- * removed and stays best-effort (a failure only warns). The pre-flight always
+ * removed and is an enforced gate. The pre-flight always
  * onboards + recalculates & deploys (prerequisites are always applied).
+ * Every phase passes the round's fabrics to the playbook as nd_switch_rehome_fabrics_csv, so a
+ * roster switch that still sits in the other VXLAN fabric is moved out of it first. phase 'home'
+ * is the enforced return to the first round's fabric after the last round; it syncs against
+ * rosterFile (the untouched canonical roster the renderer kept) instead of the installed roster.
  */
-def runSwitchMembershipSync(ndfcConfig, phase) {
-    def isPost = (phase == 'post')
-    def label = isPost ? 'restore' : 'pre-flight'
+def runSwitchMembershipSync(ndfcConfig, phase, rosterFile = '') {
+    def isPost = (phase != 'pre')
+    def label = (phase == 'home') ? 'home-fabric restore' : (isPost ? 'restore' : 'pre-flight')
     if (env.ND_SWITCH_PREFLIGHT_READY != 'true') {
         // A missing membership guard must not be treated as a successful
         // pre-flight. Without it, a stale Consul runner can send an external
         // switch serial to a primary-fabric module and later modules can run
         // against an emptied/partial fabric.
-        if (!isPost) {
-            error("Switch membership ${label} cannot run: nd_ensure_switches.yaml is not available from Consul")
+        if (isPost) {
+            env.ND_SWITCH_RESTORE_FAILED = 'true'
         }
-        echo "⚠️ Switch membership ${label} cannot run: nd_ensure_switches.yaml is not available from Consul"
-        return
+        env.PIPELINE_FAILED = 'true'
+        error("Switch membership ${label} cannot run: nd_ensure_switches.yaml is not available from Consul")
     }
-    def stageName = isPost ? "Switch Restore on NDFC ${ndfcConfig.version}" : "Switch Pre-flight on NDFC ${ndfcConfig.version}"
+    def roundTag = ndfcConfig.round_tag ?: ''
+    def stageName = (phase == 'home') ? "Switch Home Restore on NDFC ${ndfcConfig.version}${roundTag}" : (isPost ? "Switch Restore on NDFC ${ndfcConfig.version}${roundTag}" : "Switch Pre-flight on NDFC ${ndfcConfig.version}${roundTag}")
+    def rosterPath = rosterFile ? rosterFile : "${COLLECTIONS_DIRECTORY}/integration_config.yml"
+    def rehomeFabrics = (ndfcConfig.rehome_fabrics ?: []).join(',')
     stage(stageName) {
         echo "⏱ Stage '${stageName}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
         def inventoryFile = env.CURRENT_NDFC_INVENTORY ?: "${COLLECTIONS_DIRECTORY}/inventory.yaml"
         // Both phases onboard: pre-flight now ENFORCES add + recalculate & deploy +
-        // confirm the full 4+2 topology, and post restores what a destructive module
+        // confirm the full 6+2 topology, and post restores what a destructive module
         // removed. Only a prerequisite-only audit stays read-only.
         def autoOnboard = (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')
         try {
             withEnv(["PREFLIGHT_INVENTORY=${inventoryFile}",
+                         "PREFLIGHT_ROSTER=${rosterPath}",
+                         "PREFLIGHT_REHOME_FABRICS=${rehomeFabrics}",
                          "PREFLIGHT_APPLY=${autoOnboard}",
                          "PREFLIGHT_FAIL_ON_MISSING=false",
                          "PREFLIGHT_TIMEOUT=${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}"]) {
@@ -2232,7 +2535,12 @@ def runSwitchMembershipSync(ndfcConfig, phase) {
                         echo "❌ Pre-flight playbook missing or unsafe: ${PLAYBOOK}" >&2
                         exit 1
                     fi
-                    echo "🔎 Switch membership sync (apply=${PREFLIGHT_APPLY}, timeout=${PREFLIGHT_TIMEOUT}s) against ${PREFLIGHT_INVENTORY}"
+                    if [ ! -f "${PREFLIGHT_ROSTER}" ] || [ -L "${PREFLIGHT_ROSTER}" ] || [ ! -s "${PREFLIGHT_ROSTER}" ]; then
+                        echo "❌ Switch roster not found or unsafe: ${PREFLIGHT_ROSTER}" >&2
+                        exit 1
+                    fi
+                    python "${COLLECTIONS_DIRECTORY}/patch_nd_switch_removal.py" --collection-root "${COLLECTIONS_DIRECTORY}"
+                    echo "🔎 Switch membership sync (apply=${PREFLIGHT_APPLY}, timeout=${PREFLIGHT_TIMEOUT}s, roster=${PREFLIGHT_ROSTER}, rehome=${PREFLIGHT_REHOME_FABRICS:-none}) against ${PREFLIGHT_INVENTORY}"
                     # Bound the onboard: a switch that will not become manageable can
                     # otherwise hang here for hours (the module's internal manageability
                     # wait is ~175 min and un-tunable). Default 3600s (60 min) lets a
@@ -2241,7 +2549,8 @@ def runSwitchMembershipSync(ndfcConfig, phase) {
                     # the pre-flight a timeout (124) or a confirm failure FAILS the build
                     # (see the catch below) so the suite never starts on a broken topology.
                     timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook -i "${PREFLIGHT_INVENTORY}" "${PLAYBOOK}" \
-                        -e "nd_switch_roster_file=${COLLECTIONS_DIRECTORY}/integration_config.yml" \
+                        -e "nd_switch_roster_file=${PREFLIGHT_ROSTER}" \
+                        -e "nd_switch_rehome_fabrics_csv=${PREFLIGHT_REHOME_FABRICS}" \
                         -e "nd_switch_apply=${PREFLIGHT_APPLY}" \
                         -e "nd_switch_deploy=true" \
                         -e "nd_switch_settle_seconds=${ND_SWITCH_SETTLE_SECONDS:-45}" \
@@ -2249,19 +2558,23 @@ def runSwitchMembershipSync(ndfcConfig, phase) {
                         -e "nd_switch_fail_on_missing=${PREFLIGHT_FAIL_ON_MISSING}"
                     '''
             }
+            if (isPost) {
+                env.ND_SWITCH_RESTORE_FAILED = 'false'
+            }
             echo "✅ Switch membership ${label} passed for ND ${ndfcConfig.version}"
         } catch (Exception e) {
             rethrowIfInterrupt(e)
             if (!isPost) {
                 // Pre-flight is a HARD GATE: the suite must not start unless the full
-                // canonical 4+2 topology was added, recalculated & deployed, and
+                // canonical 6+2 topology was added, recalculated & deployed, and
                 // confirmed present. A timeout (exit 124) or NDP_SWITCH_CONFIRM_FAIL
                 // fails the build on purpose.
-                echo "❌ Switch membership pre-flight FAILED for ND ${ndfcConfig.version} within ${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}s: the full 4+2 topology could not be confirmed, so the suite will not start. If this was a timeout (exit 124) the switch never became manageable in the window - check device power/reachability and grep the log for NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL. Cause: ${e.getMessage()}"
+                echo "❌ Switch membership pre-flight FAILED for ND ${ndfcConfig.version} within ${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}s: the full 6+2 topology could not be confirmed, so the suite will not start. If this was a timeout (exit 124) the switch never became manageable in the window - check device power/reachability and grep the log for NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL. Cause: ${e.getMessage()}"
                 throw e
             }
-            // Post-suite restore stays best-effort: warn and continue.
-            echo "⚠️ Switch membership restore could not complete for ND ${ndfcConfig.version} within ${env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'}s; continuing best-effort (post-suite). Check device power/reachability and grep the log for NDP_SWITCH_PREFLIGHT_MISSING / NDP_SWITCH_CONFIRM_FAIL. Cause: ${e.getMessage()}"
+            env.ND_SWITCH_RESTORE_FAILED = 'true'
+            env.PIPELINE_FAILED = 'true'
+            error("NDP_SWITCH_RESTORE_FAILED: ${label} could not restore the full switch roster for ND ${ndfcConfig.version}; no next round is permitted. Cause: ${e.getMessage()}")
         }
     }
 }
@@ -2293,14 +2606,11 @@ def runFabricTest(ndfcConfig) {
             def failureFlagName = "NDFC_${ndfcConfig.versionId}_FAILED"
             def playbooksForShell = playbookFiles.join(' ')
             def secondaryFabricName = "${ndfcConfig.fabric_name_2 ?: 'External_Connectivity_Fabric'}".trim()
-            def networkFabricName = 'VXLAN_EVPN_Fabric_eBGP'
+            def networkFabricName = ndfcConfig.fabric_name
             def testRunMarker = "${env.BUILD_TAG ?: 'manual'}-${ndfcConfig.versionId}-${new Date().format('yyyyMMddHHmmssSSS')}"
-            def torFabricName = ND_TOR_FABRIC.trim()
-            def torSwitchSerials = ND_TOR_SWITCH_SERIALS
-                .collect { it.toString().trim() }
-                .findAll { it }
 
             // The vPC-pair switches come from this ND version's roster so a serial lives in one place only.
+            // The 'advanced' pair runs on this round's primary fabric with that fabric's pair type; the external pair never moves.
             def serialByName = [:]
             ndfcConfig.switches.each { sw -> serialByName[sw.name] = sw.serial }
             def vpcPairRows = []
@@ -2310,18 +2620,17 @@ def runFabricTest(ndfcConfig) {
                 if (!serial1 || !serial2) {
                     error("vPC pair ${run.id}: ${run.switch1} / ${run.switch2} are not both in the ${ndfcConfig.version} switch roster")
                 }
-                vpcPairRows.add([id: run.id, fabric: run.fabric, type: run.type, switch1: serial1, switch2: serial2])
+                def pairFabric = (run.id == 'advanced') ? ndfcConfig.fabric_name : run.fabric
+                def pairType = (run.id == 'advanced') ? (ndfcConfig.vpc_pair_fabric_type ?: run.type) : run.type
+                vpcPairRows.add([id: run.id, fabric: pairFabric, type: pairType, switch1: serial1, switch2: serial2])
             }
 
             // These fixed identifiers end up in shell command lines, so refuse anything that is not a plain token.
-            def runtimeIdentifiers = [[name: 'ND_TOR_FABRIC', value: torFabricName]]
+            def runtimeIdentifiers = []
             vpcPairRows.each { row ->
                 ['fabric', 'type', 'switch1', 'switch2'].each { key ->
                     runtimeIdentifiers.add([name: "vPC pair ${row.id} ${key}", value: row[key]])
                 }
-            }
-            torSwitchSerials.eachWithIndex { serial, index ->
-                runtimeIdentifiers.add([name: "ND_TOR_SWITCH_SERIALS[${index}]", value: serial])
             }
             def unsafeRuntimeIdentifiers = runtimeIdentifiers.findAll { item ->
                 item.value && !(item.value ==~ /^[A-Za-z0-9_.:-]+$/)
@@ -2330,34 +2639,21 @@ def runFabricTest(ndfcConfig) {
                 error("Unsafe topology identifier(s): ${unsafeRuntimeIdentifiers.collect { it.name }.join(', ')}")
             }
 
-            // nd_manage_links and nd_vpc_pair always run on the registry-verified lab pairs. nd_manage_tor is on hold
-            // until ND_TOR_ENABLED is set; once it is, its inputs are validated here before anything starts.
-            if (ND_TOR_ENABLED) {
-                if (!torFabricName) {
-                    error('nd_manage_tor requires ND_TOR_FABRIC')
-                }
-                if (torFabricName in ['VXLAN_EVPN_Fabric', secondaryFabricName]) {
-                    error('nd_manage_tor requires a dedicated ToR fabric; the shared nightly fabrics are not allowed')
-                }
-                if (torSwitchSerials.size() != 7) {
-                    error("nd_manage_tor requires exactly seven serials in ND_TOR_SWITCH_SERIALS; found ${torSwitchSerials.size()}")
-                }
-                if (torSwitchSerials.unique(false).size() != 7) {
-                    error('ND_TOR_SWITCH_SERIALS must contain seven distinct serials')
-                }
-            } else {
-                echo '⏭️ nd_manage_tor is on hold (ND_TOR_ENABLED=false): the seven-switch ToR/vPC topology has not been provided'
-            }
+            // nd_manage_links, nd_manage_tor and nd_vpc_pair always run on the registry-verified lab switches.
 
             // The destructive switch lifecycle runs last and is followed by the canonical restore.
-            def enabledStaticIntegrationModules = INTEGRATION_MODULES.findAll { moduleName ->
-                moduleName != 'nd_manage_tor' || ND_TOR_ENABLED
-            }
             // Run numbered links after fabric/resource tests and immediately before
             // nd_manage_switches, whose upstream setup removes all VXLAN members.
-            def effectiveIntegrationModules = enabledStaticIntegrationModules + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_links', 'nd_manage_switches']
+            def effectiveIntegrationModules = INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_links', 'nd_manage_switches']
             // One standalone run (and output file) per fixed vPC pair: nd_vpc_pair.<id>.
             def standaloneTargets = vpcPairRows.collect { row -> "nd_vpc_pair.${row.id}".toString() }
+            def orderedIntegrationTargets = []
+            effectiveIntegrationModules.each { moduleName ->
+                orderedIntegrationTargets.add(moduleName)
+                if (moduleName == 'nd_manage_policy_group' && env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
+                    orderedIntegrationTargets.addAll(standaloneTargets)
+                }
+            }
             def integrationForShell = effectiveIntegrationModules.join(' ')
             def standaloneIntegrationForShell = standaloneTargets.join(' ')
             def vpcPairRunsForShell = vpcPairRows.collect { row -> "${row.id}|${row.fabric}|${row.type}|${row.switch1}|${row.switch2}".toString() }.join(' ')
@@ -2392,17 +2688,10 @@ def runFabricTest(ndfcConfig) {
                         withEnv(["PLAYBOOK_LIST=${playbooksForShell}",
                                  "INTEGRATION_LIST=${integrationForShell}",
                                  "STANDALONE_INTEGRATION_LIST=${standaloneIntegrationForShell}",
+                                 "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}",
                                  "NDP_EFFECTIVE_MODULES=${profileCoverageForShell}",
                                  "VPC_PAIR_RUNS=${vpcPairRunsForShell}",
                                  "NETWORK_FABRIC_NAME=${networkFabricName}",
-                                 "ND_TOR_FABRIC=${torFabricName}",
-                                 "ND_TOR_SWITCH_SERIAL=${torSwitchSerials.size() > 0 ? torSwitchSerials[0] : ''}",
-                                 "ND_LEAF_SWITCH_SERIAL=${torSwitchSerials.size() > 1 ? torSwitchSerials[1] : ''}",
-                                 "ND_VPC_TOR_SWITCH_SERIAL=${torSwitchSerials.size() > 2 ? torSwitchSerials[2] : ''}",
-                                 "ND_VPC_TOR_PEER_SERIAL=${torSwitchSerials.size() > 3 ? torSwitchSerials[3] : ''}",
-                                 "ND_VPC_LEAF_SWITCH_SERIAL=${torSwitchSerials.size() > 4 ? torSwitchSerials[4] : ''}",
-                                 "ND_VPC_LEAF_PEER_SERIAL=${torSwitchSerials.size() > 5 ? torSwitchSerials[5] : ''}",
-                                 "ND_TOR2_SWITCH_SERIAL=${torSwitchSerials.size() > 6 ? torSwitchSerials[6] : ''}",
                                  "TEST_RUN_MARKER=${testRunMarker}",
                                  "FABRIC_NAME=${ndfcConfig.fabric_name}",
                                  "SECONDARY_FABRIC_NAME=${secondaryFabricName}",
@@ -2504,20 +2793,20 @@ def runFabricTest(ndfcConfig) {
                                 echo ""
 
                                 # --- Per-module switch-availability guard -------------------------
-                                # Confirm the canonical 4+2 switches are present before EVERY module and
+                                # Confirm the canonical 6+2 switches are present before EVERY module and
                                 # re-add any a prior destructive module (e.g. nd_manage_switches) removed,
                                 # then recalculate & deploy, so a module never runs on a fabric that is
                                 # missing a switch ("ND Error 400: Switch id <serial> not found"). Enforced
                                 # add (apply=true) except during a prerequisite-only audit. Bounded by
-                                # ND_SWITCH_GUARD_TIMEOUT (default 900s) so one truly-down switch cannot hang
-                                # the whole suite -- the enforced pre-flight already gates the suite start and
+                                # ND_SWITCH_GUARD_TIMEOUT (default 1800s) so greenfield reloads have time to finish.
+                                # The enforced pre-flight already gates the suite start and
                                 # the post-suite restore re-confirms at the end; this is the mid-suite heal.
                                 # Fail closed: if the canonical roster cannot be confirmed/restored,
                                 # do not run the module against a partial or stale fabric. The caller's
                                 # `set -e` stops the shared-topology run before it can cascade failures.
                                 SWITCH_GUARD_PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_ensure_switches.yaml"
                                 SWITCH_GUARD_ROSTER="${COLLECTIONS_DIRECTORY}/integration_config.yml"
-                                SWITCH_GUARD_TIMEOUT="${ND_SWITCH_GUARD_TIMEOUT:-900}"
+                                SWITCH_GUARD_TIMEOUT="${ND_SWITCH_GUARD_TIMEOUT:-1800}"
                                 SWITCH_GUARD_APPLY="true"
                                 if [ "${ND_PREREQUISITE_ONLY_EFFECTIVE:-false}" = "true" ]; then
                                     SWITCH_GUARD_APPLY="false"
@@ -2534,7 +2823,7 @@ def runFabricTest(ndfcConfig) {
                                     fi
                                     local _gt
                                     _gt="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 30 ${SWITCH_GUARD_TIMEOUT}" || true)"
-                                    echo "🔎 [switch-guard] Confirming canonical 4+2 switches before ${_label} (apply=${SWITCH_GUARD_APPLY}, timeout=${SWITCH_GUARD_TIMEOUT}s)"
+                                    echo "🔎 [switch-guard] Confirming canonical 6+2 switches before ${_label} (apply=${SWITCH_GUARD_APPLY}, timeout=${SWITCH_GUARD_TIMEOUT}s)"
                                     if ${_gt} ansible-playbook -i "${INVENTORY_FILE}" "${SWITCH_GUARD_PLAYBOOK}" \
                                             -e "nd_switch_roster_file=${SWITCH_GUARD_ROSTER}" \
                                             -e "nd_switch_apply=${SWITCH_GUARD_APPLY}" \
@@ -2549,16 +2838,16 @@ def runFabricTest(ndfcConfig) {
                                     fi
                                 }
 
-                                echo "==========Running Standalone Integration Modules============="
-
                                 # nd_vpc_pair runs once per fixed lab pair (VPC_PAIR_RUNS rows: id|fabric|type|switch1|switch2)
-                                # before role-based targets such as nd_manage_switches that can rebuild the fabric inventory.
+                                # immediately after nd_manage_policy_group, before destructive fabric-inventory targets.
                                 # It is a complete playbook rather than a role, so execute it directly instead of using
                                 # run_integration_module.yaml. A pair needs a cabled physical peer-link (virtual peering is
                                 # unsupported on the N9K-C9300v lab switches); the module always runs, and the probe below only
                                 # waits for ND to report that cable and logs NDP_VPC_PEERLINK_ABSENT when it never does.
-                                PEERLINK_PROBE="${INVENTORY_VARS_FILE}.peerlink-probe.yaml"
-                                for m in ${STANDALONE_INTEGRATION_LIST}; do
+                                run_standalone_integration() {
+                                    local m="$1"
+                                    local PEERLINK_PROBE="${INVENTORY_VARS_FILE}.peerlink-probe.yaml"
+                                    echo "==========Running Standalone Integration Modules============="
                                     echo "🚀 Starting standalone integration test for $m"
                                     VPC_MODULE="${m%%.*}"
                                     VPC_RUN_ID="${m#*.}"
@@ -2592,30 +2881,68 @@ def runFabricTest(ndfcConfig) {
                                     START_TIME=$(date +%s)
                                     echo "[TIMESTAMP_START: ${START_TIME}]" | tee -a "${OUTPUT_FILE}"
 
-                                    # ND drops the cable while a destructive module has the switches removed, so wait for it; any outcome other than ABSENT runs the module at once.
+                                                                        # Only the primary fabric's pair has a verified physical peer-link allocation.
                                     cat > "${PEERLINK_PROBE}" <<'PEERLINK_PROBE_EOF'
 - name: vPC peer-link probe
   hosts: nd_controller
   gather_facts: false
   tasks:
+    - name: Prepare the canonical leaf peer-link ports
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/admin_up_interface.yaml"
+      loop:
+        - fabric: "{{ probe_fabric }}"
+          serial: "{{ probe_s1 }}"
+          ifname: Ethernet1/2
+          label: vxlan_leaf_1/Ethernet1/2
+        - fabric: "{{ probe_fabric }}"
+          serial: "{{ probe_s2 }}"
+          ifname: Ethernet1/1
+          label: vxlan_leaf_2/Ethernet1/1
+      loop_control:
+        loop_var: _auif
+      when: probe_prepare_peerlink | default(false) | bool
     - name: Read the links of the fabric
       cisco.nd.nd_rest:
         path: "/api/v1/manage/links?fabricName={{ probe_fabric }}"
         method: get
       register: _probe_links
+    - name: Validate the link API response
+      ansible.builtin.assert:
+        that:
+          - _probe_links.status | default(0) | int == 200
+          - _probe_links.current | default(none) is mapping
+          - _probe_links.current.links | default(none) is sequence
+          - _probe_links.current.links | default(none) is not string
+          - _probe_links.current.links | default(none) is not mapping
+        fail_msg: NDP_VPC_PEERLINK_PROBE_FAILED - invalid link API response
     - name: Report whether the two switches are linked
       ansible.builtin.debug:
-        msg: "{{ 'NDP_VPC_PEERLINK_PRESENT' if ((_probe_links.current.links | default([])) | selectattr('srcSwitchId', 'in', [probe_s1, probe_s2]) | selectattr('dstSwitchId', 'in', [probe_s1, probe_s2]) | list | length > 0) else 'NDP_VPC_PEERLINK_ABSENT' }}"
+        msg: "{{ 'NDP_VPC_PEERLINK_PRESENT' if (_probe_links.current.links | selectattr('srcSwitchId', 'in', [probe_s1, probe_s2]) | selectattr('dstSwitchId', 'in', [probe_s1, probe_s2]) | selectattr('linkPresent', 'defined') | selectattr('linkPresent', 'equalto', true) | list | length > 0) else 'NDP_VPC_PEERLINK_ABSENT' }}"
 PEERLINK_PROBE_EOF
+                                                                        local PREPARE_PEERLINK=false
+                                                                        if [ "${VPC_RUN_ID}" = "advanced" ] && [ "${VPC_FABRIC}" = "${FABRIC_NAME}" ]; then
+                                                                                PREPARE_PEERLINK=true
+                                                                        fi
+                                                                        local PROBE_TIMEOUT_CMD
+                                                                        PROBE_TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 30 ${VPC_PEERLINK_TIMEOUT:-180}" || true)"
                                     PEERLINK_TRY=0
                                     while :; do
-                                        PEERLINK_RESULT="$(ansible-playbook -i "${INVENTORY_FILE}" "${PEERLINK_PROBE}" \
+                                                                                local PEERLINK_STATUS=0
+                                                                                PEERLINK_RESULT="$(${PROBE_TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${PEERLINK_PROBE}" \
                                             -e "@${INVENTORY_VARS_FILE}" -e "probe_fabric=${VPC_FABRIC}" \
-                                            -e "probe_s1=${VPC_SW1}" -e "probe_s2=${VPC_SW2}" 2>&1 || true)"
-                                        echo "${PEERLINK_RESULT}" | grep -q 'NDP_VPC_PEERLINK_ABSENT' || break
+                                                                                        -e "probe_s1=${VPC_SW1}" -e "probe_s2=${VPC_SW2}" \
+                                                                                        -e "probe_prepare_peerlink=${PREPARE_PEERLINK}" 2>&1)" || PEERLINK_STATUS=$?
+                                                                                PREPARE_PEERLINK=false
+                                                                                if [ "${PEERLINK_STATUS}" -ne 0 ] || ! printf '%s\n' "${PEERLINK_RESULT}" | grep -Eq 'NDP_VPC_PEERLINK_(PRESENT|ABSENT)'; then
+                                                                                        printf '%s\n' "${PEERLINK_RESULT}" | tee -a "${OUTPUT_FILE}"
+                                                                                        echo "NDP_VPC_PEERLINK_PROBE_FAILED [${m}] exit=${PEERLINK_STATUS}; running the module anyway, but recording the prerequisite error" | tee -a "${OUTPUT_FILE}"
+                                                                                        RUN_FAILURE=1
+                                                                                        break
+                                                                                fi
+                                                                                printf '%s\n' "${PEERLINK_RESULT}" | grep -q 'NDP_VPC_PEERLINK_PRESENT' && break
                                         PEERLINK_TRY=$((PEERLINK_TRY + 1))
                                         if [ "${PEERLINK_TRY}" -ge "${VPC_PEERLINK_ATTEMPTS:-6}" ]; then
-                                            echo "NDP_VPC_PEERLINK_ABSENT [integration.${m}]: ND reports no physical peer-link between ${VPC_SW1} and ${VPC_SW2} in ${VPC_FABRIC}; running the module anyway (cable the two switches, a vPC pair needs a physical peer-link on this lab)" | tee -a "${OUTPUT_FILE}"
+                                                                                        echo "NDP_VPC_PEERLINK_ABSENT [integration.${m}]: ND reports no active physical peer-link between ${VPC_SW1} and ${VPC_SW2} in ${VPC_FABRIC}; running the module anyway (verify peer-link cabling and interface admin state)" | tee -a "${OUTPUT_FILE}"
                                             break
                                         fi
                                         sleep "${VPC_PEERLINK_WAIT_SECONDS:-20}"
@@ -2638,13 +2965,19 @@ PEERLINK_PROBE_EOF
                                     echo "[TIMESTAMP_END: ${END_TIME}]" | tee -a "${OUTPUT_FILE}"
                                     echo "[DURATION_SECONDS: ${DURATION}]" | tee -a "${OUTPUT_FILE}"
                                     echo "[MODULE: $m] Execution completed." | tee -a "${OUTPUT_FILE}"
-                                done
+                                }
 
                                 echo "==========Running Integration Modules============="
 
                                 # Run each integration module as its OWN playbook so each
                                 # gets its own PLAY RECAP (passed/failed/skipped) + duration.
-                                for m in ${INTEGRATION_LIST}; do
+                                for m in ${ORDERED_INTEGRATION_LIST}; do
+                                    case "${m}" in
+                                        nd_vpc_pair.*)
+                                            run_standalone_integration "${m}"
+                                            continue
+                                            ;;
+                                    esac
                                     echo "🚀 Starting integ test for $m module"
                                     echo "========================================"
                                     echo "Running integration module: $m, pwd: $(pwd)"
@@ -2707,7 +3040,7 @@ PEERLINK_PROBE_EOF
                                                 # target cleanup (including failures).
                                                 INTERFACE_TEST_VARS="${INTERFACE_TEST_VARS} -e nd_test_port_channel_parent=Port-channel10"
                                                 ;;
-                                            nd_interface_port_channel_access|nd_interface_port_channel_trunk_host)
+                                            nd_interface_port_channel_access|nd_interface_port_channel_trunk_host|nd_interface_port_channel_routed)
                                                 INTERFACE_TEST_VARS="${INTERFACE_TEST_VARS} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13"
                                                 ;;
                                         esac
@@ -2815,7 +3148,7 @@ PEERLINK_PROBE_EOF
                                     echo "  Tests that never produced a TASK line cannot be reconstructed from this log."
                                     echo ""
                                 } > "${SKIP_SUMMARY}"
-                                for sm in ${INTEGRATION_LIST} ${STANDALONE_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do
+                                for sm in ${ORDERED_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do
                                     smlog="test_output_${FABRIC_NAME}_${VERSION_ID}_${sm}.txt"
                                     [ -f "${smlog}" ] || continue
                                     awk -v module="${sm}" -v logfile="${smlog}" '
@@ -2928,10 +3261,9 @@ PEERLINK_PROBE_EOF
                     def resultTargets = []
                     // Use the exact gated list passed to the shell. Disabled physical
                     // targets therefore do not create false missing-output failures.
-                    def effectiveIntegrationModulesForResults = effectiveIntegrationModules
+                    def effectiveIntegrationModulesForResults = orderedIntegrationTargets
                     effectiveIntegrationModulesForResults.each { m -> resultTargets.add([m, 'integration']) }
                     if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
-                        standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }
                         PLAYBOOK_FILES.each { pb -> resultTargets.add([pb, 'smoke']) }
                     }
                     resultTargets.each { t ->
@@ -2953,7 +3285,7 @@ PEERLINK_PROBE_EOF
                             // filename for the Webex row link.
                             def archivedArtifact = archiveTestOutput(ndfcConfig, token)
                             if (archivedArtifact) {
-                                def artifactLabel = (testType == 'smoke') ? "${token} (smoke)" : token
+                                def artifactLabel = ((testType == 'smoke') ? "${token} (smoke)" : token) + (ndfcConfig.round_tag ?: '')
                                 env.TEST_RESULT_ARTIFACTS += "\n${artifactLabel}|${archivedArtifact}"
                             }
                         } else {
@@ -2962,7 +3294,7 @@ PEERLINK_PROBE_EOF
                             // earlier fail-closed guard prevented this target from
                             // starting.  The owner must see NOT_RUN/PENDING instead
                             // of losing every later module from the Webex summary.
-                            def missingLabel = (testType == 'smoke') ? "${token} (smoke)" : token
+                            def missingLabel = ((testType == 'smoke') ? "${token} (smoke)" : token) + (ndfcConfig.round_tag ?: '')
                             env.TEST_RESULT_SUMMARY += "\nNOT_RUN|${missingLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|0|0|0|not reached|output file missing"
                             echo "⚠️ Required test output file not found; recording ${missingLabel} as NOT_RUN: ${testOutputFile}"
                         }
@@ -2985,7 +3317,7 @@ def generateDynamicInventory(ndfcConfig) {
     def inventoryFileName = "inventory_${ndfcConfig.versionId}.yaml"
     def inventoryDestination = "${COLLECTIONS_DIRECTORY}/${inventoryFileName}"
     def switchesByName = ndfcConfig.switches.collectEntries { [(it.name): it] }
-    ['vxlan_leaf_1', 'vxlan_leaf_2', 'vxlan_spine_1', 'vxlan_border_1', 'external_edge_1', 'external_edge_2'].each { switchName ->
+    ['vxlan_leaf_1', 'vxlan_leaf_2', 'vxlan_spine_1', 'vxlan_border_1', 'vxlan_leaf_3', 'vxlan_leaf_4', 'external_edge_1', 'external_edge_2'].each { switchName ->
         if (!switchesByName[switchName]?.ip || !switchesByName[switchName]?.serial ||
             !switchesByName[switchName]?.fabric || !switchesByName[switchName]?.role) {
             error("Incomplete switch topology for ${switchName} in ND ${ndfcConfig.version}")
@@ -3047,6 +3379,8 @@ inventory = {
             "nd_test_switch2_id": by_name["external_edge_1"]["serial"],
             "nd_test_switch1_mgmt_ip": by_name["vxlan_border_1"]["ip"],
             "nd_test_switch2_mgmt_ip": by_name["external_edge_1"]["ip"],
+            "nd_test_vpc_pair2_peer1_ip": by_name["vxlan_leaf_3"]["ip"],
+            "nd_test_vpc_pair2_peer2_ip": by_name["vxlan_leaf_4"]["ip"],
             "intf_1_2": "Ethernet1/2",
             "intf_1_3": "Ethernet1/3",
             "intf_1_10": "Ethernet1/10",

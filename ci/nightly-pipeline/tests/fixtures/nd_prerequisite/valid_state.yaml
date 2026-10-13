@@ -7,6 +7,8 @@ switches:
   vxlan_leaf_2: {fabric_ref: advanced, serial: SERIAL00002, seed_ip: 192.0.2.196, role: leaf, intended_system_mode: normal, sync_status: inSync}
   vxlan_spine_1: {fabric_ref: advanced, serial: SERIAL00003, seed_ip: 192.0.2.194, role: spine, intended_system_mode: normal, sync_status: inSync}
   vxlan_border_1: {fabric_ref: advanced, serial: SERIAL00004, seed_ip: 192.0.2.88, role: border, intended_system_mode: normal, sync_status: inSync}
+  vxlan_leaf_3: {fabric_ref: advanced, serial: SERIAL00008, seed_ip: 192.0.2.85, role: leaf, intended_system_mode: normal, sync_status: inSync}
+  vxlan_leaf_4: {fabric_ref: advanced, serial: SERIAL00009, seed_ip: 192.0.2.86, role: leaf, intended_system_mode: normal, sync_status: inSync}
   external_edge_1: {fabric_ref: external, serial: SERIAL00005, seed_ip: 192.0.2.89, role: edge_router, intended_system_mode: normal, sync_status: inSync}
   external_edge_2: {fabric_ref: external, serial: SERIAL00006, seed_ip: 192.0.2.90, role: edge_router, intended_system_mode: maintenance, sync_status: inSync}
 interfaces:
@@ -53,6 +55,26 @@ interfaces:
   vxlan_border_1:
     Ethernet1/1: {admin_state: true, operational_state: up}
     Ethernet1/2: {admin_state: true, operational_state: up}
+  vxlan_leaf_3:
+    Ethernet1/1: {admin_state: true, operational_state: up}
+    Ethernet1/2: {admin_state: true, operational_state: up}
+    Ethernet1/3: {admin_state: true, operational_state: up}
+    Ethernet1/5: {admin_state: true, operational_state: up}
+    Ethernet1/6: {admin_state: true, operational_state: up}
+    Ethernet1/7: {admin_state: true, operational_state: up}
+    Ethernet1/8: {admin_state: true, operational_state: up}
+    Ethernet1/9: {admin_state: true, operational_state: up}
+    Ethernet1/10: {admin_state: true, operational_state: up}
+  vxlan_leaf_4:
+    Ethernet1/1: {admin_state: true, operational_state: up}
+    Ethernet1/2: {admin_state: true, operational_state: up}
+    Ethernet1/3: {admin_state: true, operational_state: up}
+    Ethernet1/5: {admin_state: true, operational_state: up}
+    Ethernet1/6: {admin_state: true, operational_state: up}
+    Ethernet1/7: {admin_state: true, operational_state: up}
+    Ethernet1/8: {admin_state: true, operational_state: up}
+    Ethernet1/9: {admin_state: true, operational_state: up}
+    Ethernet1/10: {admin_state: true, operational_state: up}
   external_edge_1:
     Ethernet1/1: {admin_state: true, operational_state: up}
     Ethernet1/2: {admin_state: true, operational_state: up}
@@ -103,6 +125,9 @@ links:
   - {srcSwitchId: SERIAL00004, srcInterfaceName: Ethernet1/4, dstSwitchId: SERIAL00005, dstInterfaceName: Ethernet1/4, templateName: "", linkType: lan_planned_link, policyType: layer2Dci, linkPlanned: true, linkPresent: false}
   # vPC peer-link candidate between the leaves (cabled).
   - {srcSwitchId: SERIAL00001, srcInterfaceName: Ethernet1/2, dstSwitchId: SERIAL00002, dstInterfaceName: Ethernet1/1, templateName: "", linkType: ethisl, policyType: "", linkPlanned: false, linkPresent: true}
+  # Second vPC pair (leaf_3 <-> leaf_4): two cabled peer-links, Eth1/1 <-> Eth1/1 and Eth1/2 <-> Eth1/2.
+  - {srcSwitchId: SERIAL00008, srcInterfaceName: Ethernet1/1, dstSwitchId: SERIAL00009, dstInterfaceName: Ethernet1/1, templateName: "", linkType: ethisl, policyType: "", linkPlanned: false, linkPresent: true}
+  - {srcSwitchId: SERIAL00008, srcInterfaceName: Ethernet1/2, dstSwitchId: SERIAL00009, dstInterfaceName: Ethernet1/2, templateName: "", linkType: ethisl, policyType: "", linkPlanned: false, linkPresent: true}
 resources:
   - {kind: pool, name: L3_VNI, type: ID, state: existing}
 managed_domains:

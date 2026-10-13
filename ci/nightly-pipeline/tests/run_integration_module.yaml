@@ -53,6 +53,10 @@
     ansible_switch2: 192.0.2.196
     ansible_sno_1: SERIAL00001
     ansible_sno_2: SERIAL00002
+    # Second vPC pair (vxlan_leaf_3/vxlan_leaf_4) the nd_interface_vpc_* multi-pair scenario asserts; the runner forms it
+    # from the roster entries with these management IPs.
+    nd_test_vpc_pair2_peer1_ip: 192.0.2.85
+    nd_test_vpc_pair2_peer2_ip: 192.0.2.86
     intf_1_2: Ethernet1/2
     intf_1_3: Ethernet1/3
     intf_1_10: Ethernet1/10
@@ -69,16 +73,22 @@
     nd_test_switch_b: "{{ lookup('env', 'ND_LINKS_SWITCH_B') | default('', true) }}"
     nd_test_switch_a_ip: "{{ lookup('env', 'ND_LINKS_SWITCH_A_IP') | default('') }}"
     nd_test_switch_b_ip: "{{ lookup('env', 'ND_LINKS_SWITCH_B_IP') | default('') }}"
-    # Dedicated seven-switch topology for nd_manage_tor. The order is fixed by
-    # ND_TOR_SWITCH_SERIALS in Jenkins and mirrors the upstream target variables.
-    test_tor_fabric_name: "{{ lookup('env', 'ND_TOR_FABRIC') | default('ansible_tor_test_fabric', true) }}"
-    test_tor_switch_serial: "{{ lookup('env', 'ND_TOR_SWITCH_SERIAL') | default('') }}"
-    test_leaf_switch_serial: "{{ lookup('env', 'ND_LEAF_SWITCH_SERIAL') | default('') }}"
-    test_vpc_tor_switch_serial: "{{ lookup('env', 'ND_VPC_TOR_SWITCH_SERIAL') | default('') }}"
-    test_vpc_tor_peer_serial: "{{ lookup('env', 'ND_VPC_TOR_PEER_SERIAL') | default('') }}"
-    test_vpc_leaf_switch_serial: "{{ lookup('env', 'ND_VPC_LEAF_SWITCH_SERIAL') | default('') }}"
-    test_vpc_leaf_peer_serial: "{{ lookup('env', 'ND_VPC_LEAF_PEER_SERIAL') | default('') }}"
-    test_tor2_switch_serial: "{{ lookup('env', 'ND_TOR2_SWITCH_SERIAL') | default('') }}"
+    # nd_manage_tor runs a pipeline-owned REDUCED test instead of the upstream target, which needs six or seven switches in one
+    # fabric (three ToR-role, three leaf-role) plus two vPC pairs that this lab cannot provide. vxlan_leaf_3 takes the ToR role
+    # for the test only and is associated with vxlan_leaf_4 (the leaf); both sit in the round's primary fabric and are cabled
+    # to each other on Eth1/1 and Eth1/2. Serials are resolved live from ND by management IP, the role is restored afterwards.
+    nd_tor_switch_name: vxlan_leaf_3
+    nd_tor_leaf_name: vxlan_leaf_4
+    # nd_maintenance_mode and nd_fabric_update_group run the upstream targets on the idle leaves vxlan_leaf_3 (.85) and vxlan_leaf_4 (.86);
+    # the update-group suite adds vxlan_spine_1 (.194) as its third, disjoint switch. Both modules take management IPs and resolve the
+    # serials through ND itself. The registry profiles publish the same values as runtime vars, which the prerequisite wrapper sets as
+    # facts (they outrank these play vars), so a drifting default can never run the target on switches the planner did not verify.
+    nd_test_maintenance_mode_fabric_name: "{{ fabric_name }}"
+    nd_test_maintenance_mode_switch_ip_a: 192.0.2.85
+    nd_test_maintenance_mode_switch_ip_b: 192.0.2.86
+    nd_test_update_switch_a: 192.0.2.85
+    nd_test_update_switch_b: 192.0.2.86
+    nd_test_update_switch_c: 192.0.2.194
     # switch1 = vxlan_border_1 (SERIAL00004 / .88, role border): cabled to external_edge_1
     # (border_1 Eth1/1 routed <-> edge_1 Eth1/3, probe-confirmed up/up) for the ext_l3_dci_link.
     # Jenkins/run_all_integ.sh pass the same pair via -e; this default keeps a bare manual run
@@ -193,32 +203,25 @@
     - name: "[{{ test_module }}] validate canonical fabric membership"
       ansible.builtin.assert:
         that:
-          - nd_test_fabric_switches.VXLAN_EVPN_Fabric | length == 4
-          - nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='name') | list == ['vxlan_leaf_1', 'vxlan_leaf_2', 'vxlan_spine_1', 'vxlan_border_1']
+          - nd_test_fabric_switches.VXLAN_EVPN_Fabric | length == 6
+          - nd_test_fabric_switches.VXLAN_EVPN_Fabric | map(attribute='name') | list == ['vxlan_leaf_1', 'vxlan_leaf_2', 'vxlan_spine_1', 'vxlan_border_1', 'vxlan_leaf_3', 'vxlan_leaf_4']
           - nd_test_fabric_switches.External_Connectivity_Fabric | length == 2
           - nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='name') | list == ['external_edge_1', 'external_edge_2']
-        fail_msg: "integration_config.yml does not match the canonical four-switch primary and two-switch external topology."
+        fail_msg: "integration_config.yml does not match the canonical six-switch primary and two-switch external topology."
 
-    - name: "[{{ test_module }}] validate dedicated seven-switch ToR topology"
+    - name: "[{{ test_module }}] validate the reduced ToR roster"
       ansible.builtin.assert:
         that:
-          - test_tor_fabric_name | length > 0
-          - test_tor_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
-          - _nd_tor_serials | reject('equalto', '') | list | length == 7
-          - _nd_tor_serials | unique | list | length == 7
+          - nd_tor_switch_name != nd_tor_leaf_name
+          - _nd_tor_roster | selectattr('name', 'equalto', nd_tor_switch_name) | list | length == 1
+          - _nd_tor_roster | selectattr('name', 'equalto', nd_tor_leaf_name) | list | length == 1
+          - (_nd_tor_roster | selectattr('name', 'equalto', nd_tor_switch_name) | map(attribute='role') | list) == ['leaf']
+          - (_nd_tor_roster | selectattr('name', 'equalto', nd_tor_leaf_name) | map(attribute='role') | list) == ['leaf']
         fail_msg: >-
-          nd_manage_tor requires seven distinct serials in a dedicated fabric:
-          standalone ToR/leaf, a ToR vPC pair, a leaf vPC pair, and a second
-          standalone ToR. The current six-switch shared lab cannot satisfy it.
+          NDP_TOR_PRECHECK_FAIL: the reduced nd_manage_tor test needs {{ nd_tor_switch_name }} and {{ nd_tor_leaf_name }}
+          as two distinct leaf switches of {{ ansible_it_fabric }} in integration_config.yml.
       vars:
-        _nd_tor_serials:
-          - "{{ test_tor_switch_serial }}"
-          - "{{ test_leaf_switch_serial }}"
-          - "{{ test_vpc_tor_switch_serial }}"
-          - "{{ test_vpc_tor_peer_serial }}"
-          - "{{ test_vpc_leaf_switch_serial }}"
-          - "{{ test_vpc_leaf_peer_serial }}"
-          - "{{ test_tor2_switch_serial }}"
+        _nd_tor_roster: "{{ nd_test_fabric_switches[ansible_it_fabric] | default([]) }}"
       when: test_module == 'nd_manage_tor'
 
     # Positional switch variables are consumed by older role test cases. Keep
@@ -284,10 +287,14 @@
           - (test_module != 'nd_manage_switches') or (save | bool and deploy | bool and config_actions_type == 'switch')
           # Integration target dir is nd_resource_manager (module is nd_manage_resource_manager); test_module carries the target name.
           - (test_module not in ['nd_resource_manager', 'nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']) or (ansible_sno_1 | length > 0 and ansible_sno_2 | length > 0)
+          - (test_module not in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']) or (nd_test_vpc_pair2_peer1_ip | length > 0 and nd_test_vpc_pair2_peer2_ip | length > 0 and nd_test_vpc_pair2_peer1_ip != nd_test_vpc_pair2_peer2_ip)
           - (test_module != 'nd_resource_manager') or (intf_1_2 | length > 0 and intf_1_3 | length > 0 and intf_1_10 | length > 0)
           - (test_module != 'nd_manage_route_map') or (nd_test_fabric_name | length > 0)
           - (test_module != 'nd_manage_acl') or (acl_test_fabric | length > 0)
           - (test_module != 'nd_manage_l3out') or (nd_test_fabric1_name | length > 0 and nd_test_fabric2_name | length > 0)
+          # nd_maintenance_mode / nd_fabric_update_group: the switches the target changes must be distinct management IPs of the round's fabric.
+          - (test_module != 'nd_maintenance_mode') or (nd_test_maintenance_mode_fabric_name | length > 0 and ([nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b] | map('string') | reject('equalto', '') | unique | list | length) == 2)
+          - (test_module != 'nd_fabric_update_group') or (nd_test_fabric_name | length > 0 and ([nd_test_update_switch_a, nd_test_update_switch_b, nd_test_update_switch_c] | map('string') | reject('equalto', '') | unique | list | length) == 3)
           # nd_manage_links: both switches must be members of the chosen fabric in the canonical roster, and any
           # override must equal what the planner verified (profile runtime_vars) when prerequisites are enabled.
           - (test_module != 'nd_manage_links') or (nd_test_fabric_numbered | length > 0 and nd_test_fabric_numbered in nd_test_fabric_switches)
@@ -360,6 +367,17 @@
       when:
         - not (nd_prerequisite_only | default(false) | bool)
         - _ndp_setup_file | default('') | length > 0
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_maintenance_mode only): the pre-clean below and the post-clean in the always section run the target's teardown.yaml
+    # ON ITS OWN, but that file reads nd_info, which only the target's main.yaml sets (live 2026-10-13: "'nd_info' is undefined" ended
+    # the play before the target started, and include_role does not pass ignore_errors on to the tasks it includes). Define the same
+    # fact here; main.yaml re-sets an identical value later.
+    - name: "[{{ test_module }}] SETUP - define nd_info for the stand-alone teardown"
+      ansible.builtin.set_fact:
+        nd_info:
+          output_level: '{{ api_key_output_level | default("debug") }}'
+      when: test_module == 'nd_maintenance_mode' and not (nd_prerequisite_only | default(false) | bool)
 
     # -------------------------------------------------------------------------
     # SETUP: best-effort pre-clean of stale objects for this module, so a prior
@@ -645,9 +663,10 @@
     # SETUP (vPC interface targets): their own setup only builds a VIRTUAL-peer-link pair with vpc_pair_details, which
     # ND 4.3 rejects on the N9K-C9300v leaves and on a vxlanIbgp fabric. Form the PHYSICAL pair over the cabled
     # leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link here and hand it to the target as pre-existing substrate
-    # (nd_test_manage_vpc_pairs=false: its setup/teardown then leave the pair alone). The CLEANUP unpairs what this run
-    # created because the destructive nd_manage_switches module runs later in the same job. The target's multi-pair
-    # scenario still needs a second pair in the fabric and reports that itself.
+    # (nd_test_manage_vpc_pairs=false: its setup/teardown then leave the pair alone). The target's multi-pair
+    # scenario asserts a SECOND pair, so the runner also forms leaf_3/leaf_4 over their cabled Eth1/1 + Eth1/2
+    # peer-links. The CLEANUP unpairs what this run created because the destructive nd_manage_switches module
+    # runs later in the same job.
     - name: "[{{ test_module }}] SETUP - standing physical vPC pair for the vPC interface target"
       when: test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host'] and not (nd_prerequisite_only | default(false) | bool)
       block:
@@ -729,6 +748,103 @@
             nd_test_vpc_peer1_ip: "{{ ansible_switch1 }}"
             nd_test_vpc_peer2_ip: "{{ ansible_switch2 }}"
 
+        # Second pair (leaf_3/leaf_4): the targets' multi-pair scenario asserts that it exists with reciprocal vpcPair records
+        # and never creates it, so the runner forms it exactly like the first pair. Its switches are looked up in the roster
+        # by the nd_test_vpc_pair2_peer*_ip management IPs the target reads, so the pair, the roster and the target agree.
+        - name: "[{{ test_module }}] SETUP - resolve the second vPC pair from the roster"
+          ansible.builtin.set_fact:
+            _ndp_vpcif2_sno_1: >-
+              {{ ((nd_test_fabric_switches[ansible_it_fabric] | default([]))
+                  | selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer1_ip)
+                  | map(attribute='serial') | list + ['']) | first }}
+            _ndp_vpcif2_sno_2: >-
+              {{ ((nd_test_fabric_switches[ansible_it_fabric] | default([]))
+                  | selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer2_ip)
+                  | map(attribute='serial') | list + ['']) | first }}
+
+        - name: "[{{ test_module }}] SETUP - require two distinct roster switches for the second pair"
+          ansible.builtin.assert:
+            that:
+              - _ndp_vpcif2_sno_1 | length > 0
+              - _ndp_vpcif2_sno_2 | length > 0
+              - _ndp_vpcif2_sno_1 != _ndp_vpcif2_sno_2
+              - ([_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2] | intersect([ansible_sno_1, ansible_sno_2])) | length == 0
+            fail_msg: >-
+              The second vPC pair {{ nd_test_vpc_pair2_peer1_ip }}/{{ nd_test_vpc_pair2_peer2_ip }} must resolve to two distinct
+              {{ ansible_it_fabric }} roster switches that are not the first pair; got serials
+              '{{ _ndp_vpcif2_sno_1 }}'/'{{ _ndp_vpcif2_sno_2 }}'.
+
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the second pair is formed"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_vpcif2_pairs_before
+
+        - name: "[{{ test_module }}] SETUP - record whether the second pair pre-existed"
+          ansible.builtin.set_fact:
+            _ndp_vpcif2_pair_preexisting: >-
+              {{ ((_ndp_vpcif2_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                 | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                 | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+                 or ((_ndp_vpcif2_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_before.vpc_pairs | default([])))
+                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                 | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                 | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0 }}
+
+        - name: "[{{ test_module }}] SETUP - wait until ND reports the second pair's physical peer-link as present"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+          register: _ndp_vpcif2_peer_link
+          retries: 12
+          delay: 15
+          until: >-
+            {{ (_ndp_vpcif2_peer_link.current.links | default([]))
+               | selectattr('srcSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+               | selectattr('dstSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+          failed_when: false
+          no_log: true
+          when: not (_ndp_vpcif2_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - create the second physical vPC pair"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: merged
+            config_actions: {save: true, deploy: true, type: switch}
+            config:
+              - peer1_switch_id: "{{ _ndp_vpcif2_sno_1 }}"
+                peer2_switch_id: "{{ _ndp_vpcif2_sno_2 }}"
+                use_virtual_peer_link: false
+          when: not (_ndp_vpcif2_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - pause for second-pair establishment convergence"
+          ansible.builtin.pause:
+            seconds: 30
+          when: not (_ndp_vpcif2_pair_preexisting | bool)
+
+        - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the second pair is formed"
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_vpcif2_pairs_after
+
+        - name: "[{{ test_module }}] SETUP - require the second leaf pair before the target starts"
+          ansible.builtin.assert:
+            that: >-
+              ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
+              | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+              | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+              | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+              or ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
+              | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+              | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+              | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+            fail_msg: >-
+              The physical vPC pair {{ _ndp_vpcif2_sno_1 }}/{{ _ndp_vpcif2_sno_2 }} does not exist in {{ ansible_it_fabric }} after
+              the runner formed it; the vPC interface target's multi-pair scenario needs it as its second pair.
+
     # -------------------------------------------------------------------------
     # SETUP (nd_resource_manager only): the target forms a PHYSICAL vPC pair itself (ND 4.3 rejects a virtual
     # peer-link on N9K-C9300v). Before it starts, remember whether the pair already existed and give ND time to
@@ -779,6 +895,245 @@
           when: not (_ndp_rm_pair_preexisting | bool)
 
     # -------------------------------------------------------------------------
+    # SETUP (nd_manage_tor only, read-only): the reduced ToR test pairs vxlan_leaf_3 (given the ToR role by the RUN block)
+    # with vxlan_leaf_4 (leaf) in the round's primary fabric. Serials come live from ND by management IP, so a rebuilt switch
+    # with a new serial still resolves. Nothing is changed here: this only proves the two switches are present, normal and
+    # not vPC paired, and records what a later restore must put back.
+    - name: "[{{ test_module }}] SETUP - precheck the reduced ToR topology"
+      when: test_module == 'nd_manage_tor' and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - resolve the ToR and leaf management IPs from the roster"
+          ansible.builtin.set_fact:
+            _ndp_tor_ip: >-
+              {{ ((nd_test_fabric_switches[ansible_it_fabric] | selectattr('name', 'equalto', nd_tor_switch_name)
+                   | map(attribute='seed_ip') | list) + ['']) | first }}
+            _ndp_leaf_ip: >-
+              {{ ((nd_test_fabric_switches[ansible_it_fabric] | selectattr('name', 'equalto', nd_tor_leaf_name)
+                   | map(attribute='seed_ip') | list) + ['']) | first }}
+            _ndp_tor_role_restore: >-
+              {{ ((nd_test_fabric_switches[ansible_it_fabric] | selectattr('name', 'equalto', nd_tor_switch_name)
+                   | map(attribute='role') | list) + ['leaf']) | first }}
+
+        - name: "[{{ test_module }}] SETUP - read the live switches of the fabric"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
+          register: _ndp_tor_live
+          check_mode: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - resolve the live ToR and leaf switches by management IP"
+          ansible.builtin.set_fact:
+            _ndp_tor_sw: >-
+              {{ (((_ndp_tor_live.current.switches | default([])) | selectattr('fabricManagementIp', 'equalto', _ndp_tor_ip)
+                   | list) + [{}]) | first }}
+            _ndp_tor_leaf_sw: >-
+              {{ (((_ndp_tor_live.current.switches | default([])) | selectattr('fabricManagementIp', 'equalto', _ndp_leaf_ip)
+                   | list) + [{}]) | first }}
+
+        - name: "[{{ test_module }}] SETUP - record serials, roles and modes"
+          ansible.builtin.set_fact:
+            _ndp_tor_serial: "{{ _ndp_tor_sw.serialNumber | default(_ndp_tor_sw.switchId | default('')) }}"
+            _ndp_leaf_serial: "{{ _ndp_tor_leaf_sw.serialNumber | default(_ndp_tor_leaf_sw.switchId | default('')) }}"
+            _ndp_tor_role_before: "{{ _ndp_tor_sw.switchRole | default('') | lower }}"
+            _ndp_leaf_role_before: "{{ _ndp_tor_leaf_sw.switchRole | default('') | lower }}"
+            _ndp_tor_mode: "{{ (_ndp_tor_sw.additionalData | default({})).systemMode | default('') | lower }}"
+            _ndp_leaf_mode: "{{ (_ndp_tor_leaf_sw.additionalData | default({})).systemMode | default('') | lower }}"
+
+        - name: "[{{ test_module }}] SETUP - require both switches present, normal and in the expected roles"
+          ansible.builtin.assert:
+            that:
+              - _ndp_tor_ip | length > 0
+              - _ndp_leaf_ip | length > 0
+              - _ndp_tor_serial | length > 0
+              - _ndp_leaf_serial | length > 0
+              - _ndp_tor_serial != _ndp_leaf_serial
+              - _ndp_tor_role_before in ['leaf', 'tor']
+              - _ndp_leaf_role_before == 'leaf'
+              - _ndp_tor_mode == 'normal'
+              - _ndp_leaf_mode == 'normal'
+            fail_msg: >-
+              NDP_TOR_PRECHECK_FAIL: the reduced ToR test needs {{ nd_tor_switch_name }} ({{ _ndp_tor_ip }}, serial
+              '{{ _ndp_tor_serial }}', role '{{ _ndp_tor_role_before }}', mode '{{ _ndp_tor_mode }}') and {{ nd_tor_leaf_name }}
+              ({{ _ndp_leaf_ip }}, serial '{{ _ndp_leaf_serial }}', role '{{ _ndp_leaf_role_before }}', mode '{{ _ndp_leaf_mode }}')
+              in {{ ansible_it_fabric }}, both in normal mode, the first a leaf or tor and the second a leaf.
+            success_msg: >-
+              NDP_TOR_PRECHECK_OK {{ nd_tor_switch_name }}={{ _ndp_tor_serial }} (role {{ _ndp_tor_role_before }}) pairs with
+              {{ nd_tor_leaf_name }}={{ _ndp_leaf_serial }} (role {{ _ndp_leaf_role_before }}) in {{ ansible_it_fabric }}.
+
+        - name: "[{{ test_module }}] SETUP - read the vPC pairs of the fabric"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/vpcPairs"
+          register: _ndp_tor_pairs
+          check_mode: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - require neither switch to be vPC paired"
+          ansible.builtin.assert:
+            that:
+              - (_ndp_tor_pairs.current.vpcPairs | default([])
+                 | selectattr('switchId', 'in', [_ndp_tor_serial, _ndp_leaf_serial]) | list | length) == 0
+              - (_ndp_tor_pairs.current.vpcPairs | default([])
+                 | selectattr('peerSwitchId', 'in', [_ndp_tor_serial, _ndp_leaf_serial]) | list | length) == 0
+            fail_msg: >-
+              NDP_TOR_PRECHECK_FAIL: {{ nd_tor_switch_name }} or {{ nd_tor_leaf_name }} is still in a vPC pair
+              ({{ _ndp_tor_pairs.current.vpcPairs | default([]) }}); ND rejects a single ToR association for a paired ToR.
+
+        - name: "[{{ test_module }}] SETUP - read the existing ToR associations"
+          cisco.nd.nd_manage_tor:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: gathered
+          register: _ndp_tor_assoc_before
+
+        # Associations that involve neither switch belong to someone else; the destructive overridden step is skipped then.
+        - name: "[{{ test_module }}] SETUP - count the associations this test does not own"
+          ansible.builtin.set_fact:
+            _ndp_tor_foreign_count: >-
+              {{ (_ndp_tor_assoc_before.after | default([]))
+                 | rejectattr('access_or_tor_switch_id', 'in', [_ndp_tor_serial, _ndp_leaf_serial])
+                 | rejectattr('aggregation_or_leaf_switch_id', 'in', [_ndp_tor_serial, _ndp_leaf_serial])
+                 | list | length }}
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_local_user only, read-only): the target's overridden step deletes every controller local user that is not in its
+    # config, and its first asserts expect admin to be the only user. Read the local users first and start the target only while the
+    # logins are admin plus, at most, leftovers of the target's own three test logins (it deletes those itself before it starts).
+    # Anything else ends the play with the skip marker before a single account is touched, so no foreign login is ever removed.
+    # The skip reason must not contain an apostrophe, and ends with a Read pointer: the Jenkins skip-note parser cuts the note at the
+    # first apostrophe or at the first ' Read `', whichever comes first.
+    - name: "[{{ test_module }}] SETUP - read the controller local users"
+      cisco.nd.nd_rest:
+        method: get
+        path: /api/v1/infra/aaa/localUsers
+      register: _ndp_lu_live
+      check_mode: false
+      no_log: true
+      when: test_module == 'nd_local_user' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - find the logins this test does not own"
+      ansible.builtin.set_fact:
+        _ndp_lu_logins: "{{ (_ndp_lu_live.current.localusers | default([])) | map(attribute='loginID') | list }}"
+        _ndp_lu_foreign: >-
+          {{ (_ndp_lu_live.current.localusers | default([])) | map(attribute='loginID')
+             | reject('in', ['admin', 'ansible_local_user', 'ansible_local_user_2', 'ansible_local_user_3']) | list }}
+      when: test_module == 'nd_local_user' and not (nd_prerequisite_only | default(false) | bool)
+
+    - name: "[{{ test_module }}] SETUP - report nd_local_user as skipped when other local users exist"
+      ansible.builtin.debug:
+        msg: >-
+          NDP_MODULE_SKIPPED [integration.{{ test_module }}]: {{
+          ('local users besides admin exist (' ~ (_ndp_lu_foreign | join(', ')) ~ '); the overridden step of the target would delete them')
+          if (_ndp_lu_foreign | length > 0)
+          else 'the controller has no local user named admin, which the target expects' }}. Read `SETUP - read the controller local users` in run_integration_module.yaml for the guard.
+      when:
+        - test_module == 'nd_local_user'
+        - not (nd_prerequisite_only | default(false) | bool)
+        - (_ndp_lu_foreign | length > 0) or ('admin' not in _ndp_lu_logins)
+
+    - name: "[{{ test_module }}] SETUP - end the play cleanly before any local user is touched"
+      ansible.builtin.meta: end_play
+      when:
+        - test_module == 'nd_local_user'
+        - not (nd_prerequisite_only | default(false) | bool)
+        - (_ndp_lu_foreign | length > 0) or ('admin' not in _ndp_lu_logins)
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_maintenance_mode only, read-only): the target moves two switches to maintenance and back. It stops before any change when
+    # a switch is in migration mode and when an IP is not in the fabric, so prove both switches are present and not migrating first.
+    - name: "[{{ test_module }}] SETUP - precheck the maintenance-mode switches"
+      when: test_module == 'nd_maintenance_mode' and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - read the live switches for the maintenance-mode precheck"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_maintenance_mode_fabric_name }}/switches"
+          register: _ndp_mm_live
+          check_mode: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - select the two switches by management IP"
+          ansible.builtin.set_fact:
+            _ndp_mm_switches: >-
+              {{ (_ndp_mm_live.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b]) | list }}
+
+        - name: "[{{ test_module }}] SETUP - require both switches present and not migrating"
+          ansible.builtin.assert:
+            that:
+              - _ndp_mm_switches | length == 2
+              - (_ndp_mm_switches | map(attribute='additionalData.systemMode', default='') | map('lower') | select('equalto', 'migration') | list | length) == 0
+              - (_ndp_mm_switches | map(attribute='additionalData.intendedSystemMode', default='') | map('lower') | select('equalto', 'migration') | list | length) == 0
+            fail_msg: >-
+              NDP_MAINT_PRECHECK_FAIL: nd_maintenance_mode needs {{ nd_test_maintenance_mode_switch_ip_a }} and
+              {{ nd_test_maintenance_mode_switch_ip_b }} in {{ nd_test_maintenance_mode_fabric_name }}, neither in migration mode; found
+              {{ _ndp_mm_switches | map(attribute='fabricManagementIp') | list }} with system modes
+              {{ _ndp_mm_switches | map(attribute='additionalData.systemMode', default='') | list }} and intended modes
+              {{ _ndp_mm_switches | map(attribute='additionalData.intendedSystemMode', default='') | list }}.
+            success_msg: >-
+              NDP_MAINT_PRECHECK_OK {{ nd_test_maintenance_mode_switch_ip_a }} and {{ nd_test_maintenance_mode_switch_ip_b }} are present in
+              {{ nd_test_maintenance_mode_fabric_name }} and not migrating; the target forces both to normal first.
+
+    # -------------------------------------------------------------------------
+    # SETUP (nd_fabric_update_group only, read-only): the target's overridden and auto-assign steps act on EVERY update group of the
+    # fabric, and attaching a switch moves it out of any group it belongs to. ND keeps a built-in default group literally named None
+    # (the module ignores it). Start the target only while no other group exists (leftovers of its own two groups are fine, it
+    # deletes them first); otherwise end the play with the skip marker before anything is changed. Every non-default group that
+    # exists after the target ran was therefore created by it, which is what the CLEANUP relies on.
+    - name: "[{{ test_module }}] SETUP - precheck the update-group topology"
+      when: test_module == 'nd_fabric_update_group' and not (nd_prerequisite_only | default(false) | bool)
+      block:
+        - name: "[{{ test_module }}] SETUP - read the live switches for the update-group precheck"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric_name }}/switches"
+          register: _ndp_ug_live
+          check_mode: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - read the existing update groups"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric_name }}/updateGroups"
+          register: _ndp_ug_groups
+          check_mode: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - find the test switches and the groups this test does not own"
+          ansible.builtin.set_fact:
+            _ndp_ug_present: >-
+              {{ (_ndp_ug_live.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'in', [nd_test_update_switch_a, nd_test_update_switch_b, nd_test_update_switch_c])
+                 | map(attribute='fabricManagementIp') | list }}
+            _ndp_ug_foreign: >-
+              {{ (_ndp_ug_groups.current.updateGroups | default([]))
+                 | map(attribute='updateGroupName', default='')
+                 | reject('in', ['None', '', 'ansible_leaf_group', 'ansible_spine_group']) | list }}
+
+        - name: "[{{ test_module }}] SETUP - require the three test switches in the fabric"
+          ansible.builtin.assert:
+            that:
+              - _ndp_ug_present | length == 3
+            fail_msg: >-
+              NDP_UPDATE_GROUP_PRECHECK_FAIL: nd_fabric_update_group needs {{ nd_test_update_switch_a }}, {{ nd_test_update_switch_b }} and
+              {{ nd_test_update_switch_c }} in {{ nd_test_fabric_name }}; found {{ _ndp_ug_present }}.
+            success_msg: >-
+              NDP_UPDATE_GROUP_PRECHECK_OK {{ _ndp_ug_present }} are present in {{ nd_test_fabric_name }}; foreign update groups:
+              {{ _ndp_ug_foreign }}.
+
+        - name: "[{{ test_module }}] SETUP - report nd_fabric_update_group as skipped when other update groups exist"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_MODULE_SKIPPED [integration.{{ test_module }}]: update groups besides the default one exist
+              ({{ _ndp_ug_foreign | join(', ') }}); the overridden and auto-assign steps of the target would delete or regroup them.
+              Read `SETUP - precheck the update-group topology` in run_integration_module.yaml for the guard.
+          when: _ndp_ug_foreign | length > 0
+
+        - name: "[{{ test_module }}] SETUP - end the play cleanly before any update group is touched"
+          ansible.builtin.meta: end_play
+          when: _ndp_ug_foreign | length > 0
+
+    # -------------------------------------------------------------------------
     # SETUP: run the target's own setup/prepare file FIRST, but only when the
     # target does not already wire it (main.yaml or a test-case importing it).
     # Best-effort so a setup expecting main.yaml-scoped facts cannot abort the
@@ -824,7 +1179,256 @@
         - name: "[{{ test_module }}] include collection target (all configured cases)"
           ansible.builtin.include_role:
             name: "{{ test_module }}"
-          when: test_module not in ['nd_manage_networks', 'nd_manage_vrfs']
+          when: test_module not in ['nd_manage_networks', 'nd_manage_vrfs', 'nd_manage_tor']
+
+        # nd_manage_tor: the pipeline-owned reduced test. ND 4.3 records an association (intent only, no save or deploy) even
+        # while it reports the two switches "not connected" (live 2026-10-13), so the single 1:1 topology needs no extra
+        # cabling or admin-up: vxlan_leaf_3 takes the ToR role, pairs with vxlan_leaf_4, and the CLEANUP below puts everything
+        # back. The cases mirror the single-association half of the upstream target (create, update, drift, delete, gathered).
+        - name: "[{{ test_module }}] reduced ToR pairing test"
+          when: test_module == 'nd_manage_tor'
+          block:
+            # Recorded first so the CLEANUP restores the role even when the change below half-fails.
+            - name: "[{{ test_module }}] RUN - record the role change attempt"
+              ansible.builtin.set_fact:
+                _ndp_tor_flip_attempted: true
+
+            # nd_rest only parses 200/201/202/204 bodies and changeRoles answers 207, so the call may report a parse error
+            # after ND already acted; the role is verified by reading it back.
+            - name: "[{{ test_module }}] RUN - change {{ nd_tor_switch_name }} to the tor role"
+              cisco.nd.nd_rest:
+                method: post
+                path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switchActions/changeRoles"
+                content:
+                  switchRoles:
+                    - switchId: "{{ _ndp_tor_serial }}"
+                      role: tor
+              failed_when: false
+              no_log: true
+              when: _ndp_tor_role_before != 'tor'
+
+            - name: "[{{ test_module }}] RUN - read the role back"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
+              register: _ndp_tor_after_flip
+              retries: 6
+              delay: 10
+              until: >-
+                ((_ndp_tor_after_flip.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'equalto', _ndp_tor_ip)
+                 | map(attribute='switchRole') | map('lower') | list) == ['tor']
+              failed_when: false
+              check_mode: false
+              no_log: true
+
+            - name: "[{{ test_module }}] RUN - require the tor role"
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    ((_ndp_tor_after_flip.current.switches | default([]))
+                     | selectattr('fabricManagementIp', 'equalto', _ndp_tor_ip)
+                     | map(attribute='switchRole') | map('lower') | list) == ['tor']
+                fail_msg: >-
+                  NDP_TOR_ROLE_FLIP_FAIL: ND did not report {{ nd_tor_switch_name }} ({{ _ndp_tor_serial }}) with the tor role
+                  after changeRoles; the CLEANUP restores '{{ _ndp_tor_role_restore }}'.
+                success_msg: "NDP_TOR_ROLE_OK {{ nd_tor_switch_name }} ({{ _ndp_tor_serial }}) now holds the tor role."
+
+            # TC0: start from a clean association state (best effort).
+            - name: "[{{ test_module }}] TC0 - clear any leftover test association"
+              cisco.nd.nd_manage_tor: &ndp_tor_delete
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                state: deleted
+              ignore_errors: true
+
+            # TC1: gathered is read-only and starts empty.
+            - name: "[{{ test_module }}] TC1 - gather the fabric's associations"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _tor_gathered_0
+
+            - name: "[{{ test_module }}] TC1 - gathered is read-only and the test pair is absent"
+              ansible.builtin.assert:
+                that:
+                  - _tor_gathered_0 is not changed
+                  - _tor_gathered_0.before == _tor_gathered_0.after
+                  - (_tor_gathered_0.after | selectattr('access_or_tor_switch_id', 'equalto', _ndp_tor_serial) | list | length) == 0
+
+            # TC2: create (check mode, real, idempotent) with explicit port-channel ids.
+            - name: "[{{ test_module }}] TC2 - associate the ToR with the leaf (merged, check mode)"
+              cisco.nd.nd_manage_tor: &ndp_tor_create
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                    access_or_tor_port_channel_id: 501
+                    aggregation_or_leaf_port_channel_id: 502
+                state: merged
+              check_mode: true
+              register: _tor_cm_create
+
+            - name: "[{{ test_module }}] TC2 - associate the ToR with the leaf (merged)"
+              cisco.nd.nd_manage_tor: *ndp_tor_create
+              register: _tor_nm_create
+
+            - name: "[{{ test_module }}] TC2 - associate the ToR with the leaf (merged, idempotency)"
+              cisco.nd.nd_manage_tor: *ndp_tor_create
+              register: _tor_nm_create_again
+
+            - name: "[{{ test_module }}] TC2 - create asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_cm_create is changed
+                  - _tor_nm_create is changed
+                  - _tor_nm_create_again is not changed
+
+            # TC3: config_actions validation fails before any API call.
+            - name: "[{{ test_module }}] TC3 - deploy without save is rejected"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                    access_or_tor_port_channel_id: 501
+                    aggregation_or_leaf_port_channel_id: 502
+                state: merged
+                config_actions:
+                  save: false
+                  deploy: true
+              check_mode: true
+              register: _tor_bad_actions
+              ignore_errors: true
+
+            - name: "[{{ test_module }}] TC3 - config_actions asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_bad_actions is failed
+                  - "'config_actions.deploy=true requires config_actions.save=true' in (_tor_bad_actions.msg | default(''))"
+
+            # TC4: gathered reports the association with its port channels.
+            - name: "[{{ test_module }}] TC4 - gather the associations of the leaf"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                state: gathered
+              register: _tor_gathered_1
+
+            - name: "[{{ test_module }}] TC4 - gathered asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_gathered_1 is not changed
+                  - (_tor_gathered_1.after | selectattr('access_or_tor_switch_id', 'equalto', _ndp_tor_serial)
+                     | selectattr('aggregation_or_leaf_switch_id', 'equalto', _ndp_leaf_serial) | list | length) == 1
+                  - (_tor_gathered_1.after | selectattr('access_or_tor_switch_id', 'equalto', _ndp_tor_serial)
+                     | map(attribute='access_or_tor_port_channel_id') | list) == [501]
+                  - (_tor_gathered_1.after | selectattr('access_or_tor_switch_id', 'equalto', _ndp_tor_serial)
+                     | map(attribute='aggregation_or_leaf_port_channel_id') | list) == [502]
+
+            # TC5: update the port channels (check mode, real, idempotent).
+            - name: "[{{ test_module }}] TC5 - change the port channels (merged, check mode)"
+              cisco.nd.nd_manage_tor: &ndp_tor_update
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                    access_or_tor_port_channel_id: 511
+                    aggregation_or_leaf_port_channel_id: 512
+                state: merged
+              check_mode: true
+              register: _tor_cm_update
+
+            - name: "[{{ test_module }}] TC5 - change the port channels (merged)"
+              cisco.nd.nd_manage_tor: *ndp_tor_update
+              register: _tor_nm_update
+
+            - name: "[{{ test_module }}] TC5 - change the port channels (merged, idempotency)"
+              cisco.nd.nd_manage_tor: *ndp_tor_update
+              register: _tor_nm_update_again
+
+            - name: "[{{ test_module }}] TC5 - update asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_cm_update is changed
+                  - _tor_nm_update is changed
+                  - _tor_nm_update_again is not changed
+
+            # TC6: ND allocates and echoes port-channel ids; only an id the config states explicitly may count as drift.
+            - name: "[{{ test_module }}] TC6 - omit the port channels (merged, ND keeps its allocation)"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                state: merged
+              register: _tor_nm_omit
+
+            # overridden would remove associations this test does not own, so it only runs on a fabric without any.
+            - name: "[{{ test_module }}] TC6 - omit the port channels (overridden, reverse-diff regression)"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                state: overridden
+              register: _tor_nm_omit_overridden
+              when: (_ndp_tor_foreign_count | default(1) | int) == 0
+
+            - name: "[{{ test_module }}] TC6 - a different explicit port channel is drift"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                config:
+                  - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                    aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+                    access_or_tor_port_channel_id: 521
+                    aggregation_or_leaf_port_channel_id: 522
+                state: merged
+              register: _tor_nm_drift
+
+            - name: "[{{ test_module }}] TC6 - drift asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_nm_omit is not changed
+                  - (_tor_nm_omit_overridden is skipped) or (_tor_nm_omit_overridden is not changed)
+                  - _tor_nm_drift is changed
+
+            # TC7: delete (check mode, real, idempotent).
+            - name: "[{{ test_module }}] TC7 - disassociate (deleted, check mode)"
+              cisco.nd.nd_manage_tor: *ndp_tor_delete
+              check_mode: true
+              register: _tor_cm_delete
+
+            - name: "[{{ test_module }}] TC7 - disassociate (deleted)"
+              cisco.nd.nd_manage_tor: *ndp_tor_delete
+              register: _tor_nm_delete
+
+            - name: "[{{ test_module }}] TC7 - disassociate (deleted, idempotency)"
+              cisco.nd.nd_manage_tor: *ndp_tor_delete
+              register: _tor_nm_delete_again
+
+            - name: "[{{ test_module }}] TC7 - delete asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_cm_delete is changed
+                  - _tor_nm_delete is changed
+                  - _tor_nm_delete_again is not changed
+
+            # TC8: nothing of the test pair is left.
+            - name: "[{{ test_module }}] TC8 - gather the associations after the deletion"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _tor_gathered_2
+
+            - name: "[{{ test_module }}] TC8 - gathered asserts"
+              ansible.builtin.assert:
+                that:
+                  - _tor_gathered_2 is not changed
+                  - (_tor_gathered_2.after | selectattr('access_or_tor_switch_id', 'equalto', _ndp_tor_serial) | list | length) == 0
       when: not (nd_prerequisite_only | default(false) | bool)
       always:
         - name: "[{{ test_module }}] CLEANUP - post-clean (required)"
@@ -892,6 +1496,301 @@
                 peer2_switch_id: "{{ ansible_sno_2 }}"
             config_actions: {save: true, deploy: true, type: switch}
           ignore_errors: true
+
+        # The second (leaf_3/leaf_4) pair the runner formed for the multi-pair scenario is removed the same way.
+        - name: "[{{ test_module }}] CLEANUP - unpair the second vPC pair the runner formed for the vPC interface target"
+          when:
+            - test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host']
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_vpcif2_pair_preexisting is defined
+            - not (_ndp_vpcif2_pair_preexisting | bool)
+          cisco.nd.nd_manage_vpc_pair:
+            fabric_name: "{{ ansible_it_fabric }}"
+            state: deleted
+            config:
+              - peer1_switch_id: "{{ _ndp_vpcif2_sno_1 }}"
+                peer2_switch_id: "{{ _ndp_vpcif2_sno_2 }}"
+            config_actions: {save: true, deploy: true, type: switch}
+          ignore_errors: true
+
+        # nd_local_user: the target deletes its own logins at the end, but an aborted run leaves them behind. The precheck proved
+        # that admin was the only other account, so the three test logins are all there is to remove (best effort, never masks the
+        # test result). Without a passed precheck nothing is deleted.
+        - name: "[{{ test_module }}] CLEANUP - delete the test local users this run may have left"
+          cisco.nd.nd_local_user:
+            config:
+              - login_id: ansible_local_user
+              - login_id: ansible_local_user_2
+              - login_id: ansible_local_user_3
+            state: deleted
+          ignore_errors: true
+          when:
+            - test_module == 'nd_local_user'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_lu_foreign is defined
+            - _ndp_lu_foreign | length == 0
+
+        # nd_fabric_update_group: the target deletes its groups itself, but an abort between its auto-assign and delete steps leaves
+        # role-based groups with generated names behind. The precheck proved the fabric held no other group (besides ND's built-in
+        # default named None), so every group that exists now was created by this run. Without a passed precheck nothing is deleted.
+        - name: "[{{ test_module }}] CLEANUP - read the update groups left in the fabric"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric_name }}/updateGroups"
+          register: _ndp_ug_after
+          failed_when: false
+          check_mode: false
+          no_log: true
+          when:
+            - test_module == 'nd_fabric_update_group'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_ug_foreign is defined
+            - _ndp_ug_foreign | length == 0
+
+        - name: "[{{ test_module }}] CLEANUP - delete every update group this run created"
+          cisco.nd.nd_fabric_update_group:
+            fabric_name: "{{ nd_test_fabric_name }}"
+            config: >-
+              {{ _ndp_ug_leftover | map('community.general.dict_kv', 'update_group_name') | list }}
+            state: deleted
+          ignore_errors: true
+          vars:
+            _ndp_ug_leftover: >-
+              {{ (_ndp_ug_after.current.updateGroups | default([]))
+                 | map(attribute='updateGroupName', default='') | reject('in', ['None', '']) | list }}
+          when:
+            - test_module == 'nd_fabric_update_group'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_ug_foreign is defined
+            - _ndp_ug_foreign | length == 0
+            - (_ndp_ug_after.current.updateGroups | default([]) | map(attribute='updateGroupName', default='') | reject('in', ['None', '']) | list | length) > 0
+
+        # nd_maintenance_mode: the target puts both switches back to normal mode itself (its teardown ran as the post-clean above), but
+        # only the INTENT was toggled, so ND may keep reporting them as not in sync until a configuration save. Read both back, and
+        # recalculate plus deploy only when they are not both in sync (the deploy then has nothing to push). A mode that cannot be
+        # restored fails the module loudly; the next switch guard also heals it.
+        - name: "[{{ test_module }}] CLEANUP - read both switches back after the mode restore"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_maintenance_mode_fabric_name }}/switches"
+          register: _ndp_mm_restored
+          retries: 6
+          delay: 10
+          until: >-
+            ((_ndp_mm_restored.current.switches | default([]))
+             | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b])
+             | map(attribute='additionalData.systemMode', default='') | map('lower') | list) == ['normal', 'normal']
+            and
+            ((_ndp_mm_restored.current.switches | default([]))
+             | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b])
+             | map(attribute='additionalData.intendedSystemMode', default='') | map('lower') | list) == ['normal', 'normal']
+          failed_when: false
+          check_mode: false
+          no_log: true
+          when:
+            - test_module == 'nd_maintenance_mode'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_mm_switches is defined
+
+        - name: "[{{ test_module }}] CLEANUP - record the configuration sync state after the mode restore"
+          ansible.builtin.set_fact:
+            _ndp_mm_sync: >-
+              {{ (_ndp_mm_restored.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b])
+                 | map(attribute='additionalData.configSyncStatus', default='') | list }}
+          when:
+            - test_module == 'nd_maintenance_mode'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_mm_switches is defined
+
+        - name: "[{{ test_module }}] CLEANUP - save the fabric configuration so ND reports the maintenance-mode switches in sync again"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ nd_test_maintenance_mode_fabric_name }}/actions/configSave"
+            content: {}
+          failed_when: false
+          no_log: true
+          when:
+            - test_module == 'nd_maintenance_mode'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_mm_sync is defined
+            - _ndp_mm_sync != ['inSync', 'inSync']
+
+        # switchActions/deploy answers 207 ("No Commands to execute"), which nd_rest cannot parse; the outcome is read from state.
+        - name: "[{{ test_module }}] CLEANUP - push the pending maintenance-mode switch state (nothing to push is expected)"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ nd_test_maintenance_mode_fabric_name }}/switchActions/deploy"
+            content:
+              switchIds: "{{ _ndp_mm_switches | map(attribute='switchId') | list }}"
+          failed_when: false
+          no_log: true
+          when:
+            - test_module == 'nd_maintenance_mode'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_mm_sync is defined
+            - _ndp_mm_sync != ['inSync', 'inSync']
+
+        - name: "[{{ test_module }}] CLEANUP - wait for both maintenance-mode switches to report in sync"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_maintenance_mode_fabric_name }}/switches"
+          register: _ndp_mm_synced
+          retries: 12
+          delay: 10
+          until: >-
+            ((_ndp_mm_synced.current.switches | default([]))
+             | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b])
+             | map(attribute='additionalData.configSyncStatus', default='') | list) == ['inSync', 'inSync']
+          failed_when: false
+          check_mode: false
+          no_log: true
+          when:
+            - test_module == 'nd_maintenance_mode'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_mm_sync is defined
+            - _ndp_mm_sync != ['inSync', 'inSync']
+
+        - name: "[{{ test_module }}] CLEANUP - report the mode restore"
+          ansible.builtin.assert:
+            that:
+              - >-
+                ((_ndp_mm_restored.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b])
+                 | map(attribute='additionalData.systemMode', default='') | map('lower') | list) == ['normal', 'normal']
+              - >-
+                ((_ndp_mm_restored.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'in', [nd_test_maintenance_mode_switch_ip_a, nd_test_maintenance_mode_switch_ip_b])
+                 | map(attribute='additionalData.intendedSystemMode', default='') | map('lower') | list) == ['normal', 'normal']
+            fail_msg: >-
+              NDP_MAINT_RESTORE_FAIL: {{ nd_test_maintenance_mode_switch_ip_a }} and {{ nd_test_maintenance_mode_switch_ip_b }} do not both
+              report normal system and intended modes after the test; the next switch guard heals them.
+            success_msg: >-
+              NDP_MAINT_RESTORE_OK {{ nd_test_maintenance_mode_switch_ip_a }} and {{ nd_test_maintenance_mode_switch_ip_b }} are back in
+              normal mode; sync before recalculation {{ _ndp_mm_sync | default([]) }}.
+          when:
+            - test_module == 'nd_maintenance_mode'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_mm_switches is defined
+
+        # nd_manage_tor: undo what the reduced test changed. The association is removed first (best effort), then the ToR
+        # switch gets its roster role back and the fabric is recalculated so ND reports both switches in sync again (a role
+        # change plus association leaves them 'pending' until a config save; the deploy then finds nothing to push). A role
+        # that cannot be restored fails the module loudly; the next switch guard also heals it from the roster.
+        - name: "[{{ test_module }}] CLEANUP - remove the ToR association this run may have left"
+          cisco.nd.nd_manage_tor:
+            fabric_name: "{{ ansible_it_fabric }}"
+            config:
+              - access_or_tor_switch: "{{ _ndp_tor_serial }}"
+                aggregation_or_leaf_switch: "{{ _ndp_leaf_serial }}"
+            state: deleted
+          ignore_errors: true
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_serial is defined
+            - _ndp_leaf_serial is defined
+
+        - name: "[{{ test_module }}] CLEANUP - give {{ nd_tor_switch_name }} its roster role back"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switchActions/changeRoles"
+            content:
+              switchRoles:
+                - switchId: "{{ _ndp_tor_serial | default('') }}"
+                  role: "{{ _ndp_tor_role_restore | default('leaf') }}"
+          failed_when: false
+          no_log: true
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_flip_attempted | default(false) | bool
+
+        - name: "[{{ test_module }}] CLEANUP - read the role back"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
+          register: _ndp_tor_restored
+          retries: 6
+          delay: 10
+          until: >-
+            ((_ndp_tor_restored.current.switches | default([]))
+             | selectattr('fabricManagementIp', 'equalto', _ndp_tor_ip)
+             | map(attribute='switchRole') | map('lower') | list) == [_ndp_tor_role_restore | default('leaf')]
+          failed_when: false
+          check_mode: false
+          no_log: true
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_flip_attempted | default(false) | bool
+
+        - name: "[{{ test_module }}] CLEANUP - recalculate the fabric so ND reports the switches in sync again"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/actions/configSave"
+            content: {}
+          failed_when: false
+          no_log: true
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_flip_attempted | default(false) | bool
+
+        # switchActions/deploy answers 207 ("No Commands to execute"), which nd_rest cannot parse; the outcome is read from state.
+        - name: "[{{ test_module }}] CLEANUP - deploy the two switches (nothing to push is expected)"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switchActions/deploy"
+            content:
+              switchIds:
+                - "{{ _ndp_tor_serial | default('') }}"
+                - "{{ _ndp_leaf_serial | default('') }}"
+          failed_when: false
+          no_log: true
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_flip_attempted | default(false) | bool
+
+        - name: "[{{ test_module }}] CLEANUP - wait until both switches report in sync"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
+          register: _ndp_tor_synced
+          retries: 12
+          delay: 10
+          until: >-
+            ((_ndp_tor_synced.current.switches | default([]))
+             | selectattr('fabricManagementIp', 'in', [_ndp_tor_ip, _ndp_leaf_ip])
+             | map(attribute='additionalData.configSyncStatus', default='') | list) == ['inSync', 'inSync']
+          failed_when: false
+          check_mode: false
+          no_log: true
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_flip_attempted | default(false) | bool
+
+        - name: "[{{ test_module }}] CLEANUP - report the restore"
+          ansible.builtin.assert:
+            that:
+              - >-
+                ((_ndp_tor_restored.current.switches | default([]))
+                 | selectattr('fabricManagementIp', 'equalto', _ndp_tor_ip)
+                 | map(attribute='switchRole') | map('lower') | list) == [_ndp_tor_role_restore | default('leaf')]
+            fail_msg: >-
+              NDP_TOR_RESTORE_FAIL: {{ nd_tor_switch_name }} ({{ _ndp_tor_ip }}) does not report the role
+              '{{ _ndp_tor_role_restore | default('leaf') }}' after the test; the next switch guard heals it from the roster.
+            success_msg: >-
+              NDP_TOR_RESTORE_OK {{ nd_tor_switch_name }} holds '{{ _ndp_tor_role_restore | default('leaf') }}' again;
+              sync {{ ((_ndp_tor_synced.current.switches | default([]))
+              | selectattr('fabricManagementIp', 'in', [_ndp_tor_ip, _ndp_leaf_ip])
+              | map(attribute='additionalData.configSyncStatus', default='') | list) }}.
+          when:
+            - test_module == 'nd_manage_tor'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - _ndp_tor_flip_attempted | default(false) | bool
   handlers:
     - name: Restore prerequisite interface changes
       ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"

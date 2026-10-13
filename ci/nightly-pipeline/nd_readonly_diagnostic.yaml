@@ -36,6 +36,8 @@
       - SERIAL00002   # vxlan_leaf_2   192.0.2.196  leaf    (read-only in build #9)
       - SERIAL00003   # vxlan_spine_1  192.0.2.194  spine
       - SERIAL00004   # vxlan_border_1 192.0.2.88   border
+      - SERIAL00008   # vxlan_leaf_3  192.0.2.85   leaf    (second vPC pair with leaf_4)
+      - SERIAL00009   # vxlan_leaf_4  192.0.2.86   leaf    (second vPC pair with leaf_3)
       # --- External_Connectivity_Fabric ---
       - SERIAL00005   # external_edge_1 192.0.2.89  edge_router (l3out planner: refusing role change / drift)
       - SERIAL00006   # external_edge_2 192.0.2.90  edge_router

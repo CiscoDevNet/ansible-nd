@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-"""Snapshot prerequisite release sources without exposing their content."""
+"""Snapshot and atomically publish prerequisite sources without exposing their content."""
 
 import argparse
 import base64
@@ -58,6 +58,39 @@ class ConsulKV:
         if not value:
             raise ReleaseError(f"empty Consul value: {key}")
         return KVRecord(key, value, revision, True)
+
+    def compare_and_set(self, records: dict[str, KVRecord], values: dict[str, bytes], max_request_bytes: int = 524288) -> None:
+        if not values or set(records) != set(values):
+            raise ReleaseError("transaction requires a before-image for every published key")
+        if len(values) > 64:
+            raise ReleaseError("transaction exceeds the 64-operation limit")
+        operations = []
+        for key, value in sorted(values.items()):
+            record = records[key]
+            if record.key != key or not isinstance(value, bytes) or not value:
+                raise ReleaseError(f"invalid transaction value or before-image: {key}")
+            operations.append({"KV": {
+                "Verb": "cas", "Key": key, "Index": record.modify_index if record.exists else 0,
+                "Value": base64.b64encode(value).decode("ascii"),
+            }})
+        content = json.dumps(operations, separators=(",", ":")).encode("utf-8")
+        if len(content) > max_request_bytes:
+            raise ReleaseError(f"transaction requires {len(content)} bytes; limit is {max_request_bytes}")
+        request = urllib.request.Request(
+            f"{self.address}/v1/txn", data=content, method="PUT",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                raise ReleaseError("Consul transaction conflict; no keys changed") from exc
+            raise ReleaseError(f"Consul transaction failed: HTTP {exc.code}") from exc
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+            raise ReleaseError("Consul transaction response unavailable; verify keys before retrying") from exc
+        if not isinstance(payload, dict) or payload.get("Errors") or len(payload.get("Results") or []) != len(operations):
+            raise ReleaseError("Consul transaction could not be verified; verify keys before retrying")
 
 
 def _safe_key_path(root: pathlib.Path, key: str) -> pathlib.Path:
