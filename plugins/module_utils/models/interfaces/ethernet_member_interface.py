@@ -33,9 +33,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     PortChannelModeEnum,
     XePortChannelModeEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
-    AllowedVlans,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import (
     InterfacePolicyStrictBase,
 )
@@ -46,6 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import (
+    AllowedVlans,
     AsciiDescription,
 )
 
