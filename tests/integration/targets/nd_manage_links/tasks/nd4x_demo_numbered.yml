@@ -1,0 +1,285 @@
+---
+- name: Define numbered harness scenario data
+  ansible.builtin.set_fact:
+    nd4x_policy_name: numbered
+    nd4x_fabric_name: "{{ test_fabric_numbered }}"
+    nd4x_gathered_src_fabric_name: "{{ test_fabric_numbered }}"
+    nd4x_gathered_dst_fabric_name: "{{ test_fabric_numbered }}"
+    nd4x_primary_interface: Ethernet1/30
+    nd4x_removed_interfaces: [Ethernet1/31, Ethernet1/32]
+    nd4x_create_count: 3
+    nd4x_run_overridden: "{{ nd_test_nd4x_links_run_overridden | default(false) | bool }}"
+    nd4x_run_selector_tests: true
+    nd4x_run_reversed: false
+    nd4x_run_secret: false
+    nd4x_common_args:
+      output_level: "{{ nd_output_level | default('debug') }}"
+      fabric_name: "{{ test_fabric_numbered }}"
+      link_scope: manage
+    nd4x_module_args:
+      cluster_name: "{{ test_cluster_name }}"
+      ticket_id: "{{ test_ticket_id }}"
+    nd4x_snapshot_path: "/api/v1/manage/links?fabricName={{ test_fabric_numbered }}&max={{ nd4x_links_page_size }}&offset=0"
+    nd4x_check_mode_queries:
+      - name: Snapshot all managed links in the numbered fabric
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_numbered }}&max={{ nd4x_links_page_size }}&offset=0"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+    nd4x_nd_queries:
+      - name: Validate managed links in the numbered fabric
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_numbered }}&max={{ nd4x_links_page_size }}&offset=0"
+        method: get
+        expected_status: 200
+    nd4x_create_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')]"
+        exists: true
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')].configData.templateInputs.mtu"
+        equals: 9216
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')].configData.templateInputs.srcIp"
+        equals: 10.99.30.1
+    nd4x_update_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')].configData.templateInputs.mtu"
+        equals: 1500
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')].configData.templateInputs.srcInterfaceDescription"
+        equals: updated numbered source
+    nd4x_replace_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')].configData.templateInputs.mtu"
+        equals: 9216
+    nd4x_override_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')]"
+        exists: true
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/31' & @.configData.policyType == 'numbered')]"
+        exists: false
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/32' & @.configData.policyType == 'numbered')]"
+        exists: false
+    nd4x_recreate_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/31' & @.configData.policyType == 'numbered')]"
+        exists: true
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/32' & @.configData.policyType == 'numbered')]"
+        exists: true
+    nd4x_delete_one_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'numbered')]"
+        exists: false
+    nd4x_delete_bulk_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/31' & @.configData.policyType == 'numbered')]"
+        exists: false
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/32' & @.configData.policyType == 'numbered')]"
+        exists: false
+    nd4x_cleanup_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/31
+        dst_interface_name: Ethernet1/31
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/32
+        dst_interface_name: Ethernet1/32
+    nd4x_create_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 9216
+            speed: auto
+            fec: auto
+            interface_admin_state: true
+            src_interface_description: ansible numbered 30 source
+            dst_interface_description: ansible numbered 30 destination
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/31
+        dst_interface_name: Ethernet1/31
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.31.1
+            dst_ip: 10.99.31.2
+            mtu: 9216
+            speed: auto
+            fec: auto
+            interface_admin_state: true
+            src_interface_description: ansible numbered 31 source
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/32
+        dst_interface_name: Ethernet1/32
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.32.1
+            dst_ip: 10.99.32.2
+            mtu: 9216
+            interface_admin_state: true
+    nd4x_matching_selector_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        src_switch_ip: "{{ test_switch_a_ip }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        dst_switch_ip: "{{ test_switch_b_ip }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 9216
+            speed: auto
+            fec: auto
+            interface_admin_state: true
+            src_interface_description: ansible numbered 30 source
+            dst_interface_description: ansible numbered 30 destination
+    nd4x_conflicting_selector_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        src_switch_ip: "{{ test_switch_b_ip }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        dst_switch_ip: "{{ test_switch_b_ip }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 9216
+    nd4x_update_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 1500
+            speed: auto
+            fec: auto
+            interface_admin_state: true
+            src_interface_description: updated numbered source
+            dst_interface_description: updated numbered destination
+    nd4x_replace_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 9216
+            interface_admin_state: true
+    nd4x_override_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 9216
+            interface_admin_state: true
+    nd4x_recreate_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/31
+        dst_interface_name: Ethernet1/31
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.31.1
+            dst_ip: 10.99.31.2
+            mtu: 9216
+            interface_admin_state: true
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/32
+        dst_interface_name: Ethernet1/32
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.32.1
+            dst_ip: 10.99.32.2
+            mtu: 9216
+            interface_admin_state: true
+    nd4x_delete_one_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+    nd4x_delete_bulk_config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/31
+        dst_interface_name: Ethernet1/31
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/32
+        dst_interface_name: Ethernet1/32
+
+- name: Run numbered harness lifecycle
+  ansible.builtin.include_tasks: nd4x_demo_link_lifecycle.yml
+
+- name: Verify numbered policy-specific returned values
+  ansible.builtin.assert:
+    that:
+      - >-
+        (nd4x_create.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | first).config_data.template_inputs.src_ip == '10.99.30.1'
+      - >-
+        (nd4x_update.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | first).config_data.template_inputs.mtu == 1500
+      - >-
+        (nd4x_update.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | first).config_data.template_inputs.src_interface_description
+        == 'updated numbered source'

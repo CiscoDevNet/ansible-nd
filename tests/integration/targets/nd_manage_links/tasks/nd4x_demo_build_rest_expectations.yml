@@ -1,0 +1,71 @@
+---
+# Build REST assertions from the complete expected link objects.  The legacy
+# hand-written expectations remain useful for API-specific checks, but these
+# generated assertions make the REST query independent of the module result.
+
+- name: Build complete REST expectations for {{ nd4x_rest_expectation_label }}
+  ansible.builtin.set_fact:
+    nd4x_generated_rest_expectations: >-
+      {%- set expectations = [] -%}
+      {%- for link in nd4x_rest_expected_links -%}
+        {%- set cluster_conditions = '' -%}
+        {%- if link.src_cluster_name is defined -%}
+          {%- set cluster_conditions = cluster_conditions ~ ' & @.srcClusterName == ' ~ (link.src_cluster_name | to_json) -%}
+        {%- endif -%}
+        {%- if link.dst_cluster_name is defined -%}
+          {%- set cluster_conditions = cluster_conditions ~ ' & @.dstClusterName == ' ~ (link.dst_cluster_name | to_json) -%}
+        {%- endif -%}
+        {%- set selector =
+          "$.current.links[?(@.srcFabricName == " ~ (link.src_fabric_name | to_json) ~
+          " & @.dstFabricName == " ~ (link.dst_fabric_name | to_json) ~
+          " & @.srcSwitchName == " ~ (link.src_switch_name | to_json) ~
+          " & @.dstSwitchName == " ~ (link.dst_switch_name | to_json) ~
+          " & @.srcInterfaceName == " ~ (link.src_interface_name | to_json) ~
+          " & @.dstInterfaceName == " ~ (link.dst_interface_name | to_json) ~
+          cluster_conditions ~ ")]" -%}
+        {%- set _ = expectations.append({'jsonpath': selector, 'exists': true}) -%}
+        {%- if link.config_data is defined and link.config_data.policy_type is defined -%}
+          {%- set _ = expectations.append({'jsonpath': selector ~ '.configData.policyType', 'equals': link.config_data.policy_type}) -%}
+        {%- endif -%}
+        {%- if link.config_data is defined and link.config_data.template_name is defined -%}
+          {%- set _ = expectations.append({'jsonpath': selector ~ '.configData.templateName', 'equals': link.config_data.template_name}) -%}
+        {%- endif -%}
+        {%- for template_input in link.config_data.template_inputs | default({}) | dict2items -%}
+          {%- if template_input.key not in (nd4x_rest_sensitive_input_keys | default([
+                'ebgp_password',
+                'default_vrf_ebgp_neighbor_password',
+                'macsec_primary_key_string',
+                'macsec_fallback_key_string'
+              ])) -%}
+            {%- set key_parts = template_input.key.split('_') -%}
+            {%- set rest_key_builder = namespace(value=key_parts[0]) -%}
+            {%- for key_part in key_parts[1:] -%}
+              {%- set rest_key_builder.value = rest_key_builder.value ~ key_part[:1] | upper ~ key_part[1:] -%}
+            {%- endfor -%}
+            {%- set _ = expectations.append({'jsonpath': selector ~ '.configData.templateInputs.' ~ rest_key_builder.value, 'equals': template_input.value}) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {%- for link in nd4x_rest_absent_links -%}
+        {%- set cluster_conditions = '' -%}
+        {%- if link.src_cluster_name is defined -%}
+          {%- set cluster_conditions = cluster_conditions ~ ' & @.srcClusterName == ' ~ (link.src_cluster_name | to_json) -%}
+        {%- endif -%}
+        {%- if link.dst_cluster_name is defined -%}
+          {%- set cluster_conditions = cluster_conditions ~ ' & @.dstClusterName == ' ~ (link.dst_cluster_name | to_json) -%}
+        {%- endif -%}
+        {%- set selector =
+          "$.current.links[?(@.srcFabricName == " ~ (link.src_fabric_name | to_json) ~
+          " & @.dstFabricName == " ~ (link.dst_fabric_name | to_json) ~
+          " & @.srcSwitchName == " ~ (link.src_switch_name | to_json) ~
+          " & @.dstSwitchName == " ~ (link.dst_switch_name | to_json) ~
+          " & @.srcInterfaceName == " ~ (link.src_interface_name | to_json) ~
+          " & @.dstInterfaceName == " ~ (link.dst_interface_name | to_json) ~
+          cluster_conditions ~ ")]" -%}
+        {%- set _ = expectations.append({'jsonpath': selector, 'exists': false}) -%}
+      {%- endfor -%}
+      {{ expectations }}
+
+- name: Publish complete REST expectations for {{ nd4x_rest_expectation_label }}
+  ansible.builtin.set_fact:
+    "{{ nd4x_rest_expectation_fact }}": "{{ nd4x_generated_rest_expectations }}"

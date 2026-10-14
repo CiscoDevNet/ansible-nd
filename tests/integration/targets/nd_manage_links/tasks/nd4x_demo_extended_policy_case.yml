@@ -1,0 +1,74 @@
+---
+- name: "Define {{ nd4x_extended_case.name }} harness lifecycle"
+  ansible.builtin.set_fact:
+    nd4x_policy_name: "{{ nd4x_extended_case.name }}"
+    nd4x_link_scope: "{{ nd4x_extended_case.scope }}"
+    nd4x_fabric_name: "{{ nd4x_extended_case.fabric }}"
+    nd4x_gathered_src_fabric_name: "{{ nd4x_extended_case.src_fabric }}"
+    nd4x_gathered_dst_fabric_name: "{{ nd4x_extended_case.dst_fabric }}"
+    nd4x_primary_interface: "{{ nd4x_extended_case.primary_interface }}"
+    nd4x_removed_interfaces: "{{ nd4x_extended_case.removed_interfaces }}"
+    nd4x_create_count: "{{ nd4x_extended_case.create_config | length }}"
+    nd4x_run_overridden: false
+    nd4x_run_selector_tests: false
+    nd4x_run_reversed: false
+    nd4x_run_secret: false
+    nd4x_cluster_name: "{{ nd4x_extended_case.control_cluster | default('') }}"
+    nd4x_ticket_id: "{{ nd4x_extended_case.ticket_id | default('') }}"
+    nd4x_common_args:
+      output_level: "{{ nd_output_level | default('debug') }}"
+      fabric_name: "{{ nd4x_extended_case.fabric }}"
+      link_scope: "{{ nd4x_extended_case.scope }}"
+    nd4x_module_args:
+      cluster_name: "{{ nd4x_extended_case.control_cluster | default('') }}"
+      ticket_id: "{{ nd4x_extended_case.ticket_id | default('') }}"
+    nd4x_check_mode_queries: >-
+      {{ nd4x_extended_case.query_paths
+         | map('combine', {'expected_status': 200, 'unordered_paths': ['/links'], 'pagination': {'page_size': nd4x_links_page_size | int, 'collection_key': 'links', 'max_pages': nd4x_links_max_pages | int}})
+         | list }}
+    nd4x_nd_queries: >-
+      {{ nd4x_extended_case.query_paths
+         | map('combine', {'method': 'get', 'expected_status': 200})
+         | list }}
+    nd4x_create_expectations: "{{ nd4x_extended_case.create_expectations }}"
+    nd4x_update_expectations: "{{ nd4x_extended_case.update_expectations }}"
+    nd4x_replace_expectations: "{{ nd4x_extended_case.replace_expectations }}"
+    nd4x_override_expectations: []
+    nd4x_recreate_expectations: "{{ nd4x_extended_case.recreate_expectations }}"
+    nd4x_delete_one_expectations: "{{ nd4x_extended_case.delete_one_expectations }}"
+    nd4x_delete_bulk_expectations: "{{ nd4x_extended_case.delete_bulk_expectations }}"
+    nd4x_cleanup_config: >-
+      {%- set configs = [] -%}
+      {%- for link in nd4x_extended_case.create_config -%}
+      {%- set base = {
+        'src_fabric_name': link.src_fabric_name,
+        'dst_fabric_name': link.dst_fabric_name,
+        'src_switch_name': link.src_switch_name,
+        'dst_switch_name': link.dst_switch_name,
+        'src_interface_name': link.src_interface_name,
+        'dst_interface_name': link.dst_interface_name
+      } -%}
+      {%- if link.src_cluster_name is defined -%}
+      {%- set _ = base.update({'src_cluster_name': link.src_cluster_name, 'dst_cluster_name': link.dst_cluster_name}) -%}
+      {%- endif -%}
+      {%- set _ = configs.append(base) -%}
+      {%- endfor -%}
+      {{ configs }}
+    nd4x_create_config: "{{ nd4x_extended_case.create_config }}"
+    nd4x_update_config: "{{ nd4x_extended_case.update_config }}"
+    nd4x_replace_config: "{{ nd4x_extended_case.replace_config }}"
+    nd4x_override_config: []
+    nd4x_recreate_config: "{{ nd4x_extended_case.recreate_config }}"
+    nd4x_delete_one_config: "{{ nd4x_extended_case.create_config | selectattr('src_interface_name', 'equalto', nd4x_extended_case.primary_interface) | list }}"
+    nd4x_delete_bulk_config: "{{ nd4x_extended_case.create_config | rejectattr('src_interface_name', 'equalto', nd4x_extended_case.primary_interface) | list }}"
+
+- name: "Run {{ nd4x_extended_case.name }} harness lifecycle"
+  ansible.builtin.include_tasks: nd4x_demo_link_lifecycle.yml
+
+- name: "Verify {{ nd4x_extended_case.name }} policy-specific returned values"
+  ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+  vars:
+    nd4x_assert_label: "{{ nd4x_extended_case.name }} final"
+    nd4x_assert_collection: "{{ nd4x_create.first_run_result.after }}"
+    nd4x_expected_links: "{{ nd4x_extended_case.create_config }}"
+    nd4x_assert_scope_links: "{{ nd4x_extended_case.create_config }}"

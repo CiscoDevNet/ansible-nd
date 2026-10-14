@@ -6,6 +6,8 @@
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 # Test variables. Override any of these via inventory or extra vars at playbook time.
 # The fabric names below are what the tests assume exist in ND. Either create fabrics
@@ -40,18 +42,162 @@
     test_fabric_vrflite_src: '{{ nd_test_fabric_vrflite_src | default("ansible-fab-vrflite-a") }}'
     test_fabric_vrflite_dst: '{{ nd_test_fabric_vrflite_dst | default("ansible-fab-vrflite-b") }}'
 
-    # Per policy enable flags. Numbered runs by default (matches existing CI). Flip
-    # any of these to true (via inventory or extra vars) to opt in to that policy's tests.
-    run_numbered: '{{ nd_test_run_numbered | default(true) }}'
-    run_unnumbered: '{{ nd_test_run_unnumbered | default(false) }}'
-    run_preprovision: '{{ nd_test_run_preprovision | default(false) }}'
-    run_layer2_dci: '{{ nd_test_run_layer2_dci | default(false) }}'
-    run_multisite_overlay: '{{ nd_test_run_multisite_overlay | default(false) }}'
-    run_multisite_underlay: '{{ nd_test_run_multisite_underlay | default(false) }}'
-    run_ebgp_vrf_lite: '{{ nd_test_run_ebgp_vrf_lite | default(false) }}'
+    # Extended policy-family coverage is opt-in because these policies require
+    # different ND fabric capabilities, templates, or switch platforms.
+    test_fabric_ipv6_link_local: '{{ nd_test_fabric_ipv6_link_local | default("ansible-fab-ipv6ll") }}'
+    test_fabric_l3dci_src: '{{ nd_test_fabric_l3dci_src | default("ansible-fab-l3dci-a") }}'
+    test_fabric_l3dci_dst: '{{ nd_test_fabric_l3dci_dst | default("ansible-fab-l3dci-b") }}'
+    test_fabric_mpls_src: '{{ nd_test_fabric_mpls_src | default("ansible-fab-mpls-a") }}'
+    test_fabric_mpls_dst: '{{ nd_test_fabric_mpls_dst | default("ansible-fab-mpls-b") }}'
+    test_fabric_user_defined: '{{ nd_test_fabric_user_defined | default("ansible-fab-user-defined") }}'
+    test_fabric_iosxe: '{{ nd_test_fabric_iosxe | default("ansible-fab-iosxe") }}'
+    test_fabric_vpc: '{{ nd_test_fabric_vpc | default("ansible-fab-vpc") }}'
+    test_fabric_one_manage: '{{ nd_test_fabric_one_manage | default("ansible-fab-one-manage") }}'
+    test_one_manage_src_fabric: '{{ nd_test_one_manage_src_fabric | default("ansible-fab-one-src") }}'
+    test_one_manage_dst_fabric: '{{ nd_test_one_manage_dst_fabric | default("ansible-fab-one-dst") }}'
+    test_one_manage_src_cluster: '{{ nd_test_one_manage_src_cluster | default("cluster-a") }}'
+    test_one_manage_dst_cluster: '{{ nd_test_one_manage_dst_cluster | default("cluster-b") }}'
+    test_one_manage_cluster_name: '{{ nd_test_one_manage_cluster_name | default("") }}'
+    test_one_manage_ticket_id: '{{ nd_test_one_manage_ticket_id | default("") }}'
+    test_apply_negative_fabric: '{{ nd_test_apply_negative_fabric | default("nd4x-apply-negative-fabric-do-not-use") }}'
+    nd4x_links_page_size: '{{ nd_test_nd4x_links_page_size | default(10000) | int }}'
+    nd4x_links_max_pages: '{{ nd_test_nd4x_links_max_pages | default(1000) | int }}'
 
-    # This target intentionally exercises link_scope=manage only. OneManage needs
-    # a real multi-cluster environment and is covered by unit tests in this lab.
+    test_iosxe_switch_a: '{{ nd_test_iosxe_switch_a | default(test_switch_a) }}'
+    test_iosxe_switch_b: '{{ nd_test_iosxe_switch_b | default(test_switch_b) }}'
+    test_vpc_switch_a: '{{ nd_test_vpc_switch_a | default(test_switch_a) }}'
+    test_vpc_switch_b: '{{ nd_test_vpc_switch_b | default(test_switch_b) }}'
+
+    # ND4X harness safety metadata. These values are intentionally not
+    # invented by the target: the caller must identify the dedicated test
+    # scope and explicitly confirm that the fabrics/switches/interfaces are
+    # isolated from other work.
+    nd4x_links_scope_owner: '{{ nd_test_nd4x_links_scope_owner | default("") }}'
+    nd4x_links_scope_isolated: '{{ nd_test_nd4x_links_scope_isolated | default(false) | bool }}'
+    nd4x_scope_lock_path: >-
+      {{ nd_test_nd4x_links_scope_lock_path
+         | default(
+             '/tmp/nd4x-nd_manage_links-' ~
+             ((ansible_host | default(inventory_hostname))
+              | regex_replace('[^A-Za-z0-9_.-]', '_')),
+             true
+           ) }}
+
+
+    # Per policy enable flags. Numbered runs by default (matches existing CI).
+    # nd_test_run_all=true enables the complete non-destructive harness matrix.
+    # Individual flags remain available for focused scenario runs.
+    run_numbered: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_numbered | default(true) | bool }}
+    run_unnumbered: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_unnumbered | default(false) | bool }}
+    run_preprovision: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_preprovision | default(false) | bool }}
+    run_layer2_dci: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_layer2_dci | default(false) | bool }}
+    run_multisite_overlay: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_multisite_overlay | default(false) | bool }}
+    run_multisite_underlay: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_multisite_underlay | default(false) | bool }}
+    run_ebgp_vrf_lite: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_ebgp_vrf_lite | default(false) | bool }}
+    run_ipv6_link_local: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_ipv6_link_local | default(false) | bool }}
+    run_layer3_dci_vrf_lite: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_layer3_dci_vrf_lite | default(false) | bool }}
+    run_mpls_underlay: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_mpls_underlay | default(false) | bool }}
+    run_mpls_overlay: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_mpls_overlay | default(false) | bool }}
+    run_user_defined: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_user_defined | default(false) | bool }}
+    run_iosxe_numbered: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_iosxe_numbered | default(false) | bool }}
+    run_vpc_peer_keepalive: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_vpc_peer_keepalive | default(false) | bool }}
+    run_one_manage: >-
+      {{ nd_test_run_all | default(false) | bool
+         or nd_test_run_one_manage | default(false) | bool }}
+
+  tags:
+    - always
+
+- name: Build harness scenario selection report
+  ansible.builtin.set_fact:
+    nd4x_harness_scenario_selection:
+      - {name: numbered, enabled: "{{ run_numbered | bool }}", acceptance: implemented-default}
+      - {name: unnumbered, enabled: "{{ run_unnumbered | bool }}", acceptance: implemented-opt-in}
+      - {name: preprovision, enabled: "{{ run_preprovision | bool }}", acceptance: implemented-opt-in}
+      - {name: layer2Dci, enabled: "{{ run_layer2_dci | bool }}", acceptance: implemented-opt-in}
+      - {name: multisiteOverlay, enabled: "{{ run_multisite_overlay | bool }}", acceptance: implemented-opt-in}
+      - {name: multisiteUnderlay, enabled: "{{ run_multisite_underlay | bool }}", acceptance: implemented-opt-in}
+      - {name: ebgpVrfLite, enabled: "{{ run_ebgp_vrf_lite | bool }}", acceptance: implemented-opt-in}
+      - {name: ipv6LinkLocal, enabled: "{{ run_ipv6_link_local | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: layer3DciVrfLite, enabled: "{{ run_layer3_dci_vrf_lite | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: mplsUnderlay, enabled: "{{ run_mpls_underlay | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: mplsOverlay, enabled: "{{ run_mpls_overlay | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: userDefined, enabled: "{{ run_user_defined | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: iosXeNumbered, enabled: "{{ run_iosxe_numbered | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: vpcPeerKeepalive, enabled: "{{ run_vpc_peer_keepalive | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: one_manage, enabled: "{{ run_one_manage | bool }}", acceptance: implemented-opt-in-lab-gated}
+      - {name: auto_scope, enabled: false, acceptance: deferred-no-dedicated-scenario}
+      - {name: switch_id_selectors, enabled: false, acceptance: deferred-no-dedicated-scenario}
+      - {name: ebgp_password_variants, enabled: false, acceptance: deferred-no-dedicated-scenario}
+      - {name: macsec_fields, enabled: false, acceptance: deferred-no-dedicated-scenario}
+      - {name: qkd_fields, enabled: false, acceptance: deferred-no-dedicated-scenario}
+      - {name: netflow_fields, enabled: false, acceptance: deferred-no-dedicated-scenario}
+      - {name: policy_field_combinations, enabled: false, acceptance: deferred-no-dedicated-scenario}
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_extended
+
+- name: Report enabled and skipped harness scenarios
+  ansible.builtin.debug:
+    msg:
+      full_matrix_requested: "{{ nd_test_run_all | default(false) | bool }}"
+      enabled: >-
+        {{ nd4x_harness_scenario_selection
+           | selectattr('enabled', 'equalto', true)
+           | map(attribute='name') | list }}
+      skipped: >-
+        {{ nd4x_harness_scenario_selection
+           | rejectattr('enabled', 'equalto', true)
+           | map(attribute='name') | list }}
+      lab_gated_not_selected: >-
+        {{ nd4x_harness_scenario_selection
+           | selectattr('enabled', 'equalto', false)
+           | selectattr('acceptance', 'equalto', 'implemented-opt-in-lab-gated')
+           | map(attribute='name') | list }}
+      deferred_acceptance: >-
+        {{ nd4x_harness_scenario_selection
+           | selectattr('acceptance', 'equalto', 'deferred-no-dedicated-scenario')
+           | map(attribute='name') | list }}
+      overridden_state_enabled: >-
+        {{ nd_test_nd4x_links_run_overridden | default(false) | bool
+           and nd_test_nd4x_links_destructive_tests | default(false) | bool }}
+      overridden_state_note: >-
+        Fabric-wide overridden coverage is skipped unless both
+        nd_test_nd4x_links_run_overridden=true and
+        nd_test_nd4x_links_destructive_tests=true are supplied.
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_extended
 
 - name: Run nd_manage_links lifecycle for numbered policy
   ansible.builtin.import_tasks: numbered.yml
@@ -84,3 +230,352 @@
 - name: Run nd_manage_links discriminated union (negative) tests
   ansible.builtin.import_tasks: discriminated_union.yml
   when: run_numbered | bool
+
+# ND 4.x harness scenarios. These are never selected by the default target run;
+# the original suite above remains unchanged and continues to provide default
+# coverage. Select these with --tags never,nd4x_demo,<scenario-tag>.
+- name: Run ND 4.x nd_manage_links harness preflight
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_preflight.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_extended
+        - nd4x_demo_extended_preflight
+        - nd4x_demo_one_manage
+        - nd4x_demo_numbered
+        - nd4x_demo_unnumbered
+        - nd4x_demo_preprovision
+        - nd4x_demo_layer2_dci
+        - nd4x_demo_multisite_overlay
+        - nd4x_demo_multisite_underlay
+        - nd4x_demo_ebgp_vrf_lite
+        - nd4x_demo_negative
+        - nd4x_demo_apply_negative
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_extended
+    - nd4x_demo_extended_preflight
+    - nd4x_demo_one_manage
+    - nd4x_demo_numbered
+    - nd4x_demo_unnumbered
+    - nd4x_demo_preprovision
+    - nd4x_demo_layer2_dci
+    - nd4x_demo_multisite_overlay
+    - nd4x_demo_multisite_underlay
+    - nd4x_demo_ebgp_vrf_lite
+    - nd4x_demo_negative
+    - nd4x_demo_apply_negative
+
+- name: Load extended nd_manage_links harness policy matrix
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_extended_policy_data.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_extended
+        - nd4x_demo_extended_preflight
+        - nd4x_demo_one_manage
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_extended
+    - nd4x_demo_extended_preflight
+    - nd4x_demo_one_manage
+
+- name: Run extended nd_manage_links harness preflight
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_extended_preflight.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_extended
+        - nd4x_demo_extended_preflight
+        - nd4x_demo_one_manage
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_extended
+    - nd4x_demo_extended_preflight
+    - nd4x_demo_one_manage
+
+- name: Run extended single-cluster nd_manage_links policies
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_extended_manage.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_extended
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_extended
+
+- name: Run One Manage nd_manage_links policy coverage
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_one_manage.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_extended
+        - nd4x_demo_one_manage
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_extended
+    - nd4x_demo_one_manage
+
+- name: Run numbered links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_numbered.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_numbered
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_numbered
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_numbered | bool
+
+- name: Run unnumbered links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_unnumbered.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_unnumbered
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_unnumbered
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_unnumbered | bool
+
+- name: Run preprovision links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_preprovision.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preprovision
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_preprovision
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_preprovision | bool
+
+- name: Run layer2Dci links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_layer2_dci.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_layer2_dci
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_layer2_dci
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_layer2_dci | bool
+
+- name: Run multisiteOverlay links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_multisite_overlay.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_multisite_overlay
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_multisite_overlay
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_multisite_overlay | bool
+
+- name: Run multisiteUnderlay links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_multisite_underlay.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_multisite_underlay
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_multisite_underlay
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_multisite_underlay | bool
+
+- name: Run ebgpVrfLite links using the ND 4.x harness
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_ebgp_vrf_lite.yml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_ebgp_vrf_lite
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_ebgp_vrf_lite
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_ebgp_vrf_lite | bool
+
+- name: Run nd_manage_links negative scenarios using the ND 4.x harness
+  block:
+    - name: Acquire lock for nd_manage_links negative scenarios
+      ansible.builtin.include_tasks: nd4x_demo_acquire_scope_lock.yml
+
+    - name: Execute primary and optional nd_manage_links negative scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+    - name: Execute apply-time nd_manage_links harness negative scenario
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_apply_negative.yml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_negative
+            - nd4x_demo_apply_negative
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+        - nd4x_demo_apply_negative
+      when:
+        - nd4x_links_supported | default(false) | bool
+        - run_numbered | bool
+  always:
+    - name: Clean up the primary negative-test baseline
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ test_fabric_numbered }}"
+        link_scope: manage
+        config:
+          - src_fabric_name: "{{ test_fabric_numbered }}"
+            dst_fabric_name: "{{ test_fabric_numbered }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+      register: nd4x_negative_cleanup
+      failed_when: false
+      when:
+        - nd4x_links_supported | default(false) | bool
+        - run_numbered | bool
+        - nd4x_scope_lock_acquired | default(false) | bool
+      tags:
+        - always
+
+    - name: Verify primary negative-test cleanup while scope lock is held
+      block:
+        - name: Verify primary negative-test baseline is absent
+          cisco.nd.nd_rest:
+            path: "/api/v1/manage/links?fabricName={{ test_fabric_numbered }}&max={{ nd4x_links_page_size }}&offset=0"
+            method: get
+          register: nd4x_negative_cleanup_query
+          when:
+            - nd4x_links_supported | default(false) | bool
+            - run_numbered | bool
+            - nd4x_scope_lock_acquired | default(false) | bool
+          tags:
+            - always
+
+        - name: Assert primary negative-test cleanup query succeeded
+          ansible.builtin.assert:
+            that:
+              - nd4x_negative_cleanup_query.status | int == 200
+              - not nd4x_negative_cleanup_query.failed | default(false) | bool
+              - nd4x_negative_cleanup_query.jsondata is mapping
+              - nd4x_negative_cleanup_query.jsondata.links is defined
+              - nd4x_negative_cleanup_query.jsondata.links is sequence
+              - nd4x_negative_cleanup_query.jsondata.meta is mapping
+              - nd4x_negative_cleanup_query.jsondata.meta.counts is mapping
+              - nd4x_negative_cleanup_query.jsondata.meta.counts.remaining is defined
+              - (nd4x_negative_cleanup_query.jsondata.meta.counts.remaining | string) == '0'
+            fail_msg: >-
+              Could not verify primary negative-test cleanup. Expected HTTP 200
+              with a links collection, got status
+              {{ nd4x_negative_cleanup_query.status | default('unknown') }},
+              failed={{ nd4x_negative_cleanup_query.failed | default(false) }},
+              response={{ nd4x_negative_cleanup_query.jsondata | default('missing') }}.
+          when:
+            - nd4x_links_supported | default(false) | bool
+            - run_numbered | bool
+            - nd4x_scope_lock_acquired | default(false) | bool
+          tags:
+            - always
+
+        - name: Fail if primary negative-test cleanup did not complete
+          ansible.builtin.assert:
+            that:
+              - not nd4x_negative_cleanup.failed | default(false) | bool
+              - >-
+                nd4x_negative_cleanup_query.jsondata.links | default([])
+                | selectattr('srcInterfaceName', 'equalto', 'Ethernet1/30')
+                | list
+                | length == 0
+              - >-
+                nd4x_negative_cleanup_query.jsondata.links | default([])
+                | selectattr('dstInterfaceName', 'equalto', 'Ethernet1/30')
+                | list
+                | length == 0
+            fail_msg: >-
+              The primary nd_manage_links negative-test baseline could not be
+              verified as absent after cleanup.
+          when:
+            - nd4x_links_supported | default(false) | bool
+            - run_numbered | bool
+            - nd4x_scope_lock_acquired | default(false) | bool
+          tags:
+            - always
+      always:
+        - name: Release lock for nd_manage_links negative scenarios after verification
+          ansible.builtin.include_tasks: nd4x_demo_release_scope_lock.yml
+          tags:
+            - always
+      tags:
+        - always
+
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_negative
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - run_numbered | bool
