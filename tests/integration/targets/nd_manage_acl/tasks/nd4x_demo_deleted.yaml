@@ -1,0 +1,71 @@
+---
+- name: Run nd_manage_acl deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
+
+    - name: "DELETED SETUP: Create the IPv4 ACL to delete"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: merged
+        config:
+          - "{{ acl_ipv4_replaced }}"
+
+    - name: "DELETED: Delete the IPv4 ACL through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_acl
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ acl_fabric }}"
+        config:
+          - name: "{{ acl_ipv4_name }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_acl_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted IPv4 ACL is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv4_name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_ipv4
+
+    - name: "DELETED: Verify IPv4 ACL removal and idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_ipv4.check_mode_result.changed | bool
+          - deleted_ipv4.first_run_result.changed | bool
+          - deleted_ipv4.first_run_result.after | selectattr('name', 'equalto', acl_ipv4_name) | list | length == 0
+          - deleted_ipv4.second_run_result.changed == false
+
+  always:
+    - name: "DELETED CLEANUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always

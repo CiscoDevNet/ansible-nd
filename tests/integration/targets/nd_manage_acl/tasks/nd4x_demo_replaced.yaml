@@ -1,0 +1,120 @@
+---
+- name: Run nd_manage_acl replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
+
+    - name: "REPLACED SETUP: Create the original IPv4 ACL state"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: merged
+        config:
+          - "{{ acl_ipv4_initial }}"
+
+    - name: "REPLACED SETUP: Reproduce the original merged entry-list update"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: merged
+        config:
+          - "{{ acl_ipv4_updated }}"
+      register: replaced_setup_update
+
+    - name: "REPLACED SETUP: Verify the exact legacy pre-replaced state"
+      ansible.builtin.assert:
+        that:
+          - replaced_setup_update is changed
+          - >-
+            (
+              replaced_setup_update.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries | length == 1
+          - >-
+            (
+              replaced_setup_update.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries[0].sequence_number == 30
+
+    - name: "REPLACED: Replace the IPv4 ACL through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_acl
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ acl_fabric }}"
+        config:
+          - "{{ acl_ipv4_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_acl_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced IPv4 ACL
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv4_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ acl_ipv4_name }}"
+              - jsonpath: "$.current.type"
+                equals: ipv4
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 10
+              - jsonpath: "$.current.entries[0].action"
+                equals: permit
+              - jsonpath: "$.current.entries[0].protocol"
+                equals: ip
+              - jsonpath: "$.current.entries[1]"
+                exists: false
+      register: replaced_ipv4
+
+    - name: "REPLACED: Verify returned IPv4 configuration"
+      ansible.builtin.assert:
+        that:
+          - replaced_ipv4.check_mode_result.changed | bool
+          - replaced_ipv4.first_run_result.changed | bool
+          - >-
+            (
+              replaced_ipv4.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries | length == 1
+          - >-
+            (
+              replaced_ipv4.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries[0].sequence_number == 10
+          - replaced_ipv4.second_run_result.changed == false
+
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
