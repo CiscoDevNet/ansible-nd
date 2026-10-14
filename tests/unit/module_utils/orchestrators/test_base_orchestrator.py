@@ -260,6 +260,36 @@ class TestRegisterApiCallVerbosityTagging:
         assert len(results._tasks) == 1
         assert results._tasks[0].verbosity_level == 2
 
+    def test_multi_call_registration_preserves_state_and_check_mode(self):
+        """Every paginated-style request restores metadata after Results resets its current task."""
+
+        rest_send = _make_rest_send([_success_response(), _success_response()])
+        rest_send.params["state"] = "overridden"
+        rest_send.params["check_mode"] = True
+        rest_send.check_mode = True
+        results = Results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch._request("/api/v1/stub?offset=0", HttpVerbEnum.GET, operation_type=OperationType.QUERY)
+        orch._request("/api/v1/stub?offset=500", HttpVerbEnum.GET, operation_type=OperationType.QUERY)
+
+        assert len(results._tasks) == 2
+        assert [task.metadata["state"] for task in results._tasks] == ["overridden", "overridden"]
+        assert [task.metadata["check_mode"] for task in results._tasks] == [True, True]
+
+    def test_registration_preserves_invocation_check_mode_during_transport_override(self):
+        """A read-only POST transport override must not erase invocation check-mode metadata."""
+
+        rest_send = _make_rest_send([_success_response()])
+        rest_send.params["check_mode"] = True
+        rest_send.check_mode = False
+        results = Results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch._request("/api/v1/stub/preview", HttpVerbEnum.POST, data={"items": []}, operation_type=OperationType.QUERY)
+
+        assert results._tasks[0].metadata["check_mode"] is True
+
 
 # =============================================================================
 # Test: _register_api_call field population

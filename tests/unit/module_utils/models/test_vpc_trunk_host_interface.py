@@ -98,12 +98,12 @@ def test_vpc_trunk_host_interface_00100():
     """
     # Summary
 
-    Verify every policy field defaults to None except the frozen policy_type.
+    Verify every policy field defaults to None except the frozen policy_type and canonical empty member lists.
 
     ## Test
 
     - Instantiate with no arguments
-    - Every per-peer and shared field is None
+    - Every per-peer and shared field is None except the member lists, which default to `[]`
     - policy_type defaults to "trunkVpcHost"
 
     ## Classes and Methods
@@ -118,11 +118,11 @@ def test_vpc_trunk_host_interface_00100():
     assert instance.allowed_vlans is None
     assert instance.native_vlan is None
     # Per-peer
-    assert instance.peer1_member_ports is None
+    assert instance.peer1_member_ports == []
     assert instance.peer1_port_channel_configuration is None
     assert instance.peer1_port_channel_description is None
     assert instance.peer1_port_channel_id is None
-    assert instance.peer2_member_ports is None
+    assert instance.peer2_member_ports == []
     assert instance.peer2_port_channel_configuration is None
     assert instance.peer2_port_channel_description is None
     assert instance.peer2_port_channel_id is None
@@ -352,7 +352,7 @@ def test_vpc_trunk_host_interface_00155_allowed_vlans_rejects(value):
         # Any casing of the full prefix canonicalizes to "Ethernet".
         (["ETHERNET1/2", "etHernet1/3"], ["Ethernet1/2", "Ethernet1/3"]),
         ([], []),
-        (None, None),
+        (None, []),
         (["ethernet1/1/1"], ["Ethernet1/1/1"]),
     ],
     ids=[
@@ -376,7 +376,7 @@ def test_vpc_trunk_host_interface_00180_peer1(value, expected):
 
     - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
     - Any casing of the full prefix canonicalizes to `Ethernet`
-    - Already-canonical values pass through; empty list and None pass through; breakout suffixes are preserved
+    - Already-canonical values pass through; empty list passes through; None becomes an empty member list; breakout suffixes are preserved
 
     ## Classes and Methods
 
@@ -394,7 +394,7 @@ def test_vpc_trunk_host_interface_00180_peer1(value, expected):
         (["ethernet1/1", "ethernet1/2"], ["Ethernet1/1", "Ethernet1/2"]),
         (["Ethernet1/1"], ["Ethernet1/1"]),
         (["eth1/1"], ["Ethernet1/1"]),
-        (None, None),
+        (None, []),
     ],
     ids=["lowercase_to_canonical", "already_canonical_passthrough", "abbreviation_expanded", "none_passthrough"],
 )

@@ -255,6 +255,7 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
         "pfc": False,
         "portChannelMode": "active",
         "portTypeEdgeTrunk": True,
+        "ports": [],
         "qos": False,
         "speed": "auto",
         "stormControl": False,
@@ -326,7 +327,7 @@ class PortChannelTrunkHostPolicyModel(StormControlMutexMixin):
 
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
-    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
+    ports: list[str] = Field(default_factory=list, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
     queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
@@ -445,6 +446,7 @@ class XePortChannelTrunkHostPolicyModel(InterfacePolicyStrictBase):
         "allowedVlans": "none",
         "bpduGuard": "enable",
         "portChannelMode": "active",
+        "ports": [],
     }
     # ND 4.3.1 rejects an iosXeTrunkPoHost create that omits allowedVlans ("Validation failed for following fields: [allowedVlans]",
     # lab 2026-09-15); 4.2.1 stores "none" either way. Payload-only: see `NDBaseModel.payload_defaults` (issue #564 class).
@@ -480,7 +482,7 @@ class XePortChannelTrunkHostPolicyModel(InterfacePolicyStrictBase):
     port_channel_mode: XePortChannelModeEnum | None = Field(
         default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive/auto/desirable)"
     )
-    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/4'])")
+    ports: list[str] = Field(default_factory=list, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/4'])")
 
     @field_validator("mtu", mode="before")
     @classmethod

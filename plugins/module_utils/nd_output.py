@@ -25,6 +25,16 @@ class NDOutput:
         # down to valid module arguments so it round-trips as ``config``.
         self._gathered_spec: dict[str, Any] = {}
 
+    def mark_changed(self) -> None:
+        """Record an execution-side change that is not represented by before/after intent.
+
+        Actions such as deploying previously staged interface intent can change
+        switch running configuration while controller intent remains identical.
+        Keep that signal explicit instead of manufacturing a configuration diff.
+        """
+
+        self._changed = True
+
     def format(self, **kwargs) -> dict[str, Any]:
         # Read-only gathered state returns fetched objects under ``gathered``.
         # Keep empty before/after snapshots for a consistent result shape, but

@@ -166,6 +166,22 @@ def test_manage_vpc_pair_model_00070() -> None:
     assert model.config_actions.type == "global"
 
 
+def test_manage_vpc_pair_model_00075() -> None:
+    """Verify config_actions.type has no public or model default."""
+    model = VpcPairPlaybookConfigModel.model_validate(
+        {
+            "state": "merged",
+            "fabric_name": "fab1",
+            "config_actions": {"save": True, "deploy": False},
+        }
+    )
+
+    assert model.config_actions is not None
+    assert model.config_actions.type is None
+    spec = VpcPairPlaybookConfigModel.get_argument_spec()
+    assert "default" not in spec["config_actions"]["options"]["type"]
+
+
 def test_manage_vpc_pair_model_00080() -> None:
     """Verify config_actions.deploy requires config_actions.save."""
     with pytest.raises(ValidationError):

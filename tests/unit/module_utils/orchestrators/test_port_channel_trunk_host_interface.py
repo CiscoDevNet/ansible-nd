@@ -671,6 +671,57 @@ def test_port_channel_trunk_host_orchestrator_01100() -> None:
         instance.preflight([_build_xe_pc_model(ports=["GigabitEthernet1/0/3"])])
 
 
+def test_port_channel_trunk_host_orchestrator_01110() -> None:
+    """The shared registry accepts an IOS-XE trunk member already owned by the same parent."""
+
+    switch_id = "FDO11111AAA"
+    member_name = "GigabitEthernet1/0/4"
+    model = _build_xe_pc_model(interface_name="port-channel103", ports=[member_name])
+    parent = {
+        "interfaceName": "port-channel103",
+        "interfaceType": "portChannel",
+        "switchId": switch_id,
+        "configData": {
+            "mode": "trunk",
+            "networkOS": {
+                "networkOSType": "ios-xe",
+                "policy": {
+                    "policyType": "iosXeTrunkPoHost",
+                    "ports": [member_name],
+                },
+            },
+        },
+    }
+    member = {
+        "interfaceName": member_name,
+        "interfaceType": "ethernet",
+        "switchId": switch_id,
+        "configData": {
+            "mode": "trunk",
+            "networkOS": {
+                "networkOSType": "ios-xe",
+                "policy": {
+                    "adminState": True,
+                    "policyType": "iosXeTrunkPoMember",
+                    "portChannelId": "Port-channel103",
+                    "portChannelMode": "active",
+                },
+            },
+        },
+        "operData": {"portChannelId": -1},
+    }
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance._switch_interfaces_cache[switch_id] = {
+        parent["interfaceName"].lower(): parent,
+        member["interfaceName"].lower(): member,
+    }
+    object.__setattr__(instance, "_resolve_switch_id", lambda _switch_ip: switch_id)
+
+    with does_not_raise():
+        instance._validate_members_available([model])
+        instance._validate_xe_member_modes([model])
+
+
 # =============================================================================
 # Test: delete / delete_bulk -- IOS-XE canonical name on the delete side (workaround: xe-port-channel-remove-leaves-switch-interface)
 # =============================================================================

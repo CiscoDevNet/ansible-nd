@@ -160,6 +160,8 @@ class VpcPairStateMachine(NDStateMachine):
         verify_attempts = get_verify_iterations(self.module)
         refresh_errors: list[str] = []
         for attempt in range(1, verify_attempts + 1):
+            if state == "deleted":
+                self.module.params["_post_apply_refresh"] = True
             try:
                 response_data = self.model_orchestrator.query_all()
                 self.existing = NDConfigCollection.from_api_response(
@@ -179,7 +181,11 @@ class VpcPairStateMachine(NDStateMachine):
                     attempts=verify_attempts,
                     retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
                     refresh_errors=refresh_errors,
+                    changed=any(log.get("status") in ("created", "updated", "deleted") for log in self.logs),
                 )
+            finally:
+                if state == "deleted":
+                    self.module.params.pop("_post_apply_refresh", None)
 
     @staticmethod
     def _identifier_to_key(identifier: Any) -> str:

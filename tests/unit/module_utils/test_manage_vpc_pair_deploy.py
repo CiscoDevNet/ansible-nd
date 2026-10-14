@@ -48,6 +48,7 @@ class _FakeNDModuleV2:
         switches_exception=None,
         fail_on=None,
         fail_exception=None,
+        switch_deploy_response=None,
     ):
         self.module = module
         self.status = status
@@ -56,6 +57,7 @@ class _FakeNDModuleV2:
         self._switches_exception = switches_exception
         self._fail_on = fail_on
         self._fail_exception = fail_exception
+        self._switch_deploy_response = switch_deploy_response
 
     def request(self, path, verb, payload=None):
         self.calls.append((path, verb, payload))
@@ -63,6 +65,8 @@ class _FakeNDModuleV2:
             if self._switches_exception is not None:
                 raise self._switches_exception
             return self._switches_response
+        if self._switch_deploy_response is not None and path.endswith("/switchActions/deploy"):
+            return self._switch_deploy_response
         if self._fail_on is not None and self._fail_on in path:
             raise self._fail_exception
         return {"success": True}
@@ -177,6 +181,22 @@ def test_manage_vpc_pair_deploy_00060_global_deploy_failure_raises_vpc_error():
     assert GLOBAL_DEPLOY_PATH in fake_nd.paths()
 
 
+def test_manage_vpc_pair_deploy_00065_save_failure_preserves_prior_changed_status():
+    """A failed save after state reconciliation must not erase changed=true."""
+    nrm = _make_nrm("global")
+    fake_nd = _FakeNDModuleV2(
+        nrm.module,
+        fail_on="configSave",
+        fail_exception=NDModuleError(msg="save boom", status=500),
+    )
+
+    with patch.object(deploy, "NDModuleV2", lambda module: fake_nd):
+        with pytest.raises(VpcPairResourceError) as exc:
+            deploy.custom_vpc_deploy(nrm, "fab1", {"changed": True})
+
+    assert exc.value.details["changed"] is True
+
+
 def test_manage_vpc_pair_deploy_00070_switch_query_failure_raises_vpc_error():
     # A failed switch inventory lookup during switch-scoped deploy surfaces as a
     # deploy failure and never posts to switchActions/deploy.
@@ -193,6 +213,23 @@ def test_manage_vpc_pair_deploy_00070_switch_query_failure_raises_vpc_error():
     assert exc.value.msg == "Fabric deployment failed"
     assert SWITCHES_PATH in fake_nd.paths()
     assert SWITCH_DEPLOY_PATH not in fake_nd.paths()
+
+
+def test_manage_vpc_pair_deploy_00075_partial_pending_deploy_preserves_changed_status():
+    """A failed deploy of pending state must report the attempted mutation."""
+    nrm = _make_nrm("global")
+    nrm.module.params["_not_in_sync_pairs"] = [("FOX111AAA", "FOX222AAA")]
+    fake_nd = _FakeNDModuleV2(
+        nrm.module,
+        fail_on="/actions/deploy",
+        fail_exception=NDModuleError(msg="FOX111AAA deployed; FOX222AAA failed", status=500),
+    )
+
+    with patch.object(deploy, "NDModuleV2", lambda module: fake_nd):
+        with pytest.raises(VpcPairResourceError) as exc:
+            deploy.custom_vpc_deploy(nrm, "fab1", {"changed": False})
+
+    assert exc.value.details["changed"] is True
 
 
 def test_manage_vpc_pair_deploy_00080_fabric_utils_deploy_switches_posts_switch_endpoint():

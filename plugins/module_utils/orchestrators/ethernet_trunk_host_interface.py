@@ -25,9 +25,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     EthernetTrunkHostInterfaceModel,
     XeEthernetTrunkHostPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
+    InterfaceDefaultConfig,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
+    EthernetBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 
 class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
@@ -56,6 +62,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
+    MEMBER_FAMILY: ClassVar[str] = "trunk"
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -162,4 +169,5 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         if not isinstance(result, list):
             return result
         named = self._named_interfaces() if self.rest_send.params.get("state") != "deleted" else set()
-        return [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
+        filtered = [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
+        return self._append_named_member_projections(filtered)

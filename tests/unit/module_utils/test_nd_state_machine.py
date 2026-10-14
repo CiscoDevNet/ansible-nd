@@ -57,6 +57,10 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
     def model_post_init(self, __context) -> None:
         super().model_post_init(__context)
         self._calls: list[tuple] = []
+        self._update_kwargs: list[dict] = []
+        self._reconcile_no_diff_changed = False
+        self._reconcile_no_diff_error: Exception | None = None
+        self._reconcile_absent_delete_changed = False
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         return []
@@ -72,6 +76,16 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
     def preflight_delete(self, model_instances) -> None:
         self._calls.append(("preflight_delete", list(model_instances)))
 
+    def reconcile_no_diff(self, model_instances) -> bool:
+        self._calls.append(("reconcile_no_diff", list(model_instances)))
+        if self._reconcile_no_diff_error is not None:
+            raise self._reconcile_no_diff_error
+        return self._reconcile_no_diff_changed
+
+    def reconcile_absent_deletes(self, model_instances) -> bool:
+        self._calls.append(("reconcile_absent_deletes", list(model_instances)))
+        return self._reconcile_absent_delete_changed
+
     def create(self, model_instance, **kwargs) -> ResponseType:
         self._calls.append(("create", model_instance))
         return {}
@@ -82,6 +96,7 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
 
     def update(self, model_instance, **kwargs) -> ResponseType:
         self._calls.append(("update", model_instance))
+        self._update_kwargs.append(kwargs)
         return {}
 
     def delete(self, model_instance, **kwargs) -> None:
@@ -356,6 +371,9 @@ def test_nd_state_machine_00140() -> None:
     calls = instance.model_orchestrator._calls
     preflight_create_calls = [args for name, args in calls if name == "preflight_create"]
     assert preflight_create_calls == [[]]
+    reconcile_calls = [args for name, args in calls if name == "reconcile_no_diff"]
+    assert len(reconcile_calls) == 1
+    assert [item.get_identifier_value() for item in reconcile_calls[0]] == [("192.168.12.151", "loopback10")]
     # No create was attempted (item already existed)
     assert "create" not in [name for name, _ in calls]
     assert "create_bulk" not in [name for name, _ in calls]
@@ -459,7 +477,7 @@ class _CapabilityFailingSpy(_SpyLoopbackOrchestrator):
         LoopbackInterfaceOrchestrator.preflight_create(self, model_instances)
 
 
-def test_nd_state_machine_00170() -> None:
+def test_policy_guard_precedes_capability_preflight() -> None:
     """
     # Summary
 
@@ -501,7 +519,7 @@ class _CapabilityOnlyFailingSpy(_SpyLoopbackOrchestrator):
         raise RuntimeError("capability preflight failed: switch not capable")
 
 
-def test_nd_state_machine_00180() -> None:
+def test_capability_preflight_runtime_error_is_normalized() -> None:
     """
     # Summary
 
@@ -570,7 +588,7 @@ _REMOVAL_CONFIG = [
 ]
 
 
-def test_nd_state_machine_00190() -> None:
+def test_replaced_update_forwards_previous_model() -> None:
     """
     # Summary
 
@@ -606,6 +624,8 @@ def test_nd_state_machine_00190() -> None:
     updated = [args for name, args in calls if name == "update"][0]
     assert updated.get_identifier_value() == ("192.168.12.151", "loopback10")
     assert updated.config_data.network_os.policy.description is None
+    previous_model = instance.model_orchestrator._update_kwargs[0]["previous_model"]
+    assert previous_model.config_data.network_os.policy.description == "stale description"
 
 
 def test_nd_state_machine_00200() -> None:
@@ -634,7 +654,85 @@ def test_nd_state_machine_00200() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == ["preflight_create", "preflight"]
+    assert names == ["preflight_create", "preflight", "reconcile_no_diff"]
+
+
+def test_nd_state_machine_00205() -> None:
+    """Check mode previews unchanged deploy state without mutating it."""
+
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=True, config=_REMOVAL_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names == ["preflight_create", "preflight", "reconcile_no_diff"]
+    assert instance.output.format()["changed"] is False
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_nd_state_machine_00206(check_mode: bool) -> None:
+    """Pending deployment on unchanged intent reports changed in normal and check mode."""
+
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    spy._reconcile_no_diff_changed = True
+    module = _build_module(state="merged", check_mode=check_mode, config=_REMOVAL_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    assert instance.output.format()["changed"] is True
+    assert [name for name, _ in spy._calls] == [
+        "preflight_create",
+        "preflight",
+        "reconcile_no_diff",
+    ]
+
+
+def test_nd_state_machine_00207() -> None:
+    """A failed no-diff preview restores the execution baseline in failure output."""
+
+    spy = _ExistingConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    spy._reconcile_no_diff_error = RuntimeError("contradictory preview")
+    config = [
+        {
+            "switch_ip": "192.168.12.151",
+            "interface_name": "loopback10",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "nx-os",
+                    "policy": {
+                        "policy_type": "loopback",
+                        "admin_state": True,
+                        "description": "stale description",
+                    },
+                }
+            },
+        },
+        {
+            "switch_ip": "192.168.12.151",
+            "interface_name": "loopback20",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "nx-os",
+                    "policy": {"policy_type": "loopback", "admin_state": True},
+                }
+            },
+        },
+    ]
+    module = _build_module(state="merged", check_mode=False, config=config)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match="contradictory preview"):
+        instance.manage_state()
+
+    output = instance.output.format()
+    assert output["changed"] is False
+    assert [item["interface_name"] for item in output["after"]] == ["loopback10"]
+    assert "create_bulk" not in [name for name, _ in spy._calls]
 
 
 def test_nd_state_machine_00210() -> None:
@@ -678,7 +776,8 @@ def test_nd_state_machine_00170() -> None:
     ## Test
 
     - `state: deleted`, `check_mode: True`, one proposed interface; the inventory is empty
-    - `preflight_delete` is recorded exactly once, with the (empty) existing-items-to-delete list
+    - `preflight_delete` is recorded exactly once, with the exact absent requested item
+    - The exact absent request is passed to deploy-recovery reconciliation in check mode
     - No delete mutation is recorded
 
     ## Classes and Methods
@@ -693,8 +792,31 @@ def test_nd_state_machine_00170() -> None:
         instance.manage_state()
 
     calls = instance.model_orchestrator._calls
-    assert [name for name, _ in calls] == ["preflight_delete"]
-    assert calls[0][1] == []
+    assert [name for name, _ in calls] == [
+        "preflight_delete",
+        "reconcile_absent_deletes",
+    ]
+    assert [item.get_identifier_value() for item in calls[0][1]] == [("192.168.12.151", "loopback10")]
+    assert [item.get_identifier_value() for item in calls[1][1]] == [("192.168.12.151", "loopback10")]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_nd_state_machine_00175(check_mode: bool) -> None:
+    """An absent explicit delete can recover pending deployment in either mode."""
+
+    spy = _SpyLoopbackOrchestrator(rest_send=_build_rest_send())
+    spy._reconcile_absent_delete_changed = True
+    module = _build_module(state="deleted", check_mode=check_mode, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    assert instance.output.format()["changed"] is True
+    assert [name for name, _ in spy._calls] == [
+        "preflight_delete",
+        "reconcile_absent_deletes",
+    ]
 
 
 def test_nd_state_machine_00180() -> None:
