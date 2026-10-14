@@ -74,13 +74,17 @@ options:
         optional C(max_pages), which defaults to 10000. For each page, the
         plugin sets C(max) and C(offset) on C(path) itself; callers do not add
         those query parameters.
+      - For paginated collection queries, include C(404) in
+        C(expected_status) when the controller reports an empty collection as
+        not found. Such a 404 is treated as an empty terminal page. A 404 is
+        not treated as an empty response for non-paginated queries.
       - With C(pagination), only the rows under
         C(current.<collection_key>) are combined and compared. Other top-level
         keys in the response are not included in the snapshot comparison.
-      - The query fails when C(current.<collection_key>) is missing or is not a
-        list. It also fails if C(max_pages) is reached without receiving a
-        final page shorter than C(page_size); the snapshot is never silently
-        truncated.
+      - Except for an explicitly allowed empty-collection 404, the query fails
+        when C(current.<collection_key>) is missing or is not a list. It also
+        fails if C(max_pages) is reached without receiving a final page shorter
+        than C(page_size); the snapshot is never silently truncated.
       - C(unordered_paths) contains JSON pointers relative to the response in
         C(current). Only lists at the named paths are treated as unordered;
         C(*) matches one path component, including a list index. An empty

@@ -782,6 +782,18 @@ class ActionModule(ActionBase):
                         raise AnsibleActionFail("Check-mode snapshot query %s failed: %s" % (query_label, query_result.get("msg", "unknown error")))
                     raise AnsibleActionFail("Check-mode snapshot query %s expected status %s but got %s" % (query_label, expected_status, actual_status))
 
+                if (
+                    pagination
+                    and int(actual_status) == 404
+                    and 404 in [int(status) for status in expected_statuses]
+                ):
+                    # Some ND collection endpoints report an empty collection
+                    # as 404 instead of returning current.<collection_key>:
+                    # []. Treat that response as an empty terminal page only
+                    # when the caller explicitly allows 404 and pagination is
+                    # configured for a collection.
+                    break
+
                 if "current" not in query_result:
                     raise AnsibleActionFail("Check-mode snapshot query %s did not return current state" % query_label)
 
