@@ -1,0 +1,1127 @@
+---
+- name: Run nd_manage_prefix_list extended feature-surface scenarios
+  block:
+    - name: "FEATURE SETUP: Remove non-tenant extended prefix lists"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-DEFAULT
+          - ip_version: ipv4
+            name: PL-ND4X-MASK-V4
+          - ip_version: ipv6
+            name: PL-ND4X-MASK-V6
+          - ip_version: ipv4
+            name: PL-ND4X-ALIASES
+          - ip_version: ipv4
+            name: PL-ND4X-SAME-NAME
+          - ip_version: ipv6
+            name: PL-ND4X-SAME-NAME
+        state: deleted
+      failed_when: false
+
+    - name: "FEATURE SETUP VERIFY: Require non-tenant extended prefix lists to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+      vars:
+        nd4x_prefix_list_cleanup_ipv4_names:
+          - PL-ND4X-DEFAULT
+          - PL-ND4X-MASK-V4
+          - PL-ND4X-ALIASES
+          - PL-ND4X-SAME-NAME
+        nd4x_prefix_list_cleanup_ipv6_names:
+          - PL-ND4X-MASK-V6
+          - PL-ND4X-SAME-NAME
+
+    - name: "FEATURE: Exercise default permit action and IPv4 host-bit normalization"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-DEFAULT
+            entries:
+              - sequence_number: 10
+                prefix: "10.1.1.5/24"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate default action and normalized IPv4 prefix
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-DEFAULT
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].action"
+                equals: permit
+              - jsonpath: "$.current.entries[0].prefix"
+                equals: 10.1.1.0/24
+      register: feature_default
+
+    - name: "FEATURE: Verify default action and normalized IPv4 prefix"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              feature_default.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-DEFAULT')
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              feature_default.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-DEFAULT')
+              | first
+            ).entries[0].prefix == '10.1.1.0/24'
+
+    - name: "FEATURE: Exercise explicit IPv4 and IPv6 masks and normalization"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-MASK-V4
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "192.0.2.129/24"
+                mask: "255.255.255.0"
+          - ip_version: ipv6
+            name: PL-ND4X-MASK-V6
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:0db8:0000:0000:0000:0000:0000:0001/32"
+                mask: "ffff:ffff:0000:0000:0000:0000:0000:0000"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate explicit IPv4 mask
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-MASK-V4
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].prefix"
+                equals: 192.0.2.0/24
+              - jsonpath: "$.current.entries[0].mask"
+                equals: 255.255.255.0
+          - name: Validate normalized explicit IPv6 mask
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-ND4X-MASK-V6
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].prefix"
+                equals: "2001:db8::/32"
+              - jsonpath: "$.current.entries[0].mask"
+                equals: "ffff:ffff::"
+      register: feature_masks
+
+    - name: "FEATURE: Verify explicit masks and normalized returned state"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              feature_masks.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-MASK-V4')
+              | first
+            ).entries[0].prefix == '192.0.2.0/24'
+          - >-
+            (
+              feature_masks.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-MASK-V4')
+              | first
+            ).entries[0].mask == '255.255.255.0'
+          - >-
+            (
+              feature_masks.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-MASK-V6')
+              | first
+            ).entries[0].prefix == '2001:db8::/32'
+          - >-
+            (
+              feature_masks.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-MASK-V6')
+              | first
+            ).entries[0].mask == 'ffff:ffff::'
+
+    - name: "FEATURE: Exercise configuration aliases"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ipVersion: ipv4
+            name: PL-ND4X-ALIASES
+            entries:
+              - sequenceNumber: 10
+                prefix: "198.51.100.0/24"
+                exactLength: 28
+              - sequenceNumber: 20
+                action: deny
+                prefix: "203.0.113.0/24"
+                minLength: 25
+                maxLength: 32
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate aliased exact length
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-ALIASES
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.entries[?(@.sequenceNumber == 10)].exactLength
+                equals: 28
+              - jsonpath: >-
+                  $.current.entries[?(@.sequenceNumber == 20)].minLength
+                equals: 25
+              - jsonpath: >-
+                  $.current.entries[?(@.sequenceNumber == 20)].maxLength
+                equals: 32
+      register: feature_aliases
+
+    - name: "FEATURE: Verify aliased fields were normalized to canonical output"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              feature_aliases.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-ALIASES')
+              | first
+            ).entries | length == 2
+          - >-
+            (
+              feature_aliases.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-ALIASES')
+              | first
+            ).entries[0].exact_length == 28
+          - >-
+            (
+              feature_aliases.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-ALIASES')
+              | first
+            ).entries[1].min_prefix_length == 25
+          - >-
+            (
+              feature_aliases.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-ALIASES')
+              | first
+            ).entries[1].max_prefix_length == 32
+
+    - name: "FEATURE: Exercise the same name across IPv4 and IPv6"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-SAME-NAME
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.10.0.0/16"
+          - ip_version: ipv6
+            name: PL-ND4X-SAME-NAME
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8:10::/48"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate same-name IPv4 resource
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-SAME-NAME
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-ND4X-SAME-NAME
+          - name: Validate same-name IPv6 resource
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-ND4X-SAME-NAME
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-ND4X-SAME-NAME
+      register: feature_same_name
+
+    - name: "FEATURE: Verify same-name resources remain distinct by family"
+      ansible.builtin.assert:
+        that:
+          - >-
+            feature_same_name.first_run_result.after
+            | selectattr('name', 'equalto', 'PL-ND4X-SAME-NAME')
+            | selectattr('ip_version', 'equalto', 'ipv4')
+            | list | length == 1
+          - >-
+            feature_same_name.first_run_result.after
+            | selectattr('name', 'equalto', 'PL-ND4X-SAME-NAME')
+            | selectattr('ip_version', 'equalto', 'ipv6')
+            | list | length == 1
+
+    - name: "FEATURE TENANT SETUP: Remove tenant-scoped prefix lists"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+        state: deleted
+      failed_when: false
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT SETUP VERIFY: Require tenant resources to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+      vars:
+        nd4x_prefix_list_cleanup_ipv4_names:
+          - "{{ nd_test_tenant_name_a }}~PL-ND4X-TENANT-SHARED"
+          - "{{ nd_test_tenant_name_b }}~PL-ND4X-TENANT-SHARED"
+        nd4x_prefix_list_cleanup_ipv6_names:
+          - "{{ nd_test_tenant_name_a }}~PL-ND4X-TENANT-SHARED"
+          - "{{ nd_test_tenant_name_b }}~PL-ND4X-TENANT-SHARED"
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT: Exercise tenantName alias and tenant-scoped identity"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ipVersion: ipv4
+            tenantName: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+            entries:
+              - sequenceNumber: 10
+                prefix: "10.20.0.0/16"
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+            entries:
+              - sequence_number: 10
+                action: deny
+                prefix: "192.0.2.0/24"
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8:20::/48"
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+            entries:
+              - sequence_number: 10
+                action: deny
+                prefix: "2001:db8:30::/48"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate tenant A prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/{{ nd_test_tenant_name_a
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: "{{ nd_test_tenant_name_a }}~PL-ND4X-TENANT-SHARED"
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: $.current.entries[0].action
+                equals: permit
+              - jsonpath: $.current.entries[0].prefix
+                equals: 10.20.0.0/16
+          - name: Validate tenant B prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/{{ nd_test_tenant_name_b
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: "{{ nd_test_tenant_name_b }}~PL-ND4X-TENANT-SHARED"
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: $.current.entries[0].action
+                equals: deny
+              - jsonpath: $.current.entries[0].prefix
+                equals: 192.0.2.0/24
+          - name: Validate tenant A IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/{{ nd_test_tenant_name_a
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: "{{ nd_test_tenant_name_a }}~PL-ND4X-TENANT-SHARED"
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: $.current.entries[0].action
+                equals: permit
+              - jsonpath: $.current.entries[0].prefix
+                equals: 2001:db8:20::/48
+          - name: Validate tenant B IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/{{ nd_test_tenant_name_b
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: "{{ nd_test_tenant_name_b }}~PL-ND4X-TENANT-SHARED"
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: $.current.entries[0].action
+                equals: deny
+              - jsonpath: $.current.entries[0].prefix
+                equals: 2001:db8:30::/48
+      register: feature_tenants
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT: Verify same-name resources remain distinct by tenant"
+      ansible.builtin.assert:
+        that:
+          - >-
+            feature_tenants.first_run_result.after
+            | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+            | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+            | list | length == 1
+          - >-
+            feature_tenants.first_run_result.after
+            | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+            | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+            | list | length == 1
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).entries[0].prefix == '10.20.0.0/16'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).entries[0].action == 'deny'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).entries[0].prefix == '192.0.2.0/24'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv6')
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv6')
+              | first
+            ).entries[0].prefix == '2001:db8:20::/48'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | selectattr('ip_version', 'equalto', 'ipv6')
+              | first
+            ).entries[0].action == 'deny'
+          - >-
+            (
+              feature_tenants.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | selectattr('ip_version', 'equalto', 'ipv6')
+              | first
+            ).entries[0].prefix == '2001:db8:30::/48'
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT: Replace resources through tenant-qualified identities"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+            description: "Tenant A IPv4 replacement"
+            entries:
+              - sequence_number: 10
+                action: deny
+                prefix: "198.18.0.0/15"
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+            description: "Tenant B IPv6 replacement"
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8:40::/48"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate tenant A IPv4 replacement
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/{{ nd_test_tenant_name_a
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: $.current.description
+                equals: Tenant A IPv4 replacement
+              - jsonpath: $.current.entries[0].action
+                equals: deny
+              - jsonpath: $.current.entries[0].prefix
+                equals: 198.18.0.0/15
+          - name: Validate tenant B IPv6 replacement
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/{{ nd_test_tenant_name_b
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: $.current.description
+                equals: Tenant B IPv6 replacement
+              - jsonpath: $.current.entries[0].action
+                equals: permit
+              - jsonpath: $.current.entries[0].prefix
+                equals: 2001:db8:40::/48
+      register: feature_tenant_replaced
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT: Verify tenant-scoped replacement returned state"
+      ansible.builtin.assert:
+        that:
+          - feature_tenant_replaced.first_run_result.changed | bool
+          - >-
+            (
+              feature_tenant_replaced.first_run_result.after
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).description == 'Tenant A IPv4 replacement'
+          - >-
+            (
+              feature_tenant_replaced.first_run_result.after
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | selectattr('ip_version', 'equalto', 'ipv4')
+              | first
+            ).entries[0].prefix == '198.18.0.0/15'
+          - >-
+            (
+              feature_tenant_replaced.first_run_result.after
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | selectattr('ip_version', 'equalto', 'ipv6')
+              | first
+            ).description == 'Tenant B IPv6 replacement'
+          - >-
+            (
+              feature_tenant_replaced.first_run_result.after
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | selectattr('ip_version', 'equalto', 'ipv6')
+              | first
+            ).entries[0].prefix == '2001:db8:40::/48'
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT: Delete only tenant A IPv4 and tenant B IPv6 resources"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify tenant A IPv4 was deleted
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/{{ nd_test_tenant_name_a
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify tenant B IPv6 was deleted
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/{{ nd_test_tenant_name_b
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify tenant B IPv4 remains intact
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/{{ nd_test_tenant_name_b
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: $.current.entries[0].action
+                equals: deny
+              - jsonpath: $.current.entries[0].prefix
+                equals: 192.0.2.0/24
+          - name: Verify tenant A IPv6 remains intact
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/{{ nd_test_tenant_name_a
+              }}~PL-ND4X-TENANT-SHARED
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.tenantName
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: $.current.entries[0].action
+                equals: permit
+              - jsonpath: $.current.entries[0].prefix
+                equals: 2001:db8:20::/48
+      register: feature_tenant_deleted
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE TENANT: Verify tenant-scoped deletion returned state"
+      ansible.builtin.assert:
+        that:
+          - feature_tenant_deleted.first_run_result.changed | bool
+          - >-
+            feature_tenant_deleted.first_run_result.after
+            | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+            | selectattr('ip_version', 'equalto', 'ipv4')
+            | list | length == 0
+          - >-
+            feature_tenant_deleted.first_run_result.after
+            | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+            | selectattr('ip_version', 'equalto', 'ipv6')
+            | list | length == 0
+          - feature_tenant_deleted.second_run_result.changed == false
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE CLUSTER: Build cluster-specific predictive snapshots"
+      ansible.builtin.set_fact:
+        nd4x_prefix_list_cluster_check_mode_queries:
+          - name: Snapshot all IPv4 prefix lists in the target cluster
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists?clusterName={{ nd_test_cluster_name }}&max=100
+            expected_status: 200
+            pagination:
+              page_size: 100
+              collection_key: ipv4PrefixLists
+              max_pages: 10000
+            unordered_paths: [/ipv4PrefixLists]
+            ignore_keys:
+              - lastUpdateTimestamp
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLUSTER: Create prefix list through the target cluster"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          cluster_name: "{{ nd_test_cluster_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-CLUSTER
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "198.18.0.0/15"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_cluster_check_mode_queries }}"
+        nd_queries:
+          - name: Validate cluster-routed prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-CLUSTER?clusterName={{ nd_test_cluster_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: PL-ND4X-CLUSTER
+              - jsonpath: $.current.entries[0].action
+                equals: permit
+              - jsonpath: $.current.entries[0].prefix
+                equals: 198.18.0.0/15
+      register: feature_cluster_merged
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLUSTER: Verify cluster-routed create returned state"
+      ansible.builtin.assert:
+        that:
+          - feature_cluster_merged.first_run_result.changed | bool
+          - >-
+            feature_cluster_merged.first_run_result.after
+            | selectattr('name', 'equalto', 'PL-ND4X-CLUSTER')
+            | list | length == 1
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLUSTER: Replace prefix list through the target cluster"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          cluster_name: "{{ nd_test_cluster_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-CLUSTER
+            description: "Cluster-routed replacement"
+            entries:
+              - sequence_number: 10
+                action: deny
+                prefix: "203.0.113.0/24"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_cluster_check_mode_queries }}"
+        nd_queries:
+          - name: Validate cluster-routed replacement
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-CLUSTER?clusterName={{ nd_test_cluster_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: PL-ND4X-CLUSTER
+              - jsonpath: $.current.description
+                equals: Cluster-routed replacement
+              - jsonpath: $.current.entries[0].action
+                equals: deny
+              - jsonpath: $.current.entries[0].prefix
+                equals: 203.0.113.0/24
+      register: feature_cluster_replaced
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLUSTER: Verify cluster-routed replacement returned state"
+      ansible.builtin.assert:
+        that:
+          - feature_cluster_replaced.first_run_result.changed | bool
+          - >-
+            (
+              feature_cluster_replaced.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-CLUSTER')
+              | first
+            ).description == 'Cluster-routed replacement'
+          - >-
+            (
+              feature_cluster_replaced.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-CLUSTER')
+              | first
+            ).entries[0].action == 'deny'
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLUSTER: Delete prefix list through the target cluster"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+          cluster_name: "{{ nd_test_cluster_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-CLUSTER
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_cluster_check_mode_queries }}"
+        nd_queries:
+          - name: Validate cluster-routed deletion
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-CLUSTER?clusterName={{ nd_test_cluster_name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: feature_cluster_deleted
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLUSTER: Verify cluster-routed deletion returned state"
+      ansible.builtin.assert:
+        that:
+          - feature_cluster_deleted.first_run_result.changed | bool
+          - >-
+            feature_cluster_deleted.first_run_result.after
+            | selectattr('name', 'equalto', 'PL-ND4X-CLUSTER')
+            | list | length == 0
+          - feature_cluster_deleted.second_run_result.changed == false
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+  always:
+    - name: "FEATURE CLEANUP: Remove non-tenant extended prefix lists"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-DEFAULT
+          - ip_version: ipv4
+            name: PL-ND4X-MASK-V4
+          - ip_version: ipv6
+            name: PL-ND4X-MASK-V6
+          - ip_version: ipv4
+            name: PL-ND4X-ALIASES
+          - ip_version: ipv4
+            name: PL-ND4X-SAME-NAME
+          - ip_version: ipv6
+            name: PL-ND4X-SAME-NAME
+        state: deleted
+      failed_when: false
+
+    - name: "FEATURE CLEANUP: Remove tenant-scoped prefix lists"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv4
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            name: PL-ND4X-TENANT-SHARED
+          - ip_version: ipv6
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            name: PL-ND4X-TENANT-SHARED
+        state: deleted
+      failed_when: false
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE CLEANUP VERIFY: Verify tenant-scoped prefix lists are absent"
+      cisco.nd.nd_rest:
+        path: "{{ item.path }}"
+        method: get
+      loop:
+        - label: tenant A IPv4
+          path: >-
+            /api/v1/manage/fabrics/{{ test_fabric_name
+            }}/ipv4PrefixLists/{{ nd_test_tenant_name_a
+            }}~PL-ND4X-TENANT-SHARED
+        - label: tenant B IPv4
+          path: >-
+            /api/v1/manage/fabrics/{{ test_fabric_name
+            }}/ipv4PrefixLists/{{ nd_test_tenant_name_b
+            }}~PL-ND4X-TENANT-SHARED
+        - label: tenant A IPv6
+          path: >-
+            /api/v1/manage/fabrics/{{ test_fabric_name
+            }}/ipv6PrefixLists/{{ nd_test_tenant_name_a
+            }}~PL-ND4X-TENANT-SHARED
+        - label: tenant B IPv6
+          path: >-
+            /api/v1/manage/fabrics/{{ test_fabric_name
+            }}/ipv6PrefixLists/{{ nd_test_tenant_name_b
+            }}~PL-ND4X-TENANT-SHARED
+      loop_control:
+        label: "{{ item.label }}"
+      register: feature_cleanup_tenant_results
+      changed_when: false
+      failed_when: false
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE CLEANUP VERIFY: Assert tenant-scoped prefix lists are absent"
+      ansible.builtin.assert:
+        that:
+          - item.status | default(0) | int == 404
+        fail_msg: >-
+          Extended harness cleanup did not remove {{ item.item.label }}
+          tenant-scoped prefix list; REST returned status
+          {{ item.status | default('missing') }}.
+      loop: "{{ feature_cleanup_tenant_results.results }}"
+      loop_control:
+        label: "{{ item.item.label }}"
+      when:
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: "FEATURE CLEANUP: Remove cluster-routed prefix list"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        cluster_name: "{{ nd_test_cluster_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-CLUSTER
+        state: deleted
+      failed_when: false
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLEANUP VERIFY: Verify cluster-routed prefix list is absent"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/ipv4PrefixLists/PL-ND4X-CLUSTER?clusterName={{ nd_test_cluster_name }}
+        method: get
+      register: feature_cleanup_cluster_result
+      changed_when: false
+      failed_when: false
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLEANUP VERIFY: Assert cluster-routed prefix list is absent"
+      ansible.builtin.assert:
+        that:
+          - feature_cleanup_cluster_result.status | int == 404
+        fail_msg: >-
+          Extended harness cleanup did not remove the cluster-routed prefix
+          list PL-ND4X-CLUSTER from cluster {{ nd_test_cluster_name }}.
+      when:
+        - nd_test_cluster_name is defined
+        - nd_test_cluster_name | length > 0
+
+    - name: "FEATURE CLEANUP VERIFY: Verify all extended prefix lists are absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+      vars:
+        nd4x_prefix_list_cleanup_ipv4_names: >-
+          {{
+            [
+              'PL-ND4X-DEFAULT',
+              'PL-ND4X-MASK-V4',
+              'PL-ND4X-ALIASES',
+              'PL-ND4X-SAME-NAME'
+            ]
+            + (
+              [
+                nd_test_tenant_name_a ~ '~PL-ND4X-TENANT-SHARED',
+                nd_test_tenant_name_b ~ '~PL-ND4X-TENANT-SHARED'
+              ]
+              if nd_test_tenant_name_a is defined
+              and nd_test_tenant_name_b is defined
+              else []
+            )
+            + (
+              ['PL-ND4X-CLUSTER']
+              if nd_test_cluster_name is defined
+              and nd_test_cluster_name | length > 0
+              else []
+            )
+          }}
+        nd4x_prefix_list_cleanup_ipv6_names: >-
+          {{
+            [
+              'PL-ND4X-MASK-V6',
+              'PL-ND4X-SAME-NAME'
+            ]
+            + (
+              [
+                nd_test_tenant_name_a ~ '~PL-ND4X-TENANT-SHARED',
+                nd_test_tenant_name_b ~ '~PL-ND4X-TENANT-SHARED'
+              ]
+              if nd_test_tenant_name_a is defined
+              and nd_test_tenant_name_b is defined
+              else []
+            )
+          }}

@@ -1,0 +1,374 @@
+---
+- name: Run nd_manage_prefix_list overridden harness scenarios
+  block:
+    - name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+      ansible.builtin.assert:
+        that:
+          - nd4x_prefix_list_destructive_tests_enabled | bool
+        fail_msg: >-
+          The nd_manage_prefix_list overridden harness scenario can delete
+          every prefix list in the fabric. Run it only on a dedicated test
+          fabric with nd_prefix_list_destructive_tests_enabled=true.
+
+    - name: "OVERRIDDEN SAFETY: Initialize complete prefix-list inventory"
+      ansible.builtin.set_fact:
+        nd4x_prefix_list_inventory: []
+        nd4x_prefix_list_inventory_offset: 0
+        nd4x_prefix_list_inventory_pages: 0
+        nd4x_prefix_list_inventory_page_size: 100
+        nd4x_prefix_list_inventory_max_pages: 10000
+
+    - name: "OVERRIDDEN SAFETY: Read every IPv4 prefix-list inventory page"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_inventory_page.yaml
+      vars:
+        nd4x_prefix_list_inventory_endpoint: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/ipv4PrefixLists
+        nd4x_prefix_list_inventory_collection_key: ipv4PrefixLists
+        nd4x_prefix_list_inventory_family: IPv4
+
+    - name: "OVERRIDDEN SAFETY: Save complete IPv4 prefix-list inventory"
+      ansible.builtin.set_fact:
+        nd4x_ipv4_prefix_list_inventory:
+          current:
+            ipv4PrefixLists: "{{ nd4x_prefix_list_inventory }}"
+
+    - name: "OVERRIDDEN SAFETY: Reset prefix-list inventory pagination"
+      ansible.builtin.set_fact:
+        nd4x_prefix_list_inventory: []
+        nd4x_prefix_list_inventory_offset: 0
+        nd4x_prefix_list_inventory_pages: 0
+
+    - name: "OVERRIDDEN SAFETY: Read every IPv6 prefix-list inventory page"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_inventory_page.yaml
+      vars:
+        nd4x_prefix_list_inventory_endpoint: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/ipv6PrefixLists
+        nd4x_prefix_list_inventory_collection_key: ipv6PrefixLists
+        nd4x_prefix_list_inventory_family: IPv6
+
+    - name: "OVERRIDDEN SAFETY: Save complete IPv6 prefix-list inventory"
+      ansible.builtin.set_fact:
+        nd4x_ipv6_prefix_list_inventory:
+          current:
+            ipv6PrefixLists: "{{ nd4x_prefix_list_inventory }}"
+
+    - name: "OVERRIDDEN SAFETY: Reject prefix lists outside the reserved scope"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              nd4x_ipv4_prefix_list_inventory.current.ipv4PrefixLists
+              | default([])
+              | rejectattr(
+                  'name',
+                  'in',
+                  nd4x_prefix_list_reserved_names_by_family.ipv4
+                )
+              | list
+              | length
+            ) == 0
+          - >-
+            (
+              nd4x_ipv6_prefix_list_inventory.current.ipv6PrefixLists
+              | default([])
+              | rejectattr(
+                  'name',
+                  'in',
+                  nd4x_prefix_list_reserved_names_by_family.ipv6
+                )
+              | list
+              | length
+            ) == 0
+        fail_msg: >-
+          The overridden test found a prefix list outside the reserved
+          nd_manage_prefix_list test scope. Refusing to run a fabric-wide
+          destructive test.
+
+    - name: "OVERRIDDEN SETUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "OVERRIDDEN SETUP VERIFY: Require reserved prefix lists to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+    - name: "OVERRIDDEN SETUP: Recreate the original pre-override state"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-BORDERS
+            description: "Replaced IPv4 borders"
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.0.0.0/8"
+              - sequence_number: 20
+                action: deny
+                prefix: "0.0.0.0/0"
+          - "{{ prefix_list_ipv4_datacenter }}"
+          - ip_version: ipv6
+            name: PL-IPV6-DATACENTER
+            description: "Replaced IPv6 datacenter"
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8::/32"
+        state: merged
+
+    - name: "OVERRIDDEN: Reduce the fabric to only the IPv4 borders list"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained IPv4 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: PL-IPV4-BORDERS
+              - jsonpath: $.current.description
+                equals: Ansible integration test - border router IPv4 prefixes
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 10)].action
+                equals: permit
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 10)].prefix
+                equals: 10.0.0.0/8
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 20)].action
+                equals: permit
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 20)].prefix
+                equals: 172.16.0.0/12
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 20)].minLength
+                equals: 24
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 20)].maxLength
+                equals: 32
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 30)].action
+                equals: deny
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 30)].prefix
+                equals: 0.0.0.0/0
+          - name: Validate removed IPv4 datacenter prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-DATACENTER
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate removed IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: overridden_reduce
+
+    - name: "OVERRIDDEN: Verify only the IPv4 borders list remains"
+      ansible.builtin.assert:
+        that:
+          - overridden_reduce.check_mode_result.changed | bool
+          - overridden_reduce.first_run_result.changed | bool
+          - overridden_reduce.first_run_result.after | length == 1
+          - overridden_reduce_retained_ipv4.name == 'PL-IPV4-BORDERS'
+          - overridden_reduce_retained_ipv4.description == 'Ansible integration test - border router IPv4 prefixes'
+          - overridden_reduce_retained_ipv4.entries | length == 3
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 10)
+              | first
+            ).action == 'permit'
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 10)
+              | first
+            ).prefix == '10.0.0.0/8'
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 20)
+              | first
+            ).action == 'permit'
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 20)
+              | first
+            ).prefix == '172.16.0.0/12'
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 20)
+              | first
+            ).min_prefix_length == 24
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 20)
+              | first
+            ).max_prefix_length == 32
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 30)
+              | first
+            ).action == 'deny'
+          - >-
+            (
+              overridden_reduce_retained_ipv4.entries
+              | selectattr('sequence_number', 'equalto', 30)
+              | first
+            ).prefix == '0.0.0.0/0'
+          - overridden_reduce.second_run_result.changed == false
+      vars:
+        overridden_reduce_retained_ipv4: >-
+          {{ overridden_reduce.first_run_result.after
+             | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+             | first }}
+
+    - name: "OVERRIDDEN IDEMPOTENT: Explicitly re-apply converged config in check and normal mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: overridden
+        check_mode: true
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+      register: overridden_reduce_explicit_idempotency
+
+    - name: "OVERRIDDEN IDEMPOTENT: Verify explicit converged check and normal reapply"
+      ansible.builtin.assert:
+        that:
+          - overridden_reduce_explicit_idempotency.check_mode_result.changed == false
+          - overridden_reduce_explicit_idempotency.first_run_result.changed == false
+          - overridden_reduce_explicit_idempotency.idempotency_attempts == 0
+
+    - name: "OVERRIDDEN SWAP: Replace IPv4 borders with the IPv6 datacenter list"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv6_datacenter }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate removed IPv4 borders list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate retained IPv6 datacenter list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: PL-IPV6-DATACENTER
+              - jsonpath: $.current.description
+                equals: Ansible integration test - datacenter IPv6 prefixes
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 10)].action
+                equals: permit
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 10)].prefix
+                equals: 2001:db8::/32
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 10)].exactLength
+                equals: 48
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 20)].action
+                equals: deny
+              - jsonpath: $.current.entries[?(@.sequenceNumber == 20)].prefix
+                equals: ::/0
+      register: overridden_swap
+
+    - name: "OVERRIDDEN SWAP: Verify IPv6 replacement"
+      ansible.builtin.assert:
+        that:
+          - overridden_swap.check_mode_result.changed | bool
+          - overridden_swap.first_run_result.changed | bool
+          - overridden_swap.first_run_result.after | length == 1
+          - overridden_swap_retained_ipv6.name == 'PL-IPV6-DATACENTER'
+          - overridden_swap_retained_ipv6.description == 'Ansible integration test - datacenter IPv6 prefixes'
+          - overridden_swap_retained_ipv6.entries | length == 2
+          - >-
+            (
+              overridden_swap_retained_ipv6.entries
+              | selectattr('sequence_number', 'equalto', 10)
+              | first
+            ).action == 'permit'
+          - >-
+            (
+              overridden_swap_retained_ipv6.entries
+              | selectattr('sequence_number', 'equalto', 10)
+              | first
+            ).prefix == '2001:db8::/32'
+          - >-
+            (
+              overridden_swap_retained_ipv6.entries
+              | selectattr('sequence_number', 'equalto', 10)
+              | first
+            ).exact_length == 48
+          - >-
+            (
+              overridden_swap_retained_ipv6.entries
+              | selectattr('sequence_number', 'equalto', 20)
+              | first
+            ).action == 'deny'
+          - >-
+            (
+              overridden_swap_retained_ipv6.entries
+              | selectattr('sequence_number', 'equalto', 20)
+              | first
+            ).prefix == '::/0'
+          - overridden_swap.second_run_result.changed == false
+      vars:
+        overridden_swap_retained_ipv6: >-
+          {{ overridden_swap.first_run_result.after
+             | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER')
+             | first }}
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "OVERRIDDEN CLEANUP: Verify reserved prefix lists are absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml

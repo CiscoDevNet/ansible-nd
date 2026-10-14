@@ -28,8 +28,9 @@ options:
   state:
     description:
       - State passed to the target ND module.
+      - When omitted, the target module's own default state is preserved.
     type: str
-    required: true
+    required: false
   config:
     description:
       - Configuration passed to the target module.

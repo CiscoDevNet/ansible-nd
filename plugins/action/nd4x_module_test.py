@@ -144,8 +144,8 @@ class ActionModule(ActionBase):
         if not isinstance(module_name, str) or not module_name.strip():
             raise AnsibleActionFail("Argument module must be a non-empty string")
 
-        if not isinstance(state, str) or not state.strip():
-            raise AnsibleActionFail("Argument state must be a non-empty string")
+        if "state" in args and (not isinstance(state, str) or not state.strip()):
+            raise AnsibleActionFail("Argument state must be a non-empty string when provided")
 
         for name in ("common_args", "module_args", "expected"):
             value = args.get(name, {})
@@ -438,7 +438,11 @@ class ActionModule(ActionBase):
         final_module_args = {}
         final_module_args.update(common_args)
         final_module_args.update(module_args)
-        final_module_args["state"] = state
+        # Preserve the target module's own default when the harness caller
+        # intentionally omits state.  A supplied state is still passed
+        # explicitly after validation above.
+        if state is not None:
+            final_module_args["state"] = state
 
         if config is not None:
             final_module_args["config"] = config

@@ -146,6 +146,24 @@ def test_unknown_top_level_argument_rejected(action_plugin):
         action_plugin._validate_arguments(arguments)
 
 
+def test_state_is_optional(action_plugin):
+    arguments = base_args()
+    arguments.pop("state")
+
+    action_plugin._validate_arguments(arguments)
+
+
+def test_empty_state_is_rejected_when_provided(action_plugin):
+    arguments = base_args()
+    arguments["state"] = ""
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="state must be a non-empty string",
+    ):
+        action_plugin._validate_arguments(arguments)
+
+
 def test_unknown_expected_phase_rejected(action_plugin):
     expected = {
         "wrong_phase": {
@@ -573,6 +591,24 @@ def test_normal_execution_runs_each_phase_once(action_plugin):
     assert result["idempotency_attempts"] == 1
     assert result["second_run_result"]["changed"] is False
     assert action_plugin._task.check_mode is False
+
+
+def test_omitted_state_is_not_injected_into_target_module_args(action_plugin):
+    action_plugin._task.args.pop("state")
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    run_plugin(action_plugin)
+
+    target_calls = [
+        invocation
+        for invocation in action_plugin._execute_module.call_args_list
+        if invocation.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    ]
+    assert target_calls
+    assert all("state" not in invocation.kwargs["module_args"] for invocation in target_calls)
 
 
 def test_idempotency_retries_until_expected_result(action_plugin):
