@@ -29,6 +29,9 @@
 {% if switch.poap.discovery_password is defined and switch.poap.discovery_password %}
 {% set _ = poap_item.update({'discovery_password': switch.poap.discovery_password}) %}
 {% endif %}
+{% if switch.poap.software_image is defined and switch.poap.software_image %}
+{% set _ = poap_item.update({'software_image': switch.poap.software_image}) %}
+{% endif %}
 {% set _ = switch_item.update({'poap': poap_item}) %}
 {% endif %}
 {% if switch.preprovision is defined and switch.preprovision %}

@@ -2544,9 +2544,9 @@ class RMAHandler:
     ) -> RMASwitchModel:
         """Build an RMA model from config and bootstrap data.
 
-        All switch properties (model, version, gateway, modules) are sourced
-        exclusively from the bootstrap API response.  Only the new serial number,
-        optional discovery credentials come from the playbook config.
+        Bootstrap identity and day-0 fields come from the replacement switch's
+        bootstrap record. The old switch supplies the hostname and management IP;
+        the playbook supplies the new serial number, role, and credentials.
 
         ## Parameters
 
@@ -2593,6 +2593,8 @@ class RMAHandler:
             oldSwitchId=old_serial,
             publicKey=public_key,
             fingerPrint=finger_print,
+            dhcpBootstrapIp=bootstrap_data.get("dhcpBootstrapIp"),
+            seedSwitch=bootstrap_data.get("seedSwitch", False),
             data=({"gatewayIpMask": gateway_ip_mask, "models": data_models} if (gateway_ip_mask or data_models) else None),
         )
 

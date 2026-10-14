@@ -1372,7 +1372,9 @@ def test_rma_handler_full_success_and_ready_finalize_failures():
     wait = RecordingWait()
     nd = FakeND()
     ctx = _ctx(nd=nd, results=Results())
-    handler = RMAHandler(ctx, fabric_ops, wait, StaticBootstrapCache({"NEW1": _bootstrap_entry("NEW1")}))
+    bootstrap = _bootstrap_entry("NEW1")
+    bootstrap["seedSwitch"] = True
+    handler = RMAHandler(ctx, fabric_ops, wait, StaticBootstrapCache({"NEW1": bootstrap}))
 
     handler.handle([cfg], [old_switch])
 
@@ -1381,6 +1383,9 @@ def test_rma_handler_full_success_and_ready_finalize_failures():
     assert ctx.results.diffs[0]["new_switch_id"] == "NEW1"
     assert "oldSwitchId" not in nd.calls[0]["data"]
     assert "imagePolicy" not in nd.calls[0]["data"]
+    assert nd.calls[0]["data"]["ip"] == "192.0.2.12"
+    assert nd.calls[0]["data"]["dhcpBootstrapIp"] == "192.0.2.50"
+    assert nd.calls[0]["data"]["seedSwitch"] is True
     assert nd.calls[0]["data"]["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
     assert wait.rma_calls == [["NEW1"]]
     assert fabric_ops.saved_credentials == [[("NEW1", cfg)]]
@@ -1393,6 +1398,25 @@ def test_rma_handler_full_success_and_ready_finalize_failures():
     handler = RMAHandler(_ctx(), RecordingFabricOps(fail_finalize=True), RecordingWait(), StaticBootstrapCache({"NEW1": _bootstrap_entry("NEW1")}))
     with pytest.raises(FailJsonError, match="Failed to finalize"):
         handler.handle([cfg], [old_switch])
+
+
+@pytest.mark.parametrize("bootstrap_fields", [{"dhcpBootstrapIp": "", "seedSwitch": False}, {}])
+def test_rma_handler_optional_bootstrap_fields(bootstrap_fields):
+    """RMA omits absent DHCP addresses and defaults an absent seed flag to false."""
+    bootstrap = _bootstrap_entry("NEW1")
+    bootstrap.pop("dhcpBootstrapIp")
+    bootstrap.pop("seedSwitch")
+    bootstrap.update(bootstrap_fields)
+    nd = FakeND()
+    handler = RMAHandler(_ctx(nd=nd), RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"NEW1": bootstrap}))
+
+    handler.handle(
+        [_cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])],
+        [_sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="maintenance")],
+    )
+
+    assert "dhcpBootstrapIp" not in nd.calls[0]["data"]
+    assert nd.calls[0]["data"]["seedSwitch"] is False
 
 
 def test_resource_module_check_mode_output_and_deleted_state():
