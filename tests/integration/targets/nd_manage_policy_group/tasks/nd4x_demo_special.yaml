@@ -1,0 +1,846 @@
+---
+- name: Run nd_manage_policy_group special-case harness scenarios
+  block:
+    - name: "SPECIAL SETUP: Remove harness-owned policy groups"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: true
+
+    - name: "SPECIAL A.SETUP - Create force-create baseline"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-force baseline"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "spanning-tree mode rapid-pvst"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "SPECIAL A.TC1 - Force-create duplicate with description"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-force baseline"
+            create_additional_policy: true
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "spanning-tree vlan 1-100 priority 4096"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc1
+
+    - name: "SPECIAL A.TC1 - Verify force_created"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc1.first_run_result.force_created | length == 1
+          - nd4x_special_tc1.first_run_result.force_created[0].create_additional_policy | bool
+          - nd4x_special_tc1.first_run_result.force_created[0].template_name == 'switch_freeform'
+          - nd4x_special_tc1.first_run_result.force_created[0].description == 'ND4X-PG-SPECIAL-force baseline'
+          - nd4x_special_tc1.first_run_result.force_created[0].template_inputs.CONF is search('priority 4096')
+
+    - name: "SPECIAL A.TC1 - Independently verify force-created duplicate"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-force baseline"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc1_gather
+
+    - name: "SPECIAL A.TC1 - Verify force-created duplicate fields"
+      vars:
+        force_created_groups: >-
+          {{ nd4x_special_tc1_gather.first_run_result.gathered | default([])
+             | selectattr('template_name', 'equalto', 'switch_freeform')
+             | selectattr('template_inputs.CONF', 'equalto', 'spanning-tree vlan 1-100 priority 4096') | list }}
+      ansible.builtin.assert:
+        that:
+          - force_created_groups | length == 1
+          - force_created_groups[0].switch_ids == [test_switch_serial_1]
+
+    - name: "SPECIAL A.TC1 - Verify force-created switch configuration"
+      ansible.builtin.include_tasks: nd4x_demo_verify_switch_config.yaml
+      vars:
+        nd4x_switch_config_expectation:
+          switch_id: "{{ nd4x_policy_group_switch_id_1 }}"
+          present:
+            - "spanning-tree vlan 1-100 priority 4096"
+
+    - name: "SPECIAL A.TC1 - Save force-created policy_id"
+      ansible.builtin.set_fact:
+        nd4x_special_duplicate_id: "{{ nd4x_special_tc1.first_run_result.force_created[0].policy_id }}"
+
+    - name: "SPECIAL A.TC2 - Force-create without description"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc2
+
+    - name: "SPECIAL A.TC2 - Verify anonymous force_created"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc2.first_run_result.force_created | length == 1
+          - nd4x_special_tc2.first_run_result.force_created[0].template_name == 'switch_freeform'
+          - "'description' not in nd4x_special_tc2.first_run_result.force_created[0]"
+          - nd4x_special_tc2.first_run_result.force_created[0].create_additional_policy | bool
+          - nd4x_special_tc2.first_run_result.force_created[0].template_inputs.CONF == 'as-format asdot'
+
+    - name: "SPECIAL A.TC2 - Independently verify anonymous policy exists"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc2_gather
+
+    - name: "SPECIAL A.TC2 - Verify gathered anonymous policy fields"
+      vars:
+        anonymous_groups: >-
+          {{ nd4x_special_tc2_gather.first_run_result.gathered | default([])
+             | rejectattr('description', 'defined')
+             | selectattr('template_name', 'equalto', 'switch_freeform')
+             | selectattr('switch_ids', 'equalto', [test_switch_serial_1])
+             | selectattr('template_inputs.CONF', 'equalto', 'as-format asdot') | list }}
+      ansible.builtin.assert:
+        that:
+          - anonymous_groups | length == 1
+          - anonymous_groups[0].policy_id is match('^POLICY-GROUP-')
+
+    - name: "SPECIAL A.TC2 - Save anonymous force-created policy_id"
+      ansible.builtin.set_fact:
+        nd4x_special_anonymous_id: "{{ nd4x_special_tc2.first_run_result.force_created[0].policy_id }}"
+
+    - name: "SPECIAL B.TC3 - Predictive merged check mode on nonexistent group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: true
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-SPECIAL-check PST"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: PST
+              HOUR_OFFSET: -8
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc3
+
+    - name: "SPECIAL B.TC3 - Verify predictive result without creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc3.check_mode_result.changed | bool
+          - nd4x_special_tc3.check_mode_result.before | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-check PST') | list | length == 0
+
+    - name: "SPECIAL B.TC3.verify - Confirm no real creation"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-SPECIAL-check PST"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc3_verify
+
+    - name: "SPECIAL B.TC3.verify - Verify empty gather"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc3_verify.first_run_result.gathered == []
+
+    - name: "SPECIAL B.TC4.setup - Create check-mode delete target"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: clock_summertime
+            description: "ND4X-PG-SPECIAL-check delete CEST"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "SPECIAL B.TC4 - Predictive deleted check mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        check_mode: true
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: clock_summertime
+            description: "ND4X-PG-SPECIAL-check delete CEST"
+        expected:
+          check_mode: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc4
+
+    - name: "SPECIAL B.TC4 - Verify existing target in predictive before"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc4.check_mode_result.changed | bool
+          - nd4x_special_tc4.check_mode_result.before | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-check delete CEST') | list | length == 1
+
+    - name: "SPECIAL B.TC4.verify - Confirm target remains"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: clock_summertime
+            description: "ND4X-PG-SPECIAL-check delete CEST"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc4_verify
+
+    - name: "SPECIAL B.TC4.verify - Verify target remains after check mode"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc4_verify.first_run_result.gathered | length == 1
+
+    - name: "SPECIAL C.TC5 - Create with deploy=false"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-no-deploy create"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc5
+
+    - name: "SPECIAL C.TC5 - Verify controller-side creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc5.first_run_result.changed | bool
+          - nd4x_special_tc5.first_run_result.after | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-no-deploy create') | list | length == 1
+
+    - name: "SPECIAL C.TC5 - Independently verify staged policy"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-no-deploy create"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-no-deploy create"
+            template_name: switch_freeform
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+
+    - name: "SPECIAL C.TC5 - Read switch running-config diff"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ nd4x_policy_group_switch_id_1 }}/diff
+        method: get
+      register: nd4x_special_tc5_switch_diff
+      changed_when: false
+
+    - name: "SPECIAL C.TC5 - Verify deploy=false did not change running config"
+      vars:
+        running_config: >-
+          {{ nd4x_special_tc5_switch_diff.jsondata.diffConfigs | default([])
+             | map(attribute='runningConfig') | select('defined') | join('\n') }}
+      ansible.builtin.assert:
+        that:
+          - "'as-format asdot' not in running_config"
+
+    - name: "SPECIAL C.TC6.setup - Create multi-switch group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-no-deploy membership"
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {featureName: lacp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "SPECIAL C.TC6 - Remove one switch with deploy=false"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-no-deploy membership"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc6
+
+    - name: "SPECIAL C.TC6 - Verify controller-side membership removal"
+      vars:
+        membership_before: >-
+          {{ nd4x_special_tc6.first_run_result.before
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-no-deploy membership') | list }}
+        membership_after: >-
+          {{ nd4x_special_tc6.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-no-deploy membership') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc6.first_run_result.changed | bool
+          - membership_before | length == 1
+          - membership_before[0].switch_ids | sort == [test_switch_serial_1, test_switch_serial_2] | sort
+          - membership_after | length == 1
+          - membership_after[0].switch_ids == [test_switch_serial_1]
+          - test_switch_serial_1 in membership_after[0].switch_ids
+          - test_switch_serial_2 not in membership_after[0].switch_ids
+
+    - name: "SPECIAL C.TC6 - Independently verify staged membership"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-no-deploy membership"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-no-deploy membership"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+
+    - name: "SPECIAL C.TC6 - Read retained switch running-config diff"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ nd4x_policy_group_switch_id_2 }}/diff
+        method: get
+      register: nd4x_special_tc6_switch_diff
+      changed_when: false
+
+    - name: "SPECIAL C.TC6 - Verify deploy=false retained switch-side LACP"
+      vars:
+        running_config: >-
+          {{ nd4x_special_tc6_switch_diff.jsondata.diffConfigs | default([])
+             | map(attribute='runningConfig') | select('defined') | join('\n') }}
+      ansible.builtin.assert:
+        that:
+          - running_config is search('(?i)feature\\s+lacp')
+
+    - name: "SPECIAL D.SETUP - Create ID-based target"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-ID Enable LLDP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_id_setup
+
+    - name: "SPECIAL D.SETUP - Capture policy_id"
+      ansible.builtin.set_fact:
+        nd4x_special_policy_id: >-
+          {{ nd4x_special_id_setup.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-ID Enable LLDP')
+             | map(attribute='policy_id') | first }}
+
+    - name: "SPECIAL D.TC7 - Gather by policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: "{{ nd4x_special_policy_id }}"}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc7
+
+    - name: "SPECIAL D.TC7 - Verify ID gather"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc7.first_run_result.gathered | length == 1
+          - nd4x_special_tc7.first_run_result.gathered[0].policy_id == nd4x_special_policy_id
+
+    - name: "SPECIAL D.TC8 - Update by ID only"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_special_policy_id }}"
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {featureName: lldp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc8
+
+    - name: "SPECIAL D.TC8 - Verify ID update"
+      vars:
+        id_update_before: >-
+          {{ nd4x_special_tc8.first_run_result.before
+             | selectattr('policy_id', 'equalto', nd4x_special_policy_id) | list }}
+        id_update_after: >-
+          {{ nd4x_special_tc8.first_run_result.after
+             | selectattr('policy_id', 'equalto', nd4x_special_policy_id) | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc8.first_run_result.changed | bool
+          - id_update_before | length == 1
+          - id_update_before[0].switch_ids | length == 1
+          - id_update_after | length == 1
+          - id_update_after[0].switch_ids | sort == [test_switch_serial_1, test_switch_serial_2] | sort
+          - id_update_after[0].template_inputs.featureName == 'lldp'
+
+    - name: "SPECIAL D.TC8 - Independently verify ID update"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-ID Enable LLDP"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-ID Enable LLDP"
+            template_name: feature_enable
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {featureName: lldp}
+
+    - name: "SPECIAL D.TC10 - Unknown ID in merged state must fail"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: POLICY-GROUP-FAKE999
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+        expected:
+          apply: {failed: true}
+      register: nd4x_special_tc10
+
+    - name: "SPECIAL D.TC10 - Verify unknown ID failure"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc10.first_run_result.failed | bool
+          - nd4x_special_tc10.first_run_result.msg is search('POLICY-GROUP-FAKE999')
+
+    - name: "SPECIAL D.TC11 - Unknown ID in deleted state is a no-op"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: [{name: POLICY-GROUP-FAKE998}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc11
+
+    - name: "SPECIAL D.TC11 - Verify silent skip"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_special_tc11.first_run_result.changed | bool
+
+    - name: "SPECIAL D.TC12 - Mixed ID update and composite create"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_special_policy_id }}"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+          - name: clock_timezone
+            description: "ND4X-PG-SPECIAL-ID Timezone EST"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: EST
+              HOUR_OFFSET: -5
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc12
+
+    - name: "SPECIAL D.TC12 - Verify mixed update and create"
+      vars:
+        updated_policy: >-
+          {{ nd4x_special_tc12.first_run_result.after
+             | selectattr('policy_id', 'equalto', nd4x_special_policy_id) | list }}
+        new_policy: >-
+          {{ nd4x_special_tc12.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-ID Timezone EST') | list }}
+        new_policy_before: >-
+          {{ nd4x_special_tc12.first_run_result.before
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-ID Timezone EST') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc12.first_run_result.changed | bool
+          - updated_policy | length == 1
+          - updated_policy[0].switch_ids == [test_switch_serial_1]
+          - updated_policy[0].template_inputs.featureName == 'lldp'
+          - new_policy | length == 1
+          - new_policy[0].template_name == 'clock_timezone'
+          - new_policy[0].switch_ids == [test_switch_serial_1]
+          - new_policy[0].template_inputs.TIME_ZONE == 'EST'
+          - new_policy[0].template_inputs.HOUR_OFFSET == -5
+          - new_policy[0].template_inputs.MINUTE_OFFSET == 0
+          - new_policy_before | length == 0
+
+    - name: "SPECIAL D.TC12 - Independently verify mixed update and create"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-ID Enable LLDP"
+          - name: clock_timezone
+            description: "ND4X-PG-SPECIAL-ID Timezone EST"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-ID Enable LLDP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+          - description: "ND4X-PG-SPECIAL-ID Timezone EST"
+            template_name: clock_timezone
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: EST
+              HOUR_OFFSET: -5
+              MINUTE_OFFSET: 0
+
+    - name: "SPECIAL D.TC9 - Delete by policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: [{name: "{{ nd4x_special_policy_id }}"}]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc9
+
+    - name: "SPECIAL D.TC9 - Verify ID deletion"
+      vars:
+        deleted_before: >-
+          {{ nd4x_special_tc9.first_run_result.before
+             | selectattr('policy_id', 'equalto', nd4x_special_policy_id) | list }}
+        deleted_after: >-
+          {{ nd4x_special_tc9.first_run_result.after
+             | selectattr('policy_id', 'equalto', nd4x_special_policy_id) | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc9.first_run_result.changed | bool
+          - deleted_before | length == 1
+          - deleted_after | length == 0
+
+    - name: "SPECIAL D.TC9 - Re-gather and verify ID deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: "{{ nd4x_special_policy_id }}"}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc9_gather
+
+    - name: "SPECIAL D.TC9 - Assert policy ID is absent after deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc9_gather.first_run_result.gathered | default([]) == []
+
+    - name: "SPECIAL E.TC13 - Missing name must fail"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - description: "ND4X-PG-SPECIAL-validation no-name"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "ip pim sparse-mode"}
+        expected:
+          apply: {failed: true}
+      register: nd4x_special_tc13
+
+    - name: "SPECIAL E.TC13 - Verify missing-name failure"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc13.first_run_result.failed | bool
+          - nd4x_special_tc13.first_run_result.msg is search("'name' is required")
+
+    - name: "SPECIAL E.TC14 - Duplicate composite key must fail"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-validation duplicate"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "no ip domain-lookup"}
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-validation duplicate"
+            switch_ids: ["{{ test_switch_serial_2 }}"]
+            template_inputs: {CONF: "ip domain-name example.com"}
+        expected:
+          apply: {failed: true}
+      register: nd4x_special_tc14
+
+    - name: "SPECIAL E.TC14 - Verify duplicate failure"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc14.first_run_result.failed | bool
+          - nd4x_special_tc14.first_run_result.msg is search('Duplicate')
+
+    - name: "SPECIAL F.TC15 - Bulk BFD feature and timers"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-SPECIAL-BFD feature"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: bfd}
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-BFD timers"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "bfd interval 250 min_rx 250 multiplier 3"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc15
+
+    - name: "SPECIAL F.TC15 - Verify BFD policies"
+      vars:
+        bfd_feature_groups: >-
+          {{ nd4x_special_tc15.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-BFD feature') | list }}
+        bfd_timer_groups: >-
+          {{ nd4x_special_tc15.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-BFD timers') | list }}
+      ansible.builtin.assert:
+        that:
+          - bfd_feature_groups | length == 1
+          - bfd_feature_groups[0].template_name == 'feature_enable'
+          - bfd_feature_groups[0].template_inputs.featureName == 'bfd'
+          - bfd_timer_groups | length == 1
+          - bfd_timer_groups[0].template_name == 'switch_freeform'
+          - bfd_timer_groups[0].template_inputs.CONF is search('bfd interval 250')
+
+    - name: "SPECIAL F.TC15 - Independently verify BFD policies"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+          - name: switch_freeform
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-BFD feature"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: bfd}
+          - description: "ND4X-PG-SPECIAL-BFD timers"
+            template_name: switch_freeform
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "bfd interval 250 min_rx 250 multiplier 3"}
+        nd4x_verify_switch_config_expectations:
+          - switch_id: "{{ nd4x_policy_group_switch_id_1 }}"
+            present:
+              - "feature bfd"
+              - "bfd interval 250 min_rx 250 multiplier 3"
+
+    - name: "SPECIAL F.TC15b - Verify BFD bulk idempotence"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_special_tc15.second_run_result.changed | bool
+
+    - name: "SPECIAL G.TC16 - Exercise switch management-IP selector"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-IP selector"
+            switch_ids: ["{{ nd4x_policy_group_switch_ip_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc16_ip
+      when: nd4x_policy_group_switch_ip_1 | default('') | length > 0
+
+    - name: "SPECIAL G.TC16 - Verify management-IP selector resolution"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc16_ip.first_run_result.changed | bool
+          - nd4x_special_tc16_ip.first_run_result.after | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-IP selector') | list | length == 1
+      when: nd4x_policy_group_switch_ip_1 | default('') | length > 0
+
+    - name: "SPECIAL G.TC16 - Independently verify management-IP policy"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-IP selector"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-IP selector"
+            template_name: switch_freeform
+            switch_ids: ["{{ nd4x_policy_group_switch_ip_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+      when: nd4x_policy_group_switch_ip_1 | default('') | length > 0
+
+    - name: "SPECIAL G.TC17 - Exercise optional cluster and ticket context"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        module_args:
+          cluster_name: "{{ nd4x_policy_group_test_cluster_name }}"
+          ticket_id: "{{ nd4x_policy_group_test_ticket_id }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-context"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_special_tc17_context
+      when:
+        - nd4x_policy_group_test_cluster_name | length > 0
+        - nd4x_policy_group_test_ticket_id | length > 0
+
+    - name: "SPECIAL G.TC17 - Verify optional context operation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_special_tc17_context.first_run_result.changed | bool
+          - nd4x_special_tc17_context.first_run_result.after | selectattr('description', 'equalto', 'ND4X-PG-SPECIAL-context') | list | length == 1
+      when:
+        - nd4x_policy_group_test_cluster_name | length > 0
+        - nd4x_policy_group_test_ticket_id | length > 0
+
+    - name: "SPECIAL G.TC17 - Independently verify optional context policy"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-context"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-SPECIAL-context"
+            template_name: switch_freeform
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "as-format asdot"}
+      when:
+        - nd4x_policy_group_test_cluster_name | length > 0
+        - nd4x_policy_group_test_ticket_id | length > 0
+  always:
+    - name: "SPECIAL - Cleanup anonymous force-created policies"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ item }}"
+      loop:
+        - "{{ nd4x_special_duplicate_id | default('') }}"
+        - "{{ nd4x_special_anonymous_id | default('') }}"
+      when: item | length > 0
+
+    - name: "SPECIAL - Final cleanup"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: false
+  module_defaults:
+    cisco.nd.nd4x_module_test:
+      nd_queries: "{{ nd4x_policy_group_nd_queries }}"

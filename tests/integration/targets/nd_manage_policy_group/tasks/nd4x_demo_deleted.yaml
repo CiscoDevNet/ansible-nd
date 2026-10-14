@@ -1,0 +1,268 @@
+---
+- name: Run nd_manage_policy_group deleted-state harness scenarios
+  block:
+    - name: "DELETED SETUP: Remove harness-owned policy groups"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: true
+
+    - name: "DELETED SETUP - Create switch_freeform policy group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-DELETED-system vlan long-name"
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "system vlan long-name"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_setup
+
+    - name: "DELETED TC1 - Delete switch_freeform policy group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-DELETED-system vlan long-name"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc1
+
+    - name: "DELETED TC1 - Verify deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc1.first_run_result.changed | bool
+
+    - name: "DELETED TC1 - Re-gather and verify policy is absent"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-DELETED-system vlan long-name"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc1_gather
+
+    - name: "DELETED TC1 - Assert policy is absent after apply"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc1_gather.first_run_result.gathered | default([]) == []
+
+    - name: "DELETED TC2 - Verify idempotent delete"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_deleted_tc1.second_run_result.changed | bool
+
+    - name: "DELETED TC3 - Delete nonexistent policy group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-DELETED-does-not-exist"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc3
+
+    - name: "DELETED TC3 - Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_deleted_tc3.first_run_result.changed | bool
+          - not nd4x_deleted_tc3.second_run_result.changed | bool
+
+    - name: "DELETED TC4 SETUP - Create normal policy group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-DELETED-pending normal cleanup"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc4_setup
+
+    - name: "DELETED TC4 SETUP - Capture policy_id"
+      ansible.builtin.set_fact:
+        nd4x_pending_policy_id: >-
+          {{ nd4x_deleted_tc4_setup.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-DELETED-pending normal cleanup')
+             | map(attribute='policy_id') | first }}
+
+    - name: "DELETED TC4 - Stage deletion with deploy=false"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: "{{ nd4x_pending_policy_id }}"
+            description: "ND4X-PG-DELETED-pending normal cleanup"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc4_stage
+
+    - name: "DELETED TC4 - Verify staged deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc4_stage.first_run_result.changed | bool
+
+    - name: "DELETED TC4B - Deploy pending cleanup by policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_pending_policy_id }}"
+            description: "ND4X-PG-DELETED-pending normal cleanup"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc4_deploy
+
+    - name: "DELETED TC4B - Verify pending cleanup deploy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc4_deploy.first_run_result.changed | bool
+
+    - name: "DELETED TC4B - Re-gather and verify pending policy is absent"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: "{{ nd4x_pending_policy_id }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc4_final
+
+    - name: "DELETED TC4B - Assert pending policy is absent after deploy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc4_final.first_run_result.gathered | default([]) == []
+
+    - name: "DELETED TC5 SETUP - Create switch_freeform source-cleanup group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-DELETED-pending source cleanup"
+            priority: 120
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: |-
+                line console
+                  exec-timeout 5
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc5_setup
+
+    - name: "DELETED TC5 SETUP - Capture source-cleanup policy_id"
+      ansible.builtin.set_fact:
+        nd4x_source_cleanup_policy_id: >-
+          {{ nd4x_deleted_tc5_setup.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-DELETED-pending source cleanup')
+             | map(attribute='policy_id') | first }}
+
+    - name: "DELETED TC5 - Stage switch_freeform deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: "{{ nd4x_source_cleanup_policy_id }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc5_stage
+
+    - name: "DELETED TC5 - Verify staged switch_freeform deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc5_stage.first_run_result.changed | bool
+
+    - name: "DELETED TC5B - Deploy switch_freeform pending cleanup"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_source_cleanup_policy_id }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc5_deploy
+
+    - name: "DELETED TC5B - Verify pending source cleanup deploy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc5_deploy.first_run_result.changed | bool
+
+    - name: "DELETED TC5B - Re-gather and verify source policy is absent"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: "{{ nd4x_source_cleanup_policy_id }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_deleted_tc5_final
+
+    - name: "DELETED TC5B - Assert source policy is absent after deploy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_tc5_final.first_run_result.gathered | default([]) == []
+  always:
+    - name: "DELETED - Final cleanup"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: false
+  module_defaults:
+    cisco.nd.nd4x_module_test:
+      nd_queries: "{{ nd4x_policy_group_nd_queries }}"
