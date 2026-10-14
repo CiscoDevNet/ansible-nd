@@ -438,6 +438,25 @@ def test_paginated_snapshot_fetches_empty_sentinel_after_full_page(action_plugin
     assert len(snapshots[0]["snapshot"]["routeMaps"]) == 2
 
 
+def test_paginated_snapshot_accepts_explicit_empty_collection_404(action_plugin):
+    query = {
+        "name": "Snapshot L3Outs",
+        "path": "/api/v1/manage/l3Outs?fabricName=FAB",
+        "expected_status": [200, 404],
+        "unordered_paths": ["/l3Outs"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 100, "collection_key": "l3Outs", "max_pages": 3},
+    }
+    empty_response = snapshot_response({}, status=404, failed=True, msg="not found")
+    empty_response.pop("current")
+    action_plugin._execute_module.return_value = empty_response
+
+    snapshots = action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    assert snapshots[0]["status"] == 404
+    assert snapshots[0]["snapshot"] == {"l3Outs": []}
+
+
 def test_paginated_snapshot_fails_closed_on_page_error(action_plugin):
     query = {
         "name": "Snapshot route maps",
