@@ -594,6 +594,31 @@ def test_normal_execution_runs_each_phase_once(action_plugin):
     assert action_plugin._task.check_mode is False
 
 
+def test_check_mode_only_skips_apply_and_idempotency(action_plugin):
+    action_plugin._task.args["check_mode_only"] = True
+    action_plugin._task.args["expected"] = {
+        "check_mode": {
+            "changed": False,
+            "failed": True,
+        }
+    }
+    action_plugin._execute_module.return_value = {
+        "changed": False,
+        "failed": True,
+        "msg": "predictive validation failed",
+    }
+
+    result = run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 1
+    assert action_plugin._execute_module.call_args.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    assert action_plugin._task.check_mode is False
+    assert result["check_mode_result"]["failed"] is True
+    assert result["first_run_result"] is None
+    assert result["second_run_result"] is None
+    assert result["idempotency_attempts"] == 0
+
+
 def test_idempotency_retries_until_expected_result(action_plugin):
     action_plugin._task.args["idempotency_retries"] = 3
     action_plugin._task.args["idempotency_delay"] = 10

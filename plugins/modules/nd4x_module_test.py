@@ -61,6 +61,15 @@ options:
         regardless of this option.
     type: bool
     default: true
+  check_mode_only:
+    description:
+      - Whether to execute only the internal check-mode phase and skip the real
+        apply, idempotency, and post-apply REST-query phases.
+      - Requires O(check_mode=true). This is useful for validating predictive
+        failures and re-applying an already-present configuration in check mode.
+      - Global Ansible check mode already executes only the check-mode phase.
+    type: bool
+    default: false
   check_mode_queries:
     description:
       - Read-only ND REST API queries used to capture controller state before

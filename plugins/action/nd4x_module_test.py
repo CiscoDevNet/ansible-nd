@@ -34,6 +34,7 @@ class ActionModule(ActionBase):
         "module_args",
         "expected",
         "check_mode",
+        "check_mode_only",
         "check_mode_queries",
         "idempotency",
         "idempotency_retries",
@@ -383,6 +384,11 @@ class ActionModule(ActionBase):
             "check_mode",
         )
 
+        check_mode_only = self._parse_bool(
+            args.get("check_mode_only", False),
+            "check_mode_only",
+        )
+
         run_idempotency = self._parse_bool(
             args.get("idempotency", True),
             "idempotency",
@@ -411,6 +417,9 @@ class ActionModule(ActionBase):
 
         if idempotency_delay < 0:
             raise AnsibleActionFail("Argument idempotency_delay must be at least 0, got %r" % idempotency_delay)
+
+        if check_mode_only and not run_check_mode:
+            raise AnsibleActionFail("Argument check_mode_only requires check_mode=true")
 
         # Automatically require the second run to be unchanged.
         if run_idempotency:
@@ -516,6 +525,21 @@ class ActionModule(ActionBase):
                         second_run_result=None,
                         idempotency_attempts=0,
                     )
+
+                if check_mode_only:
+                    result.update(
+                        {
+                            "changed": bool(check_mode_result and check_mode_result.get("changed", False)),
+                            "check_mode_result": check_mode_result,
+                            "check_mode_query_results": check_mode_query_results,
+                            "first_run_result": None,
+                            "second_run_result": None,
+                            "idempotency_results": [],
+                            "idempotency_attempts": 0,
+                            "nd_query_results": [],
+                        }
+                    )
+                    return result
 
                 # First and only initial real application.
                 self._task.check_mode = False
