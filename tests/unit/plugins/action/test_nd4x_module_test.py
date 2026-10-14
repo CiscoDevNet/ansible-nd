@@ -597,6 +597,7 @@ def test_omitted_state_is_not_injected_into_target_module_args(action_plugin):
     action_plugin._task.args.pop("state")
     action_plugin._execute_module.side_effect = [
         {"changed": True, "failed": False},
+        {"changed": True, "failed": False},
         {"changed": False, "failed": False},
     ]
 
