@@ -1,0 +1,120 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.0.0', '>=')
+      }}
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x nd_manage_policy harness scenarios because controller
+      version {{ nd4x_version.current.platformVersion }} is older than 4.0.0.
+  when: not nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Determine switch scope for selected harness tags"
+  ansible.builtin.set_fact:
+    nd4x_requires_two_switches: >-
+      {{
+        'nd4x_demo' in (ansible_run_tags | default([]))
+        or 'nd4x_demo_fanout' in (ansible_run_tags | default([]))
+        or 'nd4x_demo_gathered' in (ansible_run_tags | default([]))
+      }}
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Require the primary policy test switch"
+  ansible.builtin.assert:
+    that:
+      - test_switch_serial_1 | length > 0
+    fail_msg: >-
+      Configure switch_serial_1 (or the nd_test_switch_serial_1 alias) before
+      running the selected nd_manage_policy harness scenario.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require the policy test fabric"
+  ansible.builtin.assert:
+    that:
+      - test_fabric_name | length > 0
+    fail_msg: >-
+      Configure nd_test_fabric_name or fabric_name before running the selected
+      nd_manage_policy harness scenario. The harness will not default to a
+      fabric name because that could target the wrong fabric.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require the secondary switch for multi-switch scenarios"
+  ansible.builtin.assert:
+    that:
+      - test_switch_serial_2 | length > 0
+    fail_msg: >-
+      The selected nd_manage_policy harness scenario requires two switches.
+      Configure switch_serial_2 (or the nd_test_switch_serial_2 alias) for
+      nd4x_demo_fanout, nd4x_demo_gathered, or the full nd4x_demo suite.
+  when:
+    - nd4x_supported | bool
+    - nd4x_requires_two_switches | bool
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify primary switch belongs to the fabric"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr('serialNumber', 'defined')
+        | selectattr('serialNumber', 'equalto', test_switch_serial_1)
+        | list
+        | length == 1
+    fail_msg: >-
+      The configured primary policy test switch must be present in fabric
+      {{ test_fabric_name }}.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify secondary switch belongs to the fabric"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr('serialNumber', 'defined')
+        | selectattr('serialNumber', 'equalto', test_switch_serial_2)
+        | list
+        | length == 1
+    fail_msg: >-
+      The configured secondary policy test switch must be present in fabric
+      {{ test_fabric_name }} for the selected multi-switch scenario.
+  when:
+    - nd4x_supported | bool
+    - nd4x_requires_two_switches | bool
+
+- name: "ND4X PREFLIGHT: Verify policy snapshot scope"
+  ansible.builtin.assert:
+    that:
+      - nd4x_policy_check_mode_queries | length == 1
+      - nd4x_policy_check_mode_queries[0].path is search('/policies')
+    fail_msg: >-
+      nd_manage_policy harness scenarios require one fabric-wide policy snapshot
+      so predictive execution is checked for unintended changes outside the
+      requested policy entries.
+  when: nd4x_supported | bool

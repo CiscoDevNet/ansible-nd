@@ -1,4 +1,18 @@
 ---
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
+
+- name: Set ND test output settings
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: "{{ api_key_output_level | default('debug') }}"
+  tags:
+    - always
+
 - name: Discover ND Policy Test Cases
   ansible.builtin.find:
     paths: "{{ role_path }}/tests"
@@ -15,3 +29,128 @@
   with_items: "{{ test_items }}"
   loop_control:
     loop_var: test_case_to_run
+
+- name: Run ND 4.x nd_manage_policy harness preflight
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_preflight.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_fanout
+        - nd4x_demo_modify
+        - nd4x_demo_gathered
+        - nd4x_demo_deleted
+        - nd4x_demo_edge_cases
+        - nd4x_demo_negative
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_merged
+    - nd4x_demo_fanout
+    - nd4x_demo_modify
+    - nd4x_demo_gathered
+    - nd4x_demo_deleted
+    - nd4x_demo_edge_cases
+    - nd4x_demo_negative
+
+- name: Run merged nd_manage_policy harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_merged.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_merged
+  when: nd4x_supported | default(false) | bool
+
+- name: Run multi-switch and file-input nd_manage_policy harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_fanout.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_fanout
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_fanout
+  when: nd4x_supported | default(false) | bool
+
+- name: Run modify and template-key nd_manage_policy harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_modify.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_modify
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_modify
+  when: nd4x_supported | default(false) | bool
+
+- name: Run gathered nd_manage_policy harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_gathered.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_gathered
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_gathered
+  when: nd4x_supported | default(false) | bool
+
+- name: Run deleted nd_manage_policy harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_deleted.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_deleted
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_deleted
+  when: nd4x_supported | default(false) | bool
+
+- name: Run replace and duplicate nd_manage_policy scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_edge_cases.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_edge_cases
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_edge_cases
+  when: nd4x_supported | default(false) | bool
+
+- name: Run negative nd_manage_policy harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_negative.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_negative
+  when: nd4x_supported | default(false) | bool

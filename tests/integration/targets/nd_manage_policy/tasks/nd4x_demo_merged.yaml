@@ -1,0 +1,245 @@
+---
+- name: Run nd_manage_policy merged scenarios through the shared harness
+  block:
+    - name: "MERGED SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "MERGED: Create the clock_timezone policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-merged-timezone"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate merged clock_timezone policy
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-merged-timezone' & @.templateName == 'clock_timezone' & @.priority == 101 & @.templateInputs.TIME_ZONE == 'CET')]"
+                exists: true
+      register: nd4x_merged_timezone
+
+    - name: "MERGED: Verify returned policy state"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_timezone.first_run_result.changed | bool
+          - >-
+            nd4x_merged_timezone.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-merged-timezone')
+            | selectattr('templateName', 'equalto', 'clock_timezone')
+            | selectattr('priority', 'equalto', 101)
+            | selectattr('templateInputs.TIME_ZONE', 'equalto', 'CET')
+            | list
+            | length == 1
+          - not nd4x_merged_timezone.second_run_result.changed | bool
+
+    - name: "MERGED: Create clock_summertime, switch_freeform, and feature_enable"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "ND4X-merged-summertime"
+            priority: 102
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-merged-freeform"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-merged-bfd-feature"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate merged policies
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-merged-summertime' & @.templateName == 'clock_summertime' & @.priority == 102 & @.templateInputs.SUMMER_TIME == 'CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-merged-freeform' & @.templateName == 'switch_freeform' & @.priority == 110 & @.templateInputs.CONF == 'system vlan long-name')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-merged-bfd-feature' & @.templateName == 'feature_enable' & @.priority == 112 & @.templateInputs.featureName == 'bfd')]"
+                exists: true
+      register: nd4x_merged_positive
+
+    - name: "MERGED: Gather positive merged policy state"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_summertime
+          - name: switch_freeform
+          - name: feature_enable
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_merged_positive_gathered
+
+    - name: "MERGED: Verify positive merged policy state"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_merged_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-merged-summertime')
+            | selectattr('name', 'equalto', 'clock_summertime')
+            | selectattr('priority', 'equalto', 102)
+            | selectattr('template_inputs.SUMMER_TIME', 'equalto', 'CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_merged_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-merged-freeform')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 110)
+            | selectattr('template_inputs.CONF', 'equalto', 'system vlan long-name')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_merged_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-merged-bfd-feature')
+            | selectattr('name', 'equalto', 'feature_enable')
+            | selectattr('priority', 'equalto', 112)
+            | selectattr('template_inputs.featureName', 'equalto', 'bfd')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+
+    - name: "MERGED: Create BFD timers with omitted description"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate BFD timer policy
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.templateName == 'switch_freeform' & @.priority == 115 & @.templateInputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3')]"
+                exists: true
+      register: nd4x_merged_bfd_timers
+
+    - name: "MERGED: Gather the no-description BFD timer policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_merged_bfd_timers_gathered
+
+    - name: "MERGED: Verify no-description policy shape and capture ID"
+      ansible.builtin.set_fact:
+        nd4x_merged_bfd_timer_matches: >-
+          {{
+            nd4x_merged_bfd_timers_gathered.gathered
+            | selectattr('priority', 'equalto', 115)
+            | selectattr('template_inputs.CONF', 'equalto', 'bfd interval 250 min_rx 250 multiplier 3')
+            | list
+          }}
+        nd4x_merged_bfd_timer_id: >-
+          {{
+            nd4x_merged_bfd_timers_gathered.gathered
+            | selectattr('priority', 'equalto', 115)
+            | selectattr('template_inputs.CONF', 'equalto', 'bfd interval 250 min_rx 250 multiplier 3')
+            | map(attribute='policy_id')
+            | first
+          }}
+
+    - name: "MERGED: Assert no-description behavior was preserved"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_bfd_timers.first_run_result.changed | bool
+          - nd4x_merged_bfd_timer_matches | length == 1
+          - (nd4x_merged_bfd_timer_matches[0].description | default('', true)) == ''
+          - nd4x_merged_bfd_timer_matches[0].priority == 115
+          - nd4x_merged_bfd_timer_matches[0].template_inputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3'
+
+  always:
+    - name: "MERGED CLEANUP: Remove no-description BFD timer by exact policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: "{{ nd4x_merged_bfd_timer_id }}"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      when: nd4x_merged_bfd_timer_id is defined and nd4x_merged_bfd_timer_id | length > 0
+
+    - name: "MERGED CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
