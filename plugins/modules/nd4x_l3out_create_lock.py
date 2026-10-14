@@ -21,7 +21,6 @@ from ansible.module_utils.connection import Connection
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import nd_argument_spec
 
-
 DOCUMENTATION = r"""
 ---
 module: nd4x_l3out_create_lock
