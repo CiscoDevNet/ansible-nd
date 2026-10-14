@@ -1,0 +1,31 @@
+---
+# Collect the complete switch inventory for a fabric.
+#
+# The switch collection is used to build fabric-wide snapshots and destructive
+# safety scopes, so a first-page-only response is unsafe.
+
+- name: "ND4X PAGINATION: Initialize switch inventory"
+  ansible.builtin.set_fact:
+    nd4x_paginated_switch_inventory: []
+
+- name: "ND4X PAGINATION: Collect every switch page"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_collect_switch_pages.yaml
+  vars:
+    nd4x_switch_page_size: 100
+    nd4x_switch_max_pages: 10000
+    nd4x_switch_offset: 0
+    nd4x_switch_page_number: 0
+    nd4x_switch_rows: []
+
+- name: "ND4X PAGINATION: Verify one complete switch result"
+  ansible.builtin.assert:
+    that:
+      - nd4x_paginated_switch_inventory | length == 1
+      - nd4x_paginated_switch_inventory[0].current.switches is defined
+      - nd4x_paginated_switch_inventory[0].current.switches is sequence
+      - nd4x_paginated_switch_inventory[0].current.switches is not string
+      - nd4x_paginated_switch_inventory[0].current.switches is not mapping
+    fail_msg: >-
+      Paginated switch collection did not produce one complete switch result
+      for fabric {{ nd4x_switch_fabric_name }}.
