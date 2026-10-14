@@ -372,6 +372,7 @@ class ActionModule(ActionBase):
 
         module_name = args.get("module")
         state = args.get("state")
+        self._harness_state = state
         config = args.get("config")
         common_args = args.get("common_args", {})
         module_args = args.get("module_args", {})
@@ -573,18 +574,39 @@ class ActionModule(ActionBase):
 
                 # REST validation is performed only after a real apply.
                 if nd_queries and not bool(first_run_result.get("failed", False)):
-                    nd_query_results = self._run_nd_queries(
-                        nd_queries=nd_queries,
-                        task_vars=task_vars,
-                    )
+                    try:
+                        nd_query_results = self._run_nd_queries(
+                            nd_queries=nd_queries,
+                            task_vars=task_vars,
+                        )
+                    except AnsibleActionFail as query_error:
+                        raise AnsibleActionFail(
+                            "%s\nApply result: %s"
+                            % (
+                                query_error,
+                                json.dumps(
+                                    self._summarize_module_result(first_run_result),
+                                    sort_keys=True,
+                                    default=str,
+                                ),
+                            )
+                        )
 
         finally:
             self._task.check_mode = original_check_mode
 
         reported_result = check_mode_result if global_check_mode else first_run_result
+        reported_changed = bool(reported_result and reported_result.get("changed", False))
+        if global_check_mode:
+            reported_changed = self._phase_changed("check_mode", reported_result)
+        else:
+            reported_changed = self._phase_changed("apply", reported_result)
+            if first_run_result is not None:
+                first_run_result = dict(first_run_result)
+                first_run_result["changed"] = reported_changed
         result.update(
             {
-                "changed": bool(reported_result and reported_result.get("changed", False)),
+                "changed": reported_changed,
                 "check_mode_result": check_mode_result,
                 "check_mode_query_results": check_mode_query_results,
                 "first_run_result": first_run_result,
@@ -1089,6 +1111,57 @@ class ActionModule(ActionBase):
 
         return True
 
+    def _predictive_changed(self, module_result, allow_proposed=False):
+        """Infer a planned mutation from a module's predictive state output.
+
+        Some existing collection modules intentionally report ``changed`` as
+        false from their shared result aggregator even when a mutation was
+        predicted or performed. The harness still needs to validate whether
+        the module represented a mutation. A different module-reported
+        ``before``/``after`` state is the authoritative signal for that
+        purpose; controller snapshots separately verify check-mode safety.
+
+        Args:
+            module_result: Result dictionary returned by the target module.
+
+        Returns:
+            ``True`` when the module reports a change or its predictive
+            before/after state differs; otherwise ``False``.
+        """
+        if not isinstance(module_result, dict):
+            return False
+
+        if bool(module_result.get("changed", False)):
+            return True
+
+        if bool(module_result.get("failed", False)):
+            return False
+
+        if "before" not in module_result or "after" not in module_result:
+            return False
+
+        before = self._normalize_snapshot(module_result.get("before"))
+        after = self._normalize_snapshot(module_result.get("after"))
+        if before != after:
+            return True
+
+        # A merged check-mode create can omit its after projection when the
+        # desired description is intentionally empty.  A proposed entry is
+        # sufficient to describe a planned check-mode mutation, but it is not
+        # proof that a real apply succeeded.  The apply phase must therefore
+        # rely on the module's changed flag or a before/after difference.
+        return allow_proposed and getattr(self, "_harness_state", None) == "merged" and not before and not after and bool(module_result.get("proposed"))
+
+    def _phase_changed(self, phase_name, module_result):
+        """Return the harness-visible changed value for a phase."""
+        actual_changed = bool(module_result and module_result.get("changed", False))
+        if phase_name in ("check_mode", "apply") and not actual_changed:
+            return self._predictive_changed(
+                module_result,
+                allow_proposed=phase_name == "check_mode",
+            )
+        return actual_changed
+
     def _assert_phase(
         self,
         phase_name,
@@ -1128,7 +1201,7 @@ class ActionModule(ActionBase):
 
         if "changed" in phase_expectation:
             expected_changed = phase_expectation["changed"]
-            actual_changed = bool(module_result.get("changed", False))
+            actual_changed = self._phase_changed(phase_name, module_result)
 
             if actual_changed != expected_changed:
                 raise AnsibleActionFail(
@@ -1195,6 +1268,75 @@ class ActionModule(ActionBase):
                 summary["%s_items" % key] = [self._summarize_config_item(item) for item in value[:10]]
             elif value is not None:
                 summary[key] = value
+
+        api_summary = self._summarize_api_details(module_result)
+        if api_summary:
+            summary["api"] = api_summary
+
+        return summary
+
+    def _summarize_api_details(self, module_result):
+        """Keep API diagnostics useful without dumping full controller snapshots."""
+        details = {}
+
+        paths = module_result.get("api_paths")
+        verbs = module_result.get("api_verbs")
+        if isinstance(paths, list):
+            details["paths"] = paths[:20]
+        if isinstance(verbs, list):
+            details["verbs"] = verbs[:20]
+
+        responses = module_result.get("api_response")
+        if isinstance(responses, list):
+            details["responses"] = [self._summarize_api_record(response) for response in responses[:20]]
+
+        results = module_result.get("api_result")
+        if isinstance(results, list):
+            details["results"] = [self._summarize_api_record(api_result) for api_result in results[:20]]
+
+        return details
+
+    def _summarize_api_record(self, value):
+        """Summarize one API record, retaining status, IDs, and errors."""
+        if not isinstance(value, dict):
+            return value
+
+        summary = {}
+        for key in (
+            "RETURN_CODE",
+            "MESSAGE",
+            "METHOD",
+            "REQUEST_PATH",
+            "status",
+            "message",
+            "policyId",
+            "policy_id",
+            "success",
+            "found",
+            "changed",
+            "error",
+            "nd_error",
+            "failed_policies",
+            "warning_policies",
+            "policy_ids",
+        ):
+            if key in value:
+                summary[key] = value[key]
+
+        data = value.get("DATA")
+        if isinstance(data, dict):
+            data_summary = {}
+            for key in ("status", "message", "error", "policyId", "policy_id", "policyIds", "policy_ids"):
+                if key in data:
+                    data_summary[key] = data[key]
+
+            policies = data.get("policies")
+            if isinstance(policies, list):
+                data_summary["policy_count"] = len(policies)
+                data_summary["policies"] = [self._summarize_api_record(policy) for policy in policies[:20]]
+
+            if data_summary:
+                summary["DATA"] = data_summary
 
         return summary
 

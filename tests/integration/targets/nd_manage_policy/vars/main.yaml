@@ -1,0 +1,22 @@
+---
+# Variables for the opt-in ND 4.x harness scenarios.
+#
+# The legacy suite continues to use fabric_name/switch_serial_1/2 from
+# integration_config.yml. The harness uses these normalized aliases so its
+# target-local scenarios do not depend on a second set of inventory values.
+
+test_fabric_name: "{{ nd_test_fabric_name | default(fabric_name | default('')) }}"
+test_switch_serial_1: "{{ nd_test_switch_serial_1 | default(switch_serial_1 | default('')) }}"
+test_switch_serial_2: "{{ nd_test_switch_serial_2 | default(switch_serial_2 | default('')) }}"
+
+nd4x_policy_cleanup_regex: '^ND4X-'
+nd4x_no_description_template: switch_freeform
+nd4x_no_description_priority: 115
+nd4x_no_description_conf: "bfd interval 250 min_rx 250 multiplier 3"
+nd4x_policy_check_mode_queries:
+  - name: Snapshot all policies in the test fabric
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+    expected_status: 200
+    unordered_paths: [/policies]
+    ignore_keys:
+      - operData
