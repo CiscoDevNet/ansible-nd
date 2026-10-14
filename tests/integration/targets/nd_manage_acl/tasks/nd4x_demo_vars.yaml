@@ -1,0 +1,76 @@
+---
+- name: Set nd_manage_acl harness-only variables
+  ansible.builtin.set_fact:
+    nd4x_acl_destructive_tests_enabled: >-
+      {{
+        nd_acl_destructive_tests_enabled
+        | default(false)
+        | bool
+      }}
+    nd4x_acl_reserved_names:
+      - "{{ acl_ipv4_name }}"
+      - "{{ acl_ipv6_name }}"
+    acl_ipv4_initial:
+      name: "{{ acl_ipv4_name }}"
+      type: ipv4
+      entries:
+        - sequence_number: 10
+          action: remark
+          remark_comment: "Allow web traffic"
+        - sequence_number: 20
+          action: permit
+          protocol: tcp
+          src: any
+          dst: "{{ acl_test_network_ipv4 }}"
+          dst_port_action: equal_to
+          dst_port: 80
+        - sequence_number: 100
+          action: deny
+          protocol: ip
+          src: any
+          dst: any
+    acl_ipv4_updated:
+      name: "{{ acl_ipv4_name }}"
+      type: ipv4
+      entries:
+        - sequence_number: 30
+          action: permit
+          protocol: tcp
+          src: any
+          dst: "{{ acl_test_network_ipv4 }}"
+          dst_port_action: equal_to
+          dst_port: 443
+    acl_ipv4_replaced:
+      name: "{{ acl_ipv4_name }}"
+      type: ipv4
+      entries:
+        - sequence_number: 10
+          action: permit
+          protocol: ip
+          src: 192.168.1.0
+          dst: any
+    acl_ipv6:
+      name: "{{ acl_ipv6_name }}"
+      type: ipv6
+      entries:
+        - sequence_number: 10
+          action: permit
+          protocol: tcp
+          src: any
+          dst: "{{ acl_test_prefix_ipv6 }}"
+          dst_port_action: port_range
+          dst_port_range_start: 80
+          dst_port_range_end: 443
+        - sequence_number: 20
+          action: deny
+          protocol: ipv6
+          src: any
+          dst: any
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_merged
+    - nd4x_demo_replaced
+    - nd4x_demo_deleted
+    - nd4x_demo_overridden
