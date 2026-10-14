@@ -1,0 +1,794 @@
+---
+- name: Run multi-switch, multi-template, and file-input scenarios
+  block:
+    - name: "FANOUT SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "FANOUT: Create shared policies on both switches"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-fanout-timezone"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-fanout-global-freeform"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+              - serial_number: "{{ test_switch_serial_2 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate policies on both switches
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-timezone' & @.templateName == 'clock_timezone' & @.priority == 101 & @.templateInputs.TIME_ZONE == 'CET')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-global-freeform' & @.templateName == 'switch_freeform' & @.priority == 110 & @.templateInputs.CONF == 'system vlan long-name')]"
+                exists: true
+      register: nd4x_fanout_multi_switch
+
+    - name: "FANOUT: Verify multi-switch returned state"
+      ansible.builtin.assert:
+        that:
+          - nd4x_fanout_multi_switch.first_run_result.changed | bool
+          - not nd4x_fanout_multi_switch.second_run_result.changed | bool
+
+    - name: "FANOUT: Gather shared policies from both switches"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+              - serial_number: "{{ test_switch_serial_2 }}"
+      register: nd4x_fanout_shared_gathered
+
+    - name: "FANOUT: Verify shared policy scope and exact state"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-timezone')
+            | list
+            | length == 2
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-timezone')
+            | selectattr('name', 'equalto', 'clock_timezone')
+            | selectattr('priority', 'equalto', 101)
+            | selectattr('template_inputs.TIME_ZONE', 'equalto', 'CET')
+            | list
+            | length == 2
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-global-freeform')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 110)
+            | selectattr('template_inputs.CONF', 'equalto', 'system vlan long-name')
+            | list
+            | length == 2
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-timezone')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-timezone')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_2)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-global-freeform')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_shared_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-global-freeform')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_2)
+            | list
+            | length == 1
+
+    - name: "FANOUT SETUP: Enable BFD feature on both switches"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-fanout-bfd-feature"
+            priority: 100
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+              - serial_number: "{{ test_switch_serial_2 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_fanout_bfd_feature
+
+    - name: "FANOUT: Verify BFD feature was created exactly on both switches"
+      ansible.builtin.assert:
+        that:
+          - nd4x_fanout_bfd_feature.first_run_result.changed | bool
+          - >-
+            nd4x_fanout_bfd_feature.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-fanout-bfd-feature')
+            | selectattr('templateName', 'equalto', 'feature_enable')
+            | selectattr('priority', 'equalto', 100)
+            | selectattr('templateInputs.featureName', 'equalto', 'bfd')
+            | list
+            | length == 2
+          - >-
+            nd4x_fanout_bfd_feature.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-fanout-bfd-feature')
+            | selectattr('switchId', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_bfd_feature.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-fanout-bfd-feature')
+            | selectattr('switchId', 'equalto', test_switch_serial_2)
+            | list
+            | length == 1
+
+    - name: "FANOUT: Create per-switch policy override"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-fanout-bfd-global"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+                policies:
+                  - name: switch_freeform
+                    description: "ND4X-fanout-bfd-switch1"
+                    priority: 200
+                    create_additional_policy: false
+                    template_inputs:
+                      CONF: "bfd interval 250 min_rx 250 multiplier 3"
+              - serial_number: "{{ test_switch_serial_2 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate per-switch override policies
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-bfd-global' & @.templateName == 'switch_freeform' & @.priority == 115 & @.templateInputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-bfd-switch1' & @.templateName == 'switch_freeform' & @.priority == 200 & @.templateInputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3')]"
+                exists: true
+
+    - name: "FANOUT: Gather per-switch BFD policies"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: feature_enable
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+              - serial_number: "{{ test_switch_serial_2 }}"
+      register: nd4x_fanout_bfd_gathered
+
+    - name: "FANOUT: Select global and switch-specific BFD policies"
+      ansible.builtin.set_fact:
+        nd4x_fanout_bfd_global: >-
+          {{
+            nd4x_fanout_bfd_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-bfd-global')
+            | list
+          }}
+        nd4x_fanout_bfd_switch1: >-
+          {{
+            nd4x_fanout_bfd_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-bfd-switch1')
+            | list
+          }}
+        nd4x_fanout_bfd_features: >-
+          {{
+            nd4x_fanout_bfd_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-bfd-feature')
+            | list
+          }}
+
+    - name: "FANOUT: Verify per-switch override ownership and priority"
+      ansible.builtin.assert:
+        that:
+          - nd4x_fanout_bfd_global | length == 1
+          - nd4x_fanout_bfd_switch1 | length == 1
+          - nd4x_fanout_bfd_features | length == 2
+          - >-
+            nd4x_fanout_bfd_features
+            | selectattr('name', 'equalto', 'feature_enable')
+            | selectattr('priority', 'equalto', 100)
+            | selectattr('template_inputs.featureName', 'equalto', 'bfd')
+            | list
+            | length == 2
+          - nd4x_fanout_bfd_global[0].priority == 115
+          - nd4x_fanout_bfd_global[0].switch | length == 1
+          - nd4x_fanout_bfd_global[0].switch[0].serial_number == test_switch_serial_2
+          - nd4x_fanout_bfd_switch1[0].priority == 200
+          - nd4x_fanout_bfd_switch1[0].switch | length == 1
+          - nd4x_fanout_bfd_switch1[0].switch[0].serial_number == test_switch_serial_1
+
+    - name: "FANOUT: Define legacy multi-template fixture descriptions"
+      ansible.builtin.set_fact:
+        nd4x_legacy_multi_template_descriptions:
+          - "Timezone CET"
+          - "Summertime CEST"
+          - "System vlan long-name"
+          - "BFD timers"
+          - "as-format asdot"
+          - "Enable BFD feature"
+
+    - name: "FANOUT: Isolate the legacy multi-template fixture"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "FANOUT: Refuse pre-existing legacy fixture records"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+        method: get
+      register: nd4x_legacy_multi_template_existing
+      changed_when: false
+
+    - name: "FANOUT: Assert legacy fixture descriptions are available"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_legacy_multi_template_existing.current.policies
+            | default([])
+            | selectattr('description', 'defined')
+            | selectattr('description', 'in', nd4x_legacy_multi_template_descriptions)
+            | list
+            | length == 0
+        fail_msg: >-
+          The exact legacy multi-template fixture already exists in the test
+          fabric. Remove those policies or use a dedicated harness fabric.
+
+    - name: "FANOUT: Mark legacy fixture descriptions as owned"
+      ansible.builtin.set_fact:
+        nd4x_cleanup_owned_descriptions: "{{ nd4x_legacy_multi_template_descriptions }}"
+
+    - name: "FANOUT SETUP: Enable BFD for the legacy multi-template fixture"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 100
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "FANOUT: Create the exact legacy five-policy request"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "Summertime CEST"
+            priority: 102
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "System vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "BFD timers"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "as-format asdot"
+            priority: 120
+            template_inputs:
+              CONF: "as-format asdot"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate exact legacy multi-template policies
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'Timezone CET' & @.templateName == 'clock_timezone' & @.priority == 101 & @.templateInputs.TIME_ZONE == 'CET')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'Summertime CEST' & @.templateName == 'clock_summertime' & @.priority == 102 & @.templateInputs.SUMMER_TIME == 'CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'System vlan long-name' & @.templateName == 'switch_freeform' & @.priority == 110 & @.templateInputs.CONF == 'system vlan long-name')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'BFD timers' & @.templateName == 'switch_freeform' & @.priority == 115 & @.templateInputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'as-format asdot' & @.templateName == 'switch_freeform' & @.priority == 120 & @.templateInputs.CONF == 'as-format asdot')]"
+                exists: true
+      register: nd4x_fanout_multi_template
+
+    - name: "FANOUT: Gather exact legacy multi-template fixture"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_fanout_multi_template_gathered
+
+    - name: "FANOUT: Verify exact legacy multi-template fixture"
+      ansible.builtin.assert:
+        that:
+          - nd4x_fanout_multi_template.first_run_result.changed | bool
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'in', nd4x_legacy_multi_template_descriptions)
+            | list
+            | length == 6
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'equalto', 'Timezone CET')
+            | selectattr('name', 'equalto', 'clock_timezone')
+            | selectattr('priority', 'equalto', 101)
+            | selectattr('template_inputs.TIME_ZONE', 'equalto', 'CET')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'equalto', 'Summertime CEST')
+            | selectattr('name', 'equalto', 'clock_summertime')
+            | selectattr('priority', 'equalto', 102)
+            | selectattr('template_inputs.SUMMER_TIME', 'equalto', 'CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'equalto', 'System vlan long-name')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 110)
+            | selectattr('template_inputs.CONF', 'equalto', 'system vlan long-name')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'equalto', 'BFD timers')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 115)
+            | selectattr('template_inputs.CONF', 'equalto', 'bfd interval 250 min_rx 250 multiplier 3')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'equalto', 'as-format asdot')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 120)
+            | selectattr('template_inputs.CONF', 'equalto', 'as-format asdot')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'equalto', 'Enable BFD feature')
+            | selectattr('name', 'equalto', 'feature_enable')
+            | selectattr('template_inputs.featureName', 'equalto', 'bfd')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+
+    - name: "FANOUT: Capture exact legacy fixture policy IDs for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_cleanup_explicit_ids: >-
+          {{
+            nd4x_fanout_multi_template_gathered.gathered
+            | selectattr('description', 'in', nd4x_legacy_multi_template_descriptions)
+            | map(attribute='policy_id')
+            | select('defined')
+            | list
+          }}
+
+    - name: "FANOUT: Remove isolated legacy multi-template fixture"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "FANOUT: Reset isolated fixture ownership IDs"
+      ansible.builtin.set_fact:
+        nd4x_cleanup_explicit_ids: []
+        nd4x_cleanup_owned_descriptions: []
+
+    - name: "FANOUT: Load file-backed policy inputs"
+      ansible.builtin.set_fact:
+        nd4x_syslog_inputs: "{{ lookup('file', role_path + '/files/syslog.yaml') | from_yaml }}"
+        nd4x_spanning_tree_inputs: "{{ lookup('file', role_path + '/files/spanning_tree.yaml') | from_yaml }}"
+        nd4x_alias_inputs: "{{ lookup('file', role_path + '/files/alias.yaml') | from_yaml }}"
+        nd4x_banner_text: |
+          ******************************************
+          * This device is managed by ND         *
+          * Unauthorized access is prohibited      *
+          ******************************************
+
+    - name: "FANOUT: Apply file-backed template inputs through harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: banner
+            create_additional_policy: false
+            description: "ND4X-fanout-banner"
+            priority: 200
+            template_inputs:
+              BANNER: "{{ nd4x_banner_text }}"
+              BANNERDELIMITER: "_"
+              TYPE: motd
+          - name: vrf_route_tracking
+            create_additional_policy: false
+            description: "ND4X-fanout-vrf-tracking"
+            priority: 230
+            template_inputs:
+              OBJECT_TRACKING_NUMBER: 10
+              IP_PREFIX: "10.0.0.1/31"
+              VRF_NAME: "vrf-prod-11234"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-fanout-syslog"
+            priority: 231
+            template_inputs: "{{ nd4x_syslog_inputs }}"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-fanout-spanning-tree"
+            priority: 232
+            template_inputs: "{{ nd4x_spanning_tree_inputs }}"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-fanout-alias"
+            priority: 233
+            template_inputs: "{{ nd4x_alias_inputs }}"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate file-backed policies
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-banner' & @.templateName == 'banner' & @.priority == 200 & @.templateInputs.TYPE == 'motd')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-banner')].templateInputs.BANNER"
+                equals: |
+                  ******************************************
+                  * This device is managed by ND         *
+                  * Unauthorized access is prohibited      *
+                  ******************************************
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-vrf-tracking' & @.templateName == 'vrf_route_tracking' & @.priority == 230 & @.templateInputs.OBJECT_TRACKING_NUMBER == 10)]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-syslog' & @.templateName == 'switch_freeform' & @.priority == 231 & @.templateInputs.CONF)]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-syslog')].templateInputs.CONF"
+                equals: |
+                  logging server 10.0.0.11 5 use-vrf management facility local3
+                  logging server 10.0.0.12 5 use-vrf management facility local3
+                  logging level local3 5
+                  logging source-interface mgmt0
+                  logging timestamp milliseconds
+                  no logging console
+                  no logging monitor
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-spanning-tree' & @.templateName == 'switch_freeform' & @.priority == 232 & @.templateInputs.CONF)]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-spanning-tree')].templateInputs.CONF"
+                equals: |
+                  spanning-tree pathcost method long
+                  spanning-tree port type edge default
+                  spanning-tree port type edge bpduguard default
+                  spanning-tree port type edge bpdufilter default
+                  spanning-tree bridge assurance
+                  spanning-tree loopguard default
+                  spanning-tree vlan 1-3967 priority 8192
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-alias' & @.templateName == 'switch_freeform' & @.priority == 233 & @.templateInputs.CONF)]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-alias')].templateInputs.CONF"
+                equals: |
+                  cli alias name wr copy running-config startup-config
+                  cli alias name int show interface brief
+                  cli alias name cdp show cdp neighbors
+                  cli alias name flogi show flogi database
+                  cli alias name bgps show bgp sessions
+                  cli alias name ntp show ntp peer-status
+                  cli alias name log show logging last 50 | no-more
+
+    - name: "FANOUT SETUP: Enable OSPF feature"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-fanout-ospf-feature"
+            template_inputs:
+              featureName: ospf
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate OSPF feature policy
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-ospf-feature' & @.templateName == 'feature_enable' & @.templateInputs.featureName == 'ospf')]"
+                exists: true
+
+    - name: "FANOUT: Define expected inline multiline OSPF input"
+      ansible.builtin.set_fact:
+        nd4x_ospf_inline_conf: |
+          router ospf UNDERLAY
+            max-metric router-lsa on-startup
+            auto-cost reference-bandwidth 800 Gbps
+            log-adjacency-changes
+
+    - name: "FANOUT: Apply inline multiline OSPF policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-fanout-ospf-policy"
+            priority: 235
+            template_inputs:
+              CONF: "{{ nd4x_ospf_inline_conf }}"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate OSPF policy
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-ospf-policy' & @.templateName == 'switch_freeform' & @.priority == 235 & @.templateInputs.CONF)]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-fanout-ospf-policy')].templateInputs.CONF"
+                equals: |
+                  router ospf UNDERLAY
+                    max-metric router-lsa on-startup
+                    auto-cost reference-bandwidth 800 Gbps
+                    log-adjacency-changes
+
+    - name: "FANOUT: Gather file-backed and OSPF policy state"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: banner
+          - name: vrf_route_tracking
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_fanout_positive_gathered
+
+    - name: "FANOUT: Verify positive policy inputs and switch association"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-banner')
+            | selectattr('name', 'equalto', 'banner')
+            | selectattr('priority', 'equalto', 200)
+            | selectattr('template_inputs.BANNER', 'equalto', nd4x_banner_text)
+            | selectattr('template_inputs.BANNERDELIMITER', 'equalto', '_')
+            | selectattr('template_inputs.TYPE', 'equalto', 'motd')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-vrf-tracking')
+            | selectattr('name', 'equalto', 'vrf_route_tracking')
+            | selectattr('priority', 'equalto', 230)
+            | selectattr('template_inputs.OBJECT_TRACKING_NUMBER', 'equalto', 10)
+            | selectattr('template_inputs.IP_PREFIX', 'equalto', '10.0.0.1/31')
+            | selectattr('template_inputs.VRF_NAME', 'equalto', 'vrf-prod-11234')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-syslog')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 231)
+            | selectattr('template_inputs.CONF', 'equalto', nd4x_syslog_inputs.CONF)
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-spanning-tree')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 232)
+            | selectattr('template_inputs.CONF', 'equalto', nd4x_spanning_tree_inputs.CONF)
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-alias')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 233)
+            | selectattr('template_inputs.CONF', 'equalto', nd4x_alias_inputs.CONF)
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-ospf-feature')
+            | selectattr('name', 'equalto', 'feature_enable')
+            | selectattr('template_inputs.featureName', 'equalto', 'ospf')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_fanout_positive_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-fanout-ospf-policy')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 235)
+            | selectattr('template_inputs.CONF', 'equalto', nd4x_ospf_inline_conf)
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+
+  always:
+    - name: "FANOUT CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml

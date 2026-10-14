@@ -1,0 +1,417 @@
+---
+- name: Run modify and default-key scenarios through the shared harness
+  block:
+    - name: "MODIFY SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "MODIFY SETUP: Enable BFD feature prerequisite"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-modify-bfd-feature"
+            priority: 100
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "MODIFY SETUP: Create policies for update tests"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-modify-timezone"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-modify-bfd"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "MODIFY: Update priority using description as key"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-modify-timezone"
+            priority: 999
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate priority update
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-modify-timezone' & @.priority == 999)]"
+                exists: true
+
+    - name: "MODIFY: Update template inputs while omitting priority"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-modify-bfd"
+            template_inputs:
+              CONF: "bfd interval 500 min_rx 500 multiplier 5"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate omitted-priority update
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-modify-bfd')]"
+                exists: true
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-modify-bfd' & @.templateName == 'switch_freeform' & @.priority == 115 & @.templateInputs.CONF == 'bfd interval 500 min_rx 500 multiplier 5')]"
+                exists: true
+
+    - name: "MODIFY: Gather a policy ID for exact-target update"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "ND4X-modify-timezone"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_modify_gathered
+
+    - name: "MODIFY: Capture controller policy ID"
+      ansible.builtin.set_fact:
+        nd4x_modify_timezone_id: >-
+          {{
+            nd4x_modify_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-modify-timezone')
+            | map(attribute='policy_id')
+            | first
+          }}
+
+    - name: "MODIFY: Update by policy ID while omitting description"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: "{{ nd4x_modify_timezone_id }}"
+            priority: 800
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_modify_by_id
+
+    - name: "MODIFY: Verify policy-ID update preserved description"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_modify_by_id.first_run_result.after
+            | selectattr('policyId', 'equalto', nd4x_modify_timezone_id)
+            | selectattr('priority', 'equalto', 800)
+            | selectattr('description', 'equalto', 'ND4X-modify-timezone')
+            | list
+            | length == 1
+
+    - name: "DEFAULT KEY SETUP: Create baseline template-name policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-default-original"
+            priority: 301
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DEFAULT KEY: Reapply identical template-name config"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-default-original"
+            priority: 301
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DEFAULT KEY: Create a second policy when the desired config differs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-default-changed"
+            priority: 555
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DEFAULT KEY: Gather both policies after changed config"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_default_key_after_create
+
+    - name: "DEFAULT KEY: Capture the two matching policies and their IDs"
+      ansible.builtin.set_fact:
+        nd4x_default_key_matches: >-
+          {{
+            nd4x_default_key_after_create.gathered
+            | selectattr('description', 'in', ['ND4X-default-original', 'ND4X-default-changed'])
+            | list
+          }}
+        nd4x_default_key_original: >-
+          {{
+            nd4x_default_key_after_create.gathered
+            | selectattr('description', 'equalto', 'ND4X-default-original')
+            | list
+            | first
+          }}
+        nd4x_default_key_changed: >-
+          {{
+            nd4x_default_key_after_create.gathered
+            | selectattr('description', 'equalto', 'ND4X-default-changed')
+            | list
+            | first
+          }}
+
+    - name: "DEFAULT KEY: Verify both policies and exact initial state"
+      ansible.builtin.assert:
+        that:
+          - nd4x_default_key_matches | length == 2
+          - nd4x_default_key_original.policy_id is defined
+          - nd4x_default_key_changed.policy_id is defined
+          - nd4x_default_key_original.policy_id != nd4x_default_key_changed.policy_id
+          - nd4x_default_key_original.priority == 301
+          - nd4x_default_key_changed.priority == 555
+
+    - name: "DEFAULT KEY: Reapply changed config with multiple template matches"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-default-changed"
+            priority: 555
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DEFAULT KEY: Gather policies after multi-match reapply"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_default_key_after_reapply
+
+    - name: "DEFAULT KEY: Verify reapply did not create a third policy"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_default_key_after_reapply.gathered
+            | selectattr('description', 'in', ['ND4X-default-original', 'ND4X-default-changed'])
+            | list
+            | length == 2
+          - >-
+            nd4x_default_key_after_reapply.gathered
+            | selectattr('policy_id', 'equalto', nd4x_default_key_original.policy_id)
+            | selectattr('description', 'equalto', 'ND4X-default-original')
+            | selectattr('priority', 'equalto', 301)
+            | list
+            | length == 1
+          - >-
+            nd4x_default_key_after_reapply.gathered
+            | selectattr('policy_id', 'equalto', nd4x_default_key_changed.policy_id)
+            | selectattr('description', 'equalto', 'ND4X-default-changed')
+            | selectattr('priority', 'equalto', 555)
+            | list
+            | length == 1
+
+  always:
+    - name: "MODIFY CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
