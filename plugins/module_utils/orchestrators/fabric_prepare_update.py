@@ -11,8 +11,8 @@ and progress is observed by polling `softwareUpdatePlan/summary`.
 
 This orchestrator is intentionally *not* an `NDBaseOrchestrator` subclass: there is no CRUD
 resource here, so the base's five required create/update/delete/query endpoint fields do not
-apply. It is a standalone Pydantic model that drives `RestSend` directly via a private `_request`
-helper adapted from `NDBaseOrchestrator._request`.
+apply. It subclasses `NDRequestBase` instead, inheriting `rest_send`, `results` and the shared
+`_request` / `_register_api_call` helpers without the CRUD obligations.
 
 Responsibilities:
 
@@ -30,18 +30,16 @@ from __future__ import annotations
 import time
 from typing import Any, cast
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.software_update_plan_actions import EpFabricSoftwareUpdatePlanStage
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.software_update_plan_summary import EpFabricSoftwareUpdatePlanSummary
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_prepare_update.software_update_plan_summary import (
     SoftwareUpdatePlanSummaryModel,
     SwitchStageStatusModel,
     UpdateGroupStatusModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.request_base import NDRequestBase
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 # Per-switch staged / validated statuses that count as terminal-OK for a prepare operation.
 # `skipped` is terminal-OK: ND skips staging a switch whose image is already in place.
@@ -82,7 +80,7 @@ def _switch_has_failed(switch: SwitchStageStatusModel) -> bool:
     return _FAILED_STATUS in (switch.image_staged_status, switch.image_validated_status)
 
 
-class FabricPrepareUpdateOrchestrator(BaseModel):
+class FabricPrepareUpdateOrchestrator(NDRequestBase):
     """
     # Summary
 
@@ -102,16 +100,6 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
     - Via `wait_for_completion` if a switch reports a staging failure or the wait times out.
     """
 
-    model_config = ConfigDict(
-        use_enum_values=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        arbitrary_types_allowed=True,
-    )
-
-    rest_send: RestSend
-    results: Results | None = None
-
     @property
     def fabric_name(self) -> str:
         """
@@ -124,58 +112,6 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         None
         """
         return self.rest_send.params.get("fabric_name")
-
-    def _register_api_call(self, path: str, verb: HttpVerbEnum, operation_type: OperationType, payload: dict[str, Any] | None = None) -> None:
-        """
-        # Summary
-
-        Register the most recent REST call with `Results` for verbosity-gated observability. No-op
-        when no `Results` instance is attached.
-
-        ## Raises
-
-        None
-        """
-        if self.results is None:
-            return
-        self.results.action = operation_type.value
-        self.results.operation_type = operation_type
-        self.results.path_current = path
-        self.results.verb_current = verb
-        self.results.payload_current = payload
-        self.results.response_current = self.rest_send.response_current
-        self.results.result_current = self.rest_send.result_current
-        self.results.diff_current = {}
-        # Write actions are shown at -vv (verbosity 2); reads at -vvv (verbosity 3).
-        self.results.verbosity_level_current = 3 if operation_type == OperationType.QUERY else 2
-        self.results.register_api_call()
-
-    def _request(self, path: str, verb: HttpVerbEnum, data: dict[str, Any] | None = None, operation_type: OperationType = OperationType.QUERY) -> ResponseType:
-        """
-        # Summary
-
-        Send a REST request via `RestSend`, register it with `Results`, and return the response
-        `DATA`.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the controller returns a non-success result.
-        """
-        self.rest_send.path = path
-        self.rest_send.verb = verb
-        if data is not None:
-            self.rest_send.payload = data
-        self.rest_send.commit()
-
-        # Register before the success check so failed calls are also captured for troubleshooting.
-        self._register_api_call(path, verb, operation_type, self.rest_send.committed_payload)
-
-        if not self.rest_send.success:
-            raise RuntimeError(f"Request failed: {self.rest_send.error_summary}")
-
-        return self.rest_send.response_current.get("DATA", {})
 
     @staticmethod
     def scope_for(update_group_names: list[str]) -> str | None:
