@@ -1,0 +1,229 @@
+---
+- name: Run nd_manage_prefix_list deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "DELETED SETUP VERIFY: Require reserved prefix lists to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+    - name: "DELETED SETUP: Create the IPv6 prefix list"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv6_datacenter }}"
+        state: merged
+
+    - name: "DELETED SINGLE: Delete IPv6 prefix list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv6
+            name: PL-IPV6-DATACENTER
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8::/32"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted IPv6 prefix list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_single
+
+    - name: "DELETED SINGLE: Verify deletion and harness idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_single.check_mode_result.changed | bool
+          - deleted_single.first_run_result.changed | bool
+          - deleted_single.first_run_result.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+          - deleted_single.second_run_result.changed == false
+
+    - name: "DELETED MULTI SETUP: Recreate IPv4 and IPv6 prefix lists"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+          - "{{ prefix_list_ipv6_datacenter }}"
+        state: merged
+
+    - name: "DELETED MULTI: Delete both families through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-BORDERS
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.0.0.0/8"
+          - ip_version: ipv6
+            name: PL-IPV6-DATACENTER
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8::/32"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted IPv4 prefix list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify deleted IPv6 prefix list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_multi
+
+    - name: "DELETED MULTI: Verify both families were deleted"
+      ansible.builtin.assert:
+        that:
+          - deleted_multi.check_mode_result.changed | bool
+          - deleted_multi.first_run_result.changed | bool
+          - deleted_multi.first_run_result.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 0
+          - deleted_multi.first_run_result.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+          - deleted_multi.second_run_result.changed == false
+
+    - name: "DELETED IDENTIFIER-ONLY SETUP: Recreate both prefix lists"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+          - "{{ prefix_list_ipv6_datacenter }}"
+        state: merged
+
+    - name: "DELETED IDENTIFIER-ONLY: Delete with only family and name"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-BORDERS
+          - ip_version: ipv6
+            name: PL-IPV6-DATACENTER
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify identifier-only IPv4 deletion
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify identifier-only IPv6 deletion
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_identifier_only
+
+    - name: "DELETED IDENTIFIER-ONLY: Verify both deletions"
+      ansible.builtin.assert:
+        that:
+          - deleted_identifier_only.check_mode_result.changed | bool
+          - deleted_identifier_only.first_run_result.changed | bool
+          - deleted_identifier_only.first_run_result.after | length == 0
+          - deleted_identifier_only.second_run_result.changed == false
+
+    - name: "DELETED NON-EXISTENT: Delete a prefix list that does not exist"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-NONEXISTENT
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.0.0.0/8"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify nonexistent IPv4 prefix list remains absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-NONEXISTENT
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_nonexistent
+
+    - name: "DELETED NON-EXISTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - deleted_nonexistent.check_mode_result.changed == false
+          - deleted_nonexistent.first_run_result.changed == false
+          - deleted_nonexistent.second_run_result.changed == false
+  always:
+    - name: "DELETED CLEANUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "DELETED CLEANUP: Verify reserved prefix lists are absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml

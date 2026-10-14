@@ -1,0 +1,72 @@
+---
+- name: "CLEANUP VERIFY: Initialize complete prefix-list inventory"
+  ansible.builtin.set_fact:
+    nd4x_prefix_list_inventory: []
+    nd4x_prefix_list_inventory_offset: 0
+    nd4x_prefix_list_inventory_pages: 0
+    nd4x_prefix_list_inventory_page_size: 100
+    nd4x_prefix_list_inventory_max_pages: 10000
+
+- name: "CLEANUP VERIFY: Read every IPv4 prefix-list inventory page"
+  ansible.builtin.include_tasks: nd4x_demo_prefix_list_inventory_page.yaml
+  vars:
+    nd4x_prefix_list_inventory_endpoint: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/ipv4PrefixLists
+    nd4x_prefix_list_inventory_collection_key: ipv4PrefixLists
+    nd4x_prefix_list_inventory_family: IPv4 cleanup verification
+
+- name: "CLEANUP VERIFY: Save complete IPv4 prefix-list inventory"
+  ansible.builtin.set_fact:
+    nd4x_prefix_list_cleanup_ipv4: "{{ nd4x_prefix_list_inventory }}"
+
+- name: "CLEANUP VERIFY: Reset prefix-list inventory pagination"
+  ansible.builtin.set_fact:
+    nd4x_prefix_list_inventory: []
+    nd4x_prefix_list_inventory_offset: 0
+    nd4x_prefix_list_inventory_pages: 0
+
+- name: "CLEANUP VERIFY: Read every IPv6 prefix-list inventory page"
+  ansible.builtin.include_tasks: nd4x_demo_prefix_list_inventory_page.yaml
+  vars:
+    nd4x_prefix_list_inventory_endpoint: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/ipv6PrefixLists
+    nd4x_prefix_list_inventory_collection_key: ipv6PrefixLists
+    nd4x_prefix_list_inventory_family: IPv6 cleanup verification
+
+- name: "CLEANUP VERIFY: Save complete IPv6 prefix-list inventory"
+  ansible.builtin.set_fact:
+    nd4x_prefix_list_cleanup_ipv6: "{{ nd4x_prefix_list_inventory }}"
+
+- name: "CLEANUP VERIFY: Require expected prefix lists to be absent"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          nd4x_prefix_list_cleanup_ipv4
+          | selectattr(
+              'name',
+              'in',
+              nd4x_prefix_list_cleanup_ipv4_names
+              | default(nd4x_prefix_list_reserved_names_by_family.ipv4)
+            )
+          | list
+          | length
+        ) == 0
+      - >-
+        (
+          nd4x_prefix_list_cleanup_ipv6
+          | selectattr(
+              'name',
+              'in',
+              nd4x_prefix_list_cleanup_ipv6_names
+              | default(nd4x_prefix_list_reserved_names_by_family.ipv6)
+            )
+          | list
+          | length
+        ) == 0
+    fail_msg: >-
+      Harness cleanup left one or more expected nd_manage_prefix_list resources
+      on {{ test_fabric_name }}. IPv4 remaining resources:
+      {{ nd4x_prefix_list_cleanup_ipv4 | selectattr('name', 'in', nd4x_prefix_list_cleanup_ipv4_names | default(nd4x_prefix_list_reserved_names_by_family.ipv4)) | list }};
+      IPv6 remaining resources:
+      {{ nd4x_prefix_list_cleanup_ipv6 | selectattr('name', 'in', nd4x_prefix_list_cleanup_ipv6_names | default(nd4x_prefix_list_reserved_names_by_family.ipv6)) | list }}.

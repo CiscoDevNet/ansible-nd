@@ -1,0 +1,195 @@
+---
+- name: Run nd_manage_prefix_list replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "REPLACED SETUP VERIFY: Require reserved prefix lists to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+    - name: "REPLACED SETUP: Create the original merged state"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders_updated }}"
+          - "{{ prefix_list_ipv6_datacenter_updated }}"
+        state: merged
+
+    - name: "REPLACED: Replace IPv4 prefix list with a minimal configuration"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-BORDERS
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.0.0.0/8"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate minimal replaced IPv4 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-IPV4-BORDERS
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 10
+              - jsonpath: "$.current.entries[0].prefix"
+                equals: 10.0.0.0/8
+      register: replaced_single
+
+    - name: "REPLACED: Verify minimal returned IPv4 configuration"
+      ansible.builtin.assert:
+        that:
+          - replaced_single.check_mode_result.changed | bool
+          - replaced_single.first_run_result.changed | bool
+          - >-
+            (
+              replaced_single.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+              | first
+            ).entries | length == 1
+          - >-
+            (
+              replaced_single.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+              | first
+            ).description | default('') == ''
+          - replaced_single.second_run_result.changed == false
+
+    - name: "REPLACED IDEMPOTENT: Explicitly re-apply converged config in check and normal mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: replaced
+        check_mode: true
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-BORDERS
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.0.0.0/8"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+      register: replaced_single_explicit_idempotency
+
+    - name: "REPLACED IDEMPOTENT: Verify explicit converged check and normal reapply"
+      ansible.builtin.assert:
+        that:
+          - replaced_single_explicit_idempotency.check_mode_result.changed == false
+          - replaced_single_explicit_idempotency.first_run_result.changed == false
+          - replaced_single_explicit_idempotency.idempotency_attempts == 0
+
+    - name: "REPLACED MULTI: Replace both IPv4 and IPv6 prefix lists"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-IPV4-BORDERS
+            description: "Replaced IPv4 borders"
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "10.0.0.0/8"
+              - sequence_number: 20
+                action: deny
+                prefix: "0.0.0.0/0"
+          - ip_version: ipv6
+            name: PL-IPV6-DATACENTER
+            description: "Replaced IPv6 datacenter"
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: "2001:db8::/32"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced IPv4 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.description"
+                equals: Replaced IPv4 borders
+              - jsonpath: "$.current.entries[?(@.sequenceNumber == 20)].action"
+                equals: deny
+          - name: Validate replaced IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.description"
+                equals: Replaced IPv6 datacenter
+              - jsonpath: "$.current.entries[0].prefix"
+                equals: 2001:db8::/32
+      register: replaced_multi
+
+    - name: "REPLACED MULTI: Verify both returned configurations"
+      ansible.builtin.assert:
+        that:
+          - replaced_multi.check_mode_result.changed | bool
+          - replaced_multi.first_run_result.changed | bool
+          - >-
+            (
+              replaced_multi.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+              | first
+            ).entries | length == 2
+          - >-
+            (
+              replaced_multi.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER')
+              | first
+            ).entries | length == 1
+          - replaced_multi.second_run_result.changed == false
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "REPLACED CLEANUP: Verify reserved prefix lists are absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
