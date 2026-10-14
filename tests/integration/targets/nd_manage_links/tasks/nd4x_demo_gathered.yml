@@ -1,0 +1,109 @@
+---
+- name: "GATHERED {{ nd4x_policy_name }}: Gather links without config"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_links
+    state: gathered
+    check_mode: false
+    idempotency: false
+    common_args: "{{ nd4x_common_args }}"
+    expected:
+      apply:
+        changed: false
+        failed: false
+    nd_queries: "{{ nd4x_gathered_nd_queries }}"
+  register: nd4x_gathered_result
+
+- name: "GATHERED {{ nd4x_policy_name }}: Verify gathered result"
+  ansible.builtin.assert:
+    that:
+      - not nd4x_gathered_result.first_run_result.changed | bool
+      - nd4x_gathered_result.first_run_result.before == []
+      - nd4x_gathered_result.first_run_result.after == []
+      - nd4x_gathered_result.first_run_result.before == nd4x_gathered_result.first_run_result.after
+      - nd4x_gathered_result.first_run_result.gathered is defined
+      - >-
+        nd4x_gathered_result.first_run_result.gathered
+        | selectattr('src_fabric_name', 'equalto', nd4x_gathered_src_fabric)
+        | selectattr('dst_fabric_name', 'equalto', nd4x_gathered_dst_fabric)
+        | selectattr('src_interface_name', 'equalto', nd4x_gathered_interface)
+        | selectattr('dst_interface_name', 'equalto', nd4x_gathered_interface)
+        | selectattr('config_data.policy_type', 'equalto', nd4x_policy_name)
+        | list
+        | length == 1
+      - >-
+        nd4x_gathered_result.first_run_result.gathered
+        | selectattr('src_fabric_name', 'equalto', nd4x_gathered_src_fabric)
+        | selectattr('dst_fabric_name', 'equalto', nd4x_gathered_dst_fabric)
+        | selectattr(
+            'src_interface_name',
+            'in',
+            nd4x_create_config | map(attribute='src_interface_name') | list
+          )
+        | selectattr('config_data.policy_type', 'equalto', nd4x_policy_name)
+        | list
+        | length == nd4x_create_count
+      - >-
+        nd4x_gathered_result.first_run_result.gathered
+        | selectattr('link_id', 'defined')
+        | list
+        | length == 0
+
+- name: "GATHERED {{ nd4x_policy_name }}: Select a config-shaped link"
+  ansible.builtin.set_fact:
+    nd4x_gathered_roundtrip_config: >-
+      {{
+        nd4x_gathered_result.first_run_result.gathered
+        | selectattr('src_fabric_name', 'equalto', nd4x_gathered_src_fabric)
+        | selectattr('dst_fabric_name', 'equalto', nd4x_gathered_dst_fabric)
+        | selectattr(
+            'src_interface_name',
+            'in',
+            nd4x_create_config | map(attribute='src_interface_name') | list
+          )
+        | selectattr('config_data.policy_type', 'equalto', nd4x_policy_name)
+        | list
+      }}
+
+- name: "GATHERED {{ nd4x_policy_name }}: Verify every gathered link value"
+  ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+  vars:
+    nd4x_assert_label: "{{ nd4x_policy_name }} GATHERED"
+    nd4x_assert_collection: "{{ nd4x_gathered_result.first_run_result.gathered }}"
+    nd4x_expected_links: "{{ nd4x_create_config }}"
+    nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+- name: "GATHERED {{ nd4x_policy_name }}: Verify exact REST scoped state"
+  ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+  vars:
+    nd4x_rest_assert_label: "{{ nd4x_policy_name }} GATHERED"
+    nd4x_rest_query_results: "{{ nd4x_gathered_result.nd_query_results }}"
+    nd4x_rest_expected_links: "{{ nd4x_create_config }}"
+    nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+
+- name: "GATHERED {{ nd4x_policy_name }}: Re-apply gathered link"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_links
+    state: merged
+    config: "{{ nd4x_gathered_roundtrip_config }}"
+    common_args: "{{ nd4x_common_args }}"
+    module_args: "{{ nd4x_module_args | default({}) }}"
+    expected:
+      check_mode:
+        changed: false
+        failed: false
+      apply:
+        changed: false
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    check_mode_queries: "{{ nd4x_check_mode_queries }}"
+    nd_queries: "{{ nd4x_gathered_nd_queries }}"
+  register: nd4x_gathered_roundtrip
+
+- name: "GATHERED {{ nd4x_policy_name }}: Verify round-trip idempotency"
+  ansible.builtin.assert:
+    that:
+      - not nd4x_gathered_roundtrip.check_mode_result.changed | bool
+      - not nd4x_gathered_roundtrip.first_run_result.changed | bool
+      - not nd4x_gathered_roundtrip.second_run_result.changed | bool
