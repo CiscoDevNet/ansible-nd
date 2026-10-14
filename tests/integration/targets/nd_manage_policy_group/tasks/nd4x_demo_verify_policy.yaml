@@ -1,0 +1,41 @@
+---
+- name: "ND4X VERIFY: Gather policy state after apply"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_policy_group
+    state: gathered
+    common_args: "{{ nd4x_policy_group_common_args }}"
+    config: "{{ nd4x_verify_config }}"
+    expected:
+      check_mode: {changed: false, failed: false}
+      apply: {changed: false, failed: false}
+      idempotency: {changed: false, failed: false}
+    check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+  register: nd4x_verify_result
+
+- name: "ND4X VERIFY: Assert expected gathered policy count"
+  ansible.builtin.assert:
+    that:
+      - nd4x_verify_result.first_run_result.gathered | default([]) | length == nd4x_verify_expected | length
+
+- name: "ND4X VERIFY: Assert exact gathered policy fields"
+  vars:
+    matching_groups: >-
+      {{ nd4x_verify_result.first_run_result.gathered | default([])
+         | selectattr('description', 'equalto', item.description) | list }}
+  ansible.builtin.assert:
+    that:
+      - matching_groups | length == 1
+      - matching_groups[0].template_name == item.template_name
+      - item.switch_ids is not defined or matching_groups[0].switch_ids | sort == item.switch_ids | sort
+      - item.priority is not defined or matching_groups[0].priority == item.priority
+      - item.template_inputs is not defined or matching_groups[0].template_inputs == item.template_inputs
+  loop: "{{ nd4x_verify_expected }}"
+  loop_control:
+    label: "{{ item.description }}"
+
+- name: "ND4X VERIFY: Verify switch-side policy effects when requested"
+  ansible.builtin.include_tasks: nd4x_demo_verify_switch_config.yaml
+  loop: "{{ nd4x_verify_switch_config_expectations | default([]) }}"
+  loop_control:
+    loop_var: nd4x_switch_config_expectation
+  when: nd4x_verify_switch_config_expectations is defined

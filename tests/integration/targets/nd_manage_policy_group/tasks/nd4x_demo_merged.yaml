@@ -1,0 +1,585 @@
+---
+- name: Run nd_manage_policy_group merged-state harness scenarios
+  block:
+    - name: "MERGED TC1 SETUP: Remove harness-owned policy groups"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: true
+
+    - name: "MERGED TC1 - Create switch_freeform policy group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-system vlan long-name"
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "system vlan long-name"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc1
+
+    - name: "MERGED TC1 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc1.first_run_result.changed | bool
+          - >-
+            nd4x_merged_tc1.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-system vlan long-name')
+            | list | length == 1
+          - >-
+            (nd4x_merged_tc1.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-system vlan long-name')
+            | first).template_name == 'switch_freeform'
+          - >-
+            (nd4x_merged_tc1.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-system vlan long-name')
+            | first).priority == 110
+          - >-
+            (nd4x_merged_tc1.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-system vlan long-name')
+            | first).switch_ids == [test_switch_serial_1]
+          - >-
+            (nd4x_merged_tc1.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-system vlan long-name')
+            | first).template_inputs.CONF == 'system vlan long-name'
+
+    - name: "MERGED TC1 - Independently verify applied policy state"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-system vlan long-name"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-system vlan long-name"
+            template_name: switch_freeform
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "system vlan long-name"}
+
+    - name: "MERGED TC2 - Verify harness idempotence"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_merged_tc1.second_run_result.changed | bool
+          - nd4x_merged_tc1.idempotency_attempts == 1
+
+    - name: "MERGED TC3-PRE - Enable BFD feature"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-BFD feature"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              featureName: bfd
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_bfd_feature
+
+    - name: "MERGED TC3-PRE - Independently verify BFD feature deployment"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-BFD feature"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-BFD feature"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: bfd}
+        nd4x_verify_switch_config_expectations:
+          - switch_id: "{{ nd4x_policy_group_switch_id_1 }}"
+            present:
+              - "feature bfd"
+
+    - name: "MERGED TC3 - Create second switch_freeform group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-BFD timers"
+            priority: 115
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc3
+
+    - name: "MERGED TC3 - Verify second group"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc3.first_run_result.changed | bool
+          - >-
+            nd4x_merged_tc3.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-BFD timers') | list | length == 1
+          - >-
+            (nd4x_merged_tc3.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-BFD timers')
+            | first).template_name == 'switch_freeform'
+          - >-
+            (nd4x_merged_tc3.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-BFD timers')
+            | first).priority == 115
+          - >-
+            (nd4x_merged_tc3.first_run_result.after
+            | selectattr('description', 'equalto', 'ND4X-PG-MERGED-BFD timers')
+            | first).template_inputs.CONF is search('bfd interval 250')
+
+    - name: "MERGED TC3 - Independently verify applied policy state"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-BFD timers"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-BFD timers"
+            template_name: switch_freeform
+            priority: 115
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "bfd interval 250 min_rx 250 multiplier 3"}
+
+    - name: "MERGED TC4 - Update template_inputs and preserve priority"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-system vlan long-name"
+            template_inputs:
+              CONF: |-
+                system vlan long-name
+                no ip domain-lookup
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc4
+
+    - name: "MERGED TC4 - Verify update and preserved priority"
+      vars:
+        tc4_groups: >-
+          {{ nd4x_merged_tc4.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-MERGED-system vlan long-name') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc4.first_run_result.changed | bool
+          - tc4_groups | length == 1
+          - tc4_groups[0].template_name == 'switch_freeform'
+          - tc4_groups[0].priority == 110
+          - tc4_groups[0].switch_ids == [test_switch_serial_1]
+          - tc4_groups[0].template_inputs.CONF == "system vlan long-name\nno ip domain-lookup"
+
+    - name: "MERGED TC4 - Independently verify applied update"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-system vlan long-name"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-system vlan long-name"
+            template_name: switch_freeform
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "system vlan long-name\nno ip domain-lookup"
+
+    - name: "MERGED TC5 - Verify idempotence after template_inputs update"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_merged_tc4.second_run_result.changed | bool
+
+    - name: "MERGED TC6 - Update BFD template_inputs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-BFD timers"
+            template_inputs:
+              CONF: "bfd interval 500 min_rx 500 multiplier 5"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc6
+
+    - name: "MERGED TC6 - Verify template_inputs update"
+      vars:
+        tc6_groups: >-
+          {{ nd4x_merged_tc6.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-MERGED-BFD timers') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc6.first_run_result.changed | bool
+          - tc6_groups | length == 1
+          - tc6_groups[0].template_name == 'switch_freeform'
+          - tc6_groups[0].template_inputs.CONF == 'bfd interval 500 min_rx 500 multiplier 5'
+
+    - name: "MERGED TC6 - Independently verify applied update"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-MERGED-BFD timers"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-BFD timers"
+            template_name: switch_freeform
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "bfd interval 500 min_rx 500 multiplier 5"}
+
+    - name: "MERGED TC7 - Bulk create two feature_enable groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-Enable LACP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-Enable LLDP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc7
+
+    - name: "MERGED TC7 - Verify bulk creation"
+      vars:
+        bulk_groups: >-
+          {{ nd4x_merged_tc7.first_run_result.after
+             | selectattr('description', 'match', '^ND4X-PG-MERGED-Enable') | list }}
+      ansible.builtin.assert:
+        that:
+          - bulk_groups | length == 2
+          - bulk_groups | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LACP') | list | length == 1
+          - bulk_groups | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LLDP') | list | length == 1
+          - bulk_groups | selectattr('template_name', 'equalto', 'feature_enable') | list | length == 2
+          - >-
+            (bulk_groups | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LACP') | first).switch_ids == [test_switch_serial_1]
+          - >-
+            (bulk_groups | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LACP') | first).template_inputs.featureName == 'lacp'
+          - >-
+            (bulk_groups | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LLDP') | first).switch_ids == [test_switch_serial_1]
+          - >-
+            (bulk_groups | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LLDP') | first).template_inputs.featureName == 'lldp'
+
+    - name: "MERGED TC7 - Independently verify both bulk policies"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-Enable LACP"
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-Enable LLDP"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-Enable LACP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - description: "ND4X-PG-MERGED-Enable LLDP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+
+    - name: "MERGED TC8 - Verify bulk idempotence"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_merged_tc7.second_run_result.changed | bool
+
+    - name: "MERGED TC9 - Missing description must fail"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+        expected:
+          apply: {failed: true}
+      register: nd4x_merged_tc9
+
+    - name: "MERGED TC9 - Verify failure message"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc9.first_run_result.failed | bool
+          - "'description' in (nd4x_merged_tc9.first_run_result.msg | default(''))"
+
+    - name: "MERGED TC10 - Create clock_timezone group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-MERGED-Timezone CET"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc10
+
+    - name: "MERGED TC10 - Verify creation"
+      vars:
+        tc10_groups: >-
+          {{ nd4x_merged_tc10.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Timezone CET') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc10.first_run_result.changed | bool
+          - tc10_groups | length == 1
+          - tc10_groups[0].template_name == 'clock_timezone'
+          - tc10_groups[0].switch_ids == [test_switch_serial_1]
+          - tc10_groups[0].template_inputs.TIME_ZONE == 'CET'
+          - tc10_groups[0].template_inputs.HOUR_OFFSET == 1
+          - tc10_groups[0].template_inputs.MINUTE_OFFSET == 0
+
+    - name: "MERGED TC10 - Independently verify applied policy state"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: clock_timezone
+            description: "ND4X-PG-MERGED-Timezone CET"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-Timezone CET"
+            template_name: clock_timezone
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+    - name: "MERGED TC11 - Update clock_timezone HOUR_OFFSET"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-MERGED-Timezone CET"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 5
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc11
+
+    - name: "MERGED TC11 - Verify update"
+      vars:
+        tc11_groups: >-
+          {{ nd4x_merged_tc11.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Timezone CET') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc11.first_run_result.changed | bool
+          - tc11_groups | length == 1
+          - tc11_groups[0].template_name == 'clock_timezone'
+          - tc11_groups[0].template_inputs.TIME_ZONE == 'CET'
+          - tc11_groups[0].template_inputs.HOUR_OFFSET == 5
+          - tc11_groups[0].template_inputs.MINUTE_OFFSET == 0
+
+    - name: "MERGED TC11 - Independently verify applied update"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: clock_timezone
+            description: "ND4X-PG-MERGED-Timezone CET"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-Timezone CET"
+            template_name: clock_timezone
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 5
+              MINUTE_OFFSET: 0
+
+    - name: "MERGED TC12 - Verify clock_timezone idempotence"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_merged_tc11.second_run_result.changed | bool
+
+    - name: "MERGED TC13 - Update switch membership"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-Enable LACP"
+            switch_ids:
+              - "{{ test_switch_serial_2 }}"
+              - "{{ test_switch_serial_3 }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc13
+
+    - name: "MERGED TC13 - Verify membership update"
+      vars:
+        tc13_groups: >-
+          {{ nd4x_merged_tc13.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-MERGED-Enable LACP') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc13.first_run_result.changed | bool
+          - tc13_groups | length == 1
+          - tc13_groups[0].template_name == 'feature_enable'
+          - tc13_groups[0].switch_ids | sort == [test_switch_serial_2, test_switch_serial_3] | sort
+          - tc13_groups[0].template_inputs.featureName == 'lacp'
+
+    - name: "MERGED TC13 - Independently verify applied membership"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-Enable LACP"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-Enable LACP"
+            template_name: feature_enable
+            switch_ids:
+              - "{{ test_switch_serial_2 }}"
+              - "{{ test_switch_serial_3 }}"
+            template_inputs: {featureName: lacp}
+
+    - name: "MERGED TC14 - Verify membership idempotence"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_merged_tc13.second_run_result.changed | bool
+
+    - name: "MERGED TC15 - Create mixed-update policy group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-split membership"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc15
+
+    - name: "MERGED TC15 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc15.first_run_result.changed | bool
+
+    - name: "MERGED TC15 - Independently verify applied policy state"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-split membership"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-split membership"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+
+    - name: "MERGED TC16 - Update membership and template_inputs together"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-split membership"
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {featureName: lldp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_merged_tc16
+
+    - name: "MERGED TC16 - Verify final mixed update"
+      vars:
+        mixed_update_groups: >-
+          {{ nd4x_merged_tc16.first_run_result.after
+             | selectattr('description', 'equalto', 'ND4X-PG-MERGED-split membership') | list }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_tc16.first_run_result.changed | bool
+          - mixed_update_groups | length == 1
+          - mixed_update_groups[0].switch_ids | sort == [test_switch_serial_1, test_switch_serial_2] | sort
+          - mixed_update_groups[0].template_inputs.featureName == 'lldp'
+
+    - name: "MERGED TC16 - Independently verify final mixed update"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-MERGED-split membership"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-MERGED-split membership"
+            template_name: feature_enable
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {featureName: lldp}
+        nd4x_verify_switch_config_expectations:
+          - switch_id: "{{ nd4x_policy_group_switch_id_1 }}"
+            present:
+              - "feature lldp"
+              - "bfd interval 500 min_rx 500 multiplier 5"
+              - "system vlan long-name"
+          - switch_id: "{{ nd4x_policy_group_switch_id_2 }}"
+            present:
+              - "feature lldp"
+          - switch_id: "{{ nd4x_policy_group_switch_id_3 }}"
+            present:
+              - "feature lldp"
+  always:
+    - name: "MERGED - Final cleanup"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: false
+  module_defaults:
+    cisco.nd.nd4x_module_test:
+      nd_queries: "{{ nd4x_policy_group_nd_queries }}"
