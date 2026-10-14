@@ -1,0 +1,176 @@
+---
+- name: Run nd_manage_extended_community_list overridden harness tests
+  block:
+    - name: "OVERRIDDEN PREFLIGHT: Initialize complete extended community list inventory"
+      ansible.builtin.set_fact:
+        nd4x_extended_community_list_inventory: []
+        nd4x_extended_community_list_inventory_offset: 0
+        nd4x_extended_community_list_inventory_pages: 0
+        nd4x_extended_community_list_inventory_page_size: 100
+        nd4x_extended_community_list_inventory_max_pages: 10000
+
+    - name: "OVERRIDDEN PREFLIGHT: Read every extended community list inventory page"
+      ansible.builtin.include_tasks: nd4x_demo_overridden_inventory_page.yaml
+
+    - name: "OVERRIDDEN PREFLIGHT: Build reserved API identities"
+      ansible.builtin.set_fact:
+        nd4x_extended_community_list_reserved_identities: >-
+          {{
+            [
+              extended_community_list_standard.name,
+              extended_community_list_expanded.name,
+              extended_community_list_overridden.name
+            ]
+            + (
+                [extended_community_list_tenant_identity_name]
+                if nd_test_tenant_name_a is defined
+                or nd_test_tenant_name_b is defined else []
+              )
+            + (
+                [
+                  nd_test_tenant_name_a
+                  ~ '~'
+                  ~ extended_community_list_tenant_identity_name
+                ]
+                if nd_test_tenant_name_a is defined else []
+              )
+            + (
+                [
+                  nd_test_tenant_name_b
+                  ~ '~'
+                  ~ extended_community_list_tenant_identity_name
+                ]
+                if nd_test_tenant_name_b is defined else []
+              )
+          }}
+
+    - name: "OVERRIDDEN PREFLIGHT: Initialize current API identities"
+      ansible.builtin.set_fact:
+        nd4x_extended_community_list_current_identities: []
+
+    - name: "OVERRIDDEN PREFLIGHT: Normalize current API identities"
+      ansible.builtin.set_fact:
+        nd4x_extended_community_list_current_identities: >-
+          {{
+            nd4x_extended_community_list_current_identities
+            + [
+                (
+                  (
+                    nd4x_community_list.tenantName
+                    | default(nd4x_community_list.tenant_name | default(''), true)
+                  )
+                  ~ '~' ~ nd4x_community_list.name
+                )
+                if (
+                  (
+                    nd4x_community_list.tenantName
+                    | default(nd4x_community_list.tenant_name | default(''), true)
+                  )
+                  | length > 0
+                  and not nd4x_community_list.name.startswith(
+                    (
+                      nd4x_community_list.tenantName
+                      | default(nd4x_community_list.tenant_name | default(''), true)
+                    )
+                    ~ '~'
+                  )
+                )
+                else nd4x_community_list.name
+              ]
+          }}
+      loop: >-
+        {{ nd4x_extended_community_list_inventory }}
+      loop_control:
+        loop_var: nd4x_community_list
+
+    - name: "OVERRIDDEN PREFLIGHT: Reject unreserved controller identities"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              nd4x_extended_community_list_current_identities
+              | unique
+              | list
+              | length
+            ) == (nd4x_extended_community_list_current_identities | length)
+          - >-
+            (
+              nd4x_extended_community_list_current_identities
+              | difference(nd4x_extended_community_list_reserved_identities)
+              | length
+            ) == 0
+        fail_msg: >-
+          Refusing destructive overridden coverage because the test fabric
+          inventory is incomplete, contains duplicate page results, or contains
+          an extended community list outside the reserved harness identities
+          (tenant~name, or name for the default tenant):
+          {{ nd4x_extended_community_list_current_identities
+             | difference(nd4x_extended_community_list_reserved_identities) }}
+
+    - name: "OVERRIDDEN SETUP: Create extra extended community lists"
+      cisco.nd.nd_manage_extended_community_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_standard }}"
+          - "{{ extended_community_list_expanded }}"
+        state: merged
+
+    - name: "OVERRIDDEN: Keep only the requested extended community list"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_extended_community_list
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_overridden }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_extended_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained overridden extended community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_overridden.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ extended_community_list_overridden.name }}"
+              - jsonpath: "$.current.entries[0].nonTransitiveGenericExtendedCollection[0]"
+                equals: "64512:789"
+          - name: Validate standard list was removed by override
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_standard.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate expanded list was removed by override
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_expanded.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: overridden_lists
+
+    - name: "OVERRIDDEN: Verify only requested test list remains"
+      ansible.builtin.assert:
+        that:
+          - overridden_lists.first_run_result.after | selectattr('name', 'equalto', extended_community_list_overridden.name) | list | length == 1
+          - overridden_lists.first_run_result.after | selectattr('name', 'in', [extended_community_list_standard.name, extended_community_list_expanded.name]) | list | length == 0
+          - overridden_lists.nd_query_results | length == 3
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved extended community lists"
+      ansible.builtin.include_tasks: setup.yaml

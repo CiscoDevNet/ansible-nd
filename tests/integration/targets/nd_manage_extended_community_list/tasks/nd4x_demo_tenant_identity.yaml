@@ -1,0 +1,77 @@
+---
+- name: Run nd_manage_extended_community_list tenant identity harness tests
+  block:
+    - name: "TENANT IDENTITY SETUP: Remove tenant-scoped test lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "TENANT IDENTITY: Create same-name lists in two tenants"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_extended_community_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ extended_community_list_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            type: standard
+            entries:
+              - sequence_number: 10
+                action: permit
+                route_target_collection:
+                  - "65000:101"
+          - name: "{{ extended_community_list_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            type: standard
+            entries:
+              - sequence_number: 10
+                action: permit
+                route_target_collection:
+                  - "65000:102"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_extended_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate tenant A extended community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ nd_test_tenant_name_a
+              }}~{{ extended_community_list_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.tenantName"
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: "$.current.entries[0].routeTargetCollection[0]"
+                equals: "65000:101"
+          - name: Validate tenant B extended community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ nd_test_tenant_name_b
+              }}~{{ extended_community_list_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.tenantName"
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: "$.current.entries[0].routeTargetCollection[0]"
+                equals: "65000:102"
+      register: tenant_identity
+
+    - name: "TENANT IDENTITY: Verify distinct tenant objects"
+      ansible.builtin.assert:
+        that:
+          - tenant_identity.first_run_result.after | selectattr('name', 'equalto', extended_community_list_tenant_identity_name) | selectattr('tenant_name', 'in', [nd_test_tenant_name_a, nd_test_tenant_name_b]) | list | length == 2
+          - tenant_identity.nd_query_results | length == 2
+
+  always:
+    - name: "TENANT IDENTITY CLEANUP: Remove tenant-scoped test lists"
+      ansible.builtin.include_tasks: setup.yaml
