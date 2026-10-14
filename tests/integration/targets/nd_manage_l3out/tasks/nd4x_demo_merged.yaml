@@ -1,0 +1,682 @@
+---
+- name: Run nd_manage_l3out merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Initialize cleanup ownership list"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: []
+      tags:
+        - always
+
+    - name: "MERGED CREATE: Create BGP L3Out with routed interfaces"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_bgp }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created BGP L3Out
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_bgp_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_bgp_name }}"
+              - jsonpath: "$.current.fabric1Name"
+                equals: "{{ test_fabric1_name }}"
+              - jsonpath: "$.current.fabric2Name"
+                equals: "{{ test_fabric2_name }}"
+              - jsonpath: "$.current.vrf1Name"
+                equals: "{{ test_vrf1_name }}"
+              - jsonpath: "$.current.vrf2Name"
+                equals: "{{ test_vrf2_name }}"
+              - jsonpath: "$.current.configuredFabrics"
+                equals: both
+              - jsonpath: "$.current.ipVersion"
+                equals: ipv4
+              - jsonpath: "$.current.connectivityDetails.routingInterfaceType"
+                equals: routed
+              - jsonpath: "$.current.connectivityDetails.links[0].mtu"
+                equals: 9216
+              - jsonpath: "$.current.connectivityDetails.links[0].ipv4MaskLength"
+                equals: 30
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.switchId"
+                equals: "{{ test_switch1_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.interfaceName"
+                equals: "{{ test_switch1_interface }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.ipv4Address"
+                equals: 10.0.0.1
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.switchId"
+                equals: "{{ test_switch2_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.interfaceName"
+                equals: "{{ test_switch2_interface }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.ipv4Address"
+                equals: 10.0.0.2
+              - jsonpath: "$.current.routingDetails.routingProtocol"
+                equals: bgp
+              - jsonpath: "$.current.routingDetails.auth"
+                equals: false
+              - jsonpath: "$.current.routingDetails.bfd"
+                equals: true
+              - jsonpath: "$.current.routingDetails.holdInterval"
+                equals: 180
+              - jsonpath: "$.current.routingDetails.keepAliveInterval"
+                equals: 60
+              - jsonpath: "$.current.routingDetails.fabric1Details.advertiseDefaultRoute"
+                equals: true
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv4PeeringDetails.ipv4RouteMapIn"
+                equals: "{{ l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in }}"
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv4PeeringDetails.ipv4RouteMapOut"
+                equals: "{{ l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out }}"
+      register: merged_bgp_create
+
+    - name: "MERGED CREATE: Prove BGP L3Out ownership before cleanup registration"
+      ansible.builtin.assert:
+        that:
+          - not merged_bgp_create.first_run_result.failed | default(false) | bool
+          - merged_bgp_create.first_run_result.changed | bool
+          - >-
+            (merged_bgp_create.first_run_result.before | default([])
+            | selectattr('name', 'equalto', test_l3out_bgp_name)
+            | list | length) == 0
+          - >-
+            (merged_bgp_create.first_run_result.after | default([])
+            | selectattr('name', 'equalto', test_l3out_bgp_name)
+            | list | length) == 1
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_bgp_name }}' for cleanup because
+          this run did not prove that it created the L3Out from an absent
+          before-state.
+
+    - name: "MERGED CREATE: Register created BGP L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: >-
+          {{ nd4x_l3out_owned_names + [{'name': test_l3out_bgp_name}] }}
+
+    - name: "MERGED CREATE: Verify BGP L3Out returned configuration"
+      ansible.builtin.assert:
+        vars:
+          merged_bgp_after: >-
+            {{ merged_bgp_create.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_bgp_name)
+            | first | default({}) }}
+        that:
+          - merged_bgp_create.check_mode_result.changed | bool
+          - merged_bgp_create.first_run_result.changed | bool
+          - >-
+            merged_bgp_create.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_bgp_name)
+            | list
+            | length == 1
+          - merged_bgp_after.fabric1_name == test_fabric1_name
+          - merged_bgp_after.fabric2_name == test_fabric2_name
+          - merged_bgp_after.vrf1_name == test_vrf1_name
+          - merged_bgp_after.vrf2_name == test_vrf2_name
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_bgp_after.tenant1_name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_bgp_after.tenant2_name == test_tenant2_name
+          - merged_bgp_after.configured_fabrics == 'both'
+          - merged_bgp_after.ip_version == 'ipv4'
+          - merged_bgp_after.connectivity_details.routing_interface_type == 'routed'
+          - merged_bgp_after.connectivity_details.links | length == 1
+          - merged_bgp_after.connectivity_details.links[0].mtu == 9216
+          - merged_bgp_after.connectivity_details.links[0].ipv4_mask_length == 30
+          - merged_bgp_after.connectivity_details.links[0].switch1_details.switch_id == test_switch1_id
+          - merged_bgp_after.connectivity_details.links[0].switch1_details.interface_name == test_switch1_interface
+          - merged_bgp_after.connectivity_details.links[0].switch1_details.interface_ipv4_address == '10.0.0.1'
+          - merged_bgp_after.connectivity_details.links[0].switch2_details.switch_id == test_switch2_id
+          - merged_bgp_after.connectivity_details.links[0].switch2_details.interface_name == test_switch2_interface
+          - merged_bgp_after.connectivity_details.links[0].switch2_details.interface_ipv4_address == '10.0.0.2'
+          - merged_bgp_after.routing_details.routing_protocol == 'bgp'
+          - merged_bgp_after.routing_details.bgp.auth == false
+          - merged_bgp_after.routing_details.bgp.bfd == true
+          - merged_bgp_after.routing_details.bgp.hold_interval == 180
+          - merged_bgp_after.routing_details.bgp.keep_alive_interval == 60
+          - merged_bgp_after.routing_details.bgp.fabric1_details.advertise_default_route == true
+          - merged_bgp_after.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in == l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in
+          - merged_bgp_after.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out == l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out
+          - merged_bgp_create.second_run_result.changed == false
+
+    - name: "MERGED CREATE: Verify optional BGP tenant fields"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_bgp_create.nd_query_results[0].result.current.tenant1Name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_bgp_create.nd_query_results[0].result.current.tenant2Name == test_tenant2_name
+      when: nd4x_l3out_tenant1_assert_enabled | bool or nd4x_l3out_tenant2_assert_enabled | bool
+
+    - name: "MERGED IDEMPOTENT: Re-apply BGP L3Out through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_bgp }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate idempotent BGP L3Out
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_bgp_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_bgp_name }}"
+              - jsonpath: "$.current.routingDetails.holdInterval"
+                equals: 180
+      register: merged_bgp_idempotent
+
+    - name: "MERGED IDEMPOTENT: Verify predictive and real no-change results"
+      ansible.builtin.assert:
+        that:
+          - not merged_bgp_idempotent.check_mode_result.changed | bool
+          - not merged_bgp_idempotent.first_run_result.changed | bool
+          - not merged_bgp_idempotent.second_run_result.changed | bool
+
+    - name: "MERGED CREATE: Create static L3Out with subInterface"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_static }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created static L3Out
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_static_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_static_name }}"
+              - jsonpath: "$.current.fabric1Name"
+                equals: "{{ test_fabric1_name }}"
+              - jsonpath: "$.current.fabric2Name"
+                equals: "{{ test_fabric2_name }}"
+              - jsonpath: "$.current.vrf1Name"
+                equals: "{{ test_vrf1_name }}"
+              - jsonpath: "$.current.vrf2Name"
+                equals: "{{ test_vrf2_name }}"
+              - jsonpath: "$.current.configuredFabrics"
+                equals: fabric1
+              - jsonpath: "$.current.ipVersion"
+                equals: ipv4
+              - jsonpath: "$.current.connectivityDetails.routingInterfaceType"
+                equals: subInterface
+              - jsonpath: "$.current.connectivityDetails.links[0].dot1qId"
+                equals: 100
+              - jsonpath: "$.current.connectivityDetails.links[0].mtu"
+                equals: 1500
+              - jsonpath: "$.current.connectivityDetails.links[0].ipv4MaskLength"
+                equals: 24
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.switchId"
+                equals: "{{ test_switch1_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.interfaceName"
+                equals: "{{ test_switch1_subif }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.ipv4Address"
+                equals: 192.168.100.1
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.interfaceDescription"
+                equals: Link to external network
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.switchId"
+                equals: "{{ test_switch2_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.interfaceName"
+                equals: "{{ test_switch2_subif }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.ipv4Address"
+                equals: 192.168.100.2
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.interfaceDescription"
+                equals: Link from DC1
+              - jsonpath: "$.current.routingDetails.routingProtocol"
+                equals: static
+              - jsonpath: "$.current.routingDetails.fabric1StaticRoutes[0].ipPrefix"
+                equals: 0.0.0.0/0
+              - jsonpath: "$.current.routingDetails.fabric1StaticRoutes[0].ipVersion"
+                equals: ipv4
+              - jsonpath: "$.current.routingDetails.fabric1StaticRoutes[0].nextHop"
+                equals: 192.168.100.254
+              - jsonpath: "$.current.routingDetails.fabric1StaticRoutes[0].switchIds[0]"
+                equals: "{{ test_switch1_id }}"
+              - jsonpath: "$.current.routingDetails.fabric1StaticRoutes[0].routePreference"
+                equals: 1
+      register: merged_static_create
+
+    - name: "MERGED CREATE: Prove static L3Out ownership before cleanup registration"
+      ansible.builtin.assert:
+        that:
+          - not merged_static_create.first_run_result.failed | default(false) | bool
+          - merged_static_create.first_run_result.changed | bool
+          - >-
+            (merged_static_create.first_run_result.before | default([])
+            | selectattr('name', 'equalto', test_l3out_static_name)
+            | list | length) == 0
+          - >-
+            (merged_static_create.first_run_result.after | default([])
+            | selectattr('name', 'equalto', test_l3out_static_name)
+            | list | length) == 1
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_static_name }}' for cleanup
+          because this run did not prove that it created the L3Out from an
+          absent before-state.
+
+    - name: "MERGED CREATE: Register created static L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: >-
+          {{ nd4x_l3out_owned_names + [{'name': test_l3out_static_name}] }}
+
+    - name: "MERGED CREATE: Verify static L3Out returned configuration"
+      ansible.builtin.assert:
+        vars:
+          merged_static_after: >-
+            {{ merged_static_create.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_static_name)
+            | first | default({}) }}
+        that:
+          - merged_static_create.check_mode_result.changed | bool
+          - merged_static_create.first_run_result.changed | bool
+          - >-
+            merged_static_create.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_static_name)
+            | list
+            | length == 1
+          - merged_static_after.fabric1_name == test_fabric1_name
+          - merged_static_after.fabric2_name == test_fabric2_name
+          - merged_static_after.vrf1_name == test_vrf1_name
+          - merged_static_after.vrf2_name == test_vrf2_name
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_static_after.tenant1_name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_static_after.tenant2_name == test_tenant2_name
+          - merged_static_after.configured_fabrics == 'fabric1'
+          - merged_static_after.ip_version == 'ipv4'
+          - merged_static_after.connectivity_details.routing_interface_type == 'subInterface'
+          - merged_static_after.connectivity_details.links | length == 1
+          - merged_static_after.connectivity_details.links[0].vlan_id == 100
+          - merged_static_after.connectivity_details.links[0].mtu == 1500
+          - merged_static_after.connectivity_details.links[0].ipv4_mask_length == 24
+          - merged_static_after.connectivity_details.links[0].switch1_details.switch_id == test_switch1_id
+          - merged_static_after.connectivity_details.links[0].switch1_details.interface_name == test_switch1_subif
+          - merged_static_after.connectivity_details.links[0].switch1_details.interface_ipv4_address == '192.168.100.1'
+          - merged_static_after.connectivity_details.links[0].switch1_details.interface_description == 'Link to external network'
+          - merged_static_after.connectivity_details.links[0].switch2_details.switch_id == test_switch2_id
+          - merged_static_after.connectivity_details.links[0].switch2_details.interface_name == test_switch2_subif
+          - merged_static_after.connectivity_details.links[0].switch2_details.interface_ipv4_address == '192.168.100.2'
+          - merged_static_after.connectivity_details.links[0].switch2_details.interface_description == 'Link from DC1'
+          - merged_static_after.routing_details.routing_protocol == 'static'
+          - merged_static_after.routing_details.static.fabric1_static_routes | length == 1
+          - merged_static_after.routing_details.static.fabric1_static_routes[0].ip_version == 'ipv4'
+          - merged_static_after.routing_details.static.fabric1_static_routes[0].ip_prefix == '0.0.0.0/0'
+          - merged_static_after.routing_details.static.fabric1_static_routes[0].next_hop == '192.168.100.254'
+          - merged_static_after.routing_details.static.fabric1_static_routes[0].switch_ids == [test_switch1_id]
+          - merged_static_after.routing_details.static.fabric1_static_routes[0].route_preference == 1
+          - merged_static_create.second_run_result.changed == false
+
+    - name: "MERGED CREATE: Verify optional static tenant fields"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_static_create.nd_query_results[0].result.current.tenant1Name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_static_create.nd_query_results[0].result.current.tenant2Name == test_tenant2_name
+      when: nd4x_l3out_tenant1_assert_enabled | bool or nd4x_l3out_tenant2_assert_enabled | bool
+
+    - name: "MERGED CREATE: Create dual-stack SVI L3Out"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_svi }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created dual-stack SVI L3Out
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_svi_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_svi_name }}"
+              - jsonpath: "$.current.fabric1Name"
+                equals: "{{ test_fabric1_name }}"
+              - jsonpath: "$.current.fabric2Name"
+                equals: "{{ test_fabric2_name }}"
+              - jsonpath: "$.current.vrf1Name"
+                equals: "{{ test_vrf1_name }}"
+              - jsonpath: "$.current.vrf2Name"
+                equals: "{{ test_vrf2_name }}"
+              - jsonpath: "$.current.configuredFabrics"
+                equals: both
+              - jsonpath: "$.current.ipVersion"
+                equals: both
+              - jsonpath: "$.current.connectivityDetails.routingInterfaceType"
+                equals: svi
+              - jsonpath: "$.current.connectivityDetails.links[0].vlanId"
+                equals: "{{ l3out_svi.connectivity_details.links[0].vlan_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].mtu"
+                equals: 9216
+              - jsonpath: "$.current.connectivityDetails.links[0].ipv4MaskLength"
+                equals: 24
+              - jsonpath: "$.current.connectivityDetails.links[0].ipv6PrefixLength"
+                equals: 64
+              - jsonpath: "$.current.connectivityDetails.links[0].ipv4Pim"
+                equals: true
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.switchId"
+                equals: "{{ test_switch1_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.interfaceName"
+                equals: "{{ l3out_svi.connectivity_details.links[0].switch1_details.interface_name }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.ipv4Address"
+                equals: 10.200.0.1
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.ipv6Address"
+                equals: 2001:db8:200::1
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.switchId"
+                equals: "{{ test_switch2_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.interfaceName"
+                equals: "{{ l3out_svi.connectivity_details.links[0].switch2_details.interface_name }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.ipv4Address"
+                equals: 10.200.0.2
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.ipv6Address"
+                equals: 2001:db8:200::2
+              - jsonpath: "$.current.routingDetails.routingProtocol"
+                equals: bgp
+              - jsonpath: "$.current.routingDetails.bfd"
+                equals: true
+              - jsonpath: "$.current.routingDetails.fabric1Details.advertiseHostRoutes"
+                equals: true
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv4PeeringDetails.ipv4RouteMapIn"
+                equals: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in }}"
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv4PeeringDetails.ipv4RouteMapOut"
+                equals: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out }}"
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv6PeeringDetails.ipv6RouteMapIn"
+                equals: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_in }}"
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv6PeeringDetails.ipv6RouteMapOut"
+                equals: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_out }}"
+      register: merged_svi_create
+
+    - name: "MERGED CREATE: Prove SVI L3Out ownership before cleanup registration"
+      ansible.builtin.assert:
+        that:
+          - not merged_svi_create.first_run_result.failed | default(false) | bool
+          - merged_svi_create.first_run_result.changed | bool
+          - >-
+            (merged_svi_create.first_run_result.before | default([])
+            | selectattr('name', 'equalto', test_l3out_svi_name)
+            | list | length) == 0
+          - >-
+            (merged_svi_create.first_run_result.after | default([])
+            | selectattr('name', 'equalto', test_l3out_svi_name)
+            | list | length) == 1
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_svi_name }}' for cleanup because
+          this run did not prove that it created the L3Out from an absent
+          before-state.
+
+    - name: "MERGED CREATE: Register created SVI L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: >-
+          {{ nd4x_l3out_owned_names + [{'name': test_l3out_svi_name}] }}
+
+    - name: "MERGED CREATE: Verify SVI L3Out returned configuration"
+      ansible.builtin.assert:
+        vars:
+          merged_svi_after: >-
+            {{ merged_svi_create.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_svi_name)
+            | first | default({}) }}
+        that:
+          - merged_svi_create.check_mode_result.changed | bool
+          - merged_svi_create.first_run_result.changed | bool
+          - >-
+            merged_svi_create.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_svi_name)
+            | list
+            | length == 1
+          - merged_svi_after.fabric1_name == test_fabric1_name
+          - merged_svi_after.fabric2_name == test_fabric2_name
+          - merged_svi_after.vrf1_name == test_vrf1_name
+          - merged_svi_after.vrf2_name == test_vrf2_name
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_svi_after.tenant1_name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_svi_after.tenant2_name == test_tenant2_name
+          - merged_svi_after.configured_fabrics == 'both'
+          - merged_svi_after.ip_version == 'both'
+          - merged_svi_after.connectivity_details.routing_interface_type == 'svi'
+          - merged_svi_after.connectivity_details.links | length == 1
+          - merged_svi_after.connectivity_details.links[0].vlan_id == l3out_svi.connectivity_details.links[0].vlan_id
+          - merged_svi_after.connectivity_details.links[0].mtu == 9216
+          - merged_svi_after.connectivity_details.links[0].ipv4_mask_length == 24
+          - merged_svi_after.connectivity_details.links[0].ipv6_prefix_length == 64
+          - merged_svi_after.connectivity_details.links[0].ipv4_pim == true
+          - merged_svi_after.connectivity_details.links[0].switch1_details.switch_id == test_switch1_id
+          - merged_svi_after.connectivity_details.links[0].switch1_details.interface_name == l3out_svi.connectivity_details.links[0].switch1_details.interface_name
+          - merged_svi_after.connectivity_details.links[0].switch1_details.interface_ipv4_address == '10.200.0.1'
+          - merged_svi_after.connectivity_details.links[0].switch1_details.interface_ipv6_address == '2001:db8:200::1'
+          - merged_svi_after.connectivity_details.links[0].switch2_details.switch_id == test_switch2_id
+          - merged_svi_after.connectivity_details.links[0].switch2_details.interface_name == l3out_svi.connectivity_details.links[0].switch2_details.interface_name
+          - merged_svi_after.connectivity_details.links[0].switch2_details.interface_ipv4_address == '10.200.0.2'
+          - merged_svi_after.connectivity_details.links[0].switch2_details.interface_ipv6_address == '2001:db8:200::2'
+          - merged_svi_after.routing_details.routing_protocol == 'bgp'
+          - merged_svi_after.routing_details.bgp.bfd == true
+          - merged_svi_after.routing_details.bgp.fabric1_details.advertise_host_routes == true
+          - merged_svi_after.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in == l3out_svi.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in
+          - merged_svi_after.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out == l3out_svi.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out
+          - merged_svi_after.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_in == l3out_svi.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_in
+          - merged_svi_after.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_out == l3out_svi.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_out
+          - merged_svi_create.second_run_result.changed == false
+
+    - name: "MERGED CREATE: Verify optional SVI tenant fields"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_svi_create.nd_query_results[0].result.current.tenant1Name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_svi_create.nd_query_results[0].result.current.tenant2Name == test_tenant2_name
+      when: nd4x_l3out_tenant1_assert_enabled | bool or nd4x_l3out_tenant2_assert_enabled | bool
+
+    - name: "MERGED UPDATE: Update BGP L3Out hold interval"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_bgp_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated BGP hold interval
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_bgp_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.routingDetails.routingProtocol"
+                equals: bgp
+              - jsonpath: "$.current.routingDetails.holdInterval"
+                equals: 240
+              - jsonpath: "$.current.routingDetails.auth"
+                equals: false
+              - jsonpath: "$.current.routingDetails.bfd"
+                equals: true
+              - jsonpath: "$.current.routingDetails.keepAliveInterval"
+                equals: 60
+              - jsonpath: "$.current.routingDetails.fabric1Details.advertiseDefaultRoute"
+                equals: true
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv4PeeringDetails.ipv4RouteMapIn"
+                equals: "{{ l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in }}"
+              - jsonpath: "$.current.routingDetails.fabric1Details.ipv4PeeringDetails.ipv4RouteMapOut"
+                equals: "{{ l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out }}"
+      register: merged_bgp_update
+
+    - name: "MERGED UPDATE: Verify BGP update and idempotency"
+      ansible.builtin.assert:
+        vars:
+          merged_bgp_update_after: >-
+            {{ merged_bgp_update.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_bgp_name)
+            | first | default({}) }}
+        that:
+          - merged_bgp_update.check_mode_result.changed | bool
+          - merged_bgp_update.first_run_result.changed | bool
+          - merged_bgp_update_after.fabric1_name == test_fabric1_name
+          - merged_bgp_update_after.fabric2_name == test_fabric2_name
+          - merged_bgp_update_after.vrf1_name == test_vrf1_name
+          - merged_bgp_update_after.vrf2_name == test_vrf2_name
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_bgp_update_after.tenant1_name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_bgp_update_after.tenant2_name == test_tenant2_name
+          - merged_bgp_update_after.configured_fabrics == 'both'
+          - merged_bgp_update_after.ip_version == 'ipv4'
+          - merged_bgp_update_after.connectivity_details.routing_interface_type == 'routed'
+          - merged_bgp_update_after.connectivity_details.links | length == 1
+          - merged_bgp_update_after.connectivity_details.links[0].mtu == 9216
+          - merged_bgp_update_after.connectivity_details.links[0].ipv4_mask_length == 30
+          - merged_bgp_update_after.connectivity_details.links[0].switch1_details.switch_id == test_switch1_id
+          - merged_bgp_update_after.connectivity_details.links[0].switch1_details.interface_name == test_switch1_interface
+          - merged_bgp_update_after.connectivity_details.links[0].switch1_details.interface_ipv4_address == '10.0.0.1'
+          - merged_bgp_update_after.connectivity_details.links[0].switch2_details.switch_id == test_switch2_id
+          - merged_bgp_update_after.connectivity_details.links[0].switch2_details.interface_name == test_switch2_interface
+          - merged_bgp_update_after.connectivity_details.links[0].switch2_details.interface_ipv4_address == '10.0.0.2'
+          - merged_bgp_update_after.routing_details.routing_protocol == 'bgp'
+          - merged_bgp_update_after.routing_details.bgp.auth == false
+          - merged_bgp_update_after.routing_details.bgp.bfd == true
+          - merged_bgp_update_after.routing_details.bgp.hold_interval == 240
+          - merged_bgp_update_after.routing_details.bgp.keep_alive_interval == 60
+          - merged_bgp_update_after.routing_details.bgp.fabric1_details.advertise_default_route == true
+          - merged_bgp_update_after.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in == l3out_bgp_updated.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in
+          - merged_bgp_update_after.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out == l3out_bgp_updated.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out
+          - merged_bgp_update.second_run_result.changed == false
+
+    - name: "MERGED UPDATE: Verify optional BGP tenant fields"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_l3out_tenant1_assert_enabled | bool or merged_bgp_update.nd_query_results[0].result.current.tenant1Name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or merged_bgp_update.nd_query_results[0].result.current.tenant2Name == test_tenant2_name
+      when: nd4x_l3out_tenant1_assert_enabled | bool or nd4x_l3out_tenant2_assert_enabled | bool
+
+    - name: "MERGED MGMT-IP: Re-apply BGP L3Out using management IPs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ test_l3out_bgp_name }}"
+            fabric1_name: "{{ test_fabric1_name }}"
+            fabric2_name: "{{ test_fabric2_name }}"
+            vrf1_name: "{{ test_vrf1_name }}"
+            vrf2_name: "{{ test_vrf2_name }}"
+            tenant1_name: "{{ test_tenant1_name }}"
+            tenant2_name: "{{ test_tenant2_name }}"
+            configured_fabrics: both
+            ip_version: ipv4
+            connectivity_details:
+              routing_interface_type: routed
+              links:
+                - mtu: 9216
+                  ipv4_mask_length: 30
+                  switch1_details:
+                    switch_id: "{{ test_switch1_mgmt_ip }}"
+                    interface_name: "{{ test_switch1_interface }}"
+                    interface_ipv4_address: 10.0.0.1
+                  switch2_details:
+                    switch_id: "{{ test_switch2_mgmt_ip }}"
+                    interface_name: "{{ test_switch2_interface }}"
+                    interface_ipv4_address: 10.0.0.2
+            routing_details:
+              routing_protocol: bgp
+              bgp:
+                auth: false
+                bfd: true
+                hold_interval: 240
+                keep_alive_interval: 60
+                fabric1_details:
+                  advertise_default_route: true
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ l3out_bgp_updated.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in }}"
+                    ipv4_route_map_out: "{{ l3out_bgp_updated.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Validate management-IP BGP re-apply
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_bgp_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_bgp_name }}"
+              - jsonpath: "$.current.routingDetails.holdInterval"
+                equals: 240
+      register: merged_mgmt_ip_idempotent
+
+    - name: "MERGED MGMT-IP: Verify management-IP resolution is idempotent"
+      ansible.builtin.assert:
+        that:
+          - not merged_mgmt_ip_idempotent.check_mode_result.changed | bool
+          - not merged_mgmt_ip_idempotent.first_run_result.changed | bool
+          - not merged_mgmt_ip_idempotent.second_run_result.changed | bool
+
+  always:
+    - name: "MERGED CLEANUP: Remove only this run's L3Outs"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_l3out_owned_names }}"
+      when: nd4x_l3out_owned_names | default([]) | length > 0
+      tags:
+        - always

@@ -23,6 +23,10 @@
 #   so the variable cannot be inherited from the user's shell. Add to
 #   inventory.networking [nd:vars]:
 #     nd_logging_config=/absolute/path/to/logging_config.json
+#
+# nd_test_l3out_run_id (required for ND 4.x harness scenarios)
+#   Unique per-run identifier embedded in harness-created L3Out names. The
+#   harness refuses to run without it and never deletes a pre-existing name.
 
 - name: Test that we have a Nexus Dashboard host, username and password
   ansible.builtin.fail:
@@ -36,6 +40,25 @@
 
 - name: Run nd_manage_l3out state tests with optional logging env
   block:
+    - name: Run ND 4.x nd_manage_l3out harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
 
@@ -47,6 +70,60 @@
 
     - name: Run nd_manage_l3out deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run nd_manage_l3out merged harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run nd_manage_l3out replaced harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run nd_manage_l3out deleted harness scenarios
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
+  always:
+    - name: Release controller-side ND4X nd_manage_l3out harness marker
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - name: "{{ nd4x_l3out_marker_name }}"
+      when:
+        - nd4x_l3out_marker_acquired | default(false) | bool
+      tags:
+        - always
   vars:
     ansible_command_timeout: 300
   environment:

@@ -1,0 +1,188 @@
+---
+- name: Run nd_manage_l3out replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Initialize cleanup ownership list"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: []
+      tags:
+        - always
+
+    - name: "REPLACED SETUP: Create the static L3Out to replace"
+      cisco.nd.nd4x_l3out_create_lock:
+        config: "{{ l3out_static }}"
+      register: replaced_setup_create
+      tags:
+        - always
+
+    - name: "REPLACED SETUP: Prove static L3Out ownership before cleanup registration"
+      ansible.builtin.assert:
+        that:
+          - not replaced_setup_create.failed | default(false) | bool
+          - replaced_setup_create.changed | bool
+          - replaced_setup_create.name == test_l3out_static_name
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_static_name }}' for cleanup
+          because the controller create-only operation did not prove ownership.
+
+    - name: "REPLACED SETUP: Register created static L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names:
+          - name: "{{ test_l3out_static_name }}"
+
+    - name: "REPLACED: Replace static L3Out with routed BGP configuration"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_static_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced L3Out routing protocol
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_static_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_static_name }}"
+              - jsonpath: "$.current.fabric1Name"
+                equals: "{{ test_fabric1_name }}"
+              - jsonpath: "$.current.fabric2Name"
+                equals: "{{ test_fabric2_name }}"
+              - jsonpath: "$.current.vrf1Name"
+                equals: "{{ test_vrf1_name }}"
+              - jsonpath: "$.current.vrf2Name"
+                equals: "{{ test_vrf2_name }}"
+              - jsonpath: "$.current.configuredFabrics"
+                equals: both
+              - jsonpath: "$.current.ipVersion"
+                equals: ipv4
+              - jsonpath: "$.current.connectivityDetails.routingInterfaceType"
+                equals: routed
+              - jsonpath: "$.current.connectivityDetails.links[0].mtu"
+                equals: 9216
+              - jsonpath: "$.current.connectivityDetails.links[0].ipv4MaskLength"
+                equals: 30
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.switchId"
+                equals: "{{ test_switch1_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.interfaceName"
+                equals: "{{ test_switch1_interface }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch1Details.ipv4Address"
+                equals: 10.0.1.1
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.switchId"
+                equals: "{{ test_switch2_id }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.interfaceName"
+                equals: "{{ test_switch2_interface }}"
+              - jsonpath: "$.current.connectivityDetails.links[0].switch2Details.ipv4Address"
+                equals: 10.0.1.2
+              - jsonpath: "$.current.routingDetails.routingProtocol"
+                equals: bgp
+              - jsonpath: "$.current.routingDetails.bfd"
+                equals: false
+              - jsonpath: "$.current.routingDetails.fabric1Details.advertiseDefaultRoute"
+                equals: false
+      register: replaced_static
+
+    - name: "REPLACED: Verify returned replacement and idempotency"
+      ansible.builtin.assert:
+        vars:
+          replaced_static_after: >-
+            {{ replaced_static.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_static_name)
+            | first | default({}) }}
+        that:
+          - replaced_static.check_mode_result.changed | bool
+          - replaced_static.first_run_result.changed | bool
+          - replaced_static_after.fabric1_name == test_fabric1_name
+          - replaced_static_after.fabric2_name == test_fabric2_name
+          - replaced_static_after.vrf1_name == test_vrf1_name
+          - replaced_static_after.vrf2_name == test_vrf2_name
+          - not nd4x_l3out_tenant1_assert_enabled | bool or replaced_static_after.tenant1_name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or replaced_static_after.tenant2_name == test_tenant2_name
+          - replaced_static_after.configured_fabrics == 'both'
+          - replaced_static_after.ip_version == 'ipv4'
+          - replaced_static_after.connectivity_details.routing_interface_type == 'routed'
+          - replaced_static_after.connectivity_details.links | length == 1
+          - replaced_static_after.connectivity_details.links[0].mtu == 9216
+          - replaced_static_after.connectivity_details.links[0].ipv4_mask_length == 30
+          - replaced_static_after.connectivity_details.links[0].switch1_details.switch_id == test_switch1_id
+          - replaced_static_after.connectivity_details.links[0].switch1_details.interface_name == test_switch1_interface
+          - replaced_static_after.connectivity_details.links[0].switch1_details.interface_ipv4_address == '10.0.1.1'
+          - replaced_static_after.connectivity_details.links[0].switch2_details.switch_id == test_switch2_id
+          - replaced_static_after.connectivity_details.links[0].switch2_details.interface_name == test_switch2_interface
+          - replaced_static_after.connectivity_details.links[0].switch2_details.interface_ipv4_address == '10.0.1.2'
+          - replaced_static_after.routing_details.routing_protocol == 'bgp'
+          - replaced_static_after.routing_details.bgp.bfd == false
+          - replaced_static_after.routing_details.bgp.fabric1_details.advertise_default_route == false
+          - replaced_static.second_run_result.changed == false
+
+    - name: "REPLACED: Verify optional tenant fields"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_l3out_tenant1_assert_enabled | bool or replaced_static.nd_query_results[0].result.current.tenant1Name == test_tenant1_name
+          - not nd4x_l3out_tenant2_assert_enabled | bool or replaced_static.nd_query_results[0].result.current.tenant2Name == test_tenant2_name
+      when: nd4x_l3out_tenant1_assert_enabled | bool or nd4x_l3out_tenant2_assert_enabled | bool
+
+    - name: "REPLACED IDEMPOTENT: Re-apply replacement through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ l3out_static_replaced }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate idempotent replaced L3Out
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_static_name }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_l3out_static_name }}"
+              - jsonpath: "$.current.routingDetails.routingProtocol"
+                equals: bgp
+              - jsonpath: "$.current.routingDetails.bfd"
+                equals: false
+      register: replaced_static_idempotent
+
+    - name: "REPLACED IDEMPOTENT: Verify predictive and real no-change results"
+      ansible.builtin.assert:
+        that:
+          - not replaced_static_idempotent.check_mode_result.changed | bool
+          - not replaced_static_idempotent.first_run_result.changed | bool
+          - not replaced_static_idempotent.second_run_result.changed | bool
+
+  always:
+    - name: "REPLACED CLEANUP: Remove only this run's L3Out"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_l3out_owned_names }}"
+      when: nd4x_l3out_owned_names | default([]) | length > 0
+      tags:
+        - always
