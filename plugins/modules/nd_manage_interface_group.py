@@ -25,15 +25,6 @@ description:
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
-  timeout:
-    description:
-    - Socket-level timeout in seconds.
-    - Interface Group operations can take longer as the member count grows, so
-      this module uses a higher default than the shared ND module default.
-    - If the value is not specified in the task, the value of environment
-      variable C(ND_TIMEOUT) will be used instead.
-    type: int
-    default: 300
   fabric_name:
     description:
     - Name of the fabric that owns the Interface Groups.
@@ -151,6 +142,13 @@ options:
         - All attributes are optional. For a newly created C(ethernetWithPolicy)
           group, omitted settings use the standard shared-policy values.
         - Under O(state=merged), explicitly supplied keys are merged with existing keys.
+        - Under O(state=replaced) and O(state=overridden), the supplied block is the complete
+          desired Ethernet policy, not a partial merge. Omitted defaulted settings reset to the
+          standard shared-policy values, including C(cdp=true). Omitted optional settings are
+          not copied from the existing policy.
+        - Omitting this option entirely under O(state=replaced) or O(state=overridden) also
+          selects the standard shared-policy values. Omitted network/member collections remain
+          preserved according to the state contract.
         - With O(state=gathered), supplied attributes must be present in the
           returned shared Ethernet settings.
         type: dict
@@ -291,6 +289,9 @@ extends_documentation_fragment:
 notes:
 - Supported Interface Group types are C(any), C(ethernetCustom), C(ethernetWithPolicy),
   C(ethernetWithoutPolicy), C(portChannel), and C(vpc).
+- For long-running operations, set C(ansible_command_timeout) as a host or play variable,
+  or set C(ANSIBLE_PERSISTENT_COMMAND_TIMEOUT) in the environment. The connection timeout
+  is controlled by Ansible, not a module option.
 - A switch interface can belong to only one Interface Group. Under O(state=merged), attempting
   to add a member owned by another group fails because merged is additive. O(state=replaced) and
   O(state=overridden) can move it when the source group's desired membership removes it.
@@ -763,7 +764,6 @@ def _format_failure_output(
 def main():
     """Entry point for the nd_manage_interface_group module."""
     argument_spec = nd_argument_spec()
-    argument_spec.setdefault("timeout", {"type": "int"})["default"] = 300
     argument_spec.update(InterfaceGroupModuleConfigModel.get_argument_spec())
 
     module = AnsibleModule(

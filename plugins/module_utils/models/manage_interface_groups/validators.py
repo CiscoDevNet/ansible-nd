@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Mapping
 
 from ansible_collections.cisco.nd.plugins.module_utils.constants import (
     SYSTEM_INJECTED_TEMPLATE_KEYS,
@@ -59,8 +59,8 @@ class InterfaceGroupValidators:
     """Stateless normalization and validation helpers."""
 
     @staticmethod
-    def _normalize_template_scalar(value: Any) -> tuple[str, Any]:
-        """Return a stable scalar used to compare custom-template echoes."""
+    def _normalize_template_scalar_legacy(value: Any) -> tuple[str, Any]:
+        """Preserve the schema-free comparison used by gathered filters."""
         if isinstance(value, bool):
             return ("boolean", value)
         if isinstance(value, (int, float, Decimal)):
@@ -79,29 +79,70 @@ class InterfaceGroupValidators:
                 return ("value", value)
         return ("value", value)
 
+    @staticmethod
+    def _normalize_template_scalar(value: Any, parameter_type: str) -> tuple[str, Any]:
+        """Normalize only values whose declared type permits coercion."""
+        if parameter_type == "boolean":
+            if isinstance(value, bool):
+                return ("boolean", value)
+            if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+                return ("boolean", value.strip().lower() == "true")
+        elif parameter_type in {"integer", "long", "float", "number"}:
+            if not isinstance(value, bool) and isinstance(value, (int, float, Decimal, str)):
+                try:
+                    return ("number", Decimal(str(value).strip()))
+                except InvalidOperation:
+                    pass
+        return ("value", value)
+
     @classmethod
-    def template_value_matches(cls, expected: Any, actual: Any) -> bool:
+    def template_value_matches(
+        cls,
+        expected: Any,
+        actual: Any,
+        parameter_type: str | None = None,
+        *,
+        typed: bool | None = None,
+    ) -> bool:
         """Compare one custom-template value using controller echo semantics.
 
         An explicit null delegates selection of the effective value to the
         template/controller. Once the controller returns that key, the value
         is considered reconciled. To force a value, supply it explicitly.
         """
+        if typed is None:
+            typed = parameter_type is not None
         if expected is None:
             return True
         if isinstance(expected, dict) and isinstance(actual, dict):
-            return cls.template_config_is_subset(expected, actual)
+            return cls.template_config_is_subset(expected, actual, {} if typed else None)
         if isinstance(expected, list) and isinstance(actual, list):
             return len(expected) == len(actual) and all(
-                cls.template_value_matches(expected_item, actual_item) for expected_item, actual_item in zip(expected, actual)
+                cls.template_value_matches(expected_item, actual_item, typed=typed) for expected_item, actual_item in zip(expected, actual)
             )
-        return cls._normalize_template_scalar(expected) == cls._normalize_template_scalar(actual)
+        if not typed:
+            return cls._normalize_template_scalar_legacy(expected) == cls._normalize_template_scalar_legacy(actual)
+        normalized_type = (parameter_type or "").strip().lower()
+        if not normalized_type:
+            # Direct-model comparisons may not have fetched template metadata.
+            # Native YAML scalars still have unambiguous types; strings do not.
+            if isinstance(expected, bool):
+                normalized_type = "boolean"
+            elif isinstance(expected, (int, float, Decimal)):
+                normalized_type = "number"
+        return cls._normalize_template_scalar(expected, normalized_type) == cls._normalize_template_scalar(actual, normalized_type)
 
     @classmethod
-    def template_config_is_subset(cls, expected: dict[str, Any], actual: dict[str, Any]) -> bool:
-        """Compare customer-supplied custom-template keys semantically."""
+    def template_config_is_subset(
+        cls,
+        expected: dict[str, Any],
+        actual: dict[str, Any],
+        parameter_types: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Use declared types when provided, retaining schema-free filter semantics."""
         for key, value in expected.items():
-            if key not in actual or not cls.template_value_matches(value, actual[key]):
+            parameter_type = parameter_types.get(key) if parameter_types is not None else None
+            if key not in actual or not cls.template_value_matches(value, actual[key], parameter_type, typed=parameter_types is not None):
                 return False
         return True
 

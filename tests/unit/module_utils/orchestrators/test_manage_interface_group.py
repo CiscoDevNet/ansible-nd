@@ -746,6 +746,14 @@ def test_manage_interface_group_00080(
 
     def fake_request(self, path, verb, data=None, **kwargs):
         calls.append({"path": path, "data": data})
+        if path.endswith("/interfaceActions/preview"):
+            return {
+                "configurationDiffs": [
+                    {**pair, "status": "success", "combinedConfigs": [{"configType": "pending", "lines": 0}]} for pair in data["interfaces"]
+                ]
+            }
+        if path.endswith("/interfaceActions/deploy"):
+            return {"results": [{**pair, "status": "success"} for pair in data["interfaces"]]}
         return {}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
@@ -757,8 +765,10 @@ def test_manage_interface_group_00080(
 
     orchestrator.deploy_pending()
 
-    assert expected_path in calls[0]["path"]
-    assert calls[0]["data"] == expected_payload
+    deploy_calls = [call for call in calls if expected_path in call["path"]]
+    assert len(deploy_calls) == 1
+    assert deploy_calls[0]["data"] == expected_payload
+    assert len(calls) == 1
 
 
 def test_manage_interface_group_00090() -> None:
@@ -1239,6 +1249,14 @@ def test_manage_interface_group_00135(monkeypatch) -> None:
     def fake_request(self, path, verb, data=None, **kwargs):
         del self, kwargs
         calls.append({"path": path, "verb": verb, "data": data})
+        if path.endswith("/interfaceActions/preview"):
+            return {
+                "configurationDiffs": [
+                    {**pair, "status": "success", "combinedConfigs": [{"configType": "pending", "lines": 0}]} for pair in data["interfaces"]
+                ]
+            }
+        if path.endswith("/interfaceActions/deploy"):
+            return {"results": [{**pair, "status": "success"} for pair in data["interfaces"]]}
         return {}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
@@ -1742,6 +1760,42 @@ def test_manage_interface_group_00210(monkeypatch) -> None:
     assert calls == ["/api/v1/manage/configTemplates/custom-template"]
 
 
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+def test_custom_template_preflight_applies_declared_string_type(monkeypatch, state: str) -> None:
+    """Preflight must pass template types to the state-machine comparison."""
+    monkeypatch.setattr(
+        ManageInterfaceGroupOrchestrator,
+        "_request",
+        lambda *args, **kwargs: _eligible_custom_template([{"name": "DESC", "parameterType": "string", "optional": False}]),
+    )
+    existing = InterfaceGroupConfigModel.from_response(
+        {
+            "interfaceGroupName": "custom-group",
+            "type": "ethernet",
+            "policyDetails": {
+                "policyType": "userDefinedSharedTrunk",
+                "templateName": "custom-template",
+                "templateConfig": {"DESC": "1"},
+            },
+        }
+    )
+    proposed = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": "custom-group",
+            "type": "ethernetCustom",
+            "template_name": "custom-template",
+            "template_config": {"DESC": "001"},
+        }
+    )
+    orchestrator = _orchestrator(state=state, config_actions={"deploy": False, "type": "switch"})
+    orchestrator._existing_groups = {"custom-group": existing}
+
+    orchestrator.preflight([proposed])
+
+    assert proposed._template_parameter_types == {"DESC": "string"}
+    assert existing.get_diff(proposed, exclude_unset=state == "merged") is False
+
+
 def test_manage_interface_group_00215(monkeypatch) -> None:
     """Accept a null optional integer in the live custom-template schema."""
     monkeypatch.setattr(
@@ -2102,6 +2156,92 @@ def test_manage_interface_group_00300(monkeypatch) -> None:
     )
 
     orchestrator.preflight([unique_vpc, first_port_channel, second_port_channel])
+
+
+def test_vpc_ownership_checks_scale_with_same_named_unrelated_pairs(monkeypatch) -> None:
+    """Same-named members on many unrelated pairs need linear peer checks."""
+    pair_count = 96
+    peer_lookups: list[str] = []
+
+    def get_peer(switch_id: str) -> str:
+        peer_lookups.append(switch_id)
+        return switch_id.replace("SN", "PN", 1)
+
+    orchestrator = _orchestrator()
+    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", get_peer)
+    groups = [_group(f"group-{index}", group_type="vpc", members=[(f"SN{index:03}", ["vPC200"])]) for index in range(pair_count)]
+
+    orchestrator._validate_runtime_member_ownership(groups)
+
+    assert len(peer_lookups) <= pair_count * 3
+
+
+def test_vpc_ownership_still_rejects_late_peer_collision(monkeypatch) -> None:
+    """An indexed ownership check must retain a conflict found late in the list."""
+    pair_count = 96
+    orchestrator = _orchestrator()
+    monkeypatch.setattr(
+        orchestrator,
+        "_get_vpc_peer_id",
+        lambda switch_id: switch_id.replace("SN", "PN", 1) if switch_id.startswith("SN") else switch_id.replace("PN", "SN", 1),
+    )
+    groups = [_group(f"group-{index}", group_type="vpc", members=[(f"SN{index:03}", ["vPC200"])]) for index in range(pair_count)]
+    groups.append(_group("late-conflict", group_type="vpc", members=[("PN000", ["vPC200"])]))
+
+    with pytest.raises(RuntimeError, match="present in both 'group-0' and 'late-conflict'"):
+        orchestrator._validate_runtime_member_ownership(groups)
+
+
+def test_vpc_ownership_retains_first_reverse_only_conflict(monkeypatch) -> None:
+    """Keep the first conflicting group even with one-way peer inventory."""
+    peer_ids = {"SN1": "SN3", "SN2": None, "SN3": "SN2"}
+    orchestrator = _orchestrator()
+    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", peer_ids.get)
+    groups = [
+        _group("first", group_type="vpc", members=[("SN1", ["vPC200"])]),
+        _group("second", group_type="vpc", members=[("SN2", ["vPC200"])]),
+        _group("third", group_type="vpc", members=[("SN3", ["vPC200"])]),
+    ]
+
+    with pytest.raises(RuntimeError, match="present in both 'first' and 'third'"):
+        orchestrator._validate_runtime_member_ownership(groups)
+
+
+def test_vpc_echo_alignment_scales_with_same_named_unrelated_pairs(monkeypatch) -> None:
+    """Align each logical member without repeatedly scanning every pair."""
+    pair_count = 96
+    peer_lookups: list[str] = []
+
+    def get_peer(switch_id: str) -> str:
+        peer_lookups.append(switch_id)
+        if switch_id.startswith("SN"):
+            return switch_id.replace("SN", "PN", 1)
+        return switch_id.replace("PN", "SN", 1)
+
+    orchestrator = _orchestrator()
+    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", get_peer)
+    orchestrator._existing_groups = {
+        f"group-{index}": _group(f"group-{index}", group_type="vpc", members=[(f"SN{index:03}", ["vPC200"])]) for index in range(pair_count)
+    }
+    proposed = [_group(f"group-{index}", group_type="vpc", members=[(f"PN{index:03}", ["vPC200"])]) for index in range(pair_count)]
+
+    orchestrator._align_vpc_member_switch_ids(proposed)
+
+    assert len(peer_lookups) <= pair_count * 3
+    assert [group.switch_interfaces[0].switch_id for group in proposed] == [f"SN{index:03}" for index in range(pair_count)]
+
+
+def test_vpc_echo_alignment_accepts_reverse_only_peer(monkeypatch) -> None:
+    """One-way peer inventory still aligns an existing opposite-peer echo."""
+    peer_ids = {"SN1": "SN2", "SN2": None}
+    orchestrator = _orchestrator()
+    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", peer_ids.get)
+    orchestrator._existing_groups = {"group": _group("group", group_type="vpc", members=[("SN1", ["vPC200"])])}
+    proposed = _group("group", group_type="vpc", members=[("SN2", ["vPC200"])])
+
+    orchestrator._align_vpc_member_switch_ids([proposed])
+
+    assert proposed.switch_interfaces[0].switch_id == "SN1"
 
 
 @pytest.mark.parametrize(

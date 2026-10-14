@@ -6,12 +6,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Sequence
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     SerializationInfo,
     ValidationInfo,
     field_validator,
@@ -104,6 +105,8 @@ class InterfaceGroupEthernetAttributesModel(NDNestedModel):
 class InterfaceGroupConfigModel(NDBaseModel):
     """One playbook-facing Interface Group resource."""
 
+    _template_parameter_types: dict[str, str] = PrivateAttr(default_factory=dict)
+
     identifiers: ClassVar[list[str]] = ["interface_group_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set[str]] = {
@@ -168,6 +171,14 @@ class InterfaceGroupConfigModel(NDBaseModel):
         alias="policyId",
         description="Controller-generated shared policy ID",
     )
+
+    def set_template_parameter_types(self, parameters: Sequence[dict[str, Any]]) -> None:
+        """Retain declared custom-template types for comparison, not payloads."""
+        self._template_parameter_types = {
+            parameter["name"]: parameter["parameterType"].strip().lower()
+            for parameter in parameters
+            if isinstance(parameter, dict) and isinstance(parameter.get("name"), str) and isinstance(parameter.get("parameterType"), str)
+        }
 
     @classmethod
     def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "InterfaceGroupConfigModel":
@@ -343,6 +354,22 @@ class InterfaceGroupConfigModel(NDBaseModel):
                 merged[key] = deepcopy(value)
         return merged
 
+    def prepare_for_replacement(self, existing: "NDBaseModel") -> "InterfaceGroupConfigModel":
+        """Use the same effective Ethernet policy for planning and the PUT.
+
+        The state machine calls this hook for existing authoritative updates,
+        not additive merges. Materialize the wire defaults before comparison
+        so policy-only resets also appear in check-mode and accepted state.
+        """
+        candidate = super().prepare_for_replacement(existing)
+        if candidate.type != InterfaceGroupType.ETHERNET_WITH_POLICY.value:
+            return candidate
+
+        candidate = deepcopy(candidate)
+        attributes = candidate.ethernet_attributes.model_dump(by_alias=True, exclude_none=True, mode="json") if candidate.ethernet_attributes else None
+        candidate.ethernet_attributes = InterfaceGroupEthernetAttributesModel.model_validate(InterfaceGroupValidators.to_wire_ethernet_attributes(attributes))
+        return candidate
+
     # TODO(4.2.1) Re-evaluate this normalization when NDFC consistently returns empty optional shared-policy fields.
     @staticmethod
     def _normalize_controller_omitted_empty_attributes(
@@ -369,6 +396,21 @@ class InterfaceGroupConfigModel(NDBaseModel):
             elif second_has_key and second_attributes[key] == "" and not first_has_key:
                 second_attributes.pop(key)
 
+    @staticmethod
+    def _normalize_default_native_vlan(first: dict[str, Any], second: dict[str, Any]) -> None:
+        """Align omitted native VLAN with the controller's default-VLAN echo.
+
+        The shared trunk template emits no native-VLAN command for either
+        omission or VLAN 1. Normalize only their comparison; a nondefault
+        native VLAN must still differ, and the request stays unchanged.
+        """
+        first_attributes = first["ethernetAttributes"]
+        second_attributes = second["ethernetAttributes"]
+        if first_attributes.get("nativeVlan") == 1 and "nativeVlan" not in second_attributes:
+            first_attributes.pop("nativeVlan")
+        elif second_attributes.get("nativeVlan") == 1 and "nativeVlan" not in first_attributes:
+            second_attributes.pop("nativeVlan")
+
     @classmethod
     def _semantic_diff_dicts(
         cls,
@@ -376,15 +418,42 @@ class InterfaceGroupConfigModel(NDBaseModel):
         second: "InterfaceGroupConfigModel",
         *,
         second_exclude_unset: bool = False,
+        include_ethernet_defaults: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Return comparison dictionaries with NDFC empty-string echoes aligned."""
         first_data = first.to_diff_dict()
         second_data = second.to_diff_dict(exclude_unset=second_exclude_unset)
+        if include_ethernet_defaults and first.type == second.type == InterfaceGroupType.ETHERNET_WITH_POLICY.value:
+            for data in (first_data, second_data):
+                data["ethernetAttributes"] = InterfaceGroupValidators.to_wire_ethernet_attributes(data.get("ethernetAttributes"))
+            cls._normalize_default_native_vlan(first_data, second_data)
         cls._normalize_controller_omitted_empty_attributes(first_data, second_data)
         return first_data, second_data
 
+    def _matches_replacement(self, other: "InterfaceGroupConfigModel") -> bool:
+        """Compare the complete Ethernet policy without replacing collections.
+
+        Default-omitting controller echoes are equivalent to their known wire
+        defaults. Optional nonempty settings omitted from a replacement are
+        removals, while controller-omitted empty strings remain equivalent.
+        Other fields retain their existing comparison rules.
+        """
+        current_data, proposed_data = self._semantic_diff_dicts(self, other, include_ethernet_defaults=True)
+        if self.type == other.type == InterfaceGroupType.ETHERNET_WITH_POLICY.value:
+            if current_data.get("ethernetAttributes") != proposed_data.get("ethernetAttributes"):
+                return False
+
+        if "template_config" in other.model_fields_set:
+            if not InterfaceGroupValidators.template_config_is_subset(
+                other.template_config or {}, self.template_config or {}, other._template_parameter_types
+            ):
+                return False
+            current_data.pop("templateConfig", None)
+            proposed_data.pop("templateConfig", None)
+        return issubset(proposed_data, current_data)
+
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
-        """Compare merged input using additive association semantics.
+        """Compare additive input or an effective authoritative Ethernet policy.
 
         ``NDStateMachine`` sets ``exclude_unset=True`` only for ``state=merged``.
         For that path, compare the existing model with the effective additive
@@ -395,11 +464,11 @@ class InterfaceGroupConfigModel(NDBaseModel):
         if not isinstance(other, type(self)):
             return False
 
+        if not exclude_unset:
+            return self._matches_replacement(other)
+
         template_config_supplied = "template_config" in other.model_fields_set
         if not template_config_supplied:
-            if not exclude_unset:
-                current_data, proposed_data = self._semantic_diff_dicts(self, other)
-                return issubset(proposed_data, current_data)
             candidate = deepcopy(self)
             candidate.merge(other)
             candidate_data, current_data = self._semantic_diff_dicts(candidate, self)
@@ -410,19 +479,13 @@ class InterfaceGroupConfigModel(NDBaseModel):
         template_matches = InterfaceGroupValidators.template_config_is_subset(
             proposed_template_config,
             current_template_config,
+            other._template_parameter_types,
         )
 
         current_without_template = deepcopy(self)
         proposed_without_template = deepcopy(other)
         current_without_template.template_config = {}
         proposed_without_template.template_config = {}
-
-        if not exclude_unset:
-            current_data, proposed_data = self._semantic_diff_dicts(
-                current_without_template,
-                proposed_without_template,
-            )
-            return template_matches and issubset(proposed_data, current_data)
 
         candidate = deepcopy(current_without_template)
         candidate.merge(proposed_without_template)

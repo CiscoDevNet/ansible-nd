@@ -116,7 +116,7 @@ def test_nd_manage_interface_group_00005() -> None:
         "deploy_pending",
         "exit_json",
     ]
-    assert events[0][1]["argument_spec"]["timeout"]["default"] == 300
+    assert "timeout" not in events[0][1]["argument_spec"]
     assert events[0][1]["argument_spec"]["config_actions"]["options"]["deploy"]["default"] is False
 
 

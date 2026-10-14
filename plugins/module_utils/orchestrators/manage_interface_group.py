@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from ipaddress import ip_address
@@ -42,6 +43,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
+    EpManageInterfacesGet,
+    EpManageInterfacesPreview,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
@@ -93,6 +96,10 @@ _INTERFACE_POLICY_TYPES = frozenset(
     }
 )
 _ANY_MEMBER_KIND_ORDER = ("ethernet", "port_channel", "vpc")
+_DEPLOY_INTERFACE_HEADER_RE = re.compile(r"(?im)^[ \t]*interface[ \t]+([^ \t\r\n]+)[ \t]*\r?$")
+_DEPLOY_CHILD_NAME_RE = re.compile(
+    r"(?i)^(?:ethernet|gigabitethernet|tengigabitethernet|twentyfivegige|fortygigabitethernet|hundredgige|port-channel)[0-9][0-9/.:_-]*$"
+)
 
 
 class AcceptedMutationDeployResult(TypedDict):
@@ -279,14 +286,50 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                         vpc_candidates.setdefault(interface_name, []).append((switch_entry.switch_id, group_name))
 
         for interface_name, candidates in vpc_candidates.items():
+            if len(candidates) < 2 or len({candidate[1] for candidate in candidates}) < 2:
+                continue
+            # A vPC name may be reused on unrelated pairs. Index the direct
+            # switch and peer identities instead of comparing every pair of
+            # candidates with that name. Resolve earlier peers lazily so a
+            # normal two-peer conflict still needs only the new peer lookup.
+            prior_by_switch: dict[str, list[int]] = {}
+            prior_by_peer: dict[str, list[int]] = {}
+            unresolved_prior: list[int] = []
+            seen_groups: set[str] = set()
             for index, (switch_id, group_name) in enumerate(candidates):
-                for other_switch_id, other_group_name in candidates[:index]:
-                    if group_name == other_group_name or switch_id == other_switch_id:
-                        continue
-                    if not self._vpc_switch_ids_are_equivalent(switch_id, other_switch_id):
-                        continue
-                    pair = "/".join(sorted((switch_id, other_switch_id)))
-                    raise RuntimeError(f"Interface '{interface_name}' on vPC pair '{pair}' is " f"present in both '{other_group_name}' and '{group_name}'.")
+                if seen_groups and (len(seen_groups) > 1 or group_name not in seen_groups):
+                    peer_switch_id = self._get_vpc_peer_id(switch_id)
+                    matches = list(prior_by_switch.get(switch_id, []))
+                    if peer_switch_id:
+                        matches.extend(prior_by_switch.get(peer_switch_id, []))
+                    matches.extend(prior_by_peer.get(switch_id, []))
+                    conflicts = [prior_index for prior_index in matches if candidates[prior_index][1] != group_name]
+                    first_conflict = min(conflicts, default=index)
+                    resolved_count = 0
+                    # A direct match may have an earlier reverse-only match.
+                    # Resolve only the unindexed candidates that could change
+                    # the first conflicting group selected by the old scan.
+                    for prior_index in unresolved_prior:
+                        if prior_index >= first_conflict:
+                            break
+                        prior_switch_id, prior_group_name = candidates[prior_index]
+                        prior_peer_id = self._get_vpc_peer_id(prior_switch_id)
+                        if prior_peer_id:
+                            prior_by_peer.setdefault(prior_peer_id, []).append(prior_index)
+                            if prior_peer_id == switch_id and prior_group_name != group_name:
+                                first_conflict = prior_index
+                        resolved_count += 1
+                    if resolved_count:
+                        del unresolved_prior[:resolved_count]
+                    if first_conflict < index:
+                        other_switch_id, other_group_name = candidates[first_conflict]
+                        pair = "/".join(sorted((switch_id, other_switch_id)))
+                        raise RuntimeError(
+                            f"Interface '{interface_name}' on vPC pair '{pair}' is " f"present in both '{other_group_name}' and '{group_name}'."
+                        )
+                prior_by_switch.setdefault(switch_id, []).append(index)
+                unresolved_prior.append(index)
+                seen_groups.add(group_name)
 
     def _existing_vpc_member_switches(self) -> dict[str, set[str]]:
         """Return existing vPC member names mapped to their echoed switch IDs."""
@@ -310,6 +353,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         existing_switches = self._existing_vpc_member_switches()
         if not existing_switches:
             return
+        peer_index_by_name: dict[str, dict[str, str]] = {}
 
         for model_instance in model_instances:
             if not model_instance.switch_interfaces:
@@ -320,10 +364,32 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 for interface_name in switch_entry.interface_names:
                     aligned_switch_id = switch_entry.switch_id
                     if InterfaceGroupValidators.interface_kind(interface_name) == "vpc":
-                        for existing_switch_id in sorted(existing_switches.get(interface_name, set())):
+                        matching_switches = existing_switches.get(interface_name, set())
+                        if len(matching_switches) == 1:
+                            # Keep the common single-owner path and its lazy
+                            # peer lookup unchanged.
+                            existing_switch_id = next(iter(matching_switches))
                             if self._vpc_switch_ids_are_equivalent(switch_entry.switch_id, existing_switch_id):
                                 aligned_switch_id = existing_switch_id
-                                break
+                        elif len(matching_switches) > 1:
+                            proposed_peer_id = self._get_vpc_peer_id(switch_entry.switch_id)
+                            peer_index = peer_index_by_name.get(interface_name)
+                            if peer_index is None:
+                                peer_index = {}
+                                for existing_switch_id in sorted(matching_switches):
+                                    existing_peer_id = self._get_vpc_peer_id(existing_switch_id)
+                                    if existing_peer_id:
+                                        peer_index.setdefault(existing_peer_id, existing_switch_id)
+                                peer_index_by_name[interface_name] = peer_index
+                            candidates = [
+                                switch_id
+                                for switch_id in (switch_entry.switch_id, proposed_peer_id, peer_index.get(switch_entry.switch_id))
+                                if switch_id in matching_switches
+                            ]
+                            if candidates:
+                                # The old sorted scan selected the first
+                                # matching echo; keep that stable choice.
+                                aligned_switch_id = min(candidates)
                     changed = changed or aligned_switch_id != switch_entry.switch_id
                     aligned_members.add((aligned_switch_id, interface_name))
 
@@ -1720,10 +1786,13 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
                 )
                 continue
 
+            parameters = template.get("parameters") or []
+            proposed.set_template_parameter_types(parameters)
+            after.set_template_parameter_types(parameters)
             input_errors = validate_template_inputs(
                 after.template_name,
                 after.template_config or {},
-                template.get("parameters") or [],
+                parameters,
                 input_label="template_config",
             )
             failures.extend(f"'{after.interface_group_name}': {message}" for message in input_errors)
@@ -1826,17 +1895,232 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         self._pending_switches.clear()
         return response
 
+    @staticmethod
+    def _normalized_deploy_pair(switch_id: object, interface_name: object) -> tuple[str, str] | None:
+        """Normalize an exact switch/interface identity without inferring ownership."""
+        if not isinstance(switch_id, str) or not switch_id.strip():
+            return None
+        if not isinstance(interface_name, str) or not interface_name.strip():
+            return None
+        return switch_id.strip(), interface_name.strip().lower()
+
+    def _preview_verification_targets(self, interfaces: set[tuple[str, str]]) -> set[tuple[str, str]]:
+        """Include both known vPC peers in the required preview evidence."""
+        targets = set(interfaces)
+        for switch_id, interface_name in interfaces:
+            if InterfaceGroupValidators.interface_kind(interface_name) != "vpc":
+                continue
+            peer = self._get_vpc_peer_id(switch_id)
+            if not isinstance(peer, str) or not peer.strip() or peer.strip() == switch_id:
+                raise RuntimeError(f"Cannot verify vPC deployment for {(switch_id, interface_name)!r}: no valid peer identity")
+            targets.add((peer.strip(), interface_name))
+        return targets
+
+    def _preview_interfaces(self, interfaces: set[tuple[str, str]]) -> ResponseType:
+        """Read scoped compliance evidence without saving or deploying configuration."""
+        endpoint = EpManageInterfacesPreview()
+        endpoint.fabric_name = self.fabric_name
+        payload = {"interfaces": [{"switchId": switch_id, "interfaceName": name} for switch_id, name in sorted(interfaces)]}
+        check_mode = self.rest_send.check_mode
+        self.rest_send.check_mode = False
+        try:
+            return self._request(path=endpoint.path, verb=endpoint.verb, data=payload, operation_type=OperationType.QUERY)
+        finally:
+            self.rest_send.check_mode = check_mode
+
+    @classmethod
+    def _pending_interface_preview_targets(cls, response: ResponseType, interfaces: set[tuple[str, str]]) -> tuple[set[tuple[str, str]], str | None]:
+        """Require exact successful rows and one valid pending-line count per target."""
+        if not isinstance(response, Mapping) or not isinstance(response.get("configurationDiffs"), list):
+            return set(), "preview lacks a configurationDiffs list"
+        expected = {cls._normalized_deploy_pair(*pair) for pair in interfaces}
+        if None in expected or len(expected) != len(interfaces):
+            return set(), "requested interface identities are invalid or duplicated"
+        observed: set[tuple[str, str]] = set()
+        pending: set[tuple[str, str]] = set()
+        for row in response["configurationDiffs"]:
+            if not isinstance(row, Mapping):
+                return set(), "preview contains a non-mapping row"
+            pair = cls._normalized_deploy_pair(row.get("switchId"), row.get("interfaceName"))
+            if pair is None:
+                return set(), "preview contains an invalid switch/interface identity"
+            if pair in observed:
+                return set(), f"preview contains duplicate identity {pair!r}"
+            observed.add(pair)
+            if str(row.get("status") or "").strip().lower() != "success":
+                return set(), f"preview status for {pair!r} is not success"
+            configs = row.get("combinedConfigs")
+            if not isinstance(configs, list) or any(not isinstance(item, Mapping) for item in configs):
+                return set(), f"preview for {pair!r} lacks valid combinedConfigs"
+            if any(not isinstance(item.get("configType"), str) or not item["configType"].strip() for item in configs):
+                return set(), f"preview for {pair!r} has an invalid configType"
+            sections = [item for item in configs if item["configType"].strip().lower() == "pending"]
+            lines = sections[0].get("lines") if len(sections) == 1 else None
+            if len(sections) != 1 or not isinstance(lines, int) or isinstance(lines, bool) or lines < 0:
+                return set(), f"preview for {pair!r} lacks one valid pending-line count"
+            if lines:
+                pending.add(pair)
+        if observed != expected:
+            return set(), f"preview identities differ: missing={sorted(expected - observed)!r}, unexpected={sorted(observed - expected)!r}"
+        return pending, None
+
+    def _prepare_interface_deploy_verification(self, interfaces: set[tuple[str, str]]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+        """Read parent/member evidence only after an ambiguous deployment reply."""
+        verification = self._preview_verification_targets(interfaces)
+        derived = {self._normalized_deploy_pair(*pair) for pair in verification - interfaces}
+        parents = {pair for pair in interfaces if InterfaceGroupValidators.interface_kind(pair[1]) in {"port_channel", "vpc"}}
+        if not parents:
+            return verification, derived
+        parent_targets = self._preview_verification_targets(parents)
+        preview = self._preview_interfaces(parent_targets)
+        _pending, error = self._pending_interface_preview_targets(preview, parent_targets)
+        if error is not None:
+            raise RuntimeError(f"Cannot establish parent deployment identities for {sorted(parents)!r}: {error}")
+        for row in preview["configurationDiffs"]:
+            for config in row["combinedConfigs"]:
+                if config["configType"].strip().lower() not in {"pending", "expected"}:
+                    continue
+                text = config.get("config")
+                if not isinstance(text, str):
+                    continue
+                for name in _DEPLOY_INTERFACE_HEADER_RE.findall(text):
+                    if _DEPLOY_CHILD_NAME_RE.fullmatch(name):
+                        derived.add(self._normalized_deploy_pair(row["switchId"], name))
+        derived.difference_update(self._normalized_deploy_pair(*pair) for pair in interfaces)
+        return verification, derived
+
+    def _vpc_parent_generated_children(self, parents: set[tuple[str, str]]) -> set[tuple[str, str]]:
+        """Read exact vPC member and port-channel identities after an ambiguous deploy."""
+        children: set[tuple[str, str]] = set()
+        for switch_id, interface_name in sorted(parents):
+            endpoint = EpManageInterfacesGet()
+            endpoint.fabric_name = self.fabric_name
+            endpoint.switch_sn = switch_id
+            endpoint.interface_name = interface_name
+            response = self._request(path=endpoint.path, verb=endpoint.verb, operation_type=OperationType.QUERY)
+            if not isinstance(response, Mapping) or response.get("interfaceType") != "vpc":
+                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: invalid parent readback")
+            readback_pair = self._normalized_deploy_pair(response.get("switchId"), response.get("interfaceName"))
+            if readback_pair != self._normalized_deploy_pair(switch_id, interface_name):
+                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: parent identity differs")
+            config_data = response.get("configData")
+            network_os = config_data.get("networkOS") if isinstance(config_data, Mapping) else None
+            policy = network_os.get("policy") if isinstance(network_os, Mapping) else None
+            if not isinstance(policy, Mapping):
+                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: policy is unavailable")
+            peer = self._get_vpc_peer_id(switch_id)
+            if policy.get("peerSwitchId") not in (None, peer):
+                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: peer identity differs")
+            for peer_index, owner in ((1, switch_id), (2, peer)):
+                if not isinstance(owner, str) or not owner:
+                    continue
+                port_channel_id = policy.get(f"peer{peer_index}PortChannelId")
+                if isinstance(port_channel_id, int) and not isinstance(port_channel_id, bool) and 1 <= port_channel_id <= 4096:
+                    children.add((owner, f"port-channel{port_channel_id}"))
+                member_ports = policy.get(f"peer{peer_index}MemberPorts")
+                if not isinstance(member_ports, list):
+                    continue
+                for member_port in member_ports:
+                    normalized = self._normalized_deploy_pair(owner, member_port)
+                    if (
+                        normalized is not None
+                        and InterfaceGroupValidators.interface_kind(normalized[1]) == "ethernet"
+                        and _DEPLOY_CHILD_NAME_RE.fullmatch(normalized[1])
+                    ):
+                        children.add(normalized)
+        return children
+
+    def _classify_interface_deploy_results(
+        self, response: ResponseType, interfaces: set[tuple[str, str]], derived: set[tuple[str, str]]
+    ) -> tuple[bool, set[tuple[str, str]], str | None]:
+        """Distinguish complete, insufficient, and contradictory deployment evidence."""
+        expected = {self._normalized_deploy_pair(*pair) for pair in interfaces}
+        if None in expected or len(expected) != len(interfaces):
+            return False, set(), "requested interface identities are invalid or duplicated"
+        if not isinstance(response, Mapping) or "results" not in response:
+            return False, set(), None
+        rows = response["results"]
+        if not isinstance(rows, list):
+            return False, set(), "results is not a list"
+        observed: set[tuple[str, str]] = set()
+        children: set[tuple[str, str]] = set()
+        for row in rows:
+            if not isinstance(row, Mapping):
+                return False, set(), "results contains a non-mapping row"
+            if str(row.get("status") or "").strip().lower() != "success":
+                return False, set(), "results contains a status that is not success"
+            pair = self._normalized_deploy_pair(row.get("switchId"), row.get("interfaceName"))
+            if pair is None:
+                return False, set(), "results contains an invalid switch/interface identity"
+            if pair in observed:
+                return False, set(), f"results contains duplicate identity {pair!r}"
+            if pair not in expected:
+                if pair not in derived:
+                    return False, set(), f"results contains unrelated identity {pair!r}"
+                children.add((row["switchId"].strip(), row["interfaceName"].strip()))
+            observed.add(pair)
+        return observed == expected and not children, children, None
+
+    def _verify_interface_deployment(self, verification: set[tuple[str, str]]) -> None:
+        """Bound read-only verification without resubmitting an ambiguous deploy."""
+        pending: set[tuple[str, str]] = set()
+        for _attempt in range(_RECONCILIATION_ATTEMPTS):
+            preview = self._preview_interfaces(verification)
+            pending, error = self._pending_interface_preview_targets(preview, verification)
+            if error is not None:
+                raise RuntimeError(f"Interface deployment could not be confirmed for {sorted(verification)!r}: {error}")
+            if not pending:
+                return
+        raise RuntimeError(f"Interface deployment could not be confirmed; pending configuration remains on {sorted(pending)!r}")
+
     def _deploy_interfaces(self, interfaces: set[tuple[str, str]]) -> ResponseType:
-        """Deploy one confirmed set of Interface Group interface targets."""
+        """Clear no target until exact deploy results or scoped preview confirm it.
+
+        ND 4.2 and 4.3 expose the same deployment/preview contract.
+        Exact success replies need no preview. Ambiguous parent replies use
+        scoped evidence for port-channel/vPC expansion.
+        """
+        interfaces = set(interfaces)
+        normalized = {self._normalized_deploy_pair(*pair) for pair in interfaces}
+        if None in normalized or len(normalized) != len(interfaces):
+            raise RuntimeError("Cannot deploy invalid or duplicate switch/interface identities")
         endpoint = EpManageInterfacesDeploy()
         endpoint.fabric_name = self.fabric_name
         payload = {"interfaces": [{"switchId": switch_id, "interfaceName": interface_name} for switch_id, interface_name in sorted(interfaces)]}
-        return self._request(
+        response = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=payload,
             operation_type=OperationType.UPDATE,
         )
+        confirmed, _children, error = self._classify_interface_deploy_results(response, interfaces, set())
+        if confirmed:
+            return response
+        parents = {pair for pair in interfaces if InterfaceGroupValidators.interface_kind(pair[1]) in {"port_channel", "vpc"}}
+        if error is not None and (not error.startswith("results contains unrelated identity") or not parents):
+            raise RuntimeError(f"Interface deployment response is contradictory for {sorted(interfaces)!r}: {error}")
+
+        # TODO(4.3.1) deploy-207-incomplete-success-results
+        verification, derived = self._prepare_interface_deploy_verification(interfaces)
+        expected = {self._normalized_deploy_pair(*pair) for pair in interfaces}
+        rows = response.get("results") if isinstance(response, Mapping) else None
+        reported = (
+            {self._normalized_deploy_pair(row.get("switchId"), row.get("interfaceName")) for row in rows if isinstance(row, Mapping)}
+            if isinstance(rows, list)
+            else set()
+        )
+        unproven = reported - expected - derived
+        vpc_parents = {pair for pair in parents if InterfaceGroupValidators.interface_kind(pair[1]) == "vpc"}
+        vpc_switch_ids = {switch_id for switch_id, name in verification if InterfaceGroupValidators.interface_kind(name) == "vpc"}
+        if unproven and vpc_parents and all(pair is not None and pair[0] in vpc_switch_ids and _DEPLOY_CHILD_NAME_RE.fullmatch(pair[1]) for pair in unproven):
+            derived.update(self._vpc_parent_generated_children(vpc_parents))
+        confirmed, children, error = self._classify_interface_deploy_results(response, interfaces, derived)
+        if error is not None:
+            raise RuntimeError(f"Interface deployment response is contradictory for {sorted(interfaces)!r}: {error}")
+        if not confirmed:
+            child_targets = {(switch_id, name) for switch_id, name in children if InterfaceGroupValidators.interface_kind(name) != "vpc"}
+            self._verify_interface_deployment(verification | child_targets)
+        return response
 
     def _deploy_switches(self, switch_ids: set[str]) -> ResponseType:
         """Deploy one confirmed set of Interface Group switch targets."""
