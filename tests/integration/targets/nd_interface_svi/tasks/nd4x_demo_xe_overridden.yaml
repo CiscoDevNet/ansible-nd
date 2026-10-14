@@ -1,0 +1,385 @@
+---
+- name: "XE OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_svi_destructive_tests_enabled | bool
+    fail_msg: >-
+      The IOS-XE overridden test is fabric-wide and can delete managed SVIs
+      omitted from the desired configuration. Run only on a dedicated test
+      fabric and set nd_svi_destructive_tests_enabled=true.
+
+- name: "XE OVERRIDDEN PREFLIGHT: Query all interface pages on every fabric switch"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_collect_interfaces.yaml
+  vars:
+    nd4x_interface_fabric_name: "{{ test_xe_fabric_name }}"
+    nd4x_interface_switches: "{{ nd4x_xe_switch_inventory.current.switches | default([]) }}"
+
+- name: "XE OVERRIDDEN PREFLIGHT: Store complete interface inventory"
+  ansible.builtin.set_fact:
+    nd4x_xe_fabric_interface_inventory:
+      results: "{{ nd4x_paginated_interface_inventory }}"
+
+- name: "XE OVERRIDDEN PREFLIGHT: Initialize managed SVI scope"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_xe_svis: []
+
+- name: "XE OVERRIDDEN PREFLIGHT: Collect managed IOS-XE SVIs"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_xe_svis: >-
+      {{
+        nd4x_existing_managed_xe_svis
+        + [
+            {
+              'switch_ip':
+                fabric_interface.0.item.fabricManagementIp
+                | default(fabric_interface.0.item.switchId),
+              'interface_name':
+                fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_xe_fabric_interface_inventory.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{
+        fabric_interface.0.item.fabricManagementIp
+        | default(fabric_interface.0.item.switchId)
+      }}
+      {{
+        fabric_interface.1.interfaceName
+        | default('unknown')
+      }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'svi'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') in ['iosXeSvi', 'iosXeSviShutNoShut', 'svi']
+
+- name: "XE OVERRIDDEN PREFLIGHT: Reject SVIs outside test scope"
+  vars:
+    existing_switch_ips: >-
+      {{
+        nd4x_existing_managed_xe_svis
+        | map(attribute='switch_ip')
+        | unique
+        | list
+      }}
+    existing_test_switch_svis: >-
+      {{
+        nd4x_existing_managed_xe_svis
+        | selectattr('switch_ip', 'equalto', test_xe_switch_ip)
+        | map(attribute='interface_name')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - existing_switch_ips | difference([test_xe_switch_ip]) | length == 0
+      - >-
+        existing_test_switch_svis
+        | difference(['vlan980', 'vlan981', 'vlan982', 'vlan983'])
+        | length == 0
+    fail_msg: >-
+      Unsafe IOS-XE overridden testbed. Existing managed SVIs were found on
+      another switch or outside vlan980-vlan983. No override was applied.
+
+- name: Run nd_interface_svi IOS-XE overridden and deleted harness tests
+  block:
+    - name: "XE OVERRIDDEN SETUP: Remove reserved IOS-XE SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config: "{{ xe_cleanup_config }}"
+        config_actions:
+          deploy: true
+        state: deleted
+
+    - name: "XE OVERRIDDEN SETUP: Recreate vlan980 through vlan982"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - "{{ xe_svi_980 }}"
+          - "{{ xe_svi_981_shut }}"
+          - "{{ xe_svi_982 }}"
+        config_actions:
+          deploy: true
+        state: merged
+
+    - name: "XE DISCOVERY WAIT: Wait for overridden IOS-XE test SVIs"
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_xe_discovery.yaml
+      vars:
+        nd4x_xe_discovery_fabric_name: "{{ test_xe_fabric_name }}"
+        nd4x_xe_discovery_switch_id: "{{ xe_switch_id }}"
+        nd4x_xe_discovery_interfaces:
+          - vlan980
+          - vlan981
+          - vlan982
+
+    - name: "XE OVERRIDDEN: Keep only vlan980 and vlan981"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_xe_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - "{{ xe_svi_980 }}"
+          - "{{ xe_svi_981_shut }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained IOS-XE vlan980
+            path: >-
+              /api/v1/manage/fabrics/{{ test_xe_fabric_name
+              }}/switches/{{ xe_switch_id }}/interfaces/vlan980
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: iosXeSvi
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.80.1"
+          - name: Validate retained IOS-XE vlan981
+            path: >-
+              /api/v1/manage/fabrics/{{ test_xe_fabric_name
+              }}/switches/{{ xe_switch_id }}/interfaces/vlan981
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.policyType"
+                equals: iosXeSviShutNoShut
+              - jsonpath: "$.current.configData.networkOS.policy.adminState"
+                equals: false
+          - name: Validate removed IOS-XE vlan982
+            path: >-
+              /api/v1/manage/fabrics/{{ test_xe_fabric_name
+              }}/switches/{{ xe_switch_id }}/interfaces/vlan982
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: nd4x_xe_overridden
+
+    - name: "XE OVERRIDDEN: Verify retained and removed returned state"
+      ansible.builtin.assert:
+        that:
+          - nd4x_xe_overridden.check_mode_result.changed | bool
+          - nd4x_xe_overridden.first_run_result.changed | bool
+          - nd4x_xe_overridden.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan980')
+            | list | length == 1
+          - nd4x_xe_overridden.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan981')
+            | list | length == 1
+          - nd4x_xe_overridden.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan982')
+            | list | length == 0
+          - not nd4x_xe_overridden.second_run_result.changed | bool
+
+    - name: "XE OVERRIDDEN IDEMPOTENT: Re-apply the retained IOS-XE SVIs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_xe_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - "{{ xe_svi_980 }}"
+          - "{{ xe_svi_981_shut }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+      register: nd4x_xe_overridden_idempotent
+
+    - name: "XE OVERRIDDEN IDEMPOTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_xe_overridden_idempotent.check_mode_result.changed | bool
+          - not nd4x_xe_overridden_idempotent.first_run_result.changed | bool
+
+    - name: "XE DELETED: Delete vlan980 and vlan981"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_xe_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_name: vlan980
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_name: vlan981
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate deleted IOS-XE vlan980
+            path: >-
+              /api/v1/manage/fabrics/{{ test_xe_fabric_name
+              }}/switches/{{ xe_switch_id }}/interfaces/vlan980
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate deleted IOS-XE vlan981
+            path: >-
+              /api/v1/manage/fabrics/{{ test_xe_fabric_name
+              }}/switches/{{ xe_switch_id }}/interfaces/vlan981
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: nd4x_xe_deleted
+
+    - name: "XE DELETED: Verify deletion and idempotency"
+      ansible.builtin.assert:
+        that:
+          - nd4x_xe_deleted.check_mode_result.changed | bool
+          - nd4x_xe_deleted.first_run_result.changed | bool
+          - nd4x_xe_deleted.first_run_result.after
+            | selectattr('interface_name', 'in', ['vlan980', 'vlan981'])
+            | list | length == 0
+          - not nd4x_xe_deleted.second_run_result.changed | bool
+
+    - name: "XE DELETED IDEMPOTENT: Re-delete vlan980 and vlan981"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_xe_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_name: vlan980
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_name: vlan981
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+      register: nd4x_xe_deleted_idempotent
+
+    - name: "XE DELETED IDEMPOTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_xe_deleted_idempotent.check_mode_result.changed | bool
+          - not nd4x_xe_deleted_idempotent.first_run_result.changed | bool
+
+    - name: "XE VERIFY: Read the IOS-XE running configuration through the switch diff"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/diff"
+        method: get
+      register: nd4x_xe_diff
+
+    - name: "XE VERIFY: Verify no test SVI remains in the running configuration"
+      vars:
+        running: >-
+          {{
+            nd4x_xe_diff.jsondata.diffConfigs | default([])
+            | map(attribute='runningConfig')
+            | select('defined')
+            | join('\n')
+          }}
+      ansible.builtin.assert:
+        that:
+          - "'interface Vlan980' not in running"
+          - "'interface Vlan981' not in running"
+          - "'interface Vlan982' not in running"
+
+  always:
+    - name: "XE OVERRIDDEN CLEANUP: Wait for reserved interfaces to be discovered or absent"
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_xe_discovery.yaml
+      vars:
+        nd4x_xe_discovery_fabric_name: "{{ test_xe_fabric_name }}"
+        nd4x_xe_discovery_switch_id: "{{ xe_switch_id }}"
+        nd4x_xe_discovery_interfaces: >-
+          {{ xe_cleanup_config | map(attribute='interface_name') | list }}
+        nd4x_xe_discovery_allow_absent: true
+      ignore_errors: true
+
+    - name: "XE OVERRIDDEN CLEANUP: Remove all reserved IOS-XE SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config: "{{ xe_cleanup_config }}"
+        config_actions:
+          deploy: true
+        state: deleted
+      ignore_errors: true
+
+    - name: "XE OVERRIDDEN CLEANUP: Verify no reserved SVI remains in running configuration"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/diff"
+        method: get
+      register: nd4x_xe_cleanup_diff
+
+    - name: "XE OVERRIDDEN CLEANUP: Assert final IOS-XE cleanup"
+      vars:
+        running: >-
+          {{
+            nd4x_xe_cleanup_diff.jsondata.diffConfigs | default([])
+            | map(attribute='runningConfig')
+            | select('defined')
+            | join('\n')
+          }}
+      ansible.builtin.assert:
+        that:
+          - "'interface Vlan980' not in running"
+          - "'interface Vlan981' not in running"
+          - "'interface Vlan982' not in running"
+          - "'interface Vlan983' not in running"

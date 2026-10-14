@@ -1,0 +1,388 @@
+---
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_svi_destructive_tests_enabled | bool
+    fail_msg: >-
+      The overridden SVI test is fabric-wide and can delete managed SVIs
+      omitted from the desired configuration. Run only on a dedicated test
+      fabric and set nd_svi_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN PREFLIGHT: Query all interface pages on every fabric switch"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_collect_interfaces.yaml
+  vars:
+    nd4x_interface_fabric_name: "{{ test_fabric_name }}"
+    nd4x_interface_switches: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+
+- name: "OVERRIDDEN PREFLIGHT: Store complete interface inventory"
+  ansible.builtin.set_fact:
+    nd4x_fabric_interface_inventory:
+      results: "{{ nd4x_paginated_interface_inventory }}"
+
+- name: "OVERRIDDEN PREFLIGHT: Initialize managed SVI scope"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_svis: []
+
+- name: "OVERRIDDEN PREFLIGHT: Collect managed SVIs"
+  ansible.builtin.set_fact:
+    nd4x_existing_managed_svis: >-
+      {{
+        nd4x_existing_managed_svis
+        + [
+            {
+              'switch_ip':
+                fabric_interface.0.item.fabricManagementIp
+                | default(fabric_interface.0.item.switchId),
+              'interface_name':
+                fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_fabric_interface_inventory.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{
+        fabric_interface.0.item.fabricManagementIp
+        | default(fabric_interface.0.item.switchId)
+      }}
+      {{
+        fabric_interface.1.interfaceName
+        | default('unknown')
+      }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'svi'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'svi'
+
+- name: "OVERRIDDEN PREFLIGHT: Reject SVIs outside test scope"
+  vars:
+    existing_switch_ips: >-
+      {{
+        nd4x_existing_managed_svis
+        | map(attribute='switch_ip')
+        | unique
+        | list
+      }}
+    existing_test_switch_svis: >-
+      {{
+        nd4x_existing_managed_svis
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | map(attribute='interface_name')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - existing_switch_ips | difference([test_switch_ip]) | length == 0
+      - >-
+        existing_test_switch_svis
+        | difference(nd4x_svi_overridden_allowed_interfaces)
+        | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Existing managed SVIs were found on another
+      switch or outside vlan333-vlan338. No override was applied.
+
+- name: Run nd_interface_svi overridden harness tests
+  block:
+    - name: "OVERRIDDEN SETUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
+
+    - name: "OVERRIDDEN SETUP: Recreate the exact post-replaced SVI state"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          # This is the state present when the original suite enters
+          # overridden.yaml: replaced.yaml has already replaced vlan333,
+          # vlan334, and vlan335, while vlan336-vlan338 retain their merged
+          # configurations.
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan333
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Replaced vlan333
+                  ip: 10.99.150.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan334
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Replaced vlan334
+                  ip: 10.99.151.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan335
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Replaced vlan335
+                  ip: 10.99.152.1
+                  prefix: 24
+          - "{{ svi_336 }}"
+          - "{{ svi_337 }}"
+          - "{{ svi_338 }}"
+        state: merged
+
+    - name: "OVERRIDDEN REDUCE: Retain only vlan333 and vlan334"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan333
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan333
+                  ip: 10.99.200.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan334
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan334
+                  ip: 10.99.201.1
+                  prefix: 24
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained vlan333
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan333
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.200.1"
+          - name: Validate retained vlan334
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan334
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.201.1"
+          - name: Validate removed vlan335
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan335
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate removed vlan336
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan336
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate removed vlan337
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan337
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate removed vlan338
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan338
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: overridden_reduce
+
+    - name: "OVERRIDDEN REDUCE: Verify retained and removed returned state"
+      vars:
+        vlan333_after: >-
+          {{
+            overridden_reduce.first_run_result.after
+            | selectattr('switch_ip', 'equalto', test_switch_ip)
+            | selectattr('interface_name', 'equalto', 'vlan333')
+            | first
+          }}
+        vlan334_after: >-
+          {{
+            overridden_reduce.first_run_result.after
+            | selectattr('switch_ip', 'equalto', test_switch_ip)
+            | selectattr('interface_name', 'equalto', 'vlan334')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - overridden_reduce.check_mode_result.changed | bool
+          - overridden_reduce.first_run_result.changed | bool
+          - vlan333_after.config_data.network_os.policy.description == "Overridden vlan333"
+          - vlan333_after.config_data.network_os.policy.ip == "10.99.200.1"
+          - vlan334_after.config_data.network_os.policy.description == "Overridden vlan334"
+          - vlan334_after.config_data.network_os.policy.ip == "10.99.201.1"
+          - overridden_reduce.first_run_result.after
+            | selectattr('interface_name', 'in', ['vlan335', 'vlan336', 'vlan337', 'vlan338'])
+            | list | length == 0
+          - not overridden_reduce.second_run_result.changed | bool
+
+    - name: "OVERRIDDEN IDEMPOTENT: Re-apply the same override"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan333
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan333
+                  ip: 10.99.200.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan334
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan334
+                  ip: 10.99.201.1
+                  prefix: 24
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: overridden_idempotent
+
+    - name: "OVERRIDDEN IDEMPOTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not overridden_idempotent.check_mode_result.changed | bool
+          - not overridden_idempotent.first_run_result.changed | bool
+          - not overridden_idempotent.second_run_result.changed | bool
+
+    - name: "OVERRIDDEN GROW: Re-add vlan335 to the override set"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan333
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan333
+                  ip: 10.99.200.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan334
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan334
+                  ip: 10.99.201.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan335
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Overridden vlan335
+                  ip: 10.99.202.1
+                  prefix: 24
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate re-added vlan335
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan335
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.202.1"
+      register: overridden_grow
+
+    - name: "OVERRIDDEN GROW: Verify vlan335 is present"
+      vars:
+        vlan335_after: >-
+          {{
+            overridden_grow.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan335')
+            | list
+          }}
+      ansible.builtin.assert:
+        that:
+          - overridden_grow.first_run_result.changed | bool
+          - vlan335_after | length == 1
+          - vlan335_after[0].config_data.network_os.policy.description
+            == "Overridden vlan335"
+          - not overridden_grow.second_run_result.changed | bool
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted

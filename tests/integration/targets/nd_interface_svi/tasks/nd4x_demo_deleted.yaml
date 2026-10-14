@@ -1,0 +1,145 @@
+---
+- name: "DELETED SAFETY: Refuse pre-existing reserved SVI state"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_assert_reserved_absent.yaml
+  vars:
+    nd4x_reserved_fabric_name: "{{ test_fabric_name }}"
+    nd4x_reserved_switch_id: "{{ test_switch_id }}"
+    nd4x_reserved_interface_names: >-
+      {{ cleanup_config | map(attribute='interface_name') | list }}
+
+- name: Run nd_interface_svi deleted harness tests
+  block:
+    - name: "DELETED SETUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
+
+    - name: "DELETED SETUP: Create vlan333 through vlan335"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_333 }}"
+          - "{{ svi_334 }}"
+          - "{{ svi_335 }}"
+        state: merged
+
+    - name: "DELETED SINGLE: Delete vlan333"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan333
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vlan333 is absent from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan333
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_333
+
+    - name: "DELETED SINGLE: Verify vlan333 deletion and idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_333.check_mode_result.changed | bool
+          - deleted_333.first_run_result.changed | bool
+          - deleted_333.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan333')
+            | list | length == 0
+          - deleted_333.idempotency_attempts == 1
+          - not deleted_333.second_run_result.changed | bool
+
+    - name: "DELETED MULTI: Delete vlan334 and vlan335 together"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan334
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan335
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vlan334 is absent from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan334
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate vlan335 is absent from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan335
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_334_335
+
+    - name: "DELETED MULTI: Verify vlan334 and vlan335 deletion"
+      ansible.builtin.assert:
+        that:
+          - deleted_334_335.first_run_result.changed | bool
+          - deleted_334_335.first_run_result.after
+            | selectattr('interface_name', 'in', ['vlan334', 'vlan335'])
+            | list | length == 0
+          - not deleted_334_335.second_run_result.changed | bool
+
+  always:
+    - name: "DELETED CLEANUP: Remove all reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
+      register: deleted_cleanup
+
+    - name: "DELETED CLEANUP: Verify all reserved SVIs are gone"
+      vars:
+        remaining: >-
+          {{
+            deleted_cleanup.after
+            | selectattr('switch_ip', 'equalto', test_switch_ip)
+            | selectattr(
+                'interface_name',
+                'in',
+                ['vlan333', 'vlan334', 'vlan335', 'vlan336', 'vlan337', 'vlan338']
+              )
+            | list
+          }}
+      ansible.builtin.assert:
+        that:
+          - remaining | length == 0
