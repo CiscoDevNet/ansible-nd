@@ -1907,12 +1907,15 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     def _preview_verification_targets(self, interfaces: set[tuple[str, str]]) -> set[tuple[str, str]]:
         """Include both known vPC peers in the required preview evidence."""
         targets = set(interfaces)
+        peer_evidence = dict(self._vpc_peer_cache)
         for switch_id, interface_name in interfaces:
             if InterfaceGroupValidators.interface_kind(interface_name) != "vpc":
                 continue
             peer = self._get_vpc_peer_id(switch_id)
             if not isinstance(peer, str) or not peer.strip() or peer.strip() == switch_id:
                 raise RuntimeError(f"Cannot verify vPC deployment for {(switch_id, interface_name)!r}: no valid peer identity")
+            if peer in peer_evidence and peer_evidence[peer] != switch_id:
+                raise RuntimeError(f"conflicting vPC peer identities for {(switch_id, interface_name)!r}")
             targets.add((peer.strip(), interface_name))
         return targets
 
@@ -1927,6 +1930,120 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             return self._request(path=endpoint.path, verb=endpoint.verb, data=payload, operation_type=OperationType.QUERY)
         finally:
             self.rest_send.check_mode = check_mode
+
+    def _interface_preview_requests(self, verification: set[tuple[str, str]]) -> tuple[set[tuple[str, str]], dict[tuple[str, str], set[tuple[str, str]]]]:
+        """Request one logical vPC while retaining both switch-scoped evidence identities."""
+        identities = {self._normalized_deploy_pair(*pair): pair for pair in verification}
+        if None in identities or len(identities) != len(verification):
+            raise RuntimeError("requested interface identities are invalid or duplicated")
+        peer_evidence = dict(self._vpc_peer_cache)
+        incoming: dict[str, set[str]] = {}
+        for source, target in peer_evidence.items():
+            if isinstance(target, str):
+                incoming.setdefault(target, set()).add(source)
+        requests: set[tuple[str, str]] = set()
+        scopes: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        for identity, original in sorted(identities.items()):
+            if identity in scopes:
+                continue
+            switch_id, name = identity
+            if InterfaceGroupValidators.interface_kind(name) != "vpc":
+                requests.add(original)
+                scopes[identity] = {identity}
+                continue
+            peer = self._vpc_peer_cache.get(switch_id)
+            if switch_id not in self._vpc_peer_cache:
+                # A caller can already have the required peer identity from a
+                # directed cached lookup. Reuse it without claiming that this
+                # supplies independent reciprocal endpoint evidence.
+                sources = {source for source in incoming.get(switch_id, set()) if (source, name) in identities}
+                if len(sources) > 1:
+                    raise RuntimeError(f"conflicting vPC peer identities for {identity!r}")
+                peer = next(iter(sources)) if sources else self._get_vpc_peer_id(switch_id)
+            if not isinstance(peer, str) or not peer.strip() or peer.strip() == switch_id:
+                raise RuntimeError(f"Cannot verify vPC deployment for {original!r}: no valid peer identity")
+            peer = peer.strip()
+            if peer in peer_evidence and peer_evidence[peer] != switch_id:
+                raise RuntimeError(f"conflicting vPC peer identities for {identity!r}")
+            if not incoming.get(switch_id, set()).issubset({peer}) or not incoming.get(peer, set()).issubset({switch_id}):
+                raise RuntimeError(f"conflicting vPC peer identities for {identity!r}")
+            if peer in self._vpc_peer_cache and self._vpc_peer_cache[peer] != switch_id:
+                raise RuntimeError(f"conflicting vPC peer identities for {identity!r}")
+            partner = (peer, name)
+            if partner not in identities:
+                raise RuntimeError(f"preview verification lacks peer identity {partner!r}")
+            scope = {identity, partner}
+            if partner in scopes and scopes[partner] != scope:
+                raise RuntimeError(f"conflicting vPC peer identities for {identity!r}")
+            peer_evidence[switch_id] = peer
+            peer_evidence[peer] = switch_id
+            incoming.setdefault(switch_id, set()).add(peer)
+            incoming.setdefault(peer, set()).add(switch_id)
+            scopes[identity] = scopes[partner] = scope
+            requests.add(original)
+        return requests, scopes
+
+    @classmethod
+    def _validate_interface_preview_batch(
+        cls,
+        response: ResponseType,
+        requested: set[tuple[str, str]],
+        allowed: set[tuple[str, str]],
+        identities: dict[tuple[str, str], tuple[str, str]],
+    ) -> tuple[dict[tuple[str, str], dict], set[tuple[str, str]], str | None]:
+        """Validate one reply strictly, allowing only unrequested vPC partners to be absent."""
+        rows = response.get("configurationDiffs") if isinstance(response, Mapping) else None
+        if not isinstance(rows, list):
+            return {}, set(), "preview lacks a configurationDiffs list"
+        observed = {cls._normalized_deploy_pair(row.get("switchId"), row.get("interfaceName")) for row in rows if isinstance(row, Mapping)}
+        present = {identities[pair] for pair in observed if pair in allowed}
+        pending, error = cls._pending_interface_preview_targets(response, present)
+        if error is not None:
+            return {}, set(), error
+        required = {cls._normalized_deploy_pair(*pair) for pair in requested}
+        if not required.issubset(observed):
+            return {}, set(), f"preview identities differ: missing={sorted(required - observed)!r}, unexpected=[]"
+        return {cls._normalized_deploy_pair(row["switchId"], row["interfaceName"]): row for row in rows}, pending, None
+
+    def _collect_interface_preview(self, verification: set[tuple[str, str]]) -> tuple[ResponseType, set[tuple[str, str]], str | None]:
+        """Collect complete evidence without submitting overlapping vPC preview aliases.
+
+        ND can expand one vPC preview to both peers. A switch-local reply is
+        also supported through one bounded missing-peer batch. Each response
+        is validated independently; overlap between these separate reads never
+        hides a failed row, pending configuration, or a duplicate within a reply.
+        """
+        try:
+            requests, scopes = self._interface_preview_requests(verification)
+        except RuntimeError as exc:
+            return {}, set(), str(exc)
+        identities = {self._normalized_deploy_pair(*pair): pair for pair in verification}
+        response = self._preview_interfaces(requests)
+        rows, pending, error = self._validate_interface_preview_batch(response, requests, set(identities), identities)
+        if error is not None:
+            return response, set(), error
+        missing = set(identities) - set(rows)
+        if missing:
+            requests = {identities[pair] for pair in missing}
+            allowed = set().union(*(scopes[pair] for pair in missing))
+            response = self._preview_interfaces(requests)
+            extra, extra_pending, error = self._validate_interface_preview_batch(response, requests, allowed, identities)
+            if error is not None:
+                return response, set(), error
+            pending.update(extra_pending)
+            for identity, row in extra.items():
+                previous = rows.get(identity)
+                if previous is not None:
+                    # Keep pending and expected child CLI from both validated
+                    # snapshots. A later clean echo cannot erase earlier pending
+                    # evidence in this reconciliation round.
+                    configs = previous["combinedConfigs"] + row["combinedConfigs"]
+                    sections = [item for item in configs if item["configType"].strip().lower() == "pending"]
+                    text = "\n".join(dict.fromkeys(item["config"] for item in sections if isinstance(item.get("config"), str)))
+                    row = {**row, "combinedConfigs": [item for item in configs if item not in sections]}
+                    row["combinedConfigs"].append({"configType": "pending", "lines": max(item["lines"] for item in sections), "config": text})
+                rows[identity] = row
+        return {"configurationDiffs": list(rows.values())}, pending, None
 
     @classmethod
     def _pending_interface_preview_targets(cls, response: ResponseType, interfaces: set[tuple[str, str]]) -> tuple[set[tuple[str, str]], str | None]:
@@ -1972,8 +2089,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         if not parents:
             return verification, derived
         parent_targets = self._preview_verification_targets(parents)
-        preview = self._preview_interfaces(parent_targets)
-        _pending, error = self._pending_interface_preview_targets(preview, parent_targets)
+        preview, _pending, error = self._collect_interface_preview(parent_targets)
         if error is not None:
             raise RuntimeError(f"Cannot establish parent deployment identities for {sorted(parents)!r}: {error}")
         for row in preview["configurationDiffs"]:
@@ -2065,8 +2181,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Bound read-only verification without resubmitting an ambiguous deploy."""
         pending: set[tuple[str, str]] = set()
         for _attempt in range(_RECONCILIATION_ATTEMPTS):
-            preview = self._preview_interfaces(verification)
-            pending, error = self._pending_interface_preview_targets(preview, verification)
+            _preview, pending, error = self._collect_interface_preview(verification)
             if error is not None:
                 raise RuntimeError(f"Interface deployment could not be confirmed for {sorted(verification)!r}: {error}")
             if not pending:

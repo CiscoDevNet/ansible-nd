@@ -51,21 +51,6 @@
       cleanup.
   when: test_create_network_fixtures | bool
 
-- name: Remove the reserved vPC interface fixture
-  cisco.nd.nd_interface_vpc_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip_primary }}"
-        interface_name: "{{ test_vpc_interface }}"
-    config_actions:
-      deploy: true
-    state: deleted
-  register: interface_group_vpc_fixture_cleanup
-  when:
-    - test_vpc_flow_enabled | bool
-    - test_create_vpc_fixture | bool
-
 - name: Remove the reserved port-channel interface fixtures
   cisco.nd.nd_interface_port_channel_trunk_host:
     output_level: "{{ nd_info.output_level }}"
@@ -95,6 +80,23 @@
     state: deleted
   register: interface_group_ethernet_fixture_cleanup_result
   when: test_create_ethernet_fixtures | bool
+
+# Removing a vPC can temporarily expose discovery rows under the wrong switch.
+# Finish ordinary interface cleanup before that transient inventory appears.
+- name: Remove the reserved vPC interface fixture
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_primary }}"
+        interface_name: "{{ test_vpc_interface }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: interface_group_vpc_fixture_cleanup
+  when:
+    - test_vpc_flow_enabled | bool
+    - test_create_vpc_fixture | bool
 
 - name: Allow interface cleanup to converge
   ansible.builtin.pause:

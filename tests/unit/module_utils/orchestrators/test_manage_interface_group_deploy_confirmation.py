@@ -313,7 +313,7 @@ def test_vpc_requires_both_exact_peer_preview_rows(entrypoint, deploy_targets):
     expected_paths = [DEPLOY] if deploy_targets == submitted else [DEPLOY, PREVIEW, PREVIEW]
     assert [call["path"] for call in sender.calls] == expected_paths
     assert sender.calls[0]["payload"] == _payload(submitted)
-    assert all(call["payload"] == _payload(peers) for call in sender.calls[1:])
+    assert all(call["payload"] == _payload(submitted) for call in sender.calls[1:])
     assert not orchestrator._pending_interfaces
 
 
@@ -337,8 +337,8 @@ def test_vpc_generated_peer_children_use_strict_scoped_fallback(entrypoint):
     orchestrator._vpc_peer_cache = {"SN1": "SN2"}
     getattr(orchestrator, entrypoint)()
     assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, VPC_PARENT_GET, PREVIEW]
-    assert sender.calls[1]["payload"] == _payload(peers)
-    assert sender.calls[-1]["payload"] == _payload(peers | children)
+    assert sender.calls[1]["payload"] == _payload(submitted)
+    assert sender.calls[-1]["payload"] == _payload(submitted | children)
     assert not orchestrator._pending_interfaces
 
 
@@ -414,26 +414,36 @@ def test_vpc_missing_peer_evidence_cannot_clear_queue():
     submitted = {("SN1", "vPC10")}
     peers = submitted | {("SN2", "vPC10")}
     orchestrator, sender = _build(
-        [_response(DEPLOY, {}), _response(PREVIEW, _preview_body(peers)), _response(PREVIEW, _preview_body(submitted))], targets=submitted
+        [
+            _response(DEPLOY, {}),
+            _response(PREVIEW, _preview_body(peers)),
+            _response(PREVIEW, _preview_body(submitted)),
+            _response(PREVIEW, _preview_body(submitted)),
+        ],
+        targets=submitted,
     )
     orchestrator._vpc_peer_cache = {"SN1": "SN2"}
     with pytest.raises(RuntimeError, match="missing=.*SN2"):
         orchestrator.deploy_pending()
     assert orchestrator._pending_interfaces == submitted
-    assert len(sender.calls) == 3
-    assert all(call["payload"] == _payload(peers) for call in sender.calls[1:])
+    assert len(sender.calls) == 4
+    assert all(call["payload"] == _payload(submitted) for call in sender.calls[1:3])
+    assert sender.calls[-1]["payload"] == _payload({("SN2", "vPC10")})
 
 
 @pytest.mark.parametrize("entrypoint", ENTRYPOINTS)
-def test_vpc_one_peer_preview_cannot_confirm_ambiguous_deploy(entrypoint):
+def test_vpc_one_peer_preview_with_incomplete_fallback_cannot_confirm_deploy(entrypoint):
     submitted = {("SN1", "vPC10")}
-    peers = submitted | {("SN2", "vPC10")}
-    orchestrator, sender = _build([_response(DEPLOY, {}), _response(PREVIEW, _preview_body(submitted))], targets=submitted)
+    orchestrator, sender = _build(
+        [_response(DEPLOY, {}), _response(PREVIEW, _preview_body(submitted)), _response(PREVIEW, _preview_body(set()))],
+        targets=submitted,
+    )
     orchestrator._vpc_peer_cache = {"SN1": "SN2"}
     with pytest.raises(RuntimeError, match="missing=.*SN2"):
         getattr(orchestrator, entrypoint)()
-    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW]
-    assert sender.calls[1]["payload"] == _payload(peers)
+    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, PREVIEW]
+    assert sender.calls[1]["payload"] == _payload(submitted)
+    assert sender.calls[2]["payload"] == _payload({("SN2", "vPC10")})
     assert orchestrator._pending_interfaces == submitted
 
 
