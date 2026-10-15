@@ -44,6 +44,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_bgp_validation import (
+    parse_controller_version,
+)
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -71,6 +74,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     ### RuntimeError
 
     - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `preflight` if a `csrLoopback` would be created or transitioned to on an ND 4.3.1-or-later controller.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
     - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
@@ -101,6 +105,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    # First ND release whose request gateway rejects the `csrLoopback` policy; see `_check_csr_loopback_writable`.
+    CSR_LOOPBACK_REJECTED_FROM: ClassVar[tuple[int, int, int]] = (4, 3, 1)
 
     def preflight_delete(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
         """Check IOS-XE delete spelling, ownership, and discovery before removal."""
@@ -150,6 +157,71 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         if match is None:
             raise RuntimeError(f"Cannot safely canonicalize IOS-XE loopback name {name!r} on {switch_id}")
         return f"Loopback{match.group(1)}"
+
+    def preflight(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """
+        # Summary
+
+        Pre-mutation validation for the proposed loopbacks: the shared interface preflight (switch resolution, platform match,
+        capability, IOS-XE override removals), then the `csrLoopback` release check (`_check_csr_loopback_writable`). Invoked by
+        `NDStateMachine.manage_state` before any create or update, in check mode too.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `NDBaseInterfaceOrchestrator.preflight`.
+        - Propagated from `_check_csr_loopback_writable`.
+        """
+        super().preflight(model_instances)
+        self._check_csr_loopback_writable(model_instances)
+
+    def _check_csr_loopback_writable(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """
+        # Summary
+
+        Refuse, before any write, a `csrLoopback` that would be created or transitioned to on an ND 4.3.1-or-later controller.
+        "Would be" means the proposed item carries `policyType: csrLoopback` and the switch's interface inventory (already cached by
+        `query_all`, so this adds no request) either lacks the interface or holds it under another policy type. A `csrLoopback` that
+        already exists as such is left alone: re-stating it issues no write. Releases below 4.3.1, and an unknown controller version,
+        skip the check.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more interfaces would become `csrLoopback` on a controller at or above `CSR_LOOPBACK_REJECTED_FROM`.
+        - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
+        - Via `_switch_interfaces` if the interface-list request fails.
+        """
+        # TODO(4.3.1) csr-loopback-read-schema-name-drift
+        # ND 4.3.1 validates the IOS-XE loopback policy against both halves of an inconsistent schema: the per-branch enum demands
+        # `csrIntLoopback` while the discriminator mapping only accepts `csrLoopback`, so every typed csrLoopback POST and PUT is
+        # rejected with HTTP 400 (4.2.1 accepts `csrLoopback`). The module cannot write the policy on 4.3.1 at all; fail here with the
+        # cause instead of surfacing ND's opaque "Request validation failed". Tracked as CiscoDevNet/ansible-nd#632.
+        raw_version = self.rest_send.controller_version
+        version = parse_controller_version(raw_version)
+        if version is None or version < self.CSR_LOOPBACK_REJECTED_FROM:
+            return
+        csr_value = XeLoopbackPolicyTypeEnum.CSR_LOOPBACK.value
+        becoming: list[str] = []
+        for model_instance in model_instances:
+            if self._desired_policy_type(model_instance) != csr_value:
+                continue
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower()) or {}
+            existing_policy = ((existing.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+            if existing_policy.get("policyType") == csr_value:
+                continue
+            becoming.append(f"{model_instance.interface_name} ({model_instance.switch_ip})")
+        if not becoming:
+            return
+        raise RuntimeError(
+            f"ND {raw_version} rejects the csrLoopback loopback policy on create and update (its schema enum and discriminator "
+            f"mapping disagree on the policy name; CiscoDevNet/ansible-nd#632), so csrLoopback cannot be configured on ND "
+            f"{'.'.join(str(part) for part in self.CSR_LOOPBACK_REJECTED_FROM)} or later. Affected: {', '.join(becoming)}. "
+            "Use another IOS-XE loopback policy type, or a controller release below 4.3.1."
+        )
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
