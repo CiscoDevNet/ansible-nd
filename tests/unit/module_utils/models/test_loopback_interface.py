@@ -59,7 +59,7 @@ SAMPLE_API_RESPONSE = {
                 "ip": "10.1.1.1",
                 "vrfInterface": "management",
                 "policyType": "loopback",
-                "routeMapTag": "12345",
+                "routeMapTag": 12345,
                 "description": "mgmt loopback",
             },
         },
@@ -79,7 +79,7 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "ip": "10.1.1.1",
                 "vrf": "management",
                 "policy_type": "loopback",
-                "route_map_tag": "12345",
+                "route_map_tag": 12345,
                 "description": "mgmt loopback",
             },
         },
@@ -148,7 +148,7 @@ def test_loopback_interface_00020():
     assert instance.ip == "10.1.1.1"
     assert instance.vrf == "management"
     assert instance.policy_type == "loopback"
-    assert instance.route_map_tag == "100"
+    assert instance.route_map_tag == 100
     assert instance.description == "test"
 
 
@@ -179,7 +179,7 @@ def test_loopback_interface_00030():
     assert instance.ip == "10.2.2.2"
     assert instance.vrf == "default"
     assert instance.policy_type == "loopback"
-    assert instance.route_map_tag == "200"
+    assert instance.route_map_tag == 200
 
 
 def test_loopback_interface_00040():
@@ -232,7 +232,7 @@ def test_loopback_interface_00060():
 
 
 # =============================================================================
-# Test: NexusLoopbackPolicyModel — route_map_tag coercion
+# Test: NexusLoopbackPolicyModel — route_map_tag integer contract (issue #583)
 # =============================================================================
 
 
@@ -240,12 +240,12 @@ def test_loopback_interface_00065():
     """
     # Summary
 
-    Verify `route_map_tag` coerces an integer to a string.
+    Verify `route_map_tag` stores an integer unchanged (the OpenAPI `routeMapTag` type on ND 4.2.1 and 4.3.1).
 
     ## Test
 
     - Construct with route_map_tag=12345 (int)
-    - Value is coerced to "12345" (str)
+    - Value remains the integer 12345
 
     ## Classes and Methods
 
@@ -253,20 +253,21 @@ def test_loopback_interface_00065():
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(route_map_tag=12345, policy_type="loopback")
-    assert instance.route_map_tag == "12345"
-    assert isinstance(instance.route_map_tag, str)
+    assert instance.route_map_tag == 12345
+    assert isinstance(instance.route_map_tag, int)
 
 
 def test_loopback_interface_00066():
     """
     # Summary
 
-    Verify `route_map_tag` accepts a string unchanged.
+    Verify `route_map_tag` accepts a numeric string from a playbook and stores it as an integer, so the payload sent to ND
+    is numeric on both releases (ND 4.3.1 rejects a string with HTTP 400, issue #583).
 
     ## Test
 
     - Construct with route_map_tag="12345" (str)
-    - Value remains "12345"
+    - Value is stored as the integer 12345
 
     ## Classes and Methods
 
@@ -274,19 +275,20 @@ def test_loopback_interface_00066():
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(route_map_tag="12345", policy_type="loopback")
-    assert instance.route_map_tag == "12345"
+    assert instance.route_map_tag == 12345
+    assert isinstance(instance.route_map_tag, int)
 
 
 def test_loopback_interface_00067():
     """
     # Summary
 
-    Verify `route_map_tag` coerces an integer via the camelCase alias (API response path).
+    Verify `route_map_tag` accepts the integer ND echoes on GET via the camelCase alias (API response path).
 
     ## Test
 
     - Construct with routeMapTag=12345 (int, camelCase alias)
-    - Value is coerced to "12345" (str)
+    - Value remains the integer 12345
 
     ## Classes and Methods
 
@@ -294,8 +296,57 @@ def test_loopback_interface_00067():
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(routeMapTag=12345, policyType="loopback")
-    assert instance.route_map_tag == "12345"
-    assert isinstance(instance.route_map_tag, str)
+    assert instance.route_map_tag == 12345
+    assert isinstance(instance.route_map_tag, int)
+
+
+def test_loopback_interface_00068():
+    """
+    # Summary
+
+    Verify the dumped payload carries `routeMapTag` as a JSON integer whether the playbook passed an int or a numeric string.
+
+    ## Test
+
+    - Build `LoopbackInterfaceModel` from a config whose `route_map_tag` is the string "54321"
+    - `to_payload()` emits `routeMapTag: 54321` (int) under `configData.networkOS.policy`
+    - The same config with the integer 54321 produces an identical policy payload
+
+    ## Classes and Methods
+
+    - NexusLoopbackPolicyModel.coerce_route_map_tag()
+    - LoopbackInterfaceModel.to_payload()
+    """
+    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    config["config_data"]["network_os"]["policy"]["route_map_tag"] = "54321"
+    policy_from_str = LoopbackInterfaceModel.from_config(config).to_payload()["configData"]["networkOS"]["policy"]
+    assert policy_from_str["routeMapTag"] == 54321
+    assert isinstance(policy_from_str["routeMapTag"], int)
+
+    config["config_data"]["network_os"]["policy"]["route_map_tag"] = 54321
+    policy_from_int = LoopbackInterfaceModel.from_config(config).to_payload()["configData"]["networkOS"]["policy"]
+    assert policy_from_int == policy_from_str
+
+
+@pytest.mark.parametrize("value", [True, False, "abc", "12.5", ""])
+def test_loopback_interface_00069(value):
+    """
+    # Summary
+
+    Verify `route_map_tag` rejects values that are not an integer or a numeric string (booleans would otherwise pass pydantic's
+    lax int coercion as 0 / 1).
+
+    ## Test
+
+    - Construct with a bool, a non-numeric string, a decimal string and an empty string
+    - Each raises ValidationError naming `route_map_tag`
+
+    ## Classes and Methods
+
+    - NexusLoopbackPolicyModel.coerce_route_map_tag()
+    """
+    with pytest.raises(ValidationError, match="route_map_tag"):
+        NexusLoopbackPolicyModel(route_map_tag=value, policy_type="loopback")
 
 
 # =============================================================================
@@ -2638,7 +2689,7 @@ def test_loopback_interface_00740():
         existing.merge(proposed)
     policy = existing.config_data.network_os.policy
     assert policy.description == "merged onto None"
-    assert policy.route_map_tag == "54321"
+    assert policy.route_map_tag == 54321
     assert policy.vrf == "blue"
     assert policy.admin_state is True
     assert policy.ip == "10.1.1.1"

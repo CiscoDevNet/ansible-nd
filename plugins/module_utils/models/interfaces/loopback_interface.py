@@ -133,12 +133,11 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     """
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
-    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
-    # the model's DUMPED form: the schema declares routeMapTag as integer 12345, but `coerce_route_map_tag` stores it as
-    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
+    # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`), in the model's
+    # dumped form. `routeMapTag` is an integer on the wire and in the model (issue #583), so the table holds 12345.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         **LoopbackPolicyStrictBase.reverse_diff_defaults,
-        "routeMapTag": "12345",
+        "routeMapTag": 12345,
     }
 
     policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
@@ -146,26 +145,27 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
         default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
     )
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
+    route_map_tag: int | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
 
-    # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
-    # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
-    # The same drift affects SVI `routingTag` - keep both validators in sync.
     @field_validator("route_map_tag", mode="before")
     @classmethod
     def coerce_route_map_tag(cls, value):
         """
         # Summary
 
-        Coerce `route_map_tag` to a string. The ND API returns this field as an integer, but the template defines it as a string.
+        Keep `route_map_tag` an integer. The OpenAPI `intLoopbackTemplate` declares `routeMapTag` as an integer on ND 4.2.1 and 4.3.1, ND
+        echoes an integer on GET, and ND 4.3.1 rejects a string on write with HTTP 400 (issue #583). A numeric string from a playbook is
+        accepted and converted by the field's lax integer validation; a boolean is rejected here because pydantic would otherwise coerce it to 0 / 1.
 
         ## Raises
 
-        None
+        ### ValueError
+
+        - If `value` is a boolean
         """
-        if value is None:
-            return value
-        return str(value)
+        if isinstance(value, bool):
+            raise ValueError("route_map_tag must be an integer")
+        return value
 
 
 class SecondaryIpModel(NDNestedModel):
@@ -539,7 +539,7 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             extra_config=dict(type="str"),
                                             vrf=dict(type="str"),
                                             ipv6=dict(type="str"),
-                                            route_map_tag=dict(type="str"),
+                                            route_map_tag=dict(type="int"),
                                             advertise_loopback=dict(type="bool"),
                                             is_service_reflect=dict(type="bool"),
                                             routing_tag=dict(type="str"),

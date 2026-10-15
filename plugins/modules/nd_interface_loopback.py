@@ -133,7 +133,7 @@ options:
                     - The route-map tag associated with the interface IP address.
                     - The ND default is V(12345).
                     - Applies when policy_type is C(loopback).
-                    type: str
+                    type: int
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.
@@ -292,7 +292,7 @@ EXAMPLES = r"""
               policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
-              route_map_tag: "12345"
+              route_map_tag: 12345
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:
