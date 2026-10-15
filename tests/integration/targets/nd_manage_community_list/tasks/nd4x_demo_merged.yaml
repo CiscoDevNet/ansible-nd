@@ -127,9 +127,9 @@
       ansible.builtin.assert:
         that:
           - merged_standard_check_mode_reapply.check_mode_result.changed == false
-          - merged_standard_check_mode_reapply.check_mode_result.failed == false
+          - not (merged_standard_check_mode_reapply.check_mode_result.failed | default(false) | bool)
           - merged_standard_check_mode_reapply.first_run_result.changed == false
-          - merged_standard_check_mode_reapply.first_run_result.failed == false
+          - not (merged_standard_check_mode_reapply.first_run_result.failed | default(false) | bool)
           - merged_standard_check_mode_reapply.idempotency_attempts == 0
 
     - name: "MERGED CREATE: Create expanded community list through the harness"

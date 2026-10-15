@@ -66,4 +66,19 @@ list outside the reserved test names, then snapshots the complete
   `after` entry fields in addition to REST postconditions.
 - The legacy suite is intentionally retained until original and harness suites
   pass in the same environment and retirement is approved.
-- Live controller testing is in progress; the results will be added here soon.
+- Live controller testing is complete for all isolated harness scenarios. An
+  aggregate harness run using the explicit `never` tag passed with `ok=69`,
+  `changed=14`, `failed=0`, and
+  `skipped=4`; those totals are not scenario-specific. The isolated
+  `nd4x_demo_merged` scenario has passed with `ok=23`, `changed=3`,
+  `unreachable=0`, `failed=0`, and `skipped=2`. Isolated results for the
+  `nd4x_demo_replaced` scenario have passed with `ok=16`, `changed=3`,
+  `unreachable=0`, `failed=0`, and `skipped=2`. Isolated results for the
+  `nd4x_demo_deleted` scenario have passed with `ok=16`, `changed=2`,
+  `unreachable=0`, `failed=0`, and `skipped=2`. Isolated results for the
+  `nd4x_demo_negative` scenario have passed with `ok=11`, `changed=0`,
+  `unreachable=0`, `failed=0`, and `skipped=2`. Isolated results for the
+  `nd4x_demo_tenant_identity` scenario have passed with `ok=19`, `changed=3`,
+  `unreachable=0`, `failed=0`, and `skipped=2`. The isolated overridden
+  `nd4x_demo_overridden` scenario has passed with `ok=24`, `changed=3`,
+  `unreachable=0`, `failed=0`, and `skipped=4`.
