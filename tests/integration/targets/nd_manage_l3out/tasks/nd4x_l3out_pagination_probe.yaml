@@ -1,0 +1,103 @@
+---
+- name: "ND4X PREFLIGHT: Read unfiltered L3Out page at offset {{ nd4x_l3out_probe_offset }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/l3Outs?max={{ nd4x_l3out_probe_page_size
+      }}&offset={{ nd4x_l3out_probe_offset }}
+    method: get
+  register: nd4x_l3out_probe_result
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Validate L3Out page response"
+  ansible.builtin.assert:
+    that:
+      - (nd4x_l3out_probe_result.status | default(0) | int) in [200, 404]
+      - >-
+        (nd4x_l3out_probe_result.status | default(0) | int) != 200 or
+        (nd4x_l3out_probe_result.failed | default(false) | bool) == false
+      - >-
+        (nd4x_l3out_probe_result.status | default(0) | int) != 200 or
+        ((nd4x_l3out_probe_result.current | default({})).l3Outs is defined)
+      - >-
+        (nd4x_l3out_probe_result.status | default(0) | int) != 200 or
+        (nd4x_l3out_probe_result.current.l3Outs is sequence)
+      - >-
+        (nd4x_l3out_probe_result.status | default(0) | int) != 404 or
+        ((nd4x_l3out_probe_result.current | default({})).l3Outs | default([]) | length == 0)
+    fail_msg: >-
+      The unfiltered L3Out collection did not honor the expected paginated
+      response contract at offset {{ nd4x_l3out_probe_offset }}. Status={{
+      nd4x_l3out_probe_result.status | default('missing') }}.
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Extract L3Out page rows"
+  ansible.builtin.set_fact:
+    nd4x_l3out_probe_items: >-
+      {{ (nd4x_l3out_probe_result.current | default({})).l3Outs | default([]) }}
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify page size and row identity"
+  ansible.builtin.assert:
+    that:
+      - nd4x_l3out_probe_items | length <= nd4x_l3out_probe_page_size | int
+      - >-
+        nd4x_l3out_probe_items | selectattr('name', 'defined') | list | length
+        == nd4x_l3out_probe_items | length
+      - >-
+        (nd4x_l3out_probe_items | map(attribute='name') | list)
+        | intersect(nd4x_l3out_probe_seen_names)
+        | length == 0
+    fail_msg: >-
+      The L3Out pagination response exceeded max={{ nd4x_l3out_probe_page_size
+      }}, omitted a row name, or repeated an L3Out identity at offset {{
+      nd4x_l3out_probe_offset }}.
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record the verified L3Out page"
+  ansible.builtin.set_fact:
+    nd4x_l3out_probe_seen_names: >-
+      {{ nd4x_l3out_probe_seen_names + (nd4x_l3out_probe_items | map(attribute='name') | list) }}
+    nd4x_l3out_probe_page_count: "{{ nd4x_l3out_probe_page_count | int + 1 }}"
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Stop pagination at the safety limit"
+  ansible.builtin.assert:
+    that:
+      - nd4x_l3out_probe_page_count | int < nd4x_l3out_probe_max_pages | int
+    fail_msg: >-
+      The L3Out pagination probe reached max_pages={{
+      nd4x_l3out_probe_max_pages }} without a terminal page.
+  when:
+    - nd4x_l3out_probe_result.status | default(0) | int == 200
+    - nd4x_l3out_probe_items | length == nd4x_l3out_probe_page_size | int
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Continue to the next L3Out page"
+  ansible.builtin.set_fact:
+    nd4x_l3out_probe_next_offset: >-
+      {{ nd4x_l3out_probe_offset | int + nd4x_l3out_probe_page_size | int }}
+  when:
+    - nd4x_l3out_probe_result.status | default(0) | int == 200
+    - nd4x_l3out_probe_items | length == nd4x_l3out_probe_page_size | int
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Continue to the next L3Out page"
+  ansible.builtin.include_tasks:
+    file: nd4x_l3out_pagination_probe.yaml
+  vars:
+    nd4x_l3out_probe_offset: "{{ nd4x_l3out_probe_next_offset }}"
+  when:
+    - nd4x_l3out_probe_result.status | default(0) | int == 200
+    - nd4x_l3out_probe_items | length == nd4x_l3out_probe_page_size | int
+  tags:
+    - always

@@ -1,0 +1,553 @@
+---
+- name: "ND4X PREFLIGHT: Require Nexus Dashboard credentials"
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Set shared variables"
+  ansible.builtin.set_fact:
+    nd_info:
+      output_level: "{{ api_key_output_level | default('debug') }}"
+    nd4x_l3out_marker_acquired: false
+    nd4x_l3out_tenant1_assert_enabled: >-
+      {{ test_tenant1_name is defined and test_tenant1_name != omit }}
+    nd4x_l3out_tenant2_assert_enabled: >-
+      {{ test_tenant2_name is defined and test_tenant2_name != omit }}
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record nd_manage_l3out harness support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.1.0', '>=')
+      }}
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping nd_manage_l3out harness scenarios because controller version
+      {{ nd4x_version.current.platformVersion }} is older than 4.1.0.
+  when: not nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Require a unique L3Out harness run identifier"
+  ansible.builtin.assert:
+    that:
+      - nd_test_l3out_run_id is defined
+      - nd_test_l3out_run_id | string | length > 0
+      - nd_test_l3out_run_id | string is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+    fail_msg: >-
+      Harness runs require nd_test_l3out_run_id to be a unique, non-empty
+      identifier containing only letters, numbers, hyphens, and underscores.
+      This identifier is embedded in every L3Out name so shared fabrics are not
+      cleaned up by name alone.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Build unique harness-owned L3Out names"
+  ansible.builtin.set_fact:
+    test_l3out_bgp_name: "ansible-test-l3out-{{ nd_test_l3out_run_id }}-bgp"
+    test_l3out_static_name: "ansible-test-l3out-{{ nd_test_l3out_run_id }}-static"
+    test_l3out_svi_name: "ansible-test-l3out-{{ nd_test_l3out_run_id }}-svi"
+    nd4x_l3out_marker_name: >-
+      ansible-test-l3out-lock-{{ (test_fabric1_name ~ '|' ~ test_fabric2_name) | hash('sha1') }}
+    nd4x_l3out_owned_names: []
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Build the complete controller reservation name set"
+  ansible.builtin.set_fact:
+    nd4x_l3out_reserved_names:
+      - "{{ test_l3out_bgp_name }}"
+      - "{{ test_l3out_static_name }}"
+      - "{{ test_l3out_svi_name }}"
+      - "{{ nd4x_l3out_marker_name }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Validate generated L3Out name length"
+  ansible.builtin.assert:
+    that:
+      - test_l3out_bgp_name | string | length <= 64
+      - test_l3out_static_name | string | length <= 64
+      - test_l3out_svi_name | string | length <= 64
+      - nd4x_l3out_marker_name | string | length <= 64
+    fail_msg: >-
+      nd_test_l3out_run_id is too long. Generated L3Out names must be between
+      1 and 64 characters; generated names were {{ nd4x_l3out_reserved_names }}.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Confirm the configured fabric is reachable"
+  cisco.nd.nd_manage_l3out:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: []
+  register: nd4x_l3out_preflight_result
+  changed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert the configured fabric is reachable"
+  ansible.builtin.assert:
+    that:
+      - nd4x_l3out_preflight_result is not failed
+      - nd4x_l3out_preflight_result is not changed
+    fail_msg: >-
+      Could not reach Nexus Dashboard or fabric '{{ test_fabric_name }}' for
+      the nd_manage_l3out harness scenarios.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Define required L3Out testbed resources"
+  ansible.builtin.set_fact:
+    nd4x_l3out_required_fabrics: >-
+      {{ [test_fabric_name, test_fabric1_name, test_fabric2_name] | unique }}
+    nd4x_l3out_configurations:
+      - "{{ l3out_bgp }}"
+      - "{{ l3out_static }}"
+      - "{{ l3out_svi }}"
+    nd4x_l3out_required_switches:
+      - fabric_name: "{{ test_fabric1_name }}"
+        switch_id: "{{ test_switch1_id }}"
+        management_ip: "{{ test_switch1_mgmt_ip }}"
+      - fabric_name: "{{ test_fabric2_name }}"
+        switch_id: "{{ test_switch2_id }}"
+        management_ip: "{{ test_switch2_mgmt_ip }}"
+    nd4x_l3out_required_interfaces: []
+    nd4x_l3out_required_vrfs:
+      - fabric_name: "{{ test_fabric1_name }}"
+        vrf_name: "{{ test_vrf1_name }}"
+      - fabric_name: "{{ test_fabric2_name }}"
+        vrf_name: "{{ test_vrf2_name }}"
+    nd4x_l3out_required_route_maps:
+      - fabric_name: "{{ l3out_bgp.fabric1_name }}"
+        route_map_name: "{{ l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in }}"
+      - fabric_name: "{{ l3out_bgp.fabric1_name }}"
+        route_map_name: "{{ l3out_bgp.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out }}"
+      - fabric_name: "{{ l3out_svi.fabric1_name }}"
+        route_map_name: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_in }}"
+      - fabric_name: "{{ l3out_svi.fabric1_name }}"
+        route_map_name: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv4_peering_details.ipv4_route_map_out }}"
+      - fabric_name: "{{ l3out_svi.fabric1_name }}"
+        route_map_name: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_in }}"
+      - fabric_name: "{{ l3out_svi.fabric1_name }}"
+        route_map_name: "{{ l3out_svi.routing_details.bgp.fabric1_details.ipv6_peering_details.ipv6_route_map_out }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Read required fabric endpoints"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item }}/switches?max=1&offset=0"
+    method: get
+  loop: "{{ nd4x_l3out_required_fabrics }}"
+  loop_control:
+    label: "{{ item }}"
+  register: nd4x_l3out_fabric_checks
+  changed_when: false
+  failed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert required fabric endpoints exist"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: >-
+      Required fabric '{{ item.item }}' is not readable through the ND API
+      (HTTP {{ item.status | default('missing') }}).
+  loop: "{{ nd4x_l3out_fabric_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Read switch inventory for management-IP resolution"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.fabric_name }}/switches?max=10000&offset=0"
+    method: get
+  loop: "{{ nd4x_l3out_required_switches }}"
+  loop_control:
+    label: "{{ item.fabric_name }}/{{ item.management_ip }}"
+  register: nd4x_l3out_management_switch_checks
+  changed_when: false
+  failed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert management IPs resolve to required switches"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 200
+      - not item.failed | default(false) | bool
+      - item.jsondata.switches is defined
+      - >-
+        item.jsondata.switches | default([])
+        | selectattr('fabricManagementIp', 'equalto', item.item.management_ip)
+        | list | length == 1
+    fail_msg: >-
+      Management IP '{{ item.item.management_ip }}' did not resolve to exactly
+      one switch in fabric '{{ item.item.fabric_name }}'.
+  loop: "{{ nd4x_l3out_management_switch_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.management_ip }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Resolve fabric1 switch ID from management IP"
+  ansible.builtin.set_fact:
+    test_switch1_id: >-
+      {{
+        item.jsondata.switches
+        | selectattr('fabricManagementIp', 'equalto', item.item.management_ip)
+        | map(attribute='switchId')
+        | first
+      }}
+  loop: "{{ nd4x_l3out_management_switch_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.management_ip }}"
+  when:
+    - nd4x_supported | bool
+    - item.item.fabric_name == test_fabric1_name
+    - item.item.management_ip == test_switch1_mgmt_ip
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Resolve fabric2 switch ID from management IP"
+  ansible.builtin.set_fact:
+    test_switch2_id: >-
+      {{
+        item.jsondata.switches
+        | selectattr('fabricManagementIp', 'equalto', item.item.management_ip)
+        | map(attribute='switchId')
+        | first
+      }}
+  loop: "{{ nd4x_l3out_management_switch_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.management_ip }}"
+  when:
+    - nd4x_supported | bool
+    - item.item.fabric_name == test_fabric2_name
+    - item.item.management_ip == test_switch2_mgmt_ip
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Require dynamically resolved switch IDs"
+  ansible.builtin.assert:
+    that:
+      - test_switch1_id is defined
+      - test_switch1_id | string | length > 0
+      - test_switch2_id is defined
+      - test_switch2_id | string | length > 0
+    fail_msg: >-
+      The live switch inventory did not provide switch IDs for both configured
+      management IPs. The harness will not use manually maintained serials.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Rebuild switch-dependent prerequisites from live IDs"
+  ansible.builtin.set_fact:
+    nd4x_l3out_required_switches:
+      - fabric_name: "{{ test_fabric1_name }}"
+        switch_id: "{{ test_switch1_id }}"
+        management_ip: "{{ test_switch1_mgmt_ip }}"
+      - fabric_name: "{{ test_fabric2_name }}"
+        switch_id: "{{ test_switch2_id }}"
+        management_ip: "{{ test_switch2_mgmt_ip }}"
+    nd4x_l3out_required_interfaces: []
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Collect every configured L3Out interface prerequisite"
+  ansible.builtin.set_fact:
+    nd4x_l3out_required_interfaces: >-
+      {{
+        nd4x_l3out_required_interfaces + [
+          {
+            'fabric_name': item.0.fabric1_name,
+            'switch_id': test_switch1_id,
+            'interface_name': item.1.switch1_details.interface_name
+          },
+          {
+            'fabric_name': item.0.fabric2_name,
+            'switch_id': test_switch2_id,
+            'interface_name': item.1.switch2_details.interface_name
+          }
+        ]
+      }}
+  loop: >-
+    {{ query(
+      'subelements',
+      nd4x_l3out_configurations | to_json | from_json,
+      'connectivity_details.links'
+    ) }}
+  loop_control:
+    label: "{{ item.0.name }}/{{ item.1.switch1_details.interface_name }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Read required switch endpoints"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.fabric_name }}/switches/{{ item.switch_id }}"
+    method: get
+  loop: "{{ nd4x_l3out_required_switches }}"
+  loop_control:
+    label: "{{ item.fabric_name }}/{{ item.switch_id }}"
+  register: nd4x_l3out_switch_checks
+  changed_when: false
+  failed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert required switch endpoints exist"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: >-
+      Required resolved switch '{{ item.item.switch_id }}' in fabric
+      '{{ item.item.fabric_name }}' is not readable through the ND API
+      (HTTP {{ item.status | default('missing') }}).
+  loop: "{{ nd4x_l3out_switch_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.switch_id }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Read required interface endpoints"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.fabric_name }}/switches/{{ item.switch_id }}/interfaces/{{ item.interface_name | replace('/', '%2F') }}"
+    method: get
+  loop: "{{ nd4x_l3out_required_interfaces }}"
+  loop_control:
+    label: "{{ item.fabric_name }}/{{ item.switch_id }}/{{ item.interface_name }}"
+  register: nd4x_l3out_interface_checks
+  changed_when: false
+  failed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert required interface endpoints exist"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: >-
+      Required interface '{{ item.item.interface_name }}' on switch
+      '{{ item.item.switch_id }}' in fabric '{{ item.item.fabric_name }}' is
+      not readable through the ND API (HTTP {{ item.status | default('missing') }}).
+  loop: "{{ nd4x_l3out_interface_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.switch_id }}/{{ item.item.interface_name }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Read required VRF endpoints"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.fabric_name }}/vrfs/{{ item.vrf_name }}"
+    method: get
+  loop: "{{ nd4x_l3out_required_vrfs }}"
+  loop_control:
+    label: "{{ item.fabric_name }}/{{ item.vrf_name }}"
+  register: nd4x_l3out_vrf_checks
+  changed_when: false
+  failed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert required VRF endpoints exist"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: >-
+      Required VRF '{{ item.item.vrf_name }}' in fabric
+      '{{ item.item.fabric_name }}' is not readable through the ND API
+      (HTTP {{ item.status | default('missing') }}).
+  loop: "{{ nd4x_l3out_vrf_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.vrf_name }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Read required route-map endpoints"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.fabric_name }}/routeMaps/{{ item.route_map_name }}"
+    method: get
+  loop: "{{ nd4x_l3out_required_route_maps }}"
+  loop_control:
+    label: "{{ item.fabric_name }}/{{ item.route_map_name }}"
+  register: nd4x_l3out_route_map_checks
+  changed_when: false
+  failed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert required route-map endpoints exist"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: >-
+      Required route map '{{ item.item.route_map_name }}' in fabric
+      '{{ item.item.fabric_name }}' is not readable through the ND API
+      (HTTP {{ item.status | default('missing') }}).
+  loop: "{{ nd4x_l3out_route_map_checks.results }}"
+  loop_control:
+    label: "{{ item.item.fabric_name }}/{{ item.item.route_map_name }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Initialize the read-only L3Out pagination probe"
+  ansible.builtin.set_fact:
+    nd4x_l3out_probe_page_size: 1
+    nd4x_l3out_probe_max_pages: 10000
+    nd4x_l3out_probe_offset: 0
+    nd4x_l3out_probe_page_count: 0
+    nd4x_l3out_probe_seen_names: []
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Walk the complete L3Out pagination response"
+  ansible.builtin.include_tasks:
+    file: nd4x_l3out_pagination_probe.yaml
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify the L3Out pagination probe completed"
+  ansible.builtin.assert:
+    that:
+      - nd4x_l3out_probe_page_count | int >= 1
+    fail_msg: >-
+      The L3Out pagination probe did not execute.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Reject already-owned L3Out names"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (nd4x_l3out_reserved_names | intersect(nd4x_l3out_probe_seen_names))
+        | length == 0
+    fail_msg: >-
+      Reservation refused for L3Out harness run '{{ nd_test_l3out_run_id }}'.
+      One or more generated L3Out names already exist in the unfiltered ND
+      L3Out collection:
+      {{ nd4x_l3out_reserved_names | intersect(nd4x_l3out_probe_seen_names) }}.
+      The harness will not delete existing resources. Use a new run identifier
+      or inspect and remove stale resources explicitly.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Build unfiltered L3Out snapshot query"
+  ansible.builtin.set_fact:
+    nd4x_l3out_check_mode_queries:
+      - name: Snapshot all L3Outs across participating fabrics
+        path: /api/v1/manage/l3Outs
+        expected_status: [200, 404]
+        pagination:
+          page_size: 100
+          collection_key: l3Outs
+          max_pages: 10000
+        unordered_paths: [/l3Outs]
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify L3Out snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_l3out_check_mode_queries | length == 1
+      - nd4x_l3out_check_mode_queries[0].expected_status == [200, 404]
+      - nd4x_l3out_check_mode_queries[0].pagination.page_size == 100
+      - nd4x_l3out_check_mode_queries[0].pagination.collection_key == 'l3Outs'
+      - nd4x_l3out_check_mode_queries[0].path == '/api/v1/manage/l3Outs'
+    fail_msg: >-
+      The nd_manage_l3out harness requires an unfiltered L3Out predictive
+      snapshot with empty-response handling and pagination so all participating
+      fabrics are covered.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Claim the controller-side harness ownership marker"
+  # This module sends POST /api/v1/manage/l3Outs directly. It does not perform
+  # the read-before-create used by state=merged, and it rejects duplicate-name
+  # results from the controller's per-item response.
+  cisco.nd.nd4x_l3out_create_lock:
+    config: "{{ l3out_bgp | combine({'name': nd4x_l3out_marker_name}) }}"
+  register: nd4x_l3out_marker_result
+  when:
+    - nd4x_supported | bool
+    - not ansible_check_mode
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Require exclusive controller-side marker ownership"
+  ansible.builtin.assert:
+    that:
+      - nd4x_l3out_marker_result.changed | default(false) | bool
+      - nd4x_l3out_marker_result.name == nd4x_l3out_marker_name
+    fail_msg: >-
+      Could not claim the controller-side L3Out ownership marker
+      '{{ nd4x_l3out_marker_name }}' through the controller create-only
+      operation. Another harness run may own this marker or the API rejected
+      the create. No existing marker will be deleted by this run.
+  when:
+    - nd4x_supported | bool
+    - not ansible_check_mode
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record successful controller-side marker ownership"
+  ansible.builtin.set_fact:
+    nd4x_l3out_marker_acquired: true
+  when:
+    - nd4x_supported | bool
+    - not ansible_check_mode
+    - nd4x_l3out_marker_result.changed | default(false) | bool
+    - nd4x_l3out_marker_result.name == nd4x_l3out_marker_name
+  tags:
+    - always
