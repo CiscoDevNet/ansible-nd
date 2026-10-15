@@ -1923,7 +1923,11 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Read scoped compliance evidence without saving or deploying configuration."""
         endpoint = EpManageInterfacesPreview()
         endpoint.fabric_name = self.fabric_name
-        payload = {"interfaces": [{"switchId": switch_id, "interfaceName": name} for switch_id, name in sorted(interfaces)]}
+        payload = {
+            "interfaces": [
+                {"switchId": switch_id, "interfaceName": InterfaceGroupValidators.normalize_interface_name(name)} for switch_id, name in sorted(interfaces)
+            ]
+        }
         check_mode = self.rest_send.check_mode
         self.rest_send.check_mode = False
         try:
