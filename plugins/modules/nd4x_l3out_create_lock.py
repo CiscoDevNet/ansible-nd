@@ -14,13 +14,6 @@ marker when multiple harness workers race to create it.
 
 from __future__ import absolute_import, division, print_function
 
-import json
-
-from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.connection import Connection
-
-from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import nd_argument_spec
-
 DOCUMENTATION = r"""
 ---
 module: nd4x_l3out_create_lock
@@ -39,6 +32,8 @@ options:
       - One complete L3Out configuration to create as the ownership marker.
     type: dict
     required: true
+extends_documentation_fragment:
+  - cisco.nd.modules
 notes:
   - This is a harness support module, not a replacement for nd_manage_l3out.
   - The controller's L3Out POST endpoint is responsible for create-only name
@@ -76,6 +71,12 @@ name:
   type: str
 """
 
+import json
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.connection import Connection
+
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import nd_argument_spec
 
 SUCCESS_STATUSES = {"success", "created", "ok", "succeeded"}
 FAILURE_STATUSES = {"failed", "failure", "error", "rejected"}
