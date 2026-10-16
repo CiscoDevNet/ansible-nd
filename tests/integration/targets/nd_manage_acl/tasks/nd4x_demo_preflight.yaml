@@ -1,0 +1,111 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record nd_manage_acl harness support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.1.1', '>=')
+      }}
+    nd4x_acl_ipv6_rest_expectations:
+      - jsonpath: "$.current.name"
+        equals: "{{ acl_ipv6_name }}"
+      - jsonpath: "$.current.entries"
+        exists: true
+      - jsonpath: "$.current.entries[1].sequenceNumber"
+        equals: 20
+      - jsonpath: "$.current.entries[2]"
+        exists: false
+      - jsonpath: >-
+          $.current.entries[?(@.sequenceNumber == 10)].dstPortAction
+        equals: portRange
+      - jsonpath: >-
+          $.current.entries[?(@.sequenceNumber == 10)].dstPortRangeStart
+        equals: "80"
+      - jsonpath: >-
+          $.current.entries[?(@.sequenceNumber == 10)].dstPortRangeEnd
+        equals: "443"
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Add ND 4.2.1 IPv6 readback validation"
+  ansible.builtin.set_fact:
+    nd4x_acl_ipv6_rest_expectations: >-
+      {{
+        nd4x_acl_ipv6_rest_expectations
+        + [
+            {
+              'jsonpath': '$.current.type',
+              'equals': 'ipv4'
+            }
+          ]
+      }}
+  when: nd4x_version.current.platformVersion is version('4.2.1', '>=')
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping nd_manage_acl harness scenarios because controller version
+      {{ nd4x_version.current.platformVersion }} is older than 4.1.1.
+  when: not nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Confirm the configured fabric is reachable"
+  cisco.nd.nd_manage_acl:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ acl_fabric }}"
+    state: merged
+    config: []
+  register: nd4x_acl_preflight_result
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Assert the configured fabric is reachable"
+  ansible.builtin.assert:
+    that:
+      - nd4x_acl_preflight_result is not failed
+      - nd4x_acl_preflight_result is not changed
+    fail_msg: >-
+      Could not reach Nexus Dashboard or fabric '{{ acl_fabric }}' for the
+      nd_manage_acl harness scenarios.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Build fabric-wide ACL snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_acl_check_mode_queries:
+      - name: Snapshot all ACLs in the test fabric
+        path: >-
+          /api/v1/manage/fabrics/{{ acl_fabric }}/accessControlLists
+        expected_status: 200
+        pagination:
+          page_size: 100
+          collection_key: accessControlLists
+        unordered_paths: [/accessControlLists]
+        ignore_keys:
+          - lastUpdateTimestamp
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify ACL snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_acl_check_mode_queries | length == 1
+    fail_msg: >-
+      The nd_manage_acl harness requires a fabric-wide accessControlLists
+      predictive snapshot.
+  when: nd4x_supported | bool
+  tags:
+    - always

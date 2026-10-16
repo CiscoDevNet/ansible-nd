@@ -1,0 +1,177 @@
+---
+- name: Run nd_manage_acl merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
+
+    - name: "MERGED CREATE: Create IPv4 ACL through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_acl
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ acl_fabric }}"
+        config:
+          - "{{ acl_ipv4_initial }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_acl_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created IPv4 ACL
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv4_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ acl_ipv4_name }}"
+              - jsonpath: "$.current.type"
+                equals: ipv4
+              - jsonpath: "$.current.entries"
+                exists: true
+      register: merged_ipv4_create
+
+    - name: "MERGED CREATE: Verify IPv4 returned configuration"
+      ansible.builtin.assert:
+        that:
+          - merged_ipv4_create.check_mode_result.changed | bool
+          - merged_ipv4_create.first_run_result.changed | bool
+          - merged_ipv4_create.first_run_result.after | selectattr('name', 'equalto', acl_ipv4_name) | list | length == 1
+          - >-
+            (
+              merged_ipv4_create.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries | length == 3
+          - merged_ipv4_create.second_run_result.changed == false
+
+    - name: "MERGED UPDATE: Replace the IPv4 entry list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_acl
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ acl_fabric }}"
+        config:
+          - "{{ acl_ipv4_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_acl_check_mode_queries }}"
+        nd_queries:
+          - name: Validate merged IPv4 entry-list update
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv4_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ acl_ipv4_name }}"
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 30
+      register: merged_ipv4_update
+
+    - name: "MERGED UPDATE: Verify IPv4 entry-list replacement"
+      ansible.builtin.assert:
+        that:
+          - merged_ipv4_update.check_mode_result.changed | bool
+          - merged_ipv4_update.first_run_result.changed | bool
+          - >-
+            (
+              merged_ipv4_update.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries | length == 1
+          - >-
+            (
+              merged_ipv4_update.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv4_name)
+              | first
+            ).entries[0].sequence_number == 30
+          - merged_ipv4_update.second_run_result.changed == false
+
+    - name: "MERGED CREATE: Create IPv6 ACL through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_acl
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ acl_fabric }}"
+        config:
+          - "{{ acl_ipv6 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_acl_check_mode_queries }}"
+        nd_queries:
+          - name: Validate persisted IPv6 ACL entries
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv6_name }}
+            method: get
+            expected_status: 200
+            expect: "{{ nd4x_acl_ipv6_rest_expectations }}"
+      register: merged_ipv6_create
+
+    - name: "MERGED CREATE: Verify IPv6 returned configuration"
+      ansible.builtin.assert:
+        that:
+          - merged_ipv6_create.check_mode_result.changed | bool
+          - merged_ipv6_create.first_run_result.changed | bool
+          - >-
+            (
+              merged_ipv6_create.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv6_name)
+              | first
+            ).type == 'ipv6'
+          - >-
+            (
+              merged_ipv6_create.first_run_result.after
+              | selectattr('name', 'equalto', acl_ipv6_name)
+              | first
+            ).entries | length == 2
+          - merged_ipv6_create.second_run_result.changed == false
+
+  always:
+    - name: "MERGED CLEANUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
