@@ -1,0 +1,87 @@
+---
+- name: Run nd_manage_route_map replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "REPLACED SETUP: Create the primary route map"
+      cisco.nd.nd_manage_route_map:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary }}"
+        state: merged
+
+    - name: "REPLACED: Replace primary route map through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced primary route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/routeMaps/{{ test_route_map_primary_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_route_map_primary_name }}"
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 20
+              - jsonpath: "$.current.entries[0].action"
+                equals: deny
+              - jsonpath: "$.current.entries[0].ruleEntries[0].ruleType"
+                equals: matchTag
+              - jsonpath: "$.current.entries[0].ruleEntries[0].tags[0]"
+                equals: 65000
+      register: replaced_primary
+
+    - name: "REPLACED: Verify primary returned state"
+      ansible.builtin.assert:
+        that:
+          - replaced_primary.check_mode_result.changed | bool
+          - replaced_primary.first_run_result.changed | bool
+          - >-
+            (
+              replaced_primary.first_run_result.after
+              | selectattr('name', 'equalto', test_route_map_primary_name)
+              | first
+            ).entries[0].sequence_number == 20
+          - >-
+            (
+              replaced_primary.first_run_result.after
+              | selectattr('name', 'equalto', test_route_map_primary_name)
+              | first
+            ).entries[0].action == 'deny'
+          - >-
+            (
+              replaced_primary.first_run_result.after
+              | selectattr('name', 'equalto', test_route_map_primary_name)
+              | first
+            ).entries[0].rule_entries[0].rule_type == 'matchTag'
+          - >-
+            (
+              replaced_primary.first_run_result.after
+              | selectattr('name', 'equalto', test_route_map_primary_name)
+              | first
+            ).entries[0].rule_entries[0].tags == [65000]
+          - replaced_primary.second_run_result.changed == false
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml

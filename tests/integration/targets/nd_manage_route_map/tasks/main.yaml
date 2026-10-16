@@ -19,6 +19,8 @@
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ nd_output_level | default("debug") }}'
+  tags:
+    - always
 
 - name: Run nd_manage_route_map state tests
   block:
@@ -37,5 +39,98 @@
 
     - name: Run deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run ND 4.x harness preflight discovery
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_overridden
+            - nd4x_demo_deleted
+            - nd4x_demo_tenant_identity
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_overridden
+        - nd4x_demo_deleted
+        - nd4x_demo_tenant_identity
+
+    - name: Run merged state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run replaced state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run overridden state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_overridden
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_overridden
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run deleted state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run tenant identity tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_tenant_identity.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_tenant_identity
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_tenant_identity
+      when: nd4x_supported | default(false) | bool
   vars:
     ansible_command_timeout: 300

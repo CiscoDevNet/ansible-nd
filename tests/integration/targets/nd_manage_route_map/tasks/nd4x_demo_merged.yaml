@@ -1,0 +1,147 @@
+---
+- name: Run nd_manage_route_map merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "MERGED CREATE: Create the primary route map through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created primary route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/routeMaps/{{ test_route_map_primary_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_route_map_primary_name }}"
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 10
+              - jsonpath: "$.current.entries[0].action"
+                equals: permit
+              - jsonpath: "$.current.entries[0].ruleEntries[0].ruleType"
+                equals: setLocalPreference
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 100
+      register: merged_create_primary
+
+    - name: "MERGED CREATE: Verify primary returned state"
+      ansible.builtin.assert:
+        that:
+          - merged_create_primary.check_mode_result.changed | bool
+          - merged_create_primary.first_run_result.changed | bool
+          - merged_create_primary.first_run_result.after | selectattr('name', 'equalto', test_route_map_primary_name) | list | length == 1
+          - >-
+            (
+              merged_create_primary.first_run_result.after
+              | selectattr('name', 'equalto', test_route_map_primary_name)
+              | first
+            ).entries[0].rule_entries[0].value == 100
+          - merged_create_primary.second_run_result.changed == false
+          - merged_create_primary.nd_query_results | length == 1
+
+    - name: "MERGED IDEMPOTENT: Re-apply the primary route map through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate primary route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/routeMaps/{{ test_route_map_primary_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ test_route_map_primary_name }}"
+      register: merged_idempotent_primary
+
+    - name: "MERGED IDEMPOTENT: Verify no change on re-apply"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_primary.check_mode_result.changed | bool
+          - not merged_idempotent_primary.first_run_result.changed | bool
+          - not merged_idempotent_primary.second_run_result.changed | bool
+
+    - name: "MERGED UPDATE: Update primary route-map local preference"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated primary route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/routeMaps/{{ test_route_map_primary_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].ruleEntries[0].value"
+                equals: 200
+      register: merged_update_primary
+
+    - name: "MERGED UPDATE: Verify updated primary returned state"
+      ansible.builtin.assert:
+        that:
+          - merged_update_primary.check_mode_result.changed | bool
+          - merged_update_primary.first_run_result.changed | bool
+          - >-
+            (
+              merged_update_primary.first_run_result.after
+              | selectattr('name', 'equalto', test_route_map_primary_name)
+              | first
+            ).entries[0].rule_entries[0].value == 200
+          - merged_update_primary.second_run_result.changed == false
+  always:
+    - name: "MERGED CLEANUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml

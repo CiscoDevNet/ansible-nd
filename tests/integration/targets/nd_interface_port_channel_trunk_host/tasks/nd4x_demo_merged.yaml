@@ -1,0 +1,243 @@
+---
+- name: Run port-channel trunk-host merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Normalize reserved port-channels"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_port_channel_cleanup_config }}"
+        state: deleted
+
+    - name: "MERGED SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "MERGED CREATE: Create port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501 }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate port-channel501 creation
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaceName", equals: port-channel501}
+              - {jsonpath: "$.current.interfaceType", equals: portChannel}
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkPoHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "100-200"}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 99}
+              - {jsonpath: "$.current.configData.networkOS.policy.portChannelMode", equals: active}
+              - {jsonpath: "$.current.configData.networkOS.policy.lacpRate", equals: fast}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Ansible integration test PC 501}
+      register: merged_create_501
+
+    - name: "MERGED CREATE: Verify port-channel501 returned state"
+      ansible.builtin.assert:
+        that:
+          - merged_create_501.check_mode_result.changed | bool
+          - merged_create_501.first_run_result.changed | bool
+          - merged_create_501.second_run_result.changed is false
+          - merged_create_501.check_mode_query_results | length == nd4x_fabric_check_mode_queries | length
+          - merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 1
+          - (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.allowed_vlans == "100-200"
+          - (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.native_vlan == 99
+          - (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.port_channel_mode == "active"
+          - (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.lacp_rate == "fast"
+          - (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports | length == 2
+          - test_pc_member_a in (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+          - test_pc_member_b in (merged_create_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+
+    - name: "MERGED IDEMPOTENT: Re-apply port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501 }}"]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate port-channel501
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "100-200"}
+      register: merged_idempotent_501
+
+    - name: "MERGED IDEMPOTENT: Verify every phase is unchanged"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_501.check_mode_result.changed | bool
+          - not merged_idempotent_501.first_run_result.changed | bool
+          - not merged_idempotent_501.second_run_result.changed | bool
+
+    - name: "MERGED UPDATE: Update port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_updated_vlan }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated port-channel501
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.allowedVlans", equals: "100-200,500"}
+              - {jsonpath: "$.current.configData.networkOS.policy.nativeVlan", equals: 88}
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: Ansible integration test PC 501 updated}
+      register: merged_update_501
+
+    - name: "MERGED UPDATE: Verify returned values and idempotency"
+      ansible.builtin.assert:
+        that:
+          - merged_update_501.first_run_result.changed | bool
+          - (merged_update_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.allowed_vlans == "100-200,500"
+          - (merged_update_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.native_vlan == 88
+          - (merged_update_501.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.description == "Ansible integration test PC 501 updated"
+          - not merged_update_501.second_run_result.changed | bool
+
+    - name: "MERGED MEMBERSHIP SETUP: Restore port-channel501 baseline"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: ["{{ test_pc_501 }}"]
+        state: merged
+
+    - name: "MERGED MEMBER ADD: Add member_c to port-channel501"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_added_member }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate port-channel501 member add
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.ports", exists: true}
+      register: merged_member_add
+
+    - name: "MERGED MEMBER ADD: Verify member_c was added"
+      ansible.builtin.assert:
+        that:
+          - merged_member_add.first_run_result.changed | bool
+          - (merged_member_add.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports | length == 3
+          - test_pc_member_c in (merged_member_add.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+
+    - name: "MERGED MEMBER REMOVE: Reduce port-channel501 to member_a"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_removed_member }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate port-channel501 member removal
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.ports", exists: true}
+      register: merged_member_remove
+
+    - name: "MERGED MEMBER REMOVE: Verify only member_a remains"
+      ansible.builtin.assert:
+        that:
+          - merged_member_remove.first_run_result.changed | bool
+          - (merged_member_remove.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports | length == 1
+          - test_pc_member_a in (merged_member_remove.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+          - test_pc_member_b not in (merged_member_remove.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+          - test_pc_member_c not in (merged_member_remove.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.ports
+
+    - name: "MERGED CREATE MULTI: Create port-channel502 and port-channel503"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - "{{ test_pc_502 }}"
+          - "{{ test_pc_503 }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate multiple port-channels
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel502' & @.configData.networkOS.policy.policyType == 'trunkPoHost')]", exists: true}
+              - {jsonpath: "$.current.interfaces[?(@.interfaceName == 'port-channel503' & @.configData.networkOS.policy.policyType == 'trunkPoHost')]", exists: true}
+      register: merged_create_multi
+
+    - name: "MERGED CREATE MULTI: Verify both port-channels were returned"
+      ansible.builtin.assert:
+        that:
+          - merged_create_multi.first_run_result.changed | bool
+          - merged_create_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 1
+          - merged_create_multi.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel503') | list | length == 1
+          - not merged_create_multi.second_run_result.changed | bool
+
+    - name: "MERGED NO-DEPLOY: Stage port-channel504 without deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        module_args:
+          config_actions: {deploy: false}
+        config: ["{{ test_pc_504_no_deploy }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate staged port-channel504
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel504"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.description", equals: No-deploy test port-channel504}
+      register: merged_no_deploy
+
+    - name: "MERGED NO-DEPLOY: Verify staging changed controller intent"
+      ansible.builtin.assert:
+        that:
+          - merged_no_deploy.first_run_result.changed | bool
+          - not merged_no_deploy.second_run_result.changed | bool
+
+  always:
+    - name: "MERGED CLEANUP: Normalize reserved port-channels"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_port_channel_cleanup_config }}"
+        state: deleted

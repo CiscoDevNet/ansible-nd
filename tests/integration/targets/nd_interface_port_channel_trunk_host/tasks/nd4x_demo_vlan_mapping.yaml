@@ -1,0 +1,57 @@
+---
+- name: Run port-channel trunk-host VLAN-mapping harness scenario
+  block:
+    - name: "VLAN-MAPPING SETUP: Normalize port-channel501"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: port-channel501
+        state: deleted
+
+    - name: "VLAN-MAPPING SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "VLAN-MAPPING: Create port-channel501 with VLAN mapping"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_port_channel_trunk_host
+        state: merged
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config: ["{{ test_pc_501_with_vlan_mapping }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate VLAN mapping on port-channel501
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/port-channel501"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkPoHost}
+              - {jsonpath: "$.current.configData.networkOS.policy.vlanMapping", equals: true}
+              - {jsonpath: "$.current.configData.networkOS.policy.vlanMappingEntries", exists: true}
+      register: vlan_mapping
+
+    - name: "VLAN-MAPPING: Verify exact entries and idempotency"
+      ansible.builtin.assert:
+        that:
+          - vlan_mapping.check_mode_result.changed | bool
+          - vlan_mapping.first_run_result.changed | bool
+          - (vlan_mapping.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.vlan_mapping is true
+          - (vlan_mapping.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.vlan_mapping_entries | length == 1
+          - (vlan_mapping.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.vlan_mapping_entries[0].provider_vlan_id == 1100
+          - (vlan_mapping.first_run_result.after | selectattr('interface_name', 'equalto', 'port-channel501') | first).config_data.network_os.policy.vlan_mapping_entries[0].dot1q_tunnel is true
+          - not vlan_mapping.second_run_result.changed | bool
+
+  always:
+    - name: "VLAN-MAPPING CLEANUP: Normalize port-channel501"
+      cisco.nd.nd_interface_port_channel_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: port-channel501
+        state: deleted

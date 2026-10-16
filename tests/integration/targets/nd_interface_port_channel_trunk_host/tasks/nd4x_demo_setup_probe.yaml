@@ -1,0 +1,20 @@
+---
+- name: "HARNESS SETUP: Re-query reserved port-channels after cleanup"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+    method: get
+  register: nd4x_setup_probe
+  changed_when: false
+
+- name: "HARNESS SETUP: Verify reserved port-channels are absent"
+  vars:
+    remaining_reserved: >-
+      {{ nd4x_setup_probe.current.interfaces | default([])
+         | selectattr('interfaceName', 'in', nd4x_port_channel_reserved_interfaces) | list }}
+  ansible.builtin.assert:
+    that:
+      - (nd4x_setup_probe.failed | default(false) | bool) == false
+      - remaining_reserved | length == 0
+    fail_msg: >-
+      Cleanup did not remove every reserved trunkPoHost port-channel:
+      {{ remaining_reserved | map(attribute='interfaceName') | list }}.
