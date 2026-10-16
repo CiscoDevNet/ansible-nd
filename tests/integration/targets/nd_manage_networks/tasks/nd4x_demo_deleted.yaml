@@ -1,0 +1,104 @@
+---
+- name: "DELETED PREFLIGHT: Require destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_destructive_tests_enabled | bool
+      - nd4x_network_destructive_scope_confirmed | bool
+    fail_msg: >-
+      The nd_manage_networks deleted harness scenario mutates controller state.
+      Set both nd_network_harness_destructive_tests_enabled=true and
+      nd_network_harness_destructive_scope_confirmed=true on a dedicated test
+      fabric before running it.
+
+- name: Run nd_manage_networks deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_network_deleted_cleanup_config }}"
+
+    - name: "DELETED SETUP: Create the Network to remove"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: merged
+        config: "{{ nd4x_network_deleted_seed_harness_config }}"
+
+    - name: "DELETED: Remove Network through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: deleted
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_deleted_harness_config }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_deleted_result
+
+    - name: "DELETED: Verify Network is absent from returned state"
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_deleted_result.check_mode_result.changed | bool
+          - nd4x_network_deleted_result.first_run_result.changed | bool
+          - nd4x_network_deleted_result.idempotency_attempts == 1
+          - not nd4x_network_deleted_result.second_run_result.changed | bool
+          - >-
+            nd4x_network_deleted_result.first_run_result.after
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-deleted')
+            | list
+            | length == 0
+          - >-
+            nd4x_network_topology != 'standalone'
+            or (
+              nd4x_network_deleted_result.first_run_result.after
+              | default([])
+              | selectattr('network_name', 'equalto', 'harness-nd-network-deleted-extra')
+              | list | length == 0
+            )
+
+    - name: "DELETED: Gather parent Network after deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_deleted_cleanup_config }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_deleted_parent_gathered
+
+    - name: "DELETED: Validate Network absence with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_deleted_parent_gathered.first_run_result }}"
+        test_data: "{{ nd4x_network_deleted_harness_config }}"
+        present: false
+
+  always:
+    - name: "DELETED CLEANUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_network_deleted_cleanup_config }}"
