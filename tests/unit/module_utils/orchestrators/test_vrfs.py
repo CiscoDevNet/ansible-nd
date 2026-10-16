@@ -57,6 +57,19 @@ class _Strategy:
         self.is_multicluster = is_multicluster
 
 
+def test_vrf_gathered_flatteners_preserve_present_values_and_ignore_empty_sections():
+    flattened = {}
+    VrfDataModel._flatten_core_data(flattened, {})
+    VrfDataModel._flatten_fabric_data(flattened, None)
+    assert flattened == {}
+
+    VrfDataModel._flatten_core_data(flattened, {"vrfDescription": "tenant VRF"})
+    VrfDataModel._flatten_fabric_data(flattened, {"bgpPassword": "secret", "trmData": {"ipv4Trm": True}})
+    assert flattened == {"vrf_description": "tenant VRF", "bgp_password": "secret", "trm_enable": True}
+    assert VrfDataModel._nested_config(VrfDataModel(fabricName="FAB", vrfName="BLUE"))["vrf_name"] == "BLUE"
+    assert VrfDataModel._nested_config(object()) == {}
+
+
 def _transform(
     config,
     fabric_name="AK-VXLAN",
@@ -376,6 +389,29 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         assert attachment_options["export_evpn_rt"] == ["65000:13"]
 
 
+def test_vrfs_00025a_config_model_rejects_attachment_aliases():
+    """
+    # Summary
+
+    Verify playbook-facing VRF attachment config accepts snake_case only.
+    """
+    with pytest.raises(ValidationError, match="ipAddress|freeformConfig|attachmentOptions|dpuSecure|Extra inputs"):
+        VrfConfigModel.from_config(
+            {
+                "vrf_name": "ansible-vrf-attach-alias",
+                "attach": [
+                    {
+                        "ipAddress": "192.168.1.224",
+                        "freeformConfig": "interface loopback10",
+                        "attachmentOptions": {
+                            "dpuSecure": True,
+                        },
+                    }
+                ],
+            }
+        )
+
+
 def test_vrfs_00026_config_models_match_argument_specs():
     """
     # Summary
@@ -383,9 +419,12 @@ def test_vrfs_00026_config_models_match_argument_specs():
     Verify playbook-facing config models accept the same field names exposed
     by their corresponding argument specs.
     """
-    assert set(VrfConfigModel.model_fields) == set(vrf_base_argument_spec())
-    assert set(VrfParentConfigModel.model_fields) == set(vrf_parent_argument_spec())
+    internal_only_fields = {"vrf_type"}
+    assert set(VrfConfigModel.model_fields) - internal_only_fields == set(vrf_base_argument_spec())
+    assert set(VrfParentConfigModel.model_fields) - internal_only_fields == set(vrf_parent_argument_spec())
     attach_spec = vrf_base_argument_spec()["attach"]["options"]
+    assert "vrf_type" not in vrf_base_argument_spec()
+    assert "vrf_type" not in vrf_parent_argument_spec()
     attachment_options_spec = attach_spec["attachment_options"]["options"]
 
     assert set(attach_spec) == {"ip_address", "freeform_config", "attachment_options"}
@@ -538,7 +577,6 @@ def test_vrfs_00040_transform_user_defined_custom_template_payload():
     transformed = _transform(
         {
             "vrf_name": "ansible-vrf-custom",
-            "vrf_type": "userDefined",
             "vrf_id": 9008020,
             "vlan_id": 652,
             "service_vrf_template_name": "CustomServiceTemplate1",
@@ -570,12 +608,25 @@ def test_vrfs_00040_transform_user_defined_custom_template_payload():
     }
 
 
-def test_vrfs_00050_custom_template_fields_require_user_defined_type():
-    """Custom template fields must not be silently dropped or sent on VXLAN."""
+def test_vrfs_00050_custom_template_fields_infer_user_defined_type():
+    """Custom template fields infer the internal userDefined discriminator."""
+    model = VrfConfigModel.from_config(
+        {
+            "vrf_name": "ansible-vrf-custom",
+            "vrf_template_name": "CustomTemplate1",
+        }
+    )
+
+    assert model.vrf_type == "userDefined"
+
+
+def test_vrfs_00055_custom_template_fields_reject_explicit_non_user_defined_type():
+    """Internal non-userDefined discriminator cannot be combined with templates."""
     with pytest.raises(ValidationError):
         VrfConfigModel.from_config(
             {
                 "vrf_name": "ansible-vrf-invalid-custom",
+                "vrf_type": "vxlanIbgp",
                 "vrf_template_name": "CustomTemplate1",
             }
         )
@@ -587,7 +638,6 @@ def test_vrfs_00060_vrf_template_config_values_must_be_strings():
         VrfConfigModel.from_config(
             {
                 "vrf_name": "ansible-vrf-invalid-template-config",
-                "vrf_type": "userDefined",
                 "vrf_template_name": "CustomTemplate1",
                 "vrf_template_config": {"mtu": 9216},
             }
@@ -664,7 +714,7 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=10000&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
     ]
 
 
@@ -729,8 +779,8 @@ def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
     """
     # Summary
 
-    Verify multi-name VRF reads avoid unsupported Lucene OR filters and
-    exact-filter the paginated read in module code.
+    Verify multi-name VRF reads use a scoped Lucene filter below the threshold
+    and exact-filter the response in module code.
     """
     orchestrator = _orchestrator_for_request_tests(
         {
@@ -760,7 +810,7 @@ def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=10000&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
     ]
 
 
@@ -1010,6 +1060,7 @@ def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs()
             }
         ),
     )
+    object.__setattr__(orchestrator, "enrich_mcfg_parent_from_children", True)
     requested_paths = []
 
     def request(**kwargs):
@@ -1048,6 +1099,59 @@ def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs()
         "advertiseDefaultRoute": False,
         "configureStaticDefaultRoute": False,
     }
+
+
+def test_vrfs_00089a_mcfg_parent_does_not_enrich_child_fields_unless_requested():
+    """
+    MCFG child-read enrichment is a gathered-output concern. Write-state query
+    normalization must not pull child-only fields into parent diff input.
+    """
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(
+        orchestrator,
+        "strategy",
+        _McfgTopDownStrategy(
+            {
+                "members": [
+                    {
+                        "fabricName": "nac-msd-fabric1",
+                        "fabricState": "member",
+                        "clusterName": "ND42-REL",
+                    }
+                ]
+            }
+        ),
+    )
+    object.__setattr__(orchestrator, "enrich_mcfg_parent_from_children", False)
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {
+            "vrfs": [
+                {
+                    "vrfName": "ansible-nd-vrf-mcfg-a",
+                    "fabricData": {
+                        "advertiseHostRoute": True,
+                    },
+                }
+            ]
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    item = {
+        "fabricName": "MCFG_FAB",
+        "vrfName": "ansible-nd-vrf-mcfg-a",
+        "fabricData": {
+            "l3VniWithoutVlan": False,
+        },
+    }
+
+    enriched = orchestrator._enrich_mcfg_parent_vrfs_from_children([item])
+
+    assert requested_paths == []
+    assert enriched == [item]
 
 
 def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():
@@ -1436,3 +1540,65 @@ def test_vrfs_00107_vrf_status_accepts_uppercase_controller_values():
     )
 
     assert model.to_config()["vrf_status"] == "pending"
+
+
+@pytest.mark.parametrize("scope,raise_scoped", [([], False), (["BLUE"], False), (["BLUE"], True)])
+def test_vrf_query_all_uses_unfiltered_fallback_only_for_scoped_errors(scope, raise_scoped):
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    calls = []
+    object.__setattr__(orchestrator, "_query_scope_vrf_names", lambda: scope)
+    object.__setattr__(orchestrator, "_query_all_unfiltered", lambda: calls.append("unfiltered") or [{"vrfName": "BLUE"}])
+
+    def query_by_names(_names):
+        calls.append("scoped")
+        if raise_scoped:
+            raise RuntimeError("filter unavailable")
+        return [{"vrfName": "BLUE"}]
+
+    object.__setattr__(orchestrator, "query_by_names", query_by_names)
+    assert orchestrator.query_all() == [{"vrfName": "BLUE"}]
+    assert calls == (["unfiltered"] if not scope else ["scoped", "unfiltered"] if raise_scoped else ["scoped"])
+
+
+def test_vrf_query_all_preserves_unfiltered_failure_cause():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    object.__setattr__(orchestrator, "_query_scope_vrf_names", lambda: [])
+
+    def fail():
+        raise RuntimeError("controller unavailable")
+
+    object.__setattr__(orchestrator, "_query_all_unfiltered", fail)
+    with pytest.raises(Exception, match="Query all VRFs failed: controller unavailable"):
+        orchestrator.query_all()
+
+
+def test_vrf_empty_scoped_name_list_needs_no_controller_query():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    assert orchestrator.query_by_names([]) == []
+
+
+def test_mcfg_parent_normalizes_core_defaults_from_query_response():
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+    normalized = orchestrator._normalize_query_vrf_item({"vrfName": "BLUE", "coreData": {"vrfDescription": "tenant"}})
+    assert normalized["coreData"] == {"vrfDescription": "tenant", "vrfVlanName": "", "vrfInterfaceDescription": ""}
+
+
+def test_vrf_single_name_query_falls_back_after_filtered_request_failure():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+
+    def fail(**_kwargs):
+        raise RuntimeError("filter unavailable")
+
+    object.__setattr__(orchestrator, "_request", fail)
+    object.__setattr__(orchestrator, "_query_all_unfiltered", lambda: [{"vrfName": "BLUE"}, {"vrfName": "GREEN"}])
+    assert orchestrator.query_by_names(["BLUE"]) == [{"vrfName": "BLUE"}]
+
+
+def test_vrf_single_name_query_accepts_endpoint_without_filter_parameters():
+    from types import SimpleNamespace
+
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    object.__setattr__(orchestrator, "_make_endpoint", lambda _cls: SimpleNamespace(path="/vrfs", verb=HttpVerbEnum.GET))
+    object.__setattr__(orchestrator, "_request", lambda **_kwargs: {"vrfs": [{"vrfName": "BLUE"}]})
+    assert orchestrator.query_by_names(["BLUE"]) == [{"vrfName": "BLUE"}]

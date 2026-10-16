@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
@@ -47,6 +48,17 @@ _CUSTOM_VRF_TEMPLATE_FIELDS = (
 )
 
 
+def _infer_user_defined_vrf_type(data):
+    """Set the internal VRF discriminator when custom template fields are supplied."""
+    if not isinstance(data, dict):
+        return data
+    normalized = dict(data)
+    has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_VRF_TEMPLATE_FIELDS)
+    if has_custom_template_fields and not normalized.get("vrf_type"):
+        normalized["vrf_type"] = VrfType.USER_DEFINED.value
+    return normalized
+
+
 # =============================================================================
 # VrfAttachmentOptionsConfigModel — playbook-facing instance values
 # =============================================================================
@@ -61,53 +73,46 @@ class VrfAttachmentOptionsConfigModel(NDNestedModel):
     field name directly.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     dpu_secure: bool | None = Field(
         default=None,
-        alias="dpuSecure",
         description="Enable DPU secure mode for this attachment",
     )
     dpu_affinity: DpuAffinity | None = Field(
         default=None,
-        alias="dpuAffinity",
         description="DPU affinity for this attachment",
     )
     loopback_id: int | None = Field(
         default=None,
-        alias="loopbackId",
         ge=0,
         le=1023,
         description="Attachment loopback interface identifier (0-1023)",
     )
     loopback_ipv4_address: str | None = Field(
         default=None,
-        alias="loopbackIpv4Address",
         description="Attachment loopback IPv4 address",
     )
     loopback_ipv6_address: str | None = Field(
         default=None,
-        alias="loopbackIpv6Address",
         description="Attachment loopback IPv6 address",
     )
     import_vpn_rt: list[str] | None = Field(
         default=None,
-        alias="importVpnRt",
         description="Attachment-level VPN import route targets",
     )
     export_vpn_rt: list[str] | None = Field(
         default=None,
-        alias="exportVpnRt",
         description="Attachment-level VPN export route targets",
     )
     import_evpn_rt: list[str] | None = Field(
         default=None,
-        alias="importEvpnRt",
         description="Attachment-level EVPN import route targets",
     )
     export_evpn_rt: list[str] | None = Field(
         default=None,
-        alias="exportEvpnRt",
         description="Attachment-level EVPN export route targets",
     )
 
@@ -148,20 +153,19 @@ class VrfAttachmentConfigModel(NDNestedModel):
     are translated to API ``instanceValues`` internally.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     ip_address: str = Field(
-        alias="ipAddress",
         description="Management IP address of the switch to attach this VRF to",
     )
     freeform_config: str | None = Field(
         default=None,
-        alias="freeformConfig",
         description="Additional free-form CLI configuration mapped to API extraConfig",
     )
     attachment_options: VrfAttachmentOptionsConfigModel | None = Field(
         default=None,
-        alias="attachmentOptions",
         description="Attachment-specific options mapped to API instanceValues",
     )
 
@@ -699,6 +703,12 @@ class VrfConfigModel(NDBaseModel):
     # Field validators
     # ------------------------------------------------------------------
 
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_user_defined_type(cls, data):
+        """Infer the internal user-defined discriminator for template configs."""
+        return _infer_user_defined_vrf_type(data)
+
     @field_validator("vrf_name", mode="before")
     @classmethod
     def _validate_vrf_name(cls, v: str) -> str:
@@ -1162,6 +1172,12 @@ class VrfParentConfigModel(NDBaseModel):
     # ------------------------------------------------------------------
     # Field validators
     # ------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_user_defined_type(cls, data):
+        """Infer the internal user-defined discriminator for template configs."""
+        return _infer_user_defined_vrf_type(data)
 
     @field_validator("vrf_name", mode="before")
     @classmethod

@@ -110,7 +110,6 @@ class VrfWorkflowCoordinator:
         """
         module_args: dict = dict(self.module.params)
         try:
-            self._normalize_module_args(module_args)
             if self.strategy is None:
                 self.strategy = self._resolve_strategy(module_args)
             self._trace(
@@ -199,12 +198,6 @@ class VrfWorkflowCoordinator:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
         return result
-
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,
@@ -363,6 +356,9 @@ class VrfWorkflowCoordinator:
                                 f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
+                    if not self._has_child_vrf_options(child_cfg):
+                        self._trace("child_task_skipped_without_child_options", child_fabric=child_fabric_name, state=state)
+                        continue
                     child_tasks_dict = self._accumulate_child_task(
                         vrf,
                         child_cfg,
@@ -430,6 +426,11 @@ class VrfWorkflowCoordinator:
         return result
 
     # ── Config splitting helpers ──────────────────────────────────
+
+    @staticmethod
+    def _has_child_vrf_options(child_cfg: dict[str, Any]) -> bool:
+        """Return True when a child_fabric_config entry contains fabric-data options."""
+        return any(key != "fabric_name" and value is not None for key, value in child_cfg.items())
 
     @staticmethod
     def _remove_defaulted_mcfg_parent_fabric_options(parent_vrf: dict[str, Any]) -> None:
@@ -606,11 +607,13 @@ class VrfWorkflowCoordinator:
 
             rest_send_params = dict(self.module.params)
             rest_send = self._new_rest_send(rest_send_params)
+            enrich_mcfg_parent_from_children = state == "gathered"
 
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=active_strategy,
                 trace_hook=self._trace,
+                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
@@ -740,11 +743,14 @@ class VrfWorkflowCoordinator:
             rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
+            state = module_args.get("state", "merged")
+            enrich_mcfg_parent_from_children = state == "gathered"
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=strategy,
                 results=results,
                 trace_hook=self._trace,
+                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             return orchestrator, results
         finally:
@@ -1091,6 +1097,21 @@ class VrfWorkflowCoordinator:
         else:
             vrfs = []
         return vrfs, self._finalize_api_trace(results)
+
+    def _query_current_vrfs_by_names(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather selected current VRF records for the target fabric."""
+        orchestrator, _results = self._new_vrf_orchestrator(module_args, strategy)
+        data = orchestrator.query_by_names(vrf_names)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("vrfs") or data.get("items") or []
+        return []
 
     def _wait_for_vrfs_delete_ready(
         self,
