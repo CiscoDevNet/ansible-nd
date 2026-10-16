@@ -584,11 +584,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 raise RuntimeError(f"Absent vPC delete preview lacks unique running/pending CLI for {expected_pairs!r}.")
             running_lines = [line.strip().casefold() for line in running[0].splitlines()]
             pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
-            port_channel_ids = [
-                po_match.group(1)
-                for line in running_lines
-                if (po_match := re.fullmatch(r"interface port-channel([0-9]+)", line)) is not None
-            ]
+            port_channel_ids = [po_match.group(1) for line in running_lines if (po_match := re.fullmatch(r"interface port-channel([0-9]+)", line)) is not None]
             if len(port_channel_ids) != 1 or f"vpc {vpc_id}" not in running_lines:
                 raise RuntimeError(f"Absent vPC delete preview lacks one port-channel with vPC {vpc_id} on each peer.")
             po_id = port_channel_ids[0]
