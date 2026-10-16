@@ -18,6 +18,8 @@ import ipaddress
 import re
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationInfo
+
 # Leading alphabetic prefix + the remainder (digits, /, ., -) of an interface name.
 _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 
@@ -164,12 +166,17 @@ def reconcile_cidr_prefix(data: Any, address_key: str, prefix_keys: tuple[str, .
     return reconciled
 
 
-def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, prefix_name: str) -> None:
+def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, prefix_name: str, info: ValidationInfo | None = None) -> None:
     """
     # Summary
 
     Reject half of an address / prefix pair, for a `mode="after"` model validator: an address without its prefix length, or a prefix
     length without its address, is never serialized into a payload the controller would reject or apply ambiguously.
+
+    Pass the validator's `info` so the check is skipped while pydantic validates a single assignment (`info.field_name` is set only then).
+    `NDBaseModel.merge()` assigns one field at a time under `validate_assignment`, so adding a pair to a model that had neither passes
+    through a transient half pair between the two assignments; both inputs to a merge were validated whole, so the merged result still
+    holds the invariant (issue #584).
 
     ## Raises
 
@@ -177,5 +184,7 @@ def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, pr
 
     - If exactly one of `address` / `prefix` is set.
     """
+    if getattr(info, "field_name", None) is not None:
+        return
     if (address is None) != (prefix is None):
         raise ValueError(f"{address_name} and {prefix_name} are required together; set both or neither.")
