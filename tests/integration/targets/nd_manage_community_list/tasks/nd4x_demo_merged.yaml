@@ -1,0 +1,233 @@
+---
+- name: Run nd_manage_community_list merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Remove reserved community lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "MERGED CREATE: Create standard community list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_standard }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate standard community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_standard.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ community_list_standard.name }}"
+              - jsonpath: "$.current.type"
+                equals: standard
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 10
+              - jsonpath: "$.current.entries[0].communityNumbers[0]"
+                equals: "100:200"
+              - jsonpath: "$.current.entries[1].noExport"
+                equals: true
+      register: merged_standard
+
+    - name: "MERGED CREATE: Verify standard returned configuration"
+      ansible.builtin.assert:
+        that:
+          - merged_standard.check_mode_result.changed | bool
+          - merged_standard.first_run_result.changed | bool
+          - merged_standard.first_run_result.before | selectattr('name', 'equalto', community_list_standard.name) | list | length == 0
+          - merged_standard.first_run_result.after | selectattr('name', 'equalto', community_list_standard.name) | list | length == 1
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries | length == 2
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).type == 'standard'
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[0].community_numbers[0] == '100:200'
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[1].sequence_number == 20
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[1].action == 'deny'
+          - >-
+            (
+              merged_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[1].no_export | bool
+          - merged_standard.second_run_result.changed == false
+          - merged_standard.nd_query_results | length == 1
+
+    - name: "MERGED IDEMPOTENT: Re-apply standard community list in check mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: merged
+        check_mode: true
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_standard }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+      register: merged_standard_check_mode_reapply
+
+    - name: "MERGED IDEMPOTENT: Verify check-mode reapply was unchanged"
+      ansible.builtin.assert:
+        that:
+          - merged_standard_check_mode_reapply.check_mode_result.changed == false
+          - not (merged_standard_check_mode_reapply.check_mode_result.failed | default(false) | bool)
+          - merged_standard_check_mode_reapply.first_run_result.changed == false
+          - not (merged_standard_check_mode_reapply.first_run_result.failed | default(false) | bool)
+          - merged_standard_check_mode_reapply.idempotency_attempts == 0
+
+    - name: "MERGED CREATE: Create expanded community list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_expanded }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate expanded community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_expanded.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ community_list_expanded.name }}"
+              - jsonpath: "$.current.type"
+                equals: expanded
+              - jsonpath: "$.current.entries[0].communityNumberRegex"
+                equals: "100:.*"
+              - jsonpath: "$.current.entries[1].communityNumberRegex"
+                equals: "65000:.*"
+      register: merged_expanded
+
+    - name: "MERGED CREATE: Verify expanded returned configuration"
+      ansible.builtin.assert:
+        that:
+          - merged_expanded.check_mode_result.changed | bool
+          - merged_expanded.first_run_result.changed | bool
+          - merged_expanded.first_run_result.before | selectattr('name', 'equalto', community_list_expanded.name) | list | length == 0
+          - merged_expanded.first_run_result.after | selectattr('name', 'equalto', community_list_expanded.name) | list | length == 1
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries | length == 2
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).type == 'expanded'
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries[0].community_number_regex == '100:.*'
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries[1].sequence_number == 20
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries[1].action == 'deny'
+          - >-
+            (
+              merged_expanded.first_run_result.after
+              | selectattr('name', 'equalto', community_list_expanded.name)
+              | first
+            ).entries[1].community_number_regex == '65000:.*'
+          - merged_expanded.second_run_result.changed == false
+          - merged_expanded.nd_query_results | length == 1
+
+  always:
+    - name: "MERGED CLEANUP: Remove reserved community lists"
+      ansible.builtin.include_tasks: setup.yaml

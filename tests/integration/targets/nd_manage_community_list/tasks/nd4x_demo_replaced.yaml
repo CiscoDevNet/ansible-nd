@@ -1,0 +1,130 @@
+---
+- name: Run nd_manage_community_list replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Create the original standard community list"
+      cisco.nd.nd_manage_community_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_standard }}"
+        state: merged
+
+    - name: "REPLACED UPDATE: Replace standard community list entries through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_standard_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced standard community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_standard_updated.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ community_list_standard_updated.name }}"
+              - jsonpath: "$.current.type"
+                equals: standard
+              - jsonpath: "$.current.entries[0].communityNumbers[0]"
+                equals: "200:300"
+              - jsonpath: "$.current.entries[1].internet"
+                equals: true
+      register: replaced_standard
+
+    - name: "REPLACED UPDATE: Verify replaced returned configuration"
+      ansible.builtin.assert:
+        that:
+          - replaced_standard.check_mode_result.changed | bool
+          - replaced_standard.first_run_result.changed | bool
+          - >-
+            replaced_standard.first_run_result.before
+            | selectattr('name', 'equalto', community_list_standard.name)
+            | list | length == 1
+          - >-
+            (
+              replaced_standard.first_run_result.before
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              replaced_standard.first_run_result.before
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[0].community_numbers[0] == '100:200'
+          - >-
+            (
+              replaced_standard.first_run_result.before
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[1].sequence_number == 20
+          - >-
+            (
+              replaced_standard.first_run_result.before
+              | selectattr('name', 'equalto', community_list_standard.name)
+              | first
+            ).entries[1].no_export | bool
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).entries | length == 2
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).type == 'standard'
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).entries[0].community_numbers[0] == "200:300"
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).entries[1].sequence_number == 30
+          - >-
+            (
+              replaced_standard.first_run_result.after
+              | selectattr('name', 'equalto', community_list_standard_updated.name)
+              | first
+            ).entries[1].action == 'permit'
+          - replaced_standard.second_run_result.changed == false
+          - replaced_standard.nd_query_results | length == 1
+
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved community lists"
+      ansible.builtin.include_tasks: setup.yaml

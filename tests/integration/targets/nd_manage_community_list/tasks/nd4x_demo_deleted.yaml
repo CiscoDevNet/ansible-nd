@@ -1,0 +1,64 @@
+---
+- name: Run nd_manage_community_list deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Create standard and expanded community lists"
+      cisco.nd.nd_manage_community_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_standard }}"
+          - "{{ community_list_expanded }}"
+        state: merged
+
+    - name: "DELETED: Delete community lists with name-only config through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ community_list_standard.name }}"
+          - name: "{{ community_list_expanded.name }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify standard community list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_standard.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify expanded community list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_expanded.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_lists
+
+    - name: "DELETED: Verify returned state is empty"
+      ansible.builtin.assert:
+        that:
+          - deleted_lists.check_mode_result.changed | bool
+          - deleted_lists.first_run_result.changed | bool
+          - deleted_lists.first_run_result.before | selectattr('name', 'equalto', community_list_standard.name) | list | length == 1
+          - deleted_lists.first_run_result.before | selectattr('name', 'equalto', community_list_expanded.name) | list | length == 1
+          - deleted_lists.first_run_result.after | selectattr('name', 'in', [community_list_standard.name, community_list_expanded.name]) | list | length == 0
+          - deleted_lists.second_run_result.changed == false
+          - deleted_lists.nd_query_results | length == 2
+
+  always:
+    - name: "DELETED CLEANUP: Remove reserved community lists"
+      ansible.builtin.include_tasks: setup.yaml
