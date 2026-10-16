@@ -625,7 +625,7 @@ class PortChannelTrunkHostInterfaceModel(PortChannelInterfaceBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_name=dict(type="str", required=True),
@@ -710,6 +710,6 @@ class PortChannelTrunkHostInterfaceModel(PortChannelInterfaceBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

@@ -1,0 +1,199 @@
+---
+# Gathered state tests for nd_manage_l3out
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# Pre-condition: merged.yaml has created the BGP, static, and SVI L3Outs
+#   defined in vars/main.yaml.
+
+# --- GATHERED: no config (fetch everything) ---
+
+- name: "GATHERED: Gather all L3Outs"
+  cisco.nd.nd_manage_l3out:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify read-only gather-all output"
+  vars:
+    gathered_names: >-
+      {{
+        nm_gathered_all.gathered
+        | map(attribute='name')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - test_l3out_bgp_name in gathered_names
+      - test_l3out_static_name in gathered_names
+      - test_l3out_svi_name in gathered_names
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+# --- GATHERED: select known L3Outs ---
+
+- name: "GATHERED: Select the known test L3Outs"
+  ansible.builtin.set_fact:
+    gathered_l3out_bgp: >-
+      {{
+        nm_gathered_all.gathered
+        | selectattr('name', 'equalto', test_l3out_bgp_name)
+        | list
+      }}
+    gathered_l3out_static: >-
+      {{
+        nm_gathered_all.gathered
+        | selectattr('name', 'equalto', test_l3out_static_name)
+        | list
+      }}
+    gathered_l3out_svi: >-
+      {{
+        nm_gathered_all.gathered
+        | selectattr('name', 'equalto', test_l3out_svi_name)
+        | list
+      }}
+
+- name: "GATHERED: Verify known test L3Outs were gathered once"
+  ansible.builtin.assert:
+    that:
+      - gathered_l3out_bgp | length == 1
+      - gathered_l3out_static | length == 1
+      - gathered_l3out_svi | length == 1
+
+# --- GATHERED: BGP mapping ---
+
+- name: "GATHERED: Verify BGP L3Out values"
+  ansible.builtin.assert:
+    that:
+      - gathered_l3out_bgp[0].configured_fabrics == "both"
+      - gathered_l3out_bgp[0].ip_version == "ipv4"
+      - >-
+        gathered_l3out_bgp[0]
+        .connectivity_details.routing_interface_type == "routed"
+      - >-
+        gathered_l3out_bgp[0]
+        .routing_details.routing_protocol == "bgp"
+      - >-
+        gathered_l3out_bgp[0]
+        .routing_details.bgp.hold_interval == 240
+      - >-
+        gathered_l3out_bgp[0]
+        .routing_details.bgp.keep_alive_interval == 60
+
+# --- GATHERED: static and subInterface mapping ---
+
+- name: "GATHERED: Verify static subInterface L3Out values"
+  ansible.builtin.assert:
+    that:
+      - >-
+        gathered_l3out_static[0]
+        .connectivity_details.routing_interface_type == "subInterface"
+      - >-
+        gathered_l3out_static[0]
+        .connectivity_details.links[0].vlan_id == 100
+      - >-
+        gathered_l3out_static[0]
+        .routing_details.routing_protocol == "static"
+      - >-
+        gathered_l3out_static[0]
+        .routing_details.static.fabric1_static_routes[0].ip_prefix
+        == "0.0.0.0/0"
+      - >-
+        gathered_l3out_static[0]
+        .routing_details.static.fabric1_static_routes[0].next_hop
+        == "192.168.100.254"
+
+# --- GATHERED: SVI and dual-stack mapping ---
+
+- name: "GATHERED: Verify SVI L3Out values"
+  ansible.builtin.assert:
+    that:
+      - gathered_l3out_svi[0].ip_version == "both"
+      - >-
+        gathered_l3out_svi[0]
+        .connectivity_details.routing_interface_type == "svi"
+      - >-
+        gathered_l3out_svi[0]
+        .connectivity_details.links[0].vlan_id == 200
+      - >-
+        gathered_l3out_svi[0]
+        .connectivity_details.links[0].ipv6_prefix_length == 64
+      - >-
+        gathered_l3out_svi[0]
+        .routing_details.routing_protocol == "bgp"
+
+# --- GATHERED: every item has its identifier ---
+
+- name: "GATHERED: Verify every item has its identifier"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('name', 'defined')
+        | list
+        | length == nm_gathered_all.gathered | length
+
+# --- GATHERED: explicit empty config ---
+
+- name: "GATHERED: Gather all with explicit empty config"
+  cisco.nd.nd_manage_l3out:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: []
+    state: gathered
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify empty config is equivalent to omitted config"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - >-
+        (nm_gathered_empty_config.gathered | sort(attribute='name'))
+        ==
+        (nm_gathered_all.gathered | sort(attribute='name'))
+
+# --- GATHERED: check mode ---
+
+- name: "GATHERED: Gather all in check mode"
+  cisco.nd.nd_manage_l3out:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  check_mode: true
+  register: cm_gathered_all
+
+- name: "GATHERED: Verify check mode is identical and read-only"
+  ansible.builtin.assert:
+    that:
+      - cm_gathered_all is not changed
+      - >-
+        (cm_gathered_all.gathered | sort(attribute='name'))
+        ==
+        (nm_gathered_all.gathered | sort(attribute='name'))
+
+# --- GATHERED: reject filtering ---
+
+- name: "GATHERED: Reject nonempty config because filtering is unsupported"
+  cisco.nd.nd_manage_l3out:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_l3out_bgp_name }}"
+    state: gathered
+  register: nm_gathered_with_config
+  ignore_errors: true
+
+- name: "GATHERED: Verify nonempty config is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_with_config is failed
+      - >-
+        'currently supports gather-all only'
+        in nm_gathered_with_config.msg

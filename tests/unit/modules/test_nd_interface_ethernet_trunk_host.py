@@ -15,8 +15,14 @@ integrated `expand_config` flatten step. Live ND interaction is exercised by the
 from __future__ import absolute_import, division, print_function
 
 import pytest
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import validate_gathered_filters
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
+    EthernetTrunkHostInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_trunk_host import (
     expand_config,
+    expand_gathered_filters,
     validate_across_item_duplicates,
     validate_interface_names,
     validate_within_item_duplicates,
@@ -306,6 +312,55 @@ def test_expand_config_00101_across_item_duplicate_raises():
         expand_config(config)
 
 
+@pytest.mark.parametrize(
+    "invalid_item,expected_match",
+    [
+        (
+            {"interface_names": ["Ethernet1/1"]},
+            r"switch_ip is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "", "interface_names": ["Ethernet1/1"]},
+            r"switch_ip is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "   ", "interface_names": ["Ethernet1/1"]},
+            r"switch_ip is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "1.1.1.1"},
+            r"interface_names is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "1.1.1.1", "interface_names": None},
+            r"interface_names is required.*config item 0",
+        ),
+        (
+            {"switch_ip": "1.1.1.1", "interface_names": []},
+            r"interface_names is required.*config item 0",
+        ),
+    ],
+    ids=[
+        "missing_switch_ip",
+        "empty_switch_ip",
+        "whitespace_switch_ip",
+        "missing_interface_names",
+        "null_interface_names",
+        "empty_interface_names",
+    ],
+)
+def test_expand_config_00103_rejects_missing_or_empty_write_identifiers(
+    invalid_item,
+    expected_match,
+):
+    """
+    Verify every supplied write-state config item identifies a non-empty switch and at least one
+    interface. This prevents malformed items from expanding to an empty proposed configuration.
+    """
+    with pytest.raises(ValueError, match=expected_match):
+        expand_config([invalid_item])
+
+
 def test_expand_config_00200_empty_input_returns_empty_list():
     """
     # Summary
@@ -350,11 +405,12 @@ def test_validate_interface_names_00000_all_strings():
         ([None], "null", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is null"),
         (["Ethernet1/1", None], "null", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is null"),
         ([""], "empty", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
+        (["   "], "whitespace_only", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
         (["Ethernet1/1", ""], "empty", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is empty"),
         ([5], "non_string", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
         (["Ethernet1/1", 5], "non_string", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
     ],
-    ids=["null_only", "null_after_valid", "empty_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
+    ids=["null_only", "null_after_valid", "empty_only", "whitespace_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
 )
 def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interface_names, offender, expected_match):
     """
@@ -376,12 +432,40 @@ def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interfa
         validate_interface_names(config)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        [{"switch_ip": "1.1.1.1"}],
+        [
+            {
+                "config_data": {
+                    "network_os": {
+                        "policy": {
+                            "admin_state": True,
+                        }
+                    }
+                }
+            }
+        ],
+    ],
+    ids=["switch_only", "policy_only"],
+)
+def test_expand_gathered_filters_00000_allows_partial_filters(config):
+    """
+    Verify write-state identifier validation does not leak into gathered-filter expansion.
+    Gathered filters may omit interface_names or both resource identifiers.
+    """
+    assert expand_gathered_filters(config) == config
+
+
 def test_validate_interface_names_00101_null_list_is_treated_as_empty():
     """
     # Summary
 
-    Verify a whole-list `interface_names: ~` (yielding `None`) is treated as empty and does not raise,
-    consistent with the duplicate validators and `expand_config`.
+    Verify the shared interface-entry validator treats a whole-list `interface_names: ~` as empty.
+
+    Write-state expansion rejects the null list before reaching this validator, while gathered filters
+    may omit interface_names and therefore continue to use the shared validator's optional-list behavior.
 
     ## Test
 
@@ -414,3 +498,65 @@ def test_expand_config_00102_null_entry_raises_value_error_via_expand():
     config = [{"switch_ip": "1.1.1.1", "interface_names": ["Ethernet1/1", None]}]
     with pytest.raises(ValueError, match=r"interface_names\[1\].*is null"):
         expand_config(config)
+
+
+@pytest.mark.parametrize("invalid_name", [None, "", "   ", 5], ids=["null", "empty", "whitespace_only", "non_string"])
+def test_expand_gathered_filters_00100_rejects_invalid_interface_names(invalid_name):
+    """
+    # Summary
+
+    Verify gathered-filter expansion rejects invalid interface names before the state machine and
+    controller-query paths are entered.
+
+    ## Test
+
+    - A null, empty, or non-string gathered interface name raises ValueError
+
+    ## Classes and Methods
+
+    - expand_gathered_filters()
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": [invalid_name]}]
+    with pytest.raises(ValueError, match=r"interface_names\[0\]"):
+        expand_gathered_filters(config)
+
+
+def test_gathered_policy_filter_00300_does_not_inject_network_os_type():
+    """Verify an omitted write-state discriminator does not become a gathered criterion."""
+    validator = ArgumentSpecValidator(EthernetTrunkHostInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"policy": {"admin_state": True}}}}],
+        }
+    )
+
+    assert result.error_messages == []
+    network_os = result.validated_parameters["config"][0]["config_data"]["network_os"]
+    assert network_os["network_os_type"] is None
+    validate_gathered_filters(
+        filters=result.validated_parameters["config"],
+        normalize_filter=EthernetTrunkHostInterfaceModel.normalize_gathered_filter,
+        supported_properties=EthernetTrunkHostInterfaceModel.gathered_filter_properties,
+    )
+
+
+def test_gathered_policy_filter_00310_rejects_explicit_network_os_type():
+    """Verify an explicit discriminator remains outside the gathered-property allowlist."""
+    validator = ArgumentSpecValidator(EthernetTrunkHostInterfaceModel.get_argument_spec())
+    result = validator.validate(
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [{"config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"admin_state": True}}}}],
+        }
+    )
+
+    with pytest.raises(ValueError, match="config_data.network_os.network_os_type"):
+        validate_gathered_filters(
+            filters=result.validated_parameters["config"],
+            normalize_filter=EthernetTrunkHostInterfaceModel.normalize_gathered_filter,
+            supported_properties=EthernetTrunkHostInterfaceModel.gathered_filter_properties,
+        )

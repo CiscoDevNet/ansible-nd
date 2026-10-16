@@ -213,7 +213,9 @@ def test_manage_fabric_campus_ibgp_vxlan_00110() -> None:
         "replaced",
         "overridden",
         "deleted",
+        "gathered",
     }
+    assert FabricCampusIbgpVxlanModel.supports_gathered_filtering is False
     assert spec["config_actions"] == config_actions_spec(FABRIC_CONFIG_ACTIONS)["config_actions"]
 
 
@@ -233,3 +235,26 @@ def test_manage_fabric_campus_ibgp_vxlan_00120() -> None:
 def test_manage_fabric_campus_ibgp_vxlan_00130() -> None:
     """The Campus management model explicitly opts into blank-as-unset handling."""
     assert CampusIbgpVxlanManagementModel.empty_string_means_unset is True
+
+
+def test_manage_fabric_campus_ibgp_vxlan_00140() -> None:
+    """Gathered configuration removes controller-only fields."""
+    response = _response()
+    response["controllerOnlyRoot"] = "root-marker"
+    response["management"]["controllerOnlyManagement"] = "nested-marker"
+
+    model = FabricCampusIbgpVxlanModel.from_response(response)
+    gathered = model.to_gathered_config()
+
+    assert gathered["fabric_name"] == "campus1"
+    assert gathered["management"]["bgp_asn"] == "65001"
+    assert gathered["management"]["site_id"] == "65001"
+
+    assert "category" not in gathered
+    assert "controllerOnlyRoot" not in gathered
+    assert "type" not in gathered["management"]
+    assert "name" not in gathered["management"]
+    assert "controllerOnlyManagement" not in gathered["management"]
+
+    reusable_model = FabricCampusIbgpVxlanModel.from_config(gathered)
+    assert reusable_model.to_gathered_config() == gathered

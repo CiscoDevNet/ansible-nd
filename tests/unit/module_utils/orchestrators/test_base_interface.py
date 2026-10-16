@@ -26,6 +26,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import inspect
 import logging
 from types import SimpleNamespace
+from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -575,6 +576,48 @@ def test_base_interface_00320() -> None:
     match = r"Fabric 'fabric_1' is in deployment freeze mode"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_prerequisites()
+
+
+@pytest.mark.parametrize(
+    "state, expected_method",
+    [
+        ("gathered", "read"),
+        ("merged", "mutation"),
+        ("replaced", "mutation"),
+        ("overridden", "mutation"),
+        ("deleted", "mutation"),
+    ],
+)
+def test_base_interface_00330(
+    state,
+    expected_method,
+) -> None:
+    """
+    Verify only gathered state uses read validation; all write states use
+    mutation validation.
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.params["state"] = state
+
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    fabric_context = SimpleNamespace(
+        validate_for_read=Mock(),
+        validate_for_mutation=Mock(),
+    )
+    instance._fabric_context = fabric_context
+
+    instance.validate_prerequisites()
+
+    if expected_method == "read":
+        fabric_context.validate_for_read.assert_called_once_with()
+        fabric_context.validate_for_mutation.assert_not_called()
+    else:
+        fabric_context.validate_for_read.assert_not_called()
+        fabric_context.validate_for_mutation.assert_called_once_with()
 
 
 # =============================================================================
@@ -3684,3 +3727,57 @@ def test_base_interface_01140() -> None:
 
     assert "port-channel120" not in str(exc_info.value)
     assert len(instance.rest_send.responses) == 2
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_error"),
+    [
+        ([], "unexpected response type"),
+        ({"interfaces": {}}, "expected a list"),
+        ({"interfaces": ""}, "expected a list"),
+        ({"interfaces": 0}, "expected a list"),
+        ({"interfaces": [None]}, "non-object entry"),
+    ],
+    ids=[
+        "non-object-response",
+        "mapping-page",
+        "string-page",
+        "integer-page",
+        "non-object-entry",
+    ],
+)
+def test_base_interface_01150_rejects_malformed_paginated_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    response,
+    expected_error,
+) -> None:
+    """
+    # Summary
+
+    Verify the shared gathered interface paginator fails closed when the
+    List Interfaces endpoint returns a malformed response or page.
+
+    ## Test
+
+    - A non-object response is rejected.
+    - Falsy non-list interface pages are rejected.
+    - A page containing a non-object entry is rejected.
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._query_interfaces_with_lucene()
+    """
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda **kwargs: response,
+    )
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        instance._query_interfaces_with_lucene(
+            "SERIAL-1",
+            "interfaceType:ethernet",
+        )

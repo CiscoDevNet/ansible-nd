@@ -23,8 +23,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec, build_lucene_expressions
 
 _FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+_GATHERED_QUERY_MAX_EXPRESSIONS = 3
 
 
 class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
@@ -45,7 +47,7 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     query_all_page_size: ClassVar[int] = 100
-    query_all_max_pages: ClassVar[int] = 10000
+    query_all_max_pages: ClassVar[int] = 100
 
     # Stub assignments satisfy NDBaseOrchestrator.validate_bulk_endpoints
     create_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsPost
@@ -55,6 +57,14 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageCommunityListsBulkDelete
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(),
+        field_map={
+            ("type",): "type",
+        },
+    )
 
     _fabric_context: FabricContext | None = None
 
@@ -225,40 +235,113 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: CommunityListModel | None = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: CommunityListModel | None = None, gathered_filters=None, **kwargs) -> ResponseType:
         """
         Retrieve all community lists for the fabric.
 
-        Extracts the ``communityLists`` wrapper key from the list response.
+        When ``gathered_filters`` is not None, routes to the gathered path
+        which uses safe type-based Lucene reduction and leaves name matching
+        to the shared local filter.
         """
         try:
-            collected: list[dict] = []
-            seen: set[str] = set()
-            offset = 0
-            pages_fetched = 0
-            while pages_fetched < self.query_all_max_pages:
-                pages_fetched += 1
-                ep = self._configure_endpoint(self.query_all_endpoint())
-                ep.lucene_params.max = self.query_all_page_size
-                ep.lucene_params.offset = offset
-                result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-                page = result.get("communityLists", []) or [] if isinstance(result, dict) else (result or [])
-                if not page:
-                    break
-
-                new_rows = 0
-                for row in page:
-                    name = row.get("name") if isinstance(row, dict) else None
-                    if name is not None:
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                    collected.append(row)
-                    new_rows += 1
-
-                if len(page) < self.query_all_page_size or new_rows == 0:
-                    break
-                offset += self.query_all_page_size
-            return collected
+            if gathered_filters is not None:
+                return self._query_all_for_gathered(gathered_filters)
+            return self._query_all_for_management_states()
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(self, expression: str | None = None) -> list[dict]:
+        """Fetch all community lists with pagination, optionally filtered by Lucene expression."""
+        collected: list[dict] = []
+        seen: set[tuple[str | None, str]] = set()
+        offset = 0
+        pages_fetched = 0
+        while pages_fetched < self.query_all_max_pages:
+            pages_fetched += 1
+            ep = self._configure_endpoint(self.query_all_endpoint())
+            ep.lucene_params.max = self.query_all_page_size
+            ep.lucene_params.offset = offset
+            if expression is not None:
+                ep.lucene_params.filter = expression
+            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+            page = result.get("communityLists", []) or [] if isinstance(result, dict) else (result or [])
+            if not page:
+                break
+
+            new_rows = 0
+            for row in page:
+                name = row.get("name") if isinstance(row, dict) else None
+                if name is not None:
+                    key = (row.get("tenantName"), name)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                collected.append(row)
+                new_rows += 1
+
+            if not self._has_next_page(result, len(page), offset):
+                break
+            if new_rows == 0:
+                raise RuntimeError("Pagination did not advance while the controller reported additional community lists.")
+            offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({self.query_all_max_pages} pages, {len(collected)} community lists collected). Results may be incomplete."
+            )
+        return collected
+
+    def _has_next_page(self, result: object, page_count: int, offset: int) -> bool:
+        """Return whether controller metadata or page size indicates another page."""
+        if page_count == 0:
+            return False
+        if isinstance(result, dict):
+            counts = (result.get("meta") or {}).get("counts") or {}
+            try:
+                total = int(counts["total"])
+            except (KeyError, TypeError, ValueError):
+                total = None
+            if total is not None:
+                return offset + page_count < total
+            try:
+                remaining = int(counts["remaining"])
+            except (KeyError, TypeError, ValueError):
+                remaining = None
+            if remaining is not None:
+                return remaining > 0
+        return page_count == self.query_all_page_size
+
+    def _query_all_for_gathered(self, gathered_filters=None) -> list[dict]:
+        """
+        Fetch community lists for gathered state, optionally filtered by name and type.
+
+        Type-only server filtering is safe because the API type value matches the
+        normalized Ansible value. Name criteria remain local: tenant-scoped API
+        names are qualified as ``tenant~name`` on the wire but normalized to a
+        bare name in gathered output, so an exact server-side name query could
+        omit valid tenant-scoped matches.
+        """
+        filter_items = gathered_filters or [{}]
+        results: list[dict] = []
+        seen: set[tuple[str | None, str]] = set()
+        lucene_filters = [{"type": item["type"]} for item in filter_items if item.get("type") not in (None, "")]
+        expressions = build_lucene_expressions(lucene_filters, spec=self.gathered_lucene_spec) if len(lucene_filters) == len(filter_items) else []
+        if len(expressions) > _GATHERED_QUERY_MAX_EXPRESSIONS:
+            expressions = []
+
+        if expressions:
+            for expression in expressions:
+                for item in self._query_all_for_management_states(expression):
+                    name = item.get("name") if isinstance(item, dict) else None
+                    key = (item.get("tenantName"), name) if name is not None else None
+                    if key is not None and key not in seen:
+                        seen.add(key)
+                        results.append(item)
+        else:
+            for item in self._query_all_for_management_states():
+                name = item.get("name") if isinstance(item, dict) else None
+                key = (item.get("tenantName"), name) if name is not None else None
+                if key is not None and key not in seen:
+                    seen.add(key)
+                    results.append(item)
+
+        return results

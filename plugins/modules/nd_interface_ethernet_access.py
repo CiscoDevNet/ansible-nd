@@ -37,24 +37,33 @@ options:
     - Each item specifies the target switch, a list of interface names, and a shared configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Not required for O(state=gathered).
+    - For O(state=gathered), supported supplied fields are filter criteria. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics. Supported properties are O(config.switch_ip), O(config.interface_names),
+      O(config.config_data.network_os.policy.admin_state), and O(config.config_data.network_os.policy.access_vlan).
+      Other configuration properties are rejected when used as gathered filters.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
         - The management IP address of the switch on which to manage the ethernet interfaces.
         - This is resolved to the switch serial number (switchId) internally.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       interface_names:
         description:
         - The list of ethernet interface names to configure with the same settings.
         - Each name should be in the format C(Ethernet1/1), C(Ethernet1/2), etc. for NX-OS and C(GigabitEthernet1/0/1),
           C(TenGigabitEthernet1/1/1), etc. for IOS-XE.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
         type: list
         elements: str
-        required: true
+        required: false
       config_data:
         description:
         - The configuration data shared by all interfaces in O(config[].interface_names), following the ND API structure.
@@ -70,8 +79,8 @@ options:
                 - The network OS (platform) type of the target switch. This is a discriminator that determines which
                   policy templates are applicable.
                 - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                - When omitted for configuration states, V(nx-os) is selected for backward compatibility.
                 type: str
-                default: nx-os
                 choices: [ nx-os, ios-xe ]
               policy:
                 description:
@@ -376,9 +385,11 @@ options:
       C(interfaceActions/normalize) API, the equivalent of the NX-OS C(default interface) CLI command; IOS-XE
       interfaces reset to a default trunk configuration with all policy fields cleared. An explicitly named
       C(accessPoMember), C(iosXeAccessPoMember), or C(accessVpcPoMember) is rejected because resetting it would change its membership.
+    - Use O(state=gathered) to read all accessHost ethernet interfaces in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -626,6 +637,20 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Gather all user-managed accessHost interfaces in a fabric
+  cisco.nd.nd_interface_ethernet_access:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_access
+
+- name: Gather accessHost interfaces from a specific switch
+  cisco.nd.nd_interface_ethernet_access:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.168.1.1
+  register: gathered_access_switch1
 """
 
 RETURN = r"""
@@ -742,7 +767,7 @@ def validate_interface_names(config_list: list[dict]) -> None:
     """
     # Summary
 
-    Raise `ValueError` if any element of any `interface_names` list is `None`, an empty string, or not a
+    Raise `ValueError` if any element of any `interface_names` list is `None`, empty/whitespace-only, or not a
     string. Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
     with null/empty entries, and a templated value may arrive as a non-string), and downstream `name.lower()`
     would otherwise raise `AttributeError` / silently insert a blank interface — neither of which is the
@@ -752,13 +777,13 @@ def validate_interface_names(config_list: list[dict]) -> None:
 
     ### ValueError
 
-    - If any element of `interface_names` is `None`, an empty string, or not a string.
+    - If any element of `interface_names` is `None`, empty/whitespace-only, or not a string.
     """
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
         for entry_index, name in enumerate(interface_names):
-            if not isinstance(name, str) or not name:
+            if not isinstance(name, str) or not name.strip():
                 if name is None:
                     reason = "null"
                 elif not isinstance(name, str):
@@ -835,28 +860,72 @@ def expand_config(config_list: list[dict]) -> list[dict]:
     (with singular `interface_name`). Each group produces one flat item per interface name, all
     sharing the same `config_data` and `switch_ip`.
 
+    An empty top-level `config` list remains valid. However, every item present in the list must
+    identify a switch and at least one interface.
+
     ## Raises
 
     ### ValueError
 
-    - If any `interface_names` entry is `None` or an empty string
+    - If a config item has no non-empty `switch_ip`
+    - If a config item has a missing, null, or empty `interface_names` list
+    - If any `interface_names` entry is `None`, empty, whitespace-only, or not a string
     - If an interface name appears more than once within a single config item's `interface_names` list
     - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        if not isinstance(switch_ip, str) or not switch_ip.strip():
+            raise ValueError(f"switch_ip is required and must be a non-empty string for config item {item_index}.")
+        interface_names = group.get("interface_names")
+        if not isinstance(interface_names, list) or not interface_names:
+            raise ValueError(f"interface_names is required and must contain at least one interface for switch '{switch_ip}' (config item {item_index}).")
+
     validate_interface_names(config_list)
     validate_within_item_duplicates(config_list)
     validate_across_item_duplicates(config_list)
 
     expanded = []
     for group in config_list:
-        # `or []` (not a `.get` default) so an explicit `interface_names: ~` in YAML,
-        # which yields None, is treated as empty -- consistent with the validators above.
-        interface_names = group.get("interface_names") or []
+        # The write-state validation above guarantees a present, non-empty list.
+        interface_names = group["interface_names"]
         for name in interface_names:
             item = copy.deepcopy(group)
-            item.pop("interface_names", None)
+            item.pop("interface_names")
             item["interface_name"] = name
             expanded.append(item)
+    return expanded
+
+
+def expand_gathered_filters(config_list):
+    """
+    Expand interface_names in gathered filter items to singular interface_name.
+
+    Each filter item with interface_names: [A, B] becomes two filter items:
+    {interface_name: A, ...} and {interface_name: B, ...}.
+    Multiple filter items use OR semantics, so this correctly expresses "show me A or B".
+
+    This is the gathered-filter counterpart of expand_config(), which performs
+    the same name-flattening for mutation states. Both exist because the user-facing
+    argspec uses interface_names (list) while the internal model uses interface_name (singular).
+
+    Raises ValueError when an interface_names entry is null, empty/whitespace-only, or not a string,
+    so invalid partial filters fail before the state machine can issue an API request.
+    """
+    if not config_list:
+        return config_list
+    validate_interface_names(config_list)
+    expanded = []
+    for item in config_list:
+        names = item.get("interface_names") or []
+        if names:
+            for name in names:
+                new_item = copy.deepcopy(item)
+                new_item.pop("interface_names", None)
+                new_item["interface_name"] = name
+                expanded.append(new_item)
+        else:
+            expanded.append(copy.deepcopy(item))
     return expanded
 
 
@@ -879,21 +948,34 @@ def main() -> None:
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_ethernet_access")
 
     # Expand grouped config (interface_names list) into flat config items (interface_name singular)
-    try:
-        module.params["config"] = expand_config(module.params["config"])
-    except ValueError as e:
-        module.fail_json(msg=f"Configuration error: {e}")
-    module_log.debug(
-        "expand_config done items=%d switches=%d",
-        len(module.params["config"]),
-        len({item.get("switch_ip") for item in module.params["config"]}),
-    )
+    # For gathered state, config may be None or contain filter criteria - expand names only.
+    if module.params["state"] != "gathered":
+        try:
+            module.params["config"] = expand_config(module.params["config"] or [])
+        except ValueError as e:
+            module.fail_json(msg=f"Configuration error: {e}")
+        module_log.debug(
+            "expand_config done items=%d switches=%d",
+            len(module.params["config"]),
+            len({item.get("switch_ip") for item in module.params["config"]}),
+        )
+    else:
+        try:
+            module.params["config"] = expand_gathered_filters(module.params.get("config"))
+        except (ValueError, TypeError) as e:
+            module.fail_json(msg=f"Gathered filter error: {e}")
 
     nd_state_machine = None
 
@@ -920,7 +1002,7 @@ def main() -> None:
         module_log.debug("manage_state end")
 
         # Execute all queued bulk operations
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

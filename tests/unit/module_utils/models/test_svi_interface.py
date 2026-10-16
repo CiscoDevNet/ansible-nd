@@ -1047,8 +1047,8 @@ def test_svi_interface_01100():
     ## Test
 
     - fabric_name is required str
-    - config is required list-of-dict
-    - state is enum with merged/replaced/overridden/deleted
+    - config is optional list-of-dict and conditionally required by the module
+    - state is enum with merged/replaced/overridden/deleted/gathered
     - policy options include the phase 1 writable fields
 
     ## Classes and Methods
@@ -1059,8 +1059,8 @@ def test_svi_interface_01100():
     assert spec["fabric_name"]["type"] == "str"
     assert spec["fabric_name"]["required"] is True
     assert spec["config"]["type"] == "list"
-    assert spec["config"]["required"] is True
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["config"]["required"] is False
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
     assert spec["state"]["default"] == "merged"
 
     config_options = spec["config"]["options"]
