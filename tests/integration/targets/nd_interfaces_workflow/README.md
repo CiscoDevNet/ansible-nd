@@ -200,10 +200,10 @@ Use `nd_iw_selected_families` to restrict a run. A family is active only when it
 
 The checked-in mappings currently declare no unsupported families. Add an exclusion only after collecting controller evidence, and keep it as a subset of `candidate_families`; preflight rejects unknown or inconsistent names. Live setup and cleanup send only active, declared-supported resource types.
 
-Known standalone limitations still apply to this aggregate target. On ND 4.3.1, do not count string-valued loopback
-`route_map_tag` ([#583](https://github.com/CiscoDevNet/ansible-nd/issues/583)) or direct new `mplsLoopback` creation
-([#595](https://github.com/CiscoDevNet/ansible-nd/issues/595)) as passing live cases. The tested NX-OS qualification can select
-the other eleven families while those specific loopback cases remain follow-up; this is not a claim that loopback is unsupported.
+The standalone loopback target covers numeric-string input for `route_map_tag` and verifies the integer value ND returns;
+the workflow property matrix includes that field. Direct new `mplsLoopback` creation
+([#595](https://github.com/CiscoDevNet/ansible-nd/issues/595)) remains a separate follow-up and is not counted as a
+passing live case. Loopback is still a supported workflow family.
 
 ## Lab prerequisites
 

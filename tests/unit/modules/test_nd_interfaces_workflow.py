@@ -104,6 +104,19 @@ def test_return_contract_marks_plan_keys_conditional_and_documents_nested_output
     assert "C(current)" in " ".join(documentation["options"]["output_level"]["description"])
 
 
+def test_iosxe_physical_override_scope_is_explicit_in_public_contract():
+    """A fabric-wide inventory read must not imply reset-all for omitted IOS-XE ports."""
+    documentation = yaml.safe_load(nd_interfaces_workflow.DOCUMENTATION)
+    result = yaml.safe_load(nd_interfaces_workflow.RETURN)
+    state_notes = " ".join(documentation["options"]["resources"]["suboptions"]["state"]["description"])
+    assert "unlisted IOS-XE ports are not reset" in state_notes
+    for field in ("before", "after", "family_before", "family_after"):
+        description = result["resources"]["contains"][field]["description"]
+        if isinstance(description, list):
+            description = " ".join(description)
+        assert "Omitted IOS-XE physical Ethernet ports" in description
+
+
 def test_ethernet_routed_union_and_reset_contract_is_explicit_in_documentation():
     assert "V(ethernet_routed) uses M(cisco.nd.nd_interface_ethernet_routed)" in nd_interfaces_workflow.DOCUMENTATION
     assert "C(network_os_type)" in nd_interfaces_workflow.DOCUMENTATION

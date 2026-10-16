@@ -14,6 +14,9 @@ nd_iw_selected_fabric_types:
   - vxlanIbgp
   - externalConnectivity
 nd_iw_selected_families: []
+# Permit focused lifecycle isolation without rerunning separate property packs.
+# Full qualification leaves this enabled.
+nd_iw_run_family_branches: true
 
 # Fabric-wide deletion through state: overridden is independently guarded even
 # when nd_iw_profile is destructive.

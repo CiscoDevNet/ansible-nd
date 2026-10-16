@@ -243,16 +243,23 @@ class InterfaceWorkflowExecutor:
         rest_send,
         markers: tuple[int, int],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Select a write response, never a later recovery inventory GET."""
+        """Select the write response, never a later inventory GET or read-only preview POST."""
         response_start, result_start = markers
         response_count, _result_count = cls._request_markers(rest_send)
         if response_count <= response_start:
             return {}, {}
-        responses = rest_send.responses[response_start:response_count]
-        results = rest_send.results[result_start:]
+        if hasattr(rest_send, "history_since"):
+            responses, results = rest_send.history_since(response_start, result_start)
+        else:
+            responses = rest_send.responses[response_start:response_count]
+            results = rest_send.results[result_start:]
         for index in range(len(responses) - 1, -1, -1):
             response = responses[index]
-            if not isinstance(response, dict) or response.get("METHOD") == "GET":
+            if not isinstance(response, dict):
+                continue
+            method = getattr(response.get("METHOD"), "value", response.get("METHOD"))
+            path = str(response.get("REQUEST_PATH") or "")
+            if str(method).upper() == "GET" or "interfaceActions/preview" in path:
                 continue
             result = results[index] if index < len(results) and isinstance(results[index], dict) else {}
             return response, result
@@ -274,7 +281,7 @@ class InterfaceWorkflowExecutor:
 
     @staticmethod
     def _outcome_targets(outcome: dict[str, Any], targets: Iterable[Target]) -> tuple[Target, ...]:
-        """Map one outcome to its exact target or to every target in an identified switch scope."""
+        """Map one outcome to its exact target or identified switch scope."""
         name_value = outcome.get("interfaceName") or outcome.get("name")
         switch_value = outcome.get("switchId") or outcome.get("serialNumber")
         if name_value is None and switch_value is None:
@@ -292,6 +299,11 @@ class InterfaceWorkflowExecutor:
         if switch_value is not None and name_value is None:
             return tuple(candidates)
         return tuple(candidates) if len(candidates) == 1 else ()
+
+    @staticmethod
+    def _target_key(target: Target) -> Target:
+        """Match controller-canonical interface spelling without changing the wire target."""
+        return target[0].casefold(), target[1]
 
     @classmethod
     def _classify_response(
@@ -314,6 +326,11 @@ class InterfaceWorkflowExecutor:
         for outcome in outcomes:
             status = str(outcome.get("status") or "").strip().lower()
             is_failure = status in _FAILURE_STATUSES or (is_multistatus and status not in _SUCCESS_STATUSES)
+            # A switch-level failure implicates every requested target on that
+            # switch, but switch-level success cannot prove that each interface
+            # was accepted or deployed by an HTTP 207 multi-status operation.
+            if status in _SUCCESS_STATUSES and outcome.get("interfaceName") is None and outcome.get("name") is None:
+                continue
             outcome_targets = cls._outcome_targets(outcome, target_list)
             if not outcome_targets:
                 continue
@@ -395,7 +412,7 @@ class InterfaceWorkflowExecutor:
             self._apply_outcomes(items, outcomes)
             self._errors.append(error)
             return False
-        response, result = self._fresh_current(orchestrator.rest_send, markers)
+        response, result = self._fresh_mutation_result(orchestrator.rest_send, markers)
         error = f"{context}: HTTP 207 response did not report exact success for every requested interface."
         if response.get("RETURN_CODE") == 207 and exact_207_classifier is not None:
             accepted, exact = exact_207_classifier()
@@ -465,9 +482,9 @@ class InterfaceWorkflowExecutor:
                 f"resources[{resource.resource_index}] {resource.resource_type} delete preparation failed",
             ):
                 return False
-            pending = set(orchestrator.pending_deferred_delete_targets)
+            pending = {self._target_key(target) for target in orchestrator.pending_deferred_delete_targets}
             for item in items:
-                if item.target in pending:
+                if self._target_key(item.target) in pending:
                     item.status = "queued"
                 else:
                     item.status = "skipped"
@@ -576,9 +593,10 @@ class InterfaceWorkflowExecutor:
 
         after = self._queue_targets(target, queue_name)
         remaining = set(after)
-        accepted = [candidate for candidate in before if candidate not in remaining]
+        remaining_keys = {self._target_key(candidate) for candidate in remaining}
+        accepted_keys = {self._target_key(candidate) for candidate in before if self._target_key(candidate) not in remaining_keys}
         for item in self._items:
-            if item.action == "delete" and item.status == "queued" and item.target in accepted:
+            if item.action == "delete" and item.status == "queued" and self._target_key(item.target) in accepted_keys:
                 item.status = "succeeded"
                 item.message = None
 
@@ -589,13 +607,15 @@ class InterfaceWorkflowExecutor:
         response, result = self._fresh_current(target.rest_send, markers)
         first_remaining_group = next((set(group) for group in groups if set(group) & remaining), set(remaining))
         response_outcomes = self._classify_response(first_remaining_group, response, result, error) if raised and response else {}
+        outcome_by_key = {self._target_key(candidate): outcome for candidate, outcome in response_outcomes.items()}
+        first_remaining_keys = {self._target_key(candidate) for candidate in first_remaining_group}
         for item in self._items:
-            if item.action != "delete" or item.status != "queued" or item.target not in remaining:
+            if item.action != "delete" or item.status != "queued" or self._target_key(item.target) not in remaining_keys:
                 continue
-            if raised and item.target not in first_remaining_group:
+            if raised and self._target_key(item.target) not in first_remaining_keys:
                 item.status = "not_attempted"
             else:
-                status, message = response_outcomes.get(item.target, ("failed", error))
+                status, message = outcome_by_key.get(self._target_key(item.target), ("failed", error))
                 item.status = "failed" if status == "succeeded" else status
                 item.message = message or error
             if item.message is None:
@@ -682,15 +702,15 @@ class InterfaceWorkflowExecutor:
         ]
         pending: list[batch_type] = []
         completed_batches: list[list[batch_type]] = []
-        singular: list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem]] = []
+        singular: list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem, NDBaseModel | None]] = []
 
         def execute_batch(batch: list[batch_type]) -> bool:
             if len(batch) == 1:
-                resource, model, item, _payload, _previous, _mode = batch[0]
+                resource, model, item, _payload, previous, _mode = batch[0]
                 return self._call_items(
                     resource.orchestrator,
                     [item],
-                    lambda: resource.orchestrator.update(model),
+                    lambda: resource.orchestrator.update(model, previous_model=previous),
                     f"resources[{resource.resource_index}] {resource.resource_type} update failed",
                 )
             source = batch[0][0].orchestrator
@@ -764,7 +784,7 @@ class InterfaceWorkflowExecutor:
                         pending = []
                     pending.append((resource, model, item, payload, previous, mode))
                     continue
-                singular.append((resource, model, item))
+                singular.append((resource, model, item, previous))
 
         if pending:
             completed_batches.append(pending)
@@ -774,11 +794,11 @@ class InterfaceWorkflowExecutor:
         # Every operation in this invocation is in the same independent
         # dependency layer; singular fallbacks may follow bulk batches without
         # crossing a parent/member or routed-parent discovery barrier.
-        for resource, model, item in singular:
+        for resource, model, item, previous in singular:
             if not self._call_items(
                 resource.orchestrator,
                 [item],
-                lambda resource=resource, model=model: resource.orchestrator.update(model),
+                lambda resource=resource, model=model, previous=previous: resource.orchestrator.update(model, previous_model=previous),
                 f"resources[{resource.resource_index}] {resource.resource_type} update failed",
             ):
                 return False
@@ -1100,6 +1120,57 @@ class InterfaceWorkflowExecutor:
                 resource.orchestrator._queue_preview_derived_discovery(interface_name, switch_id)
             resource.orchestrator._discover_pending_preview_derived_identities(selected)
 
+    def _prepare_port_channel_deploy_context(self, plan: InterfaceWorkflowPlan, targets: tuple[Target, ...]) -> None:
+        """Retain exact members of unchanged parents selected for deploy-only replay.
+
+        Mutation paths register their members with the source orchestrator.
+        An unchanged parent has no mutation path, so the consolidated deploy
+        must do the equivalent registration before absorbing source context.
+        Use the already validated current model: submitted ``ports`` may be
+        omitted even though the parent owns members in controller intent.
+        """
+
+        selected = {(name.casefold(), switch_id) for name, switch_id in targets}
+        staged_deletes = {(name.casefold(), switch_id) for name, switch_id in getattr(plan, "staged_delete_targets", ())}
+        for resource in plan.resources:
+            if resource.adapter.ownership_domain != "port_channel":
+                continue
+            orchestrator = resource.orchestrator
+            mutated = {
+                self._model_target(resource, model)
+                for model in (
+                    *resource.operations.deletes,
+                    *resource.operations.updates,
+                    *resource.operations.creates,
+                    *(transition.desired for transition in resource.transitions),
+                )
+            }
+            mutated_keys = {(name.casefold(), switch_id) for name, switch_id in mutated}
+            for model in resource.before:
+                name, switch_id = self._model_target(resource, model)
+                key = name.casefold(), switch_id
+                if key not in selected or key in mutated_keys:
+                    continue
+                orchestrator._prepare_deploy_context(model, switch_id)
+                # A staged removal can leave a former switch-side member
+                # absent from current intent even when other members remain.
+                # Require parent-scoped pending CLI to prove that derived 207
+                # result rather than trusting an unregistered identity.
+                orchestrator._queue_preview_derived_discovery(name, switch_id)
+                removed = orchestrator._removed_xe_members(model, switch_id)
+                orchestrator._preview_and_queue_removed_xe_members(model, switch_id, removed)
+            # A staged logical delete is already represented by an ND
+            # tombstone, so the managed ``before`` collection is empty. The
+            # planner has proved the exact pending parent deletion; require a
+            # second parent-scoped preview to register any child reported by
+            # the deployment response.
+            if staged_deletes:
+                for model in resource.proposed:
+                    name, switch_id = self._model_target(resource, model)
+                    key = name.casefold(), switch_id
+                    if key in selected and key in staged_deletes and key not in mutated_keys:
+                        orchestrator._queue_preview_derived_discovery(name, switch_id)
+
     def _deploy_pending(
         self,
         plan: InterfaceWorkflowPlan,
@@ -1134,18 +1205,38 @@ class InterfaceWorkflowExecutor:
             plan.resources[0].orchestrator,
         )
         target.deploy = True
-        markers = self._request_markers(target.rest_send)
-        self._attempted_deploy_targets.update((name.casefold(), switch_id) for name, switch_id in targets)
+        markers: tuple[int, int] | None = None
+        deploy_started = False
+        queued_before = {pair for source in self._all_orchestrators(plan) for pair in source.pending_deploys}
         try:
             self._prepare_vpc_deploy_context(plan, targets)
+            self._prepare_port_channel_deploy_context(plan, targets)
+            # A no-diff IOS-XE parent replay may discover an exact pending
+            # member detach only after its own read-only preview. Consolidate
+            # that proven member into this same deployment request.
+            newly_proven = (pair for source in self._all_orchestrators(plan) for pair in source.pending_deploys if pair not in queued_before)
+            expanded = tuple(dict.fromkeys((*targets, *newly_proven)))
+            for interface_name, switch_id in expanded[len(targets) :]:
+                entry = {"interface_name": interface_name, "switch_id": switch_id, "status": "not_attempted"}
+                batch.append(entry)
+                self._deployment["targets"].append(entry)
+            targets = expanded
             if isinstance(target, NDBaseInterfaceOrchestrator):
                 for source in self._all_orchestrators(plan):
                     if isinstance(source, NDBaseInterfaceOrchestrator):
                         target.absorb_deploy_context_from(source)
+            markers = self._request_markers(target.rest_send)
+            deploy_started = True
+            self._attempted_deploy_targets.update((name.casefold(), switch_id) for name, switch_id in targets)
             target.deploy_targets(targets)
         except Exception as exc:  # pylint: disable=broad-except
             error = f"Consolidated interface deployment failed: {exc}"
-            response, result = self._fresh_current(target.rest_send, markers)
+            if not deploy_started or markers is None:
+                self._deployment["status"] = "failed"
+                self._deployment["message"] = error
+                self._errors.append(error)
+                return False
+            response, result = self._fresh_mutation_result(target.rest_send, markers)
             outcomes = self._classify_response(targets, response, result, error)
             for entry in batch:
                 status, message = outcomes[(entry["interface_name"], entry["switch_id"])]
@@ -1158,7 +1249,18 @@ class InterfaceWorkflowExecutor:
             self._dequeue_deployed_targets(plan)
             self._errors.append(error)
             return False
-        response, result = self._fresh_current(target.rest_send, markers)
+        response, result = self._fresh_mutation_result(target.rest_send, markers)
+        if not response or result.get("success") is not True:
+            error = "Consolidated interface deployment returned no successful deployment response."
+            outcomes = self._classify_response(targets, response, result, error)
+            for entry in batch:
+                status, message = outcomes[(entry["interface_name"], entry["switch_id"])]
+                entry["status"] = "failed" if status == "succeeded" else status
+                entry["message"] = message or error
+            self._deployment["status"] = "failed"
+            self._deployment["message"] = error
+            self._errors.append(error)
+            return False
         if response.get("RETURN_CODE") == 207 and set(getattr(target, "verified_deploy_targets", ())) != set(targets):
             error = "Consolidated interface deployment failed: HTTP 207 response did not report exact success for every requested interface."
             outcomes = self._classify_response(targets, response, result, error)
@@ -1284,9 +1386,10 @@ class InterfaceWorkflowExecutor:
         if phases_ok:
             phases_ok = self._deploy_pending(plan, deployment_targets)
         elif self.deploy:
+            queued_deploys = {self._target_key(pair): pair for orchestrator in self._all_orchestrators(plan) for pair in orchestrator.pending_deploys}
             accepted_targets = tuple(
                 dict.fromkeys(
-                    item.target
+                    queued_deploys.get(self._target_key(item.target), item.target)
                     for item in self._items
                     if item.status == "succeeded" and (item.interface_name.casefold(), item.switch_id) not in self._attempted_deploy_targets
                 )

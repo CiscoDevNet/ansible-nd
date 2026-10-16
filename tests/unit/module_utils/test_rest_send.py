@@ -1901,6 +1901,27 @@ def test_rest_send_result_count():
         assert instance.result_count == 2
 
 
+def test_history_since_copies_only_new_records(monkeypatch) -> None:
+    """The workflow can inspect a fresh write without cloning old inventory pages."""
+    instance = RestSend({"check_mode": False})
+    instance.add_response({"DATA": {"old": [1]}})
+    instance.add_result({"success": True, "old": [1]})
+    response_start, result_start = instance.response_count, instance.result_count
+    instance.add_response({"DATA": {"new": [2]}})
+    instance.add_result({"success": True, "new": [2]})
+
+    def no_full_history(_self):
+        raise AssertionError("full history getter must not be used")
+
+    monkeypatch.setattr(RestSend, "responses", property(no_full_history))
+    monkeypatch.setattr(RestSend, "results", property(no_full_history))
+    responses, results = instance.history_since(response_start, result_start)
+    assert responses == [{"DATA": {"new": [2]}}]
+    assert results == [{"success": True, "new": [2]}]
+    responses[0]["DATA"]["new"].append(3)
+    assert instance._response[-1]["DATA"]["new"] == [2]
+
+
 # =============================================================================
 # Test: RestSend.add_result()
 # =============================================================================

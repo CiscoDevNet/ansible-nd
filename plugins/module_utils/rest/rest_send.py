@@ -617,6 +617,12 @@ class RestSend:  # pylint: disable=too-many-public-methods
         """
         return copy.deepcopy(self._response)
 
+    def history_since(self, response_start: int, result_start: int) -> tuple[list[dict], list[dict]]:
+        """Return isolated new records without copying the entire accumulated history."""
+        if response_start < 0 or result_start < 0:
+            raise ValueError("History offsets must be non-negative")
+        return copy.deepcopy(self._response[response_start:]), copy.deepcopy(self._result[result_start:])
+
     @property
     def response_count(self) -> int:
         """

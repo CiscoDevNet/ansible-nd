@@ -658,6 +658,15 @@ def test_synchronized_or_unknown_switch_status_does_not_trigger_blind_deployment
     assert InterfaceWorkflowCoordinator._pending_deployment_targets(workflow_plan) == ()
 
 
+def test_preview_proven_staged_child_delete_is_deployable_even_if_switch_reports_in_sync():
+    """An exact pending child deletion is stronger evidence than switch-wide sync status."""
+
+    workflow_plan, _context = _deployment_only_plan("subinterface_managed", {"SERIAL1": True})
+    workflow_plan.staged_delete_targets = (("Ethernet1/40.10", "SERIAL1"),)
+
+    assert InterfaceWorkflowCoordinator._pending_deployment_targets(workflow_plan) == (("Ethernet1/40.10", "SERIAL1"),)
+
+
 def test_same_invocation_mutation_target_is_left_to_the_orchestrator_queue():
     workflow_plan, context = _deployment_only_plan("ethernet_access", {"SERIAL1": False}, mutation=True)
 

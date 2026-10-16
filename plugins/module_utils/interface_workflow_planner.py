@@ -10,6 +10,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+import re
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters import (
@@ -218,6 +219,7 @@ class InterfaceWorkflowPlan:
     target_switch_ids: tuple[str, ...]
     resources: tuple[InterfaceResourcePlan, ...]
     request_stats: dict[str, int]
+    staged_delete_targets: tuple[tuple[str, str], ...] = ()
     auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = field(default=(), repr=False, compare=False)
     execution_layers: tuple[tuple[InterfaceWorkflowOperation, ...], ...] = field(default=(), repr=False, compare=False)
     parent_deployment_barriers: tuple[InterfaceWorkflowOperation, ...] = field(default=(), repr=False, compare=False)
@@ -267,6 +269,9 @@ class InterfaceWorkflowPlanner:
         self._inventory_by_identity: dict[tuple[str, str], dict[str, Any]] | None = None
         self._membership_index: EthernetMembershipIndex | None = None
         self._ethernet_link_cache_owner: EthernetBaseOrchestrator | None = None
+        self._staged_delete_targets: list[tuple[str, str]] = []
+        self._converged_vpc_delete_targets: set[tuple[str, str]] = set()
+        self._staged_parent_member_cache: dict[tuple[str, str], set[str] | None] = {}
 
     def plan(self, resources: list[dict[str, Any]]) -> InterfaceWorkflowPlan:
         """Return a complete read-only plan or raise before any mutation method is called."""
@@ -275,6 +280,9 @@ class InterfaceWorkflowPlanner:
         self.snapshot.load_switches(target_switch_ids)
         self._inventory_by_identity = self.snapshot.interfaces_by_identity
         self._membership_index = None
+        self._staged_delete_targets = []
+        self._converged_vpc_delete_targets = set()
+        self._staged_parent_member_cache = {}
 
         resource_plans: list[InterfaceResourcePlan] = []
         for resource_index, adapter, state, proposed in validated:
@@ -332,6 +340,7 @@ class InterfaceWorkflowPlanner:
             target_switch_ids=target_switch_ids,
             resources=tuple(resource_plans),
             request_stats=request_stats,
+            staged_delete_targets=tuple(dict.fromkeys(self._staged_delete_targets)),
             auxiliary_orchestrators=auxiliary_orchestrators,
             execution_layers=execution_layers,
             parent_deployment_barriers=parent_deployment_barriers,
@@ -911,6 +920,319 @@ class InterfaceWorkflowPlanner:
             ),
         )
 
+    def _staged_subinterface_delete_echo(
+        self,
+        resource: InterfaceResourcePlan,
+        desired: NDBaseModel,
+        current_records: tuple[tuple[str, dict[str, Any]], ...],
+    ) -> bool:
+        """Recognize only an exact, preview-proven child deletion tombstone.
+
+        ND 4.3.1 can retype a deleted managed subinterface as structural
+        ``ethernet`` while retaining a ``userDefined/interface_delete`` row.
+        The row alone is not ownership proof: require the one-child preview to
+        show the matching running header and no other pending command before
+        allowing the already-staged deletion to be deployed.
+        """
+
+        if resource.state != "deleted" or resource.adapter.resource_type not in {"subinterface_managed", "subinterface_unmanaged"}:
+            return False
+        if len(current_records) != 1:
+            return False
+        switch_id, current = current_records[0]
+        name = getattr(desired, "interface_name")
+        policy = self._wire_policy(current)
+        if (
+            str(current.get("interfaceType") or "").casefold() != "ethernet"
+            or str(current.get("interfaceName") or "").casefold() != name.casefold()
+            or current.get("switchId") != switch_id
+            or policy.get("policyType") != "userDefined"
+            or policy.get("templateName") != "interface_delete"
+        ):
+            return False
+        preview = resource.orchestrator._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": switch_id}]})
+        pending_pairs, error = resource.orchestrator._pending_preview_pairs(preview, [(name, switch_id)])
+        expected_pair = resource.orchestrator._normalized_interface_pair(name, switch_id)
+        if error is not None or pending_pairs != {expected_pair}:
+            return False
+        row = preview["configurationDiffs"][0]
+        configs = row["combinedConfigs"]
+        running = [item.get("config") for item in configs if item["configType"].strip().lower() == "running"]
+        pending = [item.get("config") for item in configs if item["configType"].strip().lower() == "pending"]
+        if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+            return False
+        running_headers = [line.strip().casefold() for line in running[0].splitlines() if line.strip().casefold().startswith("interface ")]
+        pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+        expected_delete = f"no interface {name.casefold()}"
+        if running_headers != [f"interface {name.casefold()}"] or pending_lines not in ([expected_delete], [expected_delete, "configure terminal"]):
+            return False
+        self._staged_delete_targets.append((name, switch_id))
+        return True
+
+    def _proven_vpc_discovery_echo(
+        self,
+        resource: InterfaceResourcePlan,
+        desired: NDBaseModel,
+        inventory: Mapping[tuple[str, str], dict[str, Any]],
+    ) -> bool:
+        """Classify a policy-less vPC echo only with exact two-peer preview proof."""
+
+        if resource.state not in {"deleted", "merged", "replaced"} or resource.adapter.ownership_domain != "vpc":
+            return False
+        orchestrator = resource.orchestrator
+        if not isinstance(orchestrator, VpcInterfaceBaseOrchestrator):
+            return False
+        switch_ip = getattr(desired, "switch_ip")
+        primary_id = self.fabric_context.get_switch_id(switch_ip)
+        scope = self._vpc_pair_scope(switch_ip)
+        if len(scope) != 2:
+            return False
+        name = getattr(desired, "interface_name")
+        present = [(switch_id, inventory[(switch_id, name.casefold())]) for switch_id in scope if (switch_id, name.casefold()) in inventory]
+        if not present or any(current.get("switchId") != switch_id or not orchestrator._can_replay_absent_delete(current) for switch_id, current in present):
+            return False
+        preview = orchestrator._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": primary_id}]})
+        expected_pairs = [(name, switch_id) for switch_id in scope]
+        pending_pairs, error = orchestrator._pending_preview_pairs(preview, expected_pairs)
+        expected_normalized = {orchestrator._normalized_interface_pair(*pair) for pair in expected_pairs}
+        if error is not None:
+            return False
+        if not pending_pairs:
+            # ND can retain a one-sided, policy-less discovery echo after a
+            # deployed delete. Accept it as converged only when *both* exact
+            # peer previews prove the interface is not discovered and have no
+            # pending or expected CLI. An empty preview or ordinary running
+            # config is not enough to waive pair consistency.
+            sentinel = "interface is not discovered. current configuration is not available"
+            for row in preview["configurationDiffs"]:
+                configs = row["combinedConfigs"]
+                by_type = {
+                    kind: [item.get("config") for item in configs if item["configType"].strip().casefold() == kind]
+                    for kind in ("running", "pending", "expected")
+                }
+                if (
+                    len(by_type["running"]) != 1
+                    or not isinstance(by_type["running"][0], str)
+                    or by_type["running"][0].strip().casefold() != sentinel
+                    or by_type["pending"] != [""]
+                    or by_type["expected"] != [""]
+                ):
+                    return False
+            self._converged_vpc_delete_targets.add((name.casefold(), primary_id))
+            return True
+        if pending_pairs != expected_normalized:
+            return False
+        if resource.state != "deleted":
+            # A staged deletion is not an absent parent for a new create.
+            return False
+        try:
+            orchestrator._validate_absent_vpc_delete_preview(preview, name, primary_id, next(switch_id for switch_id in scope if switch_id != primary_id))
+        except RuntimeError:
+            return False
+        self._staged_delete_targets.append((name, primary_id))
+        return True
+
+    def _staged_parent_running_members(
+        self,
+        orchestrator: NDBaseInterfaceOrchestrator,
+        switch_id: str,
+        po_id: str,
+        inventory: Mapping[tuple[str, str], dict[str, Any]],
+    ) -> set[str] | None:
+        """Prove member ownership from the exact staged parent, not ND's cleared operData."""
+
+        key = (switch_id, po_id)
+        if key in self._staged_parent_member_cache:
+            return self._staged_parent_member_cache[key]
+        self._staged_parent_member_cache[key] = None
+        name = f"port-channel{po_id}"
+        parent = inventory.get((switch_id, name)) or {}
+        policy = self._wire_policy(parent)
+        if (
+            self._canonical_interface_type(parent.get("interfaceType")) != "portChannel"
+            or parent.get("switchId") != switch_id
+            or self._wire_network_os_type(parent) != "nx-os"
+            or policy.get("policyType") != "userDefined"
+            or policy.get("templateName") != "interface_delete"
+        ):
+            return None
+        preview = orchestrator._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": switch_id}]})
+        pending_pairs, error = orchestrator._pending_preview_pairs(preview, [(name, switch_id)])
+        if error is not None or pending_pairs != {orchestrator._normalized_interface_pair(name, switch_id)}:
+            return None
+        configs = preview["configurationDiffs"][0]["combinedConfigs"]
+        running = [item.get("config") for item in configs if item["configType"].strip().casefold() == "running"]
+        pending = [item.get("config") for item in configs if item["configType"].strip().casefold() == "pending"]
+        if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+            return None
+        running_lines = [line.strip().casefold() for line in running[0].splitlines() if line.strip()]
+        pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+        if not running_lines or running_lines[0] != f"interface {name}" or not pending_lines or pending_lines[0] != f"no interface {name}":
+            return None
+        members: set[str] = set()
+        current_member = None
+        for line in running_lines[1:]:
+            if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                current_member = header.group(1)
+            elif line.startswith("interface "):
+                current_member = None
+            elif current_member is not None and (group := re.fullmatch(r"channel-group ([0-9]+) (?:force )?mode active", line)) is not None:
+                if group.group(1) != po_id:
+                    return None
+                members.add(current_member)
+        self._staged_parent_member_cache[key] = members
+        return members
+
+    def _staged_logical_delete_echo(
+        self,
+        resource: InterfaceResourcePlan,
+        desired: NDBaseModel,
+        current_records: tuple[tuple[str, dict[str, Any]], ...],
+        inventory: Mapping[tuple[str, str], dict[str, Any]],
+        requested_po_ids: set[tuple[str, str]],
+    ) -> bool:
+        """Replay only exact NX-OS logical deletions already staged by ND.
+
+        A deployed logical delete can leave a ``userDefined/interface_delete``
+        tombstone until its switch-side CLI is deployed. A port-channel preview
+        may also reset members of other port-channels in the same delete task;
+        every such member must be owned by a parent explicitly requested here.
+        """
+
+        family = resource.adapter.resource_type
+        if resource.state != "deleted" or family not in {"svi", "loopback", "port_channel_access", "port_channel_trunk_host", "port_channel_routed"}:
+            return False
+        if len(current_records) != 1:
+            return False
+        switch_id, current = current_records[0]
+        name = getattr(desired, "interface_name")
+        policy = self._wire_policy(current)
+        if (
+            str(current.get("interfaceName") or "").casefold() != name.casefold()
+            or current.get("switchId") != switch_id
+            or self._canonical_interface_type(current.get("interfaceType")) not in resource.adapter.interface_types
+            or self._wire_network_os_type(current) != "nx-os"
+            or policy.get("policyType") != "userDefined"
+            or policy.get("templateName") != "interface_delete"
+        ):
+            return False
+        orchestrator = resource.orchestrator
+        preview = orchestrator._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": switch_id}]})
+        pending_pairs, error = orchestrator._pending_preview_pairs(preview, [(name, switch_id)])
+        if error is not None or pending_pairs != {orchestrator._normalized_interface_pair(name, switch_id)}:
+            return False
+        row = preview["configurationDiffs"][0]
+        configs = row["combinedConfigs"]
+        running = [item.get("config") for item in configs if item["configType"].strip().lower() == "running"]
+        pending = [item.get("config") for item in configs if item["configType"].strip().lower() == "pending"]
+        if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+            return False
+        running_lines = [line.strip().casefold() for line in running[0].splitlines() if line.strip()]
+        pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+        if not running_lines or running_lines[0] != f"interface {name.casefold()}":
+            return False
+        if not pending_lines or pending_lines[0] != f"no interface {name.casefold()}":
+            return False
+
+        if family == "svi":
+            svi_id = re.fullmatch(r"vlan([0-9]+)", name, re.IGNORECASE)
+            allowed = {"configure terminal"}
+            if svi_id is not None:
+                allowed.add(f"no vlan {svi_id.group(1)}")
+            if any(line not in allowed for line in pending_lines[1:]):
+                return False
+        elif family == "loopback":
+            if any(line != "configure terminal" for line in pending_lines[1:]):
+                return False
+        else:
+            parent_match = re.fullmatch(r"port-channel([0-9]+)", name, re.IGNORECASE)
+            if parent_match is None:
+                return False
+            own_po_id = parent_match.group(1)
+            # ND may clear operData.portChannelId as soon as deletion is staged,
+            # while the exact parent preview still shows the switch running
+            # config with its member attached. Keep that running CLI as a
+            # narrow fallback for proving ownership of a member reset.
+            running_member_groups: dict[str, str] = {}
+            running_member = None
+            for line in running_lines[1:]:
+                if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                    running_member = header.group(1)
+                elif line.startswith("interface "):
+                    running_member = None
+                elif running_member is not None and (group := re.fullmatch(r"channel-group ([0-9]+) (?:force )?mode active", line)) is not None:
+                    previous_group = running_member_groups.get(running_member)
+                    if previous_group is not None and previous_group != group.group(1):
+                        return False
+                    running_member_groups[running_member] = group.group(1)
+
+            current_member = None
+            current_po_id = None
+            seen_members: set[str] = set()
+            proven_members: set[str] = set()
+            pending_member_owners: dict[str, str] = {}
+            for line in pending_lines[1:]:
+                if line == "configure terminal":
+                    continue
+                if (member := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                    current_member = member.group(1)
+                    seen_members.add(current_member)
+                    raw_member = inventory.get((switch_id, current_member)) or {}
+                    if raw_member.get("interfaceType") != "ethernet" or raw_member.get("switchId", switch_id) != switch_id:
+                        return False
+                    operational_po_id = str((raw_member.get("operData") or {}).get("portChannelId"))
+                    current_po_id = pending_member_owners.get(current_member)
+                    if current_po_id is None:
+                        current_po_id = operational_po_id if operational_po_id not in {"-1", "0", "None", ""} else None
+                    running_po_id = running_member_groups.get(current_member)
+                    if running_po_id is not None and current_po_id is not None and running_po_id != current_po_id:
+                        return False
+                    current_po_id = current_po_id or running_po_id
+                    if current_po_id is not None and (switch_id, current_po_id) not in requested_po_ids:
+                        return False
+                    continue
+                if current_member is None:
+                    return False
+                if line.startswith("no channel-group "):
+                    group = re.fullmatch(r"no channel-group ([0-9]+) force mode active", line)
+                    if group is None:
+                        return False
+                    declared_po_id = group.group(1)
+                    if (switch_id, declared_po_id) not in requested_po_ids or (current_po_id is not None and declared_po_id != current_po_id):
+                        return False
+                    # A requested ID alone is not proof that a different
+                    # parent's removal is staged. Require its own tombstone
+                    # and exact preview even when operData still names it.
+                    if current_po_id is None or declared_po_id != own_po_id:
+                        parent_members = self._staged_parent_running_members(orchestrator, switch_id, declared_po_id, inventory)
+                        if parent_members is None or current_member not in parent_members:
+                            return False
+                    current_po_id = declared_po_id
+                    pending_member_owners[current_member] = current_po_id
+                    proven_members.add(current_member)
+                    continue
+                allowed_member_command = (
+                    re.fullmatch(
+                        r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
+                        r"|switchport (?:access vlan|trunk native vlan) [0-9]+|switchport monitor"
+                        r"|lacp (?:rate fast|port-priority [0-9]+)|description .+"
+                        r"|duplex (?:full|half|auto)|speed [0-9]+"
+                        r"|spanning-tree (?:bpdufilter|bpduguard) (?:enable|disable)"
+                        r"|load-interval counter [0-9]+ [0-9]+)",
+                        line,
+                    )
+                    or re.fullmatch(r"switchport(?: mode trunk| trunk allowed vlan none)?", line)
+                    or re.fullmatch(r"mtu [0-9]+", line)
+                    or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable"}
+                )
+                if not allowed_member_command:
+                    return False
+            if seen_members != proven_members:
+                return False
+
+        self._staged_delete_targets.append((name, switch_id))
+        return True
+
     def _candidate_safety_errors(
         self,
         *,
@@ -994,6 +1316,13 @@ class InterfaceWorkflowPlanner:
         structural_collisions: list[InterfaceWorkflowConflict] = []
         errors: list[str] = []
         pair_validation_failures: set[tuple[int, Any]] = set()
+        requested_po_ids: set[tuple[str, str]] = set()
+        for resource in resources:
+            if resource.state == "deleted" and resource.adapter.resource_type.startswith("port_channel_"):
+                for desired in resource.proposed:
+                    match = re.fullmatch(r"port-channel([0-9]+)", getattr(desired, "interface_name"), re.IGNORECASE)
+                    if match is not None:
+                        requested_po_ids.add((self.fabric_context.get_switch_id(getattr(desired, "switch_ip")), match.group(1)))
 
         for resource in resources:
             errors.extend(self._duplicate_member_errors(resource))
@@ -1036,6 +1365,8 @@ class InterfaceWorkflowPlanner:
                     try:
                         self._current_records(resource.adapter, desired, inventory)
                     except InterfaceWorkflowValidationError as exc:
+                        if self._proven_vpc_discovery_echo(resource, desired, inventory):
+                            continue
                         errors.append(f"resources[{resource.resource_index}] {exc}")
                         pair_validation_failures.add((resource.resource_index, identifier))
 
@@ -1044,6 +1375,11 @@ class InterfaceWorkflowPlanner:
                 for desired in resource.operations.creates:
                     if (resource.resource_index, desired.get_identifier_value()) in pair_validation_failures:
                         continue
+                    if resource.adapter.ownership_domain == "vpc":
+                        vpc_key = getattr(desired, "interface_name").casefold(), self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
+                        if vpc_key in self._converged_vpc_delete_targets or self._proven_vpc_discovery_echo(resource, desired, inventory):
+                            retained_creates.append(desired)
+                            continue
                     try:
                         current_records = self._current_records(resource.adapter, desired, inventory)
                     except InterfaceWorkflowValidationError as exc:
@@ -1084,6 +1420,13 @@ class InterfaceWorkflowPlanner:
             for desired in resource.proposed:
                 if (resource.resource_index, desired.get_identifier_value()) in pair_validation_failures:
                     continue
+                desired_target = getattr(desired, "interface_name"), self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
+                if (desired_target[0].casefold(), desired_target[1]) in self._converged_vpc_delete_targets:
+                    continue
+                if desired_target in self._staged_delete_targets:
+                    continue
+                if self._proven_vpc_discovery_echo(resource, desired, inventory):
+                    continue
                 try:
                     current_records = self._current_records(resource.adapter, desired, inventory)
                 except InterfaceWorkflowValidationError as exc:
@@ -1091,8 +1434,12 @@ class InterfaceWorkflowPlanner:
                     continue
                 if not current_records:
                     continue
+                if self._staged_logical_delete_echo(resource, desired, current_records, inventory, requested_po_ids):
+                    continue
                 current_types = {self._canonical_interface_type(current.get("interfaceType")) for _switch_id, current in current_records}
                 if not current_types.issubset(resource.adapter.interface_types):
+                    if self._staged_subinterface_delete_echo(resource, desired, current_records):
+                        continue
                     structural_collisions.append(self._structural_collision(resource, desired, current_records))
                     continue
                 if self._is_unconfigured_ethernet_default(resource.adapter, current_records):
@@ -1658,6 +2005,10 @@ class InterfaceWorkflowPlanner:
                 switch_ip = getattr(item, "switch_ip")
                 switch_id = self.fabric_context.get_switch_id(switch_ip)
                 interface_name = getattr(item, "interface_name").lower()
+                if resource.adapter.ownership_domain == "vpc" and (interface_name, switch_id) in self._converged_vpc_delete_targets:
+                    # The exact two-peer preview proved this policy-less raw
+                    # echo is absent from both devices and has no pending CLI.
+                    continue
                 scope = self._vpc_pair_scope(switch_ip) if resource.adapter.ownership_domain == "vpc" else (switch_id,)
                 current_records = [inventory[(candidate_id, interface_name)] for candidate_id in scope if (candidate_id, interface_name) in inventory]
                 for current in current_records:

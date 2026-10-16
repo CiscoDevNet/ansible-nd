@@ -87,6 +87,8 @@ options:
           same structural interface domain, it performs the same implicit policy transition.
         - V(overridden) treats this family's configuration as authoritative and expands interface inventory scope to the complete fabric.
           It does not claim unlisted interfaces owned by other policy families.
+          IOS-XE physical Ethernet families retain the standalone modules' merge-only override behavior; unlisted IOS-XE ports are
+          not reset. Explicitly name a port with V(deleted) to reset it.
         - V(deleted) acts on each explicitly listed identity regardless of its current policy family, provided the current interface is in
           the same structural domain and is safe to delete. Physical Ethernet interfaces are reset to the unconfigured fabric-default
           policy; deletable logical interfaces are removed.
@@ -593,7 +595,8 @@ resources:
       description:
       - Initial observed controller state for the identities explicitly listed by this group when O(resources[].state) is V(merged),
         V(replaced), or V(deleted).
-      - For V(overridden), the complete selected-family configuration in the authoritative fabric scope.
+      - For V(overridden), all identities in the selected family's eligible override scope. Omitted IOS-XE physical Ethernet ports are
+        outside that scope and are not reset; use an explicit V(deleted) group to reset them.
       - Each returned target includes C(policy_type), so a source policy owned by another eligible family remains visible. Loopback and
         routed-Ethernet input and C(proposed) keep this discriminator nested under C(config_data.network_os.policy), while C(before)
         promotes it to the target top level and omits the duplicate nested key.
@@ -611,7 +614,8 @@ resources:
       - A removed logical interface is absent. A reset physical NX-OS Ethernet interface remains present with C(policy_type=trunkHost)
         and its normalized default configuration. A reset IOS-XE routed interface remains present with
         C(policy_type=iosXeRoutedHost) and defaults-only policy configuration.
-      - For V(overridden), the complete selected-family configuration in the authoritative fabric scope.
+      - For V(overridden), all identities in the selected family's eligible override scope. Omitted IOS-XE physical Ethernet ports are
+        outside that scope and are not reset.
       type: list
       elements: dict
     after_verified:
@@ -627,13 +631,15 @@ resources:
       type: list
       elements: dict
     family_before:
-      description: Complete unprojected selected-family configuration before execution for diagnostic use.
+      description: Unprojected configuration for the selected family's eligible override scope before execution for diagnostic use.
+        Omitted IOS-XE physical Ethernet ports are outside this scope.
       returned: when O(output_level) is V(debug)
       type: list
       elements: dict
     family_after:
       description:
-      - Complete unprojected prospective, projected, or reconciled selected-family configuration after execution for diagnostic use.
+      - Unprojected prospective, projected, or reconciled configuration for the selected family's eligible override scope after
+        execution for diagnostic use. Omitted IOS-XE physical Ethernet ports are outside this scope.
       - C(after_verified) identifies whether the result was observed after execution.
       returned: when O(output_level) is V(debug)
       type: list

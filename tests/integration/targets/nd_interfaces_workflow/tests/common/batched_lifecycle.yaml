@@ -197,7 +197,7 @@
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources: "{{ nd_iw_batch_create_resources }}"
         config_actions:
-          deploy: "{{ nd_iw_enable_deploy | bool }}"
+          deploy: false
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_create_idempotent
@@ -213,6 +213,111 @@
           - nd_iw_batch_create_idempotent.execution.mutations_sent == 0
           - nd_iw_batch_create_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
+
+    - name: Deploy the staged batched create without changing intent
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_create_resources }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      register: nd_iw_batch_create_deploy_only
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+
+    - name: Verify merged create deployment replay sends no intent mutation
+      ansible.builtin.assert:
+        that:
+          - nd_iw_batch_create_deploy_only is changed
+          - not nd_iw_batch_create_deploy_only.planned_changed
+          - nd_iw_batch_create_deploy_only.execution.status == 'completed'
+          - nd_iw_batch_create_deploy_only.execution.mutations_sent == 0
+          - nd_iw_batch_create_deploy_only.execution.deployments_sent > 0
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+
+    - name: Read target switch sync state before deployed create replay
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name }}/switches?max=500&offset=0"
+      register: nd_iw_create_switch_status
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+
+    - name: Identify switches in the exact create deployment
+      ansible.builtin.set_fact:
+        nd_iw_create_deploy_switch_ids: >-
+          {{ nd_iw_batch_create_deploy_only.execution.deployment.targets
+             | map(attribute='switch_id') | unique | list }}
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+
+    - name: Classify deployed create replay sync precondition
+      ansible.builtin.set_fact:
+        nd_iw_create_deploy_all_sync: >-
+          {{ (nd_iw_create_switch_status.current.switches
+              | selectattr('switchId', 'in', nd_iw_create_deploy_switch_ids)
+              | selectattr('additionalData.configSyncStatus', 'equalto', 'inSync')
+              | list | length) == (nd_iw_create_deploy_switch_ids | length) }}
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+
+    - name: Verify deployed batched create is fully idempotent
+      cisco.nd.nd_interfaces_workflow:
+        fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+        resources: "{{ nd_iw_batch_create_resources }}"
+        config_actions:
+          deploy: true
+        output_level: normal
+      register: nd_iw_batch_create_deployed_idempotent
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+
+    - name: Report deployed create replay counters when ND still reports change
+      ansible.builtin.debug:
+        msg:
+          changed: "{{ nd_iw_batch_create_deployed_idempotent.changed }}"
+          planned_changed: "{{ nd_iw_batch_create_deployed_idempotent.planned_changed }}"
+          execution: "{{ nd_iw_batch_create_deployed_idempotent.execution }}"
+          deployment: "{{ nd_iw_batch_create_deployed_idempotent.deployment | default({}) }}"
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
+        - nd_iw_batch_create_deployed_idempotent is changed
+
+    - name: Assert deployed batched create sends no intent mutation or unrelated deployment
+      ansible.builtin.assert:
+        that:
+          - not nd_iw_batch_create_deployed_idempotent.planned_changed
+          - nd_iw_batch_create_deployed_idempotent.execution.mutations_sent == 0
+          - nd_iw_batch_create_deployed_idempotent.changed == (not nd_iw_create_deploy_all_sync | bool)
+          - nd_iw_batch_create_deployed_idempotent.execution.deployments_sent == (0 if nd_iw_create_deploy_all_sync | bool else 1)
+          - >-
+            nd_iw_batch_create_deployed_idempotent.execution.deployment.targets
+            | map(attribute='interface_name')
+            | difference(nd_iw_batch_create_deploy_only.execution.deployment.targets
+                         | map(attribute='interface_name') | list)
+            | list | length == 0
+          - >-
+            nd_iw_batch_create_deployed_idempotent.execution.deployment.targets
+            | map(attribute='switch_id')
+            | difference(nd_iw_create_deploy_switch_ids)
+            | list | length == 0
+          - >-
+            nd_iw_batch_create_deployed_idempotent.execution.deployment.targets
+            | rejectattr('status', 'equalto', 'succeeded') | list | length == 0
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
 
     - name: Preview the batched merged update
       cisco.nd.nd_interfaces_workflow:
@@ -275,7 +380,7 @@
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources: "{{ nd_iw_batch_update_resources }}"
         config_actions:
-          deploy: "{{ nd_iw_enable_deploy | bool }}"
+          deploy: false
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_update_idempotent
@@ -290,6 +395,15 @@
           - nd_iw_batch_update_idempotent.execution.mutations_sent == 0
           - nd_iw_batch_update_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
+
+    - name: Verify staged update deployment and deployed idempotence
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_staged_deployment.yaml"
+      vars:
+        nd_iw_staged_label: merged update
+        nd_iw_staged_resources: "{{ nd_iw_batch_update_resources }}"
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
 
     - name: Preview the batched replaced state
       cisco.nd.nd_interfaces_workflow:
@@ -351,7 +465,7 @@
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources: "{{ nd_iw_batch_replace_resources }}"
         config_actions:
-          deploy: "{{ nd_iw_enable_deploy | bool }}"
+          deploy: false
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_replace_idempotent
@@ -370,6 +484,69 @@
       when:
         - nd_iw_run_full | bool
         - not nd_iw_module_check_mode
+
+    # Temporary live diagnostic; remove after identifying the NDFC CLI source.
+    - name: Capture exact leaf1 CLI before replaced deployment
+      cisco.dcnm.dcnm_rest:
+        method: POST
+        path: "/api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name }}/switchActions/preview?forceShowRun=true&showBrief=false&recompute=true"
+        data: "{{ {'switchIds': ['99TRB2TMZYJ']} | to_json }}"
+      vars:
+        ansible_network_os: cisco.dcnm.dcnm
+      register: nd_iw_replace_diagnostic
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      no_log: true
+      when: nd_iw_stop_before_replace_deploy | default(false) | bool
+
+    - name: Select exact leaf1 replacement preview
+      ansible.builtin.set_fact:
+        nd_iw_replace_diagnostic_row: >-
+          {{ nd_iw_replace_diagnostic.response.DATA['items']
+             | selectattr('switchId', 'equalto', '99TRB2TMZYJ') | first }}
+      when: nd_iw_stop_before_replace_deploy | default(false) | bool
+
+    - name: Report only auto-negotiation reset contexts
+      ansible.builtin.debug:
+        msg:
+          switch_id: "{{ nd_iw_replace_diagnostic_row.switchId }}"
+          status: "{{ nd_iw_replace_diagnostic_row.status }}"
+          pending_count: "{{ nd_iw_replace_diagnostic_row.pendingConfigs | default([]) | length }}"
+          reset_contexts: >-
+            {{ nd_iw_replace_diagnostic_row.pendingConfigs | default([]) | join('\n')
+               | regex_findall('(?is).{0,500}no negotiate auto.{0,120}') }}
+      when: nd_iw_stop_before_replace_deploy | default(false) | bool
+
+    - name: Capture exact member and policy previews before replaced deployment
+      cisco.dcnm.dcnm_rest:
+        method: POST
+        path: "/api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name }}/interfaceActions/preview"
+        data: >-
+          {{ {'interfaces': [
+               {'interfaceName': 'Ethernet1/46', 'switchId': '99TRB2TMZYJ'},
+               {'interfaceName': 'port-channel901', 'switchId': '99TRB2TMZYJ'},
+               {'interfaceName': 'Ethernet1/41', 'switchId': '99TRB2TMZYJ'}
+             ]} | to_json }}
+      vars:
+        ansible_network_os: cisco.dcnm.dcnm
+      register: nd_iw_replace_exact_diagnostic
+      delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+      no_log: true
+      when: nd_iw_stop_before_replace_deploy | default(false) | bool
+
+    - name: Stop diagnostic before replaced deployment
+      ansible.builtin.fail:
+        msg: Replacement CLI captured before any replaced deployment
+      when: nd_iw_stop_before_replace_deploy | default(false) | bool
+
+    - name: Verify staged replacement deployment and deployed idempotence
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_staged_deployment.yaml"
+      vars:
+        nd_iw_staged_label: replaced state
+        nd_iw_staged_resources: "{{ nd_iw_batch_replace_resources }}"
+      when:
+        - nd_iw_run_full | bool
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
 
     - name: Preview the batched deleted state
       cisco.nd.nd_interfaces_workflow:
@@ -405,6 +582,20 @@
       delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
       when: not nd_iw_module_check_mode
 
+    # Temporary ND 4.3.1 vPC-delete diagnostic; remove after classifying the
+    # one-sided raw echo versus a workflow reconciliation regression.
+    - name: Show unverified vPC deletion results before always-cleanup
+      ansible.builtin.debug:
+        msg:
+          execution: "{{ nd_iw_batch_delete.execution }}"
+          unverified: >-
+            {{ nd_iw_batch_delete.resources
+               | selectattr('after_verified', 'equalto', false) | list }}
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_batch_delete.resources | selectattr('after_verified', 'equalto', false) | list | length > 0
+        - nd_iw_active_cases | selectattr('family', 'match', '^vpc_') | list | length > 0
+
     - name: Verify every deleted family is absent from reconciled state
       ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_case_absent.yaml"
       vars:
@@ -433,7 +624,7 @@
         fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
         resources: "{{ nd_iw_batch_delete_resources }}"
         config_actions:
-          deploy: "{{ nd_iw_enable_deploy | bool }}"
+          deploy: false
         output_level: normal
       check_mode: "{{ nd_iw_module_check_mode }}"
       register: nd_iw_batch_delete_idempotent
@@ -449,6 +640,15 @@
           - nd_iw_batch_delete_idempotent.execution.mutations_sent == 0
           - nd_iw_batch_delete_idempotent.execution.deployments_sent == 0
       when: not nd_iw_module_check_mode
+
+    - name: Verify staged deletion deployment and deployed idempotence
+      ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_staged_deployment.yaml"
+      vars:
+        nd_iw_staged_label: deleted state
+        nd_iw_staged_resources: "{{ nd_iw_batch_delete_resources }}"
+      when:
+        - not nd_iw_module_check_mode
+        - nd_iw_enable_deploy | bool
 
   always:
     - name: Remove only reserved lifecycle resources after the live run

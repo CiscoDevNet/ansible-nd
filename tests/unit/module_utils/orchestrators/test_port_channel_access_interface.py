@@ -41,6 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import (
     PortChannelAccessInterfaceOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
     ResponseHandler,
 )
@@ -183,6 +184,179 @@ def test_absent_access_delete_does_not_deploy_staged_trunk_port_channel(monkeypa
     assert rest_send.response_count == 0
 
 
+@pytest.mark.parametrize(
+    "interface_type,policy_type,template_name,expected",
+    [
+        ("portChannel", "userDefined", "interface_delete", True),
+        ("portChannel", "userDefined", "other_template", False),
+        ("portChannel", "trunkPoHost", "interface_delete", False),
+        ("ethernet", "userDefined", "interface_delete", False),
+    ],
+)
+def test_absent_access_delete_accepts_only_port_channel_deletion_echo(interface_type, policy_type, template_name, expected) -> None:
+    """A discovered delete marker can replay, but a foreign policy cannot."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    record = {
+        "interfaceName": "Port-channel982",
+        "interfaceType": interface_type,
+        "configData": {"networkOS": {"policy": {"policyType": policy_type, "templateName": template_name}}},
+    }
+
+    assert orchestrator._can_replay_absent_delete(record) is expected
+
+
+def test_absent_port_channel_preview_detects_missing_delete_tombstone() -> None:
+    """Running Po plus empty expected/pending config needs an exact repeat remove."""
+
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface port-channel982\n description test\n", "lines": 2},
+                    {"configType": "pending", "config": "", "lines": 0},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ],
+            }
+        ]
+    }
+
+    assert PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel982") is True
+    preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = "interface port-channel983\n"
+    with pytest.raises(RuntimeError, match="running identity"):
+        PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel982")
+
+
+def test_absent_port_channel_preview_accepts_exact_undiscovered_sentinel() -> None:
+    """ND's one-line not-discovered message is not a running Po config."""
+
+    preview = {
+        "configurationDiffs": [
+            {
+                "combinedConfigs": [
+                    {"configType": "running", "config": "Interface is not discovered. Current configuration is not available", "lines": 1},
+                    {"configType": "pending", "config": "", "lines": 0},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ]
+            }
+        ]
+    }
+
+    assert PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel501") is False
+    preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = "Interface is not discovered. Current configuration is not available!"
+    with pytest.raises(RuntimeError, match="running identity"):
+        PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel501")
+
+
+def test_absent_port_channel_empty_preview_is_converged(monkeypatch) -> None:
+    """An already-removed Po has no row and must not cause a repeat remove."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    orchestrator.deploy = True
+    monkeypatch.setattr(orchestrator, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(orchestrator, "_switch_interfaces", lambda switch_id: {})
+    monkeypatch.setattr(orchestrator, "_preview_interfaces", lambda payload: {"configurationDiffs": []})
+    monkeypatch.setattr(
+        orchestrator,
+        "_reissue_absent_remove",
+        lambda name, switch_id: pytest.fail("An empty preview must not trigger a repeat remove"),
+    )
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "reconcile_absent_deletes", lambda self, models: False)
+
+    assert orchestrator.reconcile_absent_deletes([_build_pc_model(interface_name="port-channel982", include_config=False)]) is False
+
+
+@pytest.mark.parametrize(
+    "pending,accepted",
+    [
+        ("no interface port-channel982\nconfigure terminal\n", True),
+        ("interface port-channel982\nshutdown\n", False),
+        ("no interface port-channel982\nshutdown\n", False),
+        ("no interface port-channel982\ninterface ethernet1/99\nno channel-group 982 force mode active\n", False),
+    ],
+)
+def test_absent_port_channel_replay_requires_exact_safe_delete_cli(monkeypatch, pending: str, accepted: bool) -> None:
+    """A successful preview row alone cannot authorize arbitrary pending CLI."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    orchestrator.deploy = True
+    tombstone = {
+        "interfaceName": "port-channel982",
+        "interfaceType": "portChannel",
+        "switchId": "FDO11111AAA",
+        "configData": {"networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "userDefined", "templateName": "interface_delete"}}},
+    }
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface port-channel982\n", "lines": 1},
+                    {"configType": "pending", "config": pending, "lines": len(pending.splitlines())},
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(orchestrator, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(orchestrator, "_switch_interfaces", lambda switch_id: {"port-channel982": tombstone})
+    monkeypatch.setattr(orchestrator, "_preview_interfaces", lambda payload: preview)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "reconcile_absent_deletes", lambda self, models: False)
+    model = _build_pc_model(interface_name="port-channel982", include_config=False)
+
+    if accepted:
+        assert orchestrator.reconcile_absent_deletes([model]) is False
+    else:
+        with pytest.raises(RuntimeError, match="does not prove removal|unproven"):
+            orchestrator.reconcile_absent_deletes([model])
+    assert orchestrator._pending_deploys == []
+
+
+def test_absent_port_channel_replay_proves_its_own_member_detach() -> None:
+    """Member reset CLI is eligible only when the running parent owns it."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface port-channel982\ninterface Ethernet1/46\nchannel-group 982 mode active\n"},
+                    {
+                        "configType": "pending",
+                        "config": (
+                            "no interface port-channel982\ninterface Ethernet1/46\n"
+                            "no channel-group 982 force mode active\nno shutdown\nconfigure terminal\n"
+                        ),
+                    },
+                ],
+            }
+        ]
+    }
+    orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+    preview["configurationDiffs"][0]["combinedConfigs"][1]["config"] += "shutdown\n"
+    with pytest.raises(RuntimeError, match="unproven"):
+        orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
+@pytest.mark.parametrize("network_os_type,expected", [("nx-os", True), ("ios-xe", False), (None, False)])
+def test_absent_access_delete_accepts_only_nxos_policyless_discovery_echo(network_os_type, expected) -> None:
+    """An NX-OS discovered Po with no owning policy can replay deletion."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    record = {
+        "interfaceName": "Port-channel982",
+        "interfaceType": "portChannel",
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
+    }
+    assert orchestrator._can_replay_absent_delete(record) is expected
+
+
 def test_port_channel_deploy_results_allow_derived_members_only_via_preview() -> None:
     """Port-channel deploys allow only members proven by the submitted parent."""
 
@@ -205,6 +379,17 @@ def test_deferred_port_channel_deploy_retains_exact_member_context() -> None:
     instance._prepare_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
 
     assert instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")]) == {("ethernet1/1", "FDO11111AAA")}
+
+
+def test_unchanged_port_channel_with_current_member_previews_removed_member() -> None:
+    """A prior staged removal can leave a pending former member beside a retained one."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = True
+
+    instance._prepare_no_diff_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
+
+    assert ("port-channel501", "FDO11111AAA") in instance._pending_preview_derived_discovery
 
 
 def test_port_channel_deploy_context_includes_exact_operational_member_after_staged_removal() -> None:

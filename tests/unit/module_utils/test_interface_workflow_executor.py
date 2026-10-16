@@ -268,7 +268,7 @@ class FakeOrchestrator:
     def remove_pending_queue(self, _queue_name):
         return self.remove_pending()
 
-    def update(self, model, existing_data=None):
+    def update(self, model, existing_data=None, **_kwargs):
         target = (
             model.interface_name,
             self.fabric_context.get_switch_id(model.switch_ip),
@@ -1440,6 +1440,204 @@ def test_consolidated_deploy_previews_only_selected_vpc_parent_targets():
     ]
 
 
+def test_deploy_only_port_channel_replay_prepares_current_member_context():
+    """A staged unchanged parent retains its member's exact 207 identity."""
+
+    class ScopedPortChannel(FakeOrchestrator):
+        def _prepare_deploy_context(self, model, switch_id):
+            self.events.append(("members", model.interface_name, switch_id, tuple(model.ports)))
+
+        @staticmethod
+        def _proposed_members(model):
+            return model.ports
+
+        def _queue_preview_derived_discovery(self, name, switch_id):
+            self.events.append(("preview_children", name, switch_id))
+
+        @staticmethod
+        def _removed_xe_members(_model, _switch_id):
+            return []
+
+        @staticmethod
+        def _preview_and_queue_removed_xe_members(_model, _switch_id, _members):
+            return False
+
+    events = []
+    orchestrator = ScopedPortChannel("pc", events)
+    current = FakeModel("port-channel124")
+    current.ports = ["GigabitEthernet1/0/14"]
+    unrelated = FakeModel("port-channel125")
+    unrelated.ports = []
+    resource_plan = resource(0, orchestrator)
+    resource_plan.adapter.ownership_domain = "port_channel"
+    resource_plan.before = FakeCollection([current, unrelated])
+
+    InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True)._prepare_port_channel_deploy_context(
+        plan(resource_plan), (("port-channel124", "SERIAL1"),)
+    )
+
+    assert events == [
+        ("members", "port-channel124", "SERIAL1", ("GigabitEthernet1/0/14",)),
+        ("preview_children", "port-channel124", "SERIAL1"),
+    ]
+
+
+def test_deploy_only_memberless_port_channel_requires_scoped_child_preview():
+    """Operational children absent from intent must be proven by parent preview."""
+
+    class ScopedPortChannel(FakeOrchestrator):
+        def _prepare_deploy_context(self, model, switch_id):
+            self.events.append(("members", model.interface_name, switch_id))
+
+        @staticmethod
+        def _proposed_members(_model):
+            return []
+
+        def _queue_preview_derived_discovery(self, name, switch_id):
+            self.events.append(("preview_children", name, switch_id))
+
+        @staticmethod
+        def _removed_xe_members(_model, _switch_id):
+            return []
+
+        @staticmethod
+        def _preview_and_queue_removed_xe_members(_model, _switch_id, _members):
+            return False
+
+    events = []
+    orchestrator = ScopedPortChannel("pc", events)
+    resource_plan = resource(0, orchestrator)
+    resource_plan.adapter.ownership_domain = "port_channel"
+    resource_plan.before = FakeCollection([FakeModel("port-channel124")])
+
+    InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True)._prepare_port_channel_deploy_context(
+        plan(resource_plan), (("port-channel124", "SERIAL1"),)
+    )
+
+    assert events == [
+        ("members", "port-channel124", "SERIAL1"),
+        ("preview_children", "port-channel124", "SERIAL1"),
+    ]
+
+
+def test_deploy_only_port_channel_replay_adds_only_newly_proven_member_target():
+    """A pending IOS-XE detach is deployed with its parent, not an unrelated queued target."""
+
+    class ScopedPortChannel(FakeOrchestrator):
+        def _prepare_deploy_context(self, _model, _switch_id):
+            pass
+
+        @staticmethod
+        def _proposed_members(_model):
+            return []
+
+        def _queue_preview_derived_discovery(self, _name, _switch_id):
+            pass
+
+        @staticmethod
+        def _removed_xe_members(_model, _switch_id):
+            return ["GigabitEthernet1/0/16"]
+
+        def _preview_and_queue_removed_xe_members(self, _model, switch_id, members):
+            self.queue_deploy_targets([(name, switch_id) for name in members])
+            return True
+
+    events = []
+    orchestrator = ScopedPortChannel("pc", events)
+    resource_plan = resource(0, orchestrator)
+    resource_plan.adapter.ownership_domain = "port_channel"
+    resource_plan.before = FakeCollection([FakeModel("port-channel128")])
+    orchestrator.queue_deploy_targets([("unrelated", "SERIAL2")])
+    executor = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True)
+
+    assert executor._deploy_pending(plan(resource_plan), supplemental_targets=(("port-channel128", "SERIAL1"),), mutation_targets=()) is True
+
+    deploy_event = next(event for event in events if event[0] == "deploy")
+    assert deploy_event[2] == (
+        ("port-channel128", "SERIAL1"),
+        ("GigabitEthernet1/0/16", "SERIAL1"),
+    )
+
+
+def test_rejected_member_preview_cannot_be_mistaken_for_successful_deployment():
+    """A read-only preview may succeed even though no deploy request was sent."""
+
+    class RejectedMemberPreview(FakeOrchestrator):
+        def _prepare_deploy_context(self, _model, _switch_id):
+            pass
+
+        @staticmethod
+        def _proposed_members(_model):
+            return []
+
+        def _queue_preview_derived_discovery(self, _name, _switch_id):
+            pass
+
+        @staticmethod
+        def _removed_xe_members(_model, _switch_id):
+            return ["GigabitEthernet1/0/16"]
+
+        def _preview_and_queue_removed_xe_members(self, _model, _switch_id, _members):
+            self.rest_send.record("/interfaceActions/preview", success=True, changed=False)
+            raise RuntimeError("member has unrelated pending CLI")
+
+    events = []
+    orchestrator = RejectedMemberPreview("pc", events)
+    parent = ("port-channel128", "SERIAL1")
+    orchestrator.queue_deploy_targets([parent])
+    resource_plan = resource(0, orchestrator)
+    resource_plan.adapter.ownership_domain = "port_channel"
+    resource_plan.before = FakeCollection([FakeModel(parent[0])])
+    executor = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True)
+
+    assert executor._deploy_pending(plan(resource_plan), supplemental_targets=(parent,), mutation_targets=()) is False
+    assert not any(event[0] == "deploy" for event in events)
+    assert executor._deployment["status"] == "failed"
+    assert executor._deployment["targets"] == [{"interface_name": parent[0], "switch_id": parent[1], "status": "not_attempted"}]
+    assert orchestrator.pending_deploys == (parent,)
+
+
+def test_canonical_delete_queue_tracks_exact_partial_success_and_deploys_accepted_name():
+    """IOS-XE wire casing must not make an accepted loopback deletion look skipped."""
+
+    class CanonicalPartialRemove(FakeOrchestrator):
+        def delete_bulk(self, models):
+            for model in models:
+                canonical = (model.interface_name.capitalize(), self.fabric_context.get_switch_id(model.switch_ip))
+                self.queue_remove_targets([canonical])
+                self.queue_deploy_targets([canonical])
+
+        def remove_pending_queue(self, queue_name):
+            assert queue_name == "remove"
+            first, second = self.pending_removes
+            self.rest_send.record(
+                "/interfaceActions/remove",
+                return_code=207,
+                success=False,
+                data={
+                    "results": [
+                        {"name": first[0], "switchId": first[1], "status": "success"},
+                        {"name": second[0], "switchId": second[1], "status": "failed"},
+                    ]
+                },
+            )
+            self._removes = [second]
+
+    events = []
+    orchestrator = CanonicalPartialRemove("loopback", events)
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(
+        plan(resource(0, orchestrator, deletes=[FakeModel("loopback221"), FakeModel("loopback222")]))
+    )
+
+    assert result.failed is True
+    assert {item.interface_name: item.status for item in result.items} == {
+        "loopback221": "succeeded",
+        "loopback222": "failed",
+    }
+    assert result.deployment["targets"] == [{"interface_name": "Loopback221", "switch_id": "SERIAL1", "status": "succeeded"}]
+    assert orchestrator.pending_deploys == (("Loopback222", "SERIAL1"),)
+
+
 def test_supplemental_and_mutation_deployment_targets_are_deduplicated_into_one_post():
     events = []
     orchestrator = FakeOrchestrator("only", events)
@@ -2352,8 +2550,34 @@ def test_preview_verified_207_deploy_is_not_rejected_by_second_raw_response_chec
     assert {entry["status"] for entry in result.deployment["targets"]} == {"succeeded"}
 
 
-def test_deploy_switch_scoped_207_outcomes_fan_out_to_every_requested_interface():
-    """Switch outcomes fan out, while an interface-specific failure overrides switch success."""
+def test_update_result_is_not_replaced_by_later_read_only_preview_post():
+    """An exact member preview after a successful PUT is not itself a second mutation result."""
+
+    class PreviewingUpdate(FakeOrchestrator):
+        def update(self, model, existing_data=None, **_kwargs):
+            super().update(model, existing_data=existing_data)
+            self.rest_send.record(
+                "/interfaceActions/preview",
+                method="POST",
+                return_code=207,
+                changed=False,
+                data={"configurationDiffs": []},
+            )
+
+    events = []
+    orchestrator = PreviewingUpdate("pc", events)
+    workflow_plan = plan(resource(0, orchestrator, updates=[FakeModel("port-channel128")]))
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.status == "staged"
+    assert result.mutation_requests == 1
+    assert {item.status for item in result.items} == {"succeeded"}
+
+
+def test_deploy_switch_scoped_207_success_does_not_prove_requested_interfaces():
+    """Switch-wide failure implicates its targets; success needs per-interface proof."""
     events = []
     orchestrator = MixedSwitch207DeployFakeOrchestrator("only", events)
     workflow_plan = plan(resource(0, orchestrator, actual=("before",)))
@@ -2368,12 +2592,12 @@ def test_deploy_switch_scoped_207_outcomes_fan_out_to_every_requested_interface(
     )
 
     assert result.failed is True
-    assert result.status == "partial_failure"
+    assert result.status == "failed"
     assert result.mutation_requests == 0
     assert result.deploy_requests == 1
-    assert result.deployment["status"] == "partial_failure"
+    assert result.deployment["status"] == "failed"
     assert {(entry["interface_name"], entry["switch_id"]): entry["status"] for entry in result.deployment["targets"]} == {
-        ("loopback1", "SERIAL1"): "succeeded",
+        ("loopback1", "SERIAL1"): "failed",
         ("loopback2", "SERIAL1"): "failed",
         ("loopback3", "SERIAL2"): "failed",
     }
@@ -2553,7 +2777,7 @@ class CacheAwareFakeVpcOrchestrator(FakeOrchestrator):
         switch_id = self.fabric_context.get_switch_id(model.switch_ip)
         return VpcInterfaceBaseOrchestrator._resolve_peer_switch_id(self, model.switch_ip, switch_id)
 
-    def update(self, model, existing_data=None):
+    def update(self, model, existing_data=None, **_kwargs):
         self._resolve_model_peer(model)
         return super().update(model, existing_data=existing_data)
 
@@ -2616,6 +2840,39 @@ def test_workflow_bulk_updates_across_resource_groups_use_one_post() -> None:
     assert result.mutation_requests == 1
     assert [event for event in events if event[0] == "bulk_modify"] == [("bulk_modify", "loopback", ("loopback1", "loopback2"))]
     assert all(item.status == "succeeded" for item in result.items)
+
+
+@pytest.mark.parametrize("bulk_eligible", [False, True])
+def test_single_update_passes_previous_model_for_removed_member_deploy_context(bulk_eligible) -> None:
+    class PreviousAware(FakeOrchestrator):
+        received_previous = None
+
+        def update(self, model, **kwargs):
+            self.received_previous = kwargs.get("previous_model")
+            return super().update(model)
+
+    class BulkPreviousAware(BulkUpdateOrchestrator, PreviousAware):
+        pass
+
+    class BeforeCollection(FakeCollection):
+        def __init__(self, previous):
+            super().__init__([previous])
+            self.previous = previous
+
+        def get(self, identifier):
+            return self.previous if identifier == self.previous.get_identifier_value() else None
+
+    events = []
+    orchestrator = (BulkPreviousAware if bulk_eligible else PreviousAware)("port-channel", events)
+    previous = FakeModel("port-channel901")
+    desired = FakeModel("port-channel901")
+    resource_plan = resource(0, orchestrator, updates=[desired], resource_type="port_channel_access")
+    resource_plan.before = BeforeCollection(previous)
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events)).execute(plan(resource_plan))
+
+    assert result.failed is False
+    assert orchestrator.received_previous is previous
 
 
 def test_medium_bulk_update_layer_stays_in_one_request() -> None:

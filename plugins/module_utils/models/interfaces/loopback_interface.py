@@ -135,11 +135,11 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
-    # the model's DUMPED form: the schema declares routeMapTag as integer 12345, but `coerce_route_map_tag` stores it as
-    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
+    # the model's DUMPED form. Both ND 4.2.1 and 4.3.1 declare an integer;
+    # normalize a numeric-string read echo before comparing or writing.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         **LoopbackPolicyStrictBase.reverse_diff_defaults,
-        "routeMapTag": "12345",
+        "routeMapTag": 12345,
     }
 
     policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
@@ -147,18 +147,17 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
         default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
     )
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
+    route_map_tag: int | None = Field(default=None, alias="routeMapTag", ge=0, le=4294967295, description="Route-Map tag associated with interface IP")
 
-    # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
-    # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
-    # The same drift affects SVI `routingTag` - keep both validators in sync.
+    # Accept older playbooks and any GET echo that spells this numeric tag as a
+    # string, while always serializing the integer required by both schemas.
     @field_validator("route_map_tag", mode="before")
     @classmethod
     def coerce_route_map_tag(cls, value):
         """
         # Summary
 
-        Coerce `route_map_tag` to a string. The ND API returns this field as an integer, but the template defines it as a string.
+        Normalize an integer or decimal-string tag to the integer wire type.
 
         ## Raises
 
@@ -166,7 +165,13 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
         """
         if value is None:
             return value
-        return str(value)
+        if isinstance(value, bool):
+            raise ValueError("route_map_tag must be an integer, not a boolean")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isascii() and value.isdecimal():
+            return int(value)
+        raise ValueError("route_map_tag must be a decimal integer")
 
 
 class SecondaryIpModel(NDNestedModel):
@@ -559,7 +564,7 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             extra_config=dict(type="str"),
                                             vrf=dict(type="str"),
                                             ipv6=dict(type="str"),
-                                            route_map_tag=dict(type="str"),
+                                            route_map_tag=dict(type="int"),
                                             advertise_loopback=dict(type="bool"),
                                             is_service_reflect=dict(type="bool"),
                                             routing_tag=dict(type="str"),

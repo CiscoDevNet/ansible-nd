@@ -658,7 +658,7 @@ class InterfaceWorkflowCoordinator:
     @classmethod
     def _pending_deployment_targets(cls, plan: InterfaceWorkflowPlan) -> tuple[Target, ...]:
         """Select explicit no-mutation targets on switches the cached inventory reports out of sync or pending."""
-        targets = []
+        targets = list(getattr(plan, "staged_delete_targets", ()))
         for resource in plan.resources:
             orchestrator = getattr(resource, "orchestrator", None)
             context = getattr(orchestrator, "fabric_context", None)

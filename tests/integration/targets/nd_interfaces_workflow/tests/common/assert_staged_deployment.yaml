@@ -1,0 +1,74 @@
+---
+# A repeated intent with deploy enabled is a deployment-only operation, not
+# an idempotent no-op, until the exact staged targets converge on the switches.
+- name: "Deploy staged {{ nd_iw_staged_label }} without changing intent"
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources: "{{ nd_iw_staged_resources }}"
+    config_actions:
+      deploy: true
+    output_level: normal
+  register: nd_iw_staged_deploy_only
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: "Verify {{ nd_iw_staged_label }} deployment replay sent no intent mutation"
+  ansible.builtin.assert:
+    that:
+      - nd_iw_staged_deploy_only is changed
+      - not nd_iw_staged_deploy_only.planned_changed
+      - nd_iw_staged_deploy_only.execution.status == 'completed'
+      - nd_iw_staged_deploy_only.execution.mutations_sent == 0
+      - nd_iw_staged_deploy_only.execution.deployments_sent > 0
+
+- name: "Read target switch sync state before {{ nd_iw_staged_label }} replay"
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name }}/switches?max=500&offset=0"
+  register: nd_iw_staged_switch_status
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: "Identify exact {{ nd_iw_staged_label }} deployment switches"
+  ansible.builtin.set_fact:
+    nd_iw_staged_deploy_switch_ids: >-
+      {{ nd_iw_staged_deploy_only.execution.deployment.targets
+         | map(attribute='switch_id') | unique | list }}
+
+- name: "Classify {{ nd_iw_staged_label }} replay sync precondition"
+  ansible.builtin.set_fact:
+    nd_iw_staged_deploy_all_sync: >-
+      {{ (nd_iw_staged_switch_status.current.switches
+          | selectattr('switchId', 'in', nd_iw_staged_deploy_switch_ids)
+          | selectattr('additionalData.configSyncStatus', 'equalto', 'inSync')
+          | list | length) == (nd_iw_staged_deploy_switch_ids | length) }}
+
+- name: "Replay deployed {{ nd_iw_staged_label }} to prove full idempotence"
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources: "{{ nd_iw_staged_resources }}"
+    config_actions:
+      deploy: true
+    output_level: normal
+  register: nd_iw_staged_deployed_idempotent
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: "Verify deployed {{ nd_iw_staged_label }} sends no intent mutation or unrelated deployment"
+  ansible.builtin.assert:
+    that:
+      - not nd_iw_staged_deployed_idempotent.planned_changed
+      - nd_iw_staged_deployed_idempotent.execution.mutations_sent == 0
+      - nd_iw_staged_deployed_idempotent.changed == (not nd_iw_staged_deploy_all_sync | bool)
+      - nd_iw_staged_deployed_idempotent.execution.deployments_sent == (0 if nd_iw_staged_deploy_all_sync | bool else 1)
+      - >-
+        nd_iw_staged_deployed_idempotent.execution.deployment.targets
+        | map(attribute='interface_name')
+        | difference(nd_iw_staged_deploy_only.execution.deployment.targets
+                     | map(attribute='interface_name') | list)
+        | list | length == 0
+      - >-
+        nd_iw_staged_deployed_idempotent.execution.deployment.targets
+        | map(attribute='switch_id')
+        | difference(nd_iw_staged_deploy_switch_ids)
+        | list | length == 0
+      - >-
+        nd_iw_staged_deployed_idempotent.execution.deployment.targets
+        | rejectattr('status', 'equalto', 'succeeded') | list | length == 0

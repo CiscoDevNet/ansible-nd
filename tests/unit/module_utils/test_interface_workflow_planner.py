@@ -29,6 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planne
     InterfaceWorkflowConflictError,
     InterfaceWorkflowPlanner,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
@@ -330,6 +331,24 @@ def test_ethernet_adapter_accepts_the_grouped_standalone_input_contract() -> Non
     )
 
     assert proposed.keys() == [("192.0.2.1", "Ethernet1/1"), ("192.0.2.1", "Ethernet1/2")]
+
+
+def test_ethernet_adapter_rejects_misspelled_property_in_workflow_config() -> None:
+    """Nested workflow config must reject typos as standalone argspecs do."""
+    adapter = INTERFACE_FAMILY_ADAPTERS["ethernet_access"]
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="acess_vlan"):
+        adapter.validate_config(
+            [
+                {
+                    "switch_ip": "192.0.2.1",
+                    "interface_names": ["Ethernet1/1"],
+                    "config_data": {"network_os": {"policy": {"acess_vlan": 10}}},
+                }
+            ],
+            "merged",
+            0,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1000,6 +1019,298 @@ def test_same_name_different_interface_type_is_a_structural_collision() -> None:
     assert len(recorder.calls) == 1
 
 
+@pytest.mark.parametrize("pending_command,accepted", [("no interface ethernet1/1.10\nconfigure terminal\n", True), ("no interface ethernet1/1.11\n", False)])
+def test_deleted_subinterface_accepts_only_exact_preview_proven_tombstone(monkeypatch, pending_command: str, accepted: bool) -> None:
+    """ND's retyped interface_delete echo must never mask an unrelated structural collision."""
+
+    parent = _wire_interface("Ethernet1/1", "ethernet", "routedHost", mode="routed")
+    tombstone = {
+        "interfaceName": "Ethernet1/1.10",
+        "interfaceType": "ethernet",
+        "switchId": "SERIAL1",
+        "configData": {"networkOS": {"policy": {"policyType": "userDefined", "templateName": "interface_delete"}}},
+    }
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "Ethernet1/1.10",
+                "switchId": "SERIAL1",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface Ethernet1/1.10\n  encapsulation dot1q 10\n", "lines": 2},
+                    {"configType": "pending", "config": pending_command, "lines": len(pending_command.splitlines())},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [parent, tombstone]}])
+    request = [{"type": "subinterface_managed", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "Ethernet1/1.10"}]}]
+
+    if not accepted:
+        with pytest.raises(InterfaceWorkflowConflictError, match="structural interfaceType"):
+            planner.plan(request)
+        return
+    plan = planner.plan(request)
+    assert not plan.changed
+    assert plan.staged_delete_targets == (("Ethernet1/1.10", "SERIAL1"),)
+
+
+@pytest.mark.parametrize(
+    "family,name,interface_type,pending_command",
+    [
+        ("svi", "vlan3901", "svi", "no interface vlan3901\nno vlan 3901\nconfigure terminal\n"),
+        ("loopback", "loopback901", "loopback", "no interface loopback901\nconfigure terminal\n"),
+        ("port_channel_routed", "port-channel921", "portChannel", "no interface port-channel921\nconfigure terminal\n"),
+    ],
+)
+def test_deleted_logical_tombstone_replays_only_exact_pending_removal(monkeypatch, family, name, interface_type, pending_command) -> None:
+    """An ND deletion tombstone must not become a foreign-policy conflict."""
+
+    tombstone = _wire_interface(name, interface_type, "userDefined", templateName="interface_delete")
+    tombstone["switchId"] = "SERIAL1"
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": name,
+                "switchId": "SERIAL1",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": f"interface {name}\n", "lines": 1},
+                    {"configType": "pending", "config": pending_command, "lines": len(pending_command.splitlines())},
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone]}])
+
+    plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": name}]}])
+
+    assert not plan.changed
+    assert plan.staged_delete_targets == ((name, "SERIAL1"),)
+    preview["configurationDiffs"][0]["combinedConfigs"][1]["config"] += "interface ethernet1/99\nshutdown\n"
+    assert not planner._staged_logical_delete_echo(
+        plan.resources[0], next(iter(plan.resources[0].proposed)), (("SERIAL1", tombstone),), planner._inventory(), set()
+    )
+
+
+def test_deleted_port_channel_tombstone_rejects_unrequested_member_reset(monkeypatch) -> None:
+    """A cross-parent member reset is safe only when both parents are requested."""
+
+    first = _wire_interface("port-channel901", "portChannel", "userDefined", templateName="interface_delete")
+    second = _wire_interface("port-channel911", "portChannel", "userDefined", templateName="interface_delete")
+    first["switchId"] = second["switchId"] = "SERIAL1"
+    first_member = _wire_interface("Ethernet1/46", "ethernet", "accessHost")
+    second_member = _wire_interface("Ethernet1/49", "ethernet", "trunkHost")
+    first_member["operData"] = {"portChannelId": 901}
+    second_member["operData"] = {"portChannelId": 911}
+
+    def preview(_orchestrator, payload):
+        name = payload["interfaces"][0]["interfaceName"]
+        commands = f"no interface {name}\n"
+        running = f"interface {name}\n"
+        if name == "port-channel901":
+            commands += "interface ethernet1/46\nno channel-group 901 force mode active\n"
+            commands += "interface ethernet1/49\nno channel-group 911 force mode active\n"
+        else:
+            running += "interface ethernet1/49\nchannel-group 911 mode active\n"
+        return {
+            "configurationDiffs": [
+                {
+                    "interfaceName": name,
+                    "switchId": "SERIAL1",
+                    "status": "success",
+                    "combinedConfigs": [
+                        {"configType": "running", "config": running, "lines": len(running.splitlines())},
+                        {"configType": "pending", "config": commands, "lines": len(commands.splitlines())},
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", preview)
+    planner, _recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [first, second, first_member, second_member]}],
+    )
+    plan = planner.plan(
+        [
+            {"type": "port_channel_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel901"}]},
+            {"type": "port_channel_trunk_host", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel911"}]},
+        ]
+    )
+
+    assert not plan.changed
+    assert set(plan.staged_delete_targets) == {("port-channel901", "SERIAL1"), ("port-channel911", "SERIAL1")}
+    assert not planner._staged_logical_delete_echo(
+        plan.resources[0], next(iter(plan.resources[0].proposed)), (("SERIAL1", first),), planner._inventory(), {("SERIAL1", "901")}
+    )
+
+
+def test_deleted_port_channel_tombstone_proves_cross_parent_member_after_operational_id_clears(monkeypatch) -> None:
+    """Both requested parents can prove their own members when ND clears operData early."""
+
+    first = _wire_interface("port-channel901", "portChannel", "userDefined", templateName="interface_delete")
+    second = _wire_interface("port-channel911", "portChannel", "userDefined", templateName="interface_delete")
+    first["switchId"] = second["switchId"] = "SERIAL1"
+    first_member = _wire_interface("Ethernet1/46", "ethernet", "accessHost")
+    second_member = _wire_interface("Ethernet1/49", "ethernet", "trunkHost")
+    first_member["operData"] = second_member["operData"] = {"portChannelId": -1}
+    other_group = {"value": "911"}
+
+    def preview(_orchestrator, payload):
+        name = payload["interfaces"][0]["interfaceName"]
+        own_member = "ethernet1/46" if name == "port-channel901" else "ethernet1/49"
+        own_group = "901" if name == "port-channel901" else other_group["value"]
+        pending = (
+            f"no interface {name}\n"
+            "interface ethernet1/46\nno channel-group 901 force mode active\n"
+            "interface ethernet1/49\nno channel-group 911 force mode active\n"
+        )
+        return {
+            "configurationDiffs": [
+                {
+                    "interfaceName": name,
+                    "switchId": "SERIAL1",
+                    "status": "success",
+                    "combinedConfigs": [
+                        {"configType": "running", "config": f"interface {name}\ninterface {own_member}\nchannel-group {own_group} mode active\n"},
+                        {"configType": "pending", "config": pending, "lines": len(pending.splitlines())},
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", preview)
+    planner, _recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [first, second, first_member, second_member]}],
+    )
+    plan = planner.plan(
+        [
+            {"type": "port_channel_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel901"}]},
+            {"type": "port_channel_trunk_host", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel911"}]},
+        ]
+    )
+    assert not plan.changed
+    assert set(plan.staged_delete_targets) == {("port-channel901", "SERIAL1"), ("port-channel911", "SERIAL1")}
+
+    other_group["value"] = "999"
+    planner._staged_parent_member_cache.clear()
+    assert not planner._staged_logical_delete_echo(
+        plan.resources[0],
+        next(iter(plan.resources[0].proposed)),
+        (("SERIAL1", first),),
+        planner._inventory(),
+        {("SERIAL1", "901"), ("SERIAL1", "911")},
+    )
+
+
+def test_deleted_port_channel_tombstone_requires_cross_parent_even_with_operational_id(monkeypatch) -> None:
+    """A requested Po ID does not prove another parent's staged removal."""
+
+    tombstone = _wire_interface("port-channel901", "portChannel", "userDefined", templateName="interface_delete")
+    tombstone["switchId"] = "SERIAL1"
+    foreign_member = _wire_interface("Ethernet1/49", "ethernet", "trunkHost")
+    foreign_member["switchId"] = "SERIAL1"
+    foreign_member["operData"] = {"portChannelId": 911}
+    pending = {"value": "no interface port-channel901\n"}
+
+    def preview(_orchestrator, payload):
+        name = payload["interfaces"][0]["interfaceName"]
+        return {
+            "configurationDiffs": [
+                {
+                    "interfaceName": name,
+                    "switchId": "SERIAL1",
+                    "status": "success",
+                    "combinedConfigs": [
+                        {"configType": "running", "config": f"interface {name}\n", "lines": 1},
+                        {"configType": "pending", "config": pending["value"], "lines": len(pending["value"].splitlines())},
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone, foreign_member]}])
+    plan = planner.plan([{"type": "port_channel_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel901"}]}])
+    pending["value"] = "no interface port-channel901\ninterface ethernet1/49\nno channel-group 911 force mode active\n"
+
+    assert not planner._staged_logical_delete_echo(
+        plan.resources[0],
+        next(iter(plan.resources[0].proposed)),
+        (("SERIAL1", tombstone),),
+        planner._inventory(),
+        {("SERIAL1", "901"), ("SERIAL1", "911")},
+    )
+
+
+def test_deleted_port_channel_tombstone_uses_exact_running_cli_when_operational_membership_lags(monkeypatch) -> None:
+    """A staged delete may clear operData before the switch applies its member detach."""
+
+    tombstone = _wire_interface("port-channel901", "portChannel", "userDefined", templateName="interface_delete")
+    tombstone["switchId"] = "SERIAL1"
+    member = _wire_interface("Ethernet1/46", "ethernet", "trunkHost")
+    member["operData"] = {"portChannelId": -1}
+    pending = (
+        "no interface port-channel901\n"
+        "interface ethernet1/46\n"
+        "no channel-group 901 force mode active\n"
+        "cdp enable\n"
+        "no lacp port-priority 4096\n"
+        "no speed 1000\n"
+        "no duplex full\n"
+        "no spanning-tree bpdufilter disable\n"
+        "no switchport monitor\n"
+        "no load-interval counter 1 60\n"
+        "interface ethernet1/46\n"
+        "switchport\n"
+        "switchport mode trunk\n"
+        "switchport trunk allowed vlan none\n"
+        "mtu 9216\n"
+        "spanning-tree port type edge trunk\n"
+        "no shutdown\n"
+        "configure terminal\n"
+    )
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel901",
+                "switchId": "SERIAL1",
+                "status": "success",
+                "combinedConfigs": [
+                    {
+                        "configType": "running",
+                        "config": "interface port-channel901\ninterface Ethernet1/46\nchannel-group 901 mode active\n",
+                        "lines": 3,
+                    },
+                    {"configType": "pending", "config": pending, "lines": len(pending.splitlines())},
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone, member]}])
+
+    plan = planner.plan([{"type": "port_channel_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel901"}]}])
+
+    assert not plan.changed
+    assert plan.staged_delete_targets == (("port-channel901", "SERIAL1"),)
+    executor = InterfaceWorkflowExecutor(snapshot=planner.snapshot, deploy=True)
+    executor._prepare_port_channel_deploy_context(plan, plan.staged_delete_targets)
+    source = plan.resources[0].orchestrator
+    assert source._pending_preview_derived_discovery == {("port-channel901", "SERIAL1")}
+    source._discover_pending_preview_derived_identities(list(plan.staged_delete_targets))
+    assert source._deploy_derived_identities[("port-channel901", "SERIAL1")] == {("ethernet1/46", "SERIAL1")}
+    preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = "interface port-channel901\ninterface Ethernet1/46\nchannel-group 999 mode active\n"
+    assert not planner._staged_logical_delete_echo(
+        plan.resources[0], next(iter(plan.resources[0].proposed)), (("SERIAL1", tombstone),), planner._inventory(), {("SERIAL1", "901")}
+    )
+
+
 @pytest.mark.parametrize(
     ("resource_type", "config", "interface_name", "interface_type", "current_policy_type"),
     [
@@ -1528,6 +1839,138 @@ def test_vpc_deleted_accepts_reciprocal_peer_fields_on_nd_431() -> None:
     plan = planner.plan([{"type": "vpc_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc10"}]}])
 
     assert len(plan.resources[0].operations.deletes) == 1
+
+
+@pytest.mark.parametrize("complete_preview", [True, False])
+def test_vpc_deleted_replays_one_sided_policyless_echo_only_with_exact_pair_preview(monkeypatch, complete_preview: bool) -> None:
+    """A discovery echo on one peer cannot suppress a staged delete on both peers without proof."""
+    echo = {
+        "interfaceName": "vpc951",
+        "interfaceType": "vpc",
+        "switchId": "SERIAL1",
+        "configData": {"mode": "unknown", "networkOS": {}},
+    }
+
+    def preview_row(switch_id: str) -> dict[str, Any]:
+        return {
+            "interfaceName": "vpc951",
+            "switchId": switch_id,
+            "status": "success",
+            "combinedConfigs": [
+                {"configType": "running", "config": "interface port-channel951\n vpc 951\n", "lines": 2},
+                {"configType": "pending", "config": "no interface port-channel951\n", "lines": 1},
+            ],
+        }
+
+    preview_rows = [preview_row("SERIAL1")]
+    if complete_preview:
+        preview_rows.append(preview_row("SERIAL2"))
+    preview = {"configurationDiffs": preview_rows}
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [echo]}, {"interfaces": []}],
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
+    )
+    request = [{"type": "vpc_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc951"}]}]
+
+    if not complete_preview:
+        with pytest.raises(InterfaceWorkflowValidationError, match="missing on peer"):
+            planner.plan(request)
+        return
+    plan = planner.plan(request)
+    assert not plan.changed
+    assert plan.staged_delete_targets == (("vpc951", "SERIAL1"),)
+
+
+@pytest.mark.parametrize("peer_is_absent", [True, False])
+def test_vpc_deleted_accepts_converged_one_sided_echo_only_with_both_absent_previews(monkeypatch, peer_is_absent: bool) -> None:
+    """A deployed delete can leave one raw echo, but both exact peers must prove no device config or pending CLI."""
+    echo = {
+        "interfaceName": "vpc951",
+        "interfaceType": "vpc",
+        "switchId": "SERIAL1",
+        "configData": {"mode": "unknown", "networkOS": {}},
+    }
+    absent = "Interface is not discovered. Current configuration is not available"
+
+    def preview_row(switch_id: str, running: str) -> dict[str, Any]:
+        return {
+            "interfaceName": "vpc951",
+            "switchId": switch_id,
+            "status": "success",
+            "combinedConfigs": [
+                {"configType": "running", "config": running, "lines": 1},
+                {"configType": "pending", "config": "", "lines": 0},
+                {"configType": "expected", "config": "", "lines": 0},
+            ],
+        }
+
+    preview = {
+        "configurationDiffs": [
+            preview_row("SERIAL1", absent),
+            preview_row("SERIAL2", absent if peer_is_absent else "interface port-channel951\n vpc 951\n"),
+        ]
+    }
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [echo]}, {"interfaces": []}],
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
+    )
+    request = [{"type": "vpc_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc951"}]}]
+
+    if not peer_is_absent:
+        with pytest.raises(InterfaceWorkflowValidationError, match="missing on peer"):
+            planner.plan(request)
+        return
+    plan = planner.plan(request)
+    assert not plan.changed
+    assert plan.staged_delete_targets == ()
+
+
+@pytest.mark.parametrize("peer_is_absent", [True, False])
+def test_vpc_merged_recreates_after_converged_one_sided_echo_only(monkeypatch, peer_is_absent: bool) -> None:
+    """A safe recreate requires both peers to report not-discovered and zero pending CLI."""
+    echo = {
+        "interfaceName": "vpc951",
+        "interfaceType": "vpc",
+        "switchId": "SERIAL1",
+        "configData": {"mode": "unknown", "networkOS": {}},
+    }
+    absent = "Interface is not discovered. Current configuration is not available"
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "vpc951",
+                "switchId": switch_id,
+                "status": "success",
+                "combinedConfigs": [
+                    {
+                        "configType": "running",
+                        "config": absent if switch_id == "SERIAL1" or peer_is_absent else "interface port-channel951\n vpc 951\n",
+                        "lines": 1,
+                    },
+                    {"configType": "pending", "config": "", "lines": 0},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ],
+            }
+            for switch_id in ("SERIAL1", "SERIAL2")
+        ]
+    }
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [echo]}, {"interfaces": []}],
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
+    )
+    request = [{"type": "vpc_access", "state": "merged", "config": [_vpc("192.0.2.1", "vpc951")]}]
+
+    if not peer_is_absent:
+        with pytest.raises(InterfaceWorkflowValidationError, match="missing on peer"):
+            planner.plan(request)
+        return
+    plan = planner.plan(request)
+    assert plan.changed
+    assert len(plan.resources[0].operations.creates) == 1
+    assert plan.staged_delete_targets == ()
 
 
 def test_vpc_transition_rejects_a_record_missing_on_one_peer() -> None:

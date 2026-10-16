@@ -211,7 +211,10 @@
                 state: replaced
                 config: "{{ nd_iw_transition_to_trunk }}"
             config_actions:
-              deploy: "{{ nd_iw_enable_deploy | bool }}"
+              # The previous task staged with deploy=false. A deploy=true
+              # replay may legitimately change deployment state without
+              # sending a new intent mutation.
+              deploy: false
             output_level: normal
           register: nd_iw_transition_idempotent
           delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
@@ -352,7 +355,8 @@
                 state: deleted
                 config: "{{ nd_iw_transition_delete_trunk_via_access }}"
             config_actions:
-              deploy: "{{ nd_iw_enable_deploy | bool }}"
+              # Check intent idempotency at the same staged boundary.
+              deploy: false
             output_level: normal
           register: nd_iw_transition_delete_idempotent
           delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"

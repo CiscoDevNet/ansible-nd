@@ -31,7 +31,8 @@ user to create the pair first via `nd_manage_vpc_pair`.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
@@ -535,6 +536,121 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         if self.deploy:
             self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """Allow only ND's policy-less, structurally vPC discovery echo."""
+
+        if existing_data is None:
+            return True
+        if existing_data.get("interfaceType") != "vpc":
+            return False
+        config_data = existing_data.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        return config_data.get("mode") == "unknown" and not network_os.get("policy")
+
+    def _validate_absent_vpc_delete_preview(
+        self,
+        preview: ResponseType,
+        interface_name: str,
+        switch_id: str,
+        peer_switch_id: str,
+    ) -> None:
+        """Prove that replay can deploy only the requested pair's staged delete.
+
+        ND may rediscover a deployed vPC after its policy is deleted. A raw
+        policy-less record alone does not prove the pending command is a
+        deletion, so require an exact successful row for each authoritative
+        peer, matching running vPC ID, and an exact parent removal command.
+        """
+
+        match = re.fullmatch(r"vpc([0-9]+)", interface_name, re.IGNORECASE)
+        if match is None:
+            raise RuntimeError(f"Cannot classify absent vPC delete identity {interface_name!r}.")
+        vpc_id = match.group(1)
+        expected_pairs = [(interface_name, switch_id), (interface_name, peer_switch_id)]
+        pending_pairs, error = self._pending_preview_pairs(preview, expected_pairs)
+        if error is not None:
+            raise RuntimeError(f"Cannot safely replay absent vPC delete for {expected_pairs!r}: {error}")
+        if not pending_pairs:
+            return
+        if pending_pairs != {self._normalized_interface_pair(*pair) for pair in expected_pairs}:
+            raise RuntimeError(f"Absent vPC delete preview is pending on only part of pair {expected_pairs!r}.")
+
+        for row in preview["configurationDiffs"]:
+            configs = row["combinedConfigs"]
+            running = [item.get("config") for item in configs if item["configType"].strip().lower() == "running"]
+            pending = [item.get("config") for item in configs if item["configType"].strip().lower() == "pending"]
+            if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+                raise RuntimeError(f"Absent vPC delete preview lacks unique running/pending CLI for {expected_pairs!r}.")
+            running_lines = [line.strip().casefold() for line in running[0].splitlines()]
+            pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+            port_channel_ids = [
+                po_match.group(1)
+                for line in running_lines
+                if (po_match := re.fullmatch(r"interface port-channel([0-9]+)", line)) is not None
+            ]
+            if len(port_channel_ids) != 1 or f"vpc {vpc_id}" not in running_lines:
+                raise RuntimeError(f"Absent vPC delete preview lacks one port-channel with vPC {vpc_id} on each peer.")
+            po_id = port_channel_ids[0]
+            if not pending_lines or pending_lines[0] != f"no interface port-channel{po_id}":
+                raise RuntimeError(f"Absent vPC delete preview does not prove removal of port-channel{po_id} on both peers.")
+            # A preview can include member resets as well as the parent delete.
+            # Prove each member belongs to this exact port-channel in the
+            # running config before accepting *any* commands beneath it.
+            running_member = None
+            owned_members = set()
+            for line in running_lines:
+                if (member_match := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                    running_member = member_match.group(1)
+                elif line.startswith("interface "):
+                    running_member = None
+                elif running_member and re.fullmatch(rf"channel-group {po_id} mode (?:active|passive|on)", line):
+                    owned_members.add(running_member)
+
+            allowed_member_commands = (
+                rf"no channel-group {po_id} force mode (?:active|passive|on)",
+                r"no storm-control action (?:trap|shutdown)",
+                r"no storm-control (?:broadcast|multicast|unicast) level .+",
+                r"no switchport access vlan [0-9]+",
+                r"no switchport trunk native vlan [0-9]+",
+                r"no lacp rate fast",
+                r"no description .+",
+                r"switchport",
+                r"switchport mode trunk",
+                r"switchport trunk allowed vlan none",
+                r"mtu [0-9]+",
+                r"spanning-tree port type edge trunk",
+                r"no shutdown",
+            )
+            pending_member = None
+            for index, line in enumerate(pending_lines[1:], 1):
+                if line == "configure terminal" and index == len(pending_lines) - 1:
+                    continue
+                if (member_match := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                    pending_member = member_match.group(1)
+                    if pending_member not in owned_members:
+                        raise RuntimeError(f"Absent vPC delete preview touches a non-member interface: {line!r}.")
+                    continue
+                if pending_member is None or not any(re.fullmatch(pattern, line) for pattern in allowed_member_commands):
+                    raise RuntimeError(f"Absent vPC delete preview includes an unproven command: {line!r}.")
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Preview exact pair-scoped staged deletes before the shared replay."""
+
+        if not self.deploy or not model_instances:
+            return False
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower())
+            if not self._can_replay_absent_delete(existing_data):
+                continue
+            peer_switch_id = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+            payload = {"interfaces": [{"interfaceName": model_instance.interface_name, "switchId": switch_id}]}
+            preview = self._preview_interfaces(payload)
+            if isinstance(preview, Mapping) and preview.get("configurationDiffs") == []:
+                continue
+            self._validate_absent_vpc_delete_preview(preview, model_instance.interface_name, switch_id, peer_switch_id)
+        return super().reconcile_absent_deletes(model_instances)
 
     def _inject_peer_switch_id(self, payload: dict, peer_serial: str) -> dict:
         """

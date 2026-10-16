@@ -156,7 +156,11 @@ class InterfaceFamilyAdapter:
                     )
         try:
             normalized = self.config_normalizer(config) if self.config_normalizer is not None else config
-            return NDConfigCollection.from_ansible_config(data=normalized, model_class=self.model_class, context={"state": state})
+            # The standalone modules reject unknown Ansible options before
+            # model validation.  The aggregate workflow's nested resource
+            # dictionaries bypass that argspec, so forbid extras here rather
+            # than silently dropping a misspelled property.
+            return NDConfigCollection.from_ansible_config(data=normalized, model_class=self.model_class, context={"state": state}, extra="forbid")
         except Exception as exc:
             raise InterfaceWorkflowValidationError(
                 f"resources[{resource_index}] type '{self.resource_type}' validation failed using {self.module_name} "

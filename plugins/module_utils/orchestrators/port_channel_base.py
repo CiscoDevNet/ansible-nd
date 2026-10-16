@@ -28,15 +28,15 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific fu
 - An IOS-XE member-mode `preflight()` that rejects, before any write, an `iosXeAccessPoHost`/`iosXeTrunkPoHost`
   member whose current intent policy does not already match the port-channel mode (issues #536/#537)
 
-Member ethernet interfaces are not managed by this orchestrator — the port-channel policy is the
-single source of truth for member configuration via the `ports` list. Member field restrictions
-on standalone ethernet modules are enforced separately by the ethernet orchestrators.
+The port-channel policy is the single source of truth for member configuration via the `ports` list.
+On IOS-XE, a removed member can require its own exact-interface deploy to apply the detach.
+Member field restrictions on standalone ethernet modules are enforced separately by the ethernet orchestrators.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
@@ -191,10 +191,112 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         )
 
     def _prepare_no_diff_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
-        """Discover pending switch-side children when unchanged intent has none."""
+        """Discover pending former members even when unchanged intent still has other members."""
 
-        if self.deploy and not self._proposed_members(model_instance):
+        if self.deploy:
             self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _removed_xe_members(self, model_instance: ModelType, switch_id: str, previous_model: ModelType | None = None) -> list[str]:
+        """Find only this IOS-XE parent's former members, including staged removals still on the switch."""
+
+        network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
+        if getattr(network_os, "network_os_type", None) != "ios-xe":
+            return []
+        match = _XE_PORT_CHANNEL_NAME_RE.fullmatch(model_instance.interface_name.lower())
+        if match is None:
+            return []
+
+        inventory = self._switch_interfaces_cache.get(switch_id)
+        if inventory is None and previous_model is None:
+            inventory = self._switch_interfaces(switch_id)
+        before: list[str] = []
+        if previous_model is not None:
+            previous_os = getattr(getattr(previous_model, "config_data", None), "network_os", None)
+            if (
+                previous_model.interface_name.casefold() != model_instance.interface_name.casefold()
+                or previous_model.switch_ip != model_instance.switch_ip
+                or getattr(previous_os, "network_os_type", None) != "ios-xe"
+            ):
+                raise RuntimeError(f"Cannot establish previous IOS-XE membership for {model_instance.interface_name}")
+            before = self._proposed_members(previous_model)
+        elif inventory is not None:
+            record = inventory.get(model_instance.interface_name.casefold())
+            record_os = ((record or {}).get("configData") or {}).get("networkOS") or {}
+            policy = record_os.get("policy") or {}
+            if (
+                record
+                and record.get("interfaceType") == "portChannel"
+                and record_os.get("networkOSType") == "ios-xe"
+                and policy.get("policyType") in self._managed_policy_types()
+            ):
+                raw_ports = policy.get("ports") or []
+                if not isinstance(raw_ports, list) or any(not isinstance(name, str) or not name for name in raw_ports):
+                    raise RuntimeError(f"Cannot establish previous IOS-XE membership for {model_instance.interface_name}: invalid ports")
+                before = raw_ports
+
+        desired = {name.casefold() for name in self._proposed_members(model_instance)}
+        operational = [name for name, _sid in self._operational_port_channel_members(switch_id, int(match.group(1)))]
+        removed: dict[str, str] = {}
+        for name in (*before, *operational):
+            if name.casefold() not in desired:
+                removed[name.casefold()] = name
+        return list(removed.values())
+
+    def _preview_and_queue_removed_xe_members(self, model_instance: ModelType, switch_id: str, members: Sequence[str]) -> bool:
+        """Deploy a detached physical member only when its exact preview contains this parent's removal."""
+
+        # Workflow source orchestrators stage intent with deploy=False; their
+        # accepted queues are deployed later by the consolidated executor.
+        if not members:
+            return False
+        pairs = [(name, switch_id) for name in members]
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name in members]}
+        preview = self._preview_interfaces(payload)
+        pending, error = self._pending_preview_pairs(preview, pairs)
+        if error is not None:
+            raise RuntimeError(f"Cannot safely preview removed port-channel members {pairs}: {error}")
+
+        match = _XE_PORT_CHANNEL_NAME_RE.fullmatch(model_instance.interface_name.lower())
+        if match is None:
+            raise RuntimeError(f"Cannot identify IOS-XE port-channel {model_instance.interface_name}")
+        removal = re.compile(rf"no channel-group[ \t]+{match.group(1)}(?:[ \t]+mode[ \t]+(?:active|passive|on))?", re.IGNORECASE)
+        for row in preview["configurationDiffs"]:
+            pair = self._normalized_interface_pair(row["interfaceName"], row["switchId"])
+            if pair not in pending:
+                continue
+            pending_config = next(item for item in row["combinedConfigs"] if item["configType"].strip().lower() == "pending").get("config")
+            if not isinstance(pending_config, str):
+                raise RuntimeError(f"Pending config for removed member {pair!r} does not prove channel-group {match.group(1)} removal")
+            lines = [line.strip() for line in pending_config.splitlines() if line.strip() and line.strip() not in {"!", "end", "exit"}]
+            headers = [line.removeprefix("interface ").strip() for line in lines if line.lower().startswith("interface ")]
+            commands = [line for line in lines if not line.lower().startswith("interface ")]
+            if len(headers) != 1 or headers[0].casefold() != pair[0]:
+                raise RuntimeError(f"Pending config for removed member {pair!r} includes another interface or no exact interface header")
+            # ND can also clear the former member's description while detaching
+            # it. Never deploy unrelated pending CLI (for example shutdown)
+            # merely because the same preview contains a valid detach line.
+            detach = [line for line in commands if removal.fullmatch(line)]
+            description_clears = [line for line in commands if re.fullmatch(r"no description(?:[ \t]+[^\r\n]+)?", line, re.IGNORECASE)]
+            if len(detach) != 1 or len(description_clears) > 1 or len(commands) != len(detach) + len(description_clears):
+                raise RuntimeError(f"Pending config for removed member {pair!r} does not prove channel-group {match.group(1)} removal without unrelated CLI")
+
+        if not self.rest_send.check_mode:
+            for name, sid in pairs:
+                if self._normalized_interface_pair(name, sid) in pending:
+                    self._queue_deploy(name, sid)
+        return bool(pending)
+
+    def reconcile_no_diff(self, model_instances: Sequence[ModelType]) -> bool:
+        """Recover a staged IOS-XE detach even when the parent preview is already converged."""
+
+        parent_pending = super().reconcile_no_diff(model_instances)
+        member_pending = False
+        if self.deploy:
+            for model_instance in model_instances:
+                switch_id = self._resolve_switch_id(model_instance.switch_ip)
+                removed = self._removed_xe_members(model_instance, switch_id)
+                member_pending = self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed) or member_pending
+        return parent_pending or member_pending
 
     def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:  # pylint: disable=unused-argument
         """Retain exact parent/member context before a grouped create is sent."""
@@ -245,7 +347,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Update a port-channel interface configuration. Resolves `switch_ip` from the model instance, injects `switchId`
-        into the payload. Queues a deploy for later bulk execution via `deploy_pending`.
+        into the payload. Queues the parent and any proven IOS-XE member detach for later bulk execution via `deploy_pending`.
 
         ## Raises
 
@@ -256,6 +358,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             previous_model = kwargs.get("previous_model")
+            removed_members = self._removed_xe_members(model_instance, switch_id, previous_model)
             if previous_model is not None:
                 self._prepare_deploy_context(previous_model, switch_id)
                 if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
@@ -267,6 +370,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
             self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
+            self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed_members)
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
@@ -724,6 +828,203 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             record["configData"] = {key: value for key, value in iface["configData"].items() if key != "mode"}
             records.append(record)
         return records
+
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """A discovered deletion echo is not a competing port-channel policy.
+
+        After a staged remove, NDFC may rediscover the switch-side Po under its
+        canonical spelling with either no policy or the internal
+        ``interface_delete`` policy. The managed-policy query does not return
+        either echo, but its presence must not suppress an explicit,
+        exact-target deploy replay. All other raw records retain the base
+        class's foreign-policy protection.
+        """
+
+        if existing_data is None:
+            return True
+        if existing_data.get("interfaceType") != "portChannel":
+            return False
+        policy = self._policy_of(existing_data)
+        if not policy:
+            network_os = (existing_data.get("configData") or {}).get("networkOS") or {}
+            return network_os.get("networkOSType") == "nx-os"
+        return policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
+
+    @staticmethod
+    def _staged_remove_needs_reissue(preview: Mapping[str, Any], interface_name: str) -> bool:
+        """Recognize ND's no-pending echo of a deployed, now-unowned Po.
+
+        An exact preview can report zero pending lines even though its running
+        configuration still contains the Po and expected configuration is
+        empty.  A second exact remove makes ND generate the missing pending
+        ``no interface`` command; an empty preview alone is not convergence.
+        """
+
+        rows = preview.get("configurationDiffs")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise RuntimeError(f"Cannot classify absent port-channel delete preview for {interface_name!r}.")
+        configs = rows[0].get("combinedConfigs")
+        if not isinstance(configs, list):
+            raise RuntimeError(f"Absent port-channel delete preview lacks combinedConfigs for {interface_name!r}.")
+        by_type: dict[str, list[Mapping[str, Any]]] = {}
+        for config in configs:
+            if isinstance(config, Mapping):
+                by_type.setdefault(str(config.get("configType") or "").strip().lower(), []).append(config)
+        running = by_type.get("running", [])
+        expected = by_type.get("expected", [])
+        if len(running) != 1 or len(expected) != 1:
+            raise RuntimeError(f"Absent port-channel delete preview lacks unique running/expected config for {interface_name!r}.")
+        running_lines = running[0].get("lines")
+        expected_lines = expected[0].get("lines")
+        if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in (running_lines, expected_lines)):
+            raise RuntimeError(f"Absent port-channel delete preview has invalid line counts for {interface_name!r}.")
+        if running_lines and expected_lines == 0:
+            running_config = running[0].get("config")
+            # ND represents a truly absent, undiscovered interface with this
+            # one-line message in the "running" slot. It is not switch CLI.
+            if running_lines == 1 and running_config == "Interface is not discovered. Current configuration is not available":
+                return False
+            first_line = running_config.splitlines()[0].strip().casefold() if isinstance(running_config, str) and running_config.splitlines() else ""
+            if first_line != f"interface {interface_name}".casefold():
+                raise RuntimeError(f"Absent port-channel delete preview does not prove the running identity {interface_name!r}.")
+            return True
+        return False
+
+    def _reissue_absent_remove(self, interface_name: str, switch_id: str) -> None:
+        """Require exact 207 success for one repeat remove before deployment."""
+
+        endpoint = EpManageInterfacesRemove(fabric_name=self.fabric_name)
+        recorded = self.rest_send.response_count
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data={"interfaces": [{"interfaceName": interface_name, "switchId": switch_id}]},
+        )
+        rows = result.get("results") if isinstance(result, Mapping) else None
+        if self.rest_send.response_count <= recorded or not isinstance(rows, list) or len(rows) != 1:
+            raise RuntimeError(f"Repeat remove did not return one exact result for {(interface_name, switch_id)!r}.")
+        row = rows[0]
+        if (
+            not isinstance(row, Mapping)
+            or self._normalized_interface_pair(row.get("interfaceName"), row.get("switchId")) != self._normalized_interface_pair(interface_name, switch_id)
+            or str(row.get("status") or "").strip().lower() != "success"
+        ):
+            raise RuntimeError(f"Repeat remove did not prove exact success for {(interface_name, switch_id)!r}.")
+
+    def _validate_pending_absent_delete(self, preview: Mapping[str, Any], interface_name: str, switch_id: str) -> None:
+        """Require a parent delete and only proven member resets before replay."""
+
+        match = _XE_PORT_CHANNEL_NAME_RE.fullmatch(interface_name.lower())
+        if match is None:
+            raise RuntimeError(f"Cannot classify absent port-channel delete identity {interface_name!r}.")
+        po_id = match.group(1)
+        rows = preview.get("configurationDiffs")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise RuntimeError(f"Absent port-channel delete preview lacks one exact row for {interface_name!r}.")
+        if self._normalized_interface_pair(rows[0].get("interfaceName"), rows[0].get("switchId")) != self._normalized_interface_pair(
+            interface_name, switch_id
+        ):
+            raise RuntimeError(f"Absent port-channel delete preview has the wrong identity for {interface_name!r}.")
+        configs = rows[0].get("combinedConfigs")
+        if not isinstance(configs, list):
+            raise RuntimeError(f"Absent port-channel delete preview lacks combinedConfigs for {interface_name!r}.")
+        running = [item.get("config") for item in configs if isinstance(item, Mapping) and str(item.get("configType") or "").strip().lower() == "running"]
+        pending = [item.get("config") for item in configs if isinstance(item, Mapping) and str(item.get("configType") or "").strip().lower() == "pending"]
+        if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+            raise RuntimeError(f"Absent port-channel delete preview lacks unique running/pending CLI for {interface_name!r}.")
+        running_lines = [line.strip().casefold() for line in running[0].splitlines() if line.strip()]
+        pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+        parent_header = f"interface {interface_name.casefold()}"
+        if not running_lines or running_lines[0] != parent_header or not pending_lines or pending_lines[0] != f"no {parent_header}":
+            raise RuntimeError(f"Absent port-channel delete preview does not prove removal of {interface_name!r}.")
+
+        running_members: set[str] = set()
+        running_member = None
+        for line in running_lines[1:]:
+            if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                running_member = header.group(1)
+            elif line.startswith("interface "):
+                running_member = None
+            elif running_member is not None and re.fullmatch(rf"channel-group {po_id} (?:force )?mode (?:active|passive|on)", line):
+                running_members.add(running_member)
+
+        allowed_member_command = (
+            r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
+            r"|switchport (?:access vlan|trunk native vlan) [0-9]+|switchport monitor"
+            r"|lacp (?:rate fast|port-priority [0-9]+)|description .+"
+            r"|duplex (?:full|half|auto)|speed [0-9]+"
+            r"|spanning-tree (?:bpdufilter|bpduguard) (?:enable|disable)"
+            r"|load-interval counter [0-9]+ [0-9]+)"
+        )
+        touched_members: set[str] = set()
+        detached_members: set[str] = set()
+        current_member = None
+        for index, line in enumerate(pending_lines[1:], 1):
+            if line == "configure terminal" and index == len(pending_lines) - 1:
+                continue
+            if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                current_member = header.group(1)
+                if current_member not in running_members:
+                    raise RuntimeError(f"Absent port-channel delete preview touches an unproven member {current_member!r}.")
+                touched_members.add(current_member)
+                continue
+            if current_member is None:
+                raise RuntimeError(f"Absent port-channel delete preview includes an unproven command {line!r}.")
+            if re.fullmatch(rf"no channel-group {po_id} force mode (?:active|passive|on)", line):
+                detached_members.add(current_member)
+                continue
+            if not (
+                re.fullmatch(allowed_member_command, line)
+                or re.fullmatch(r"switchport(?: mode trunk| trunk allowed vlan none)?", line)
+                or re.fullmatch(r"mtu [0-9]+", line)
+                or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable"}
+            ):
+                raise RuntimeError(f"Absent port-channel delete preview includes an unproven member command {line!r}.")
+        if touched_members != detached_members:
+            raise RuntimeError(f"Absent port-channel delete preview lacks a proven detach for {interface_name!r} members.")
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Recover both pending and no-pending staged NX-OS Po removals."""
+
+        if not self.deploy or not model_instances:
+            return False
+        would_reissue = False
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower())
+            if not self._can_replay_absent_delete(existing_data):
+                continue
+            name = self._delete_side_name(model_instance)
+            pair = (name, switch_id)
+            payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id}]}
+            preview = self._preview_interfaces(payload)
+            if isinstance(preview, Mapping) and preview.get("configurationDiffs") == []:
+                # A fully removed interface has no exact preview row. The
+                # shared absent-delete reconciler treats this as converged.
+                continue
+            pending_pairs, error = self._pending_preview_pairs(preview, [pair])
+            if error is not None:
+                raise RuntimeError(f"Cannot safely replay absent port-channel delete for {pair!r}: {error}")
+            if pending_pairs:
+                self._validate_pending_absent_delete(preview, name, switch_id)
+                continue
+            if not self._staged_remove_needs_reissue(preview, name):
+                continue
+            # Keep the IOS-XE canonical-name/discovery workaround separate until
+            # the no-pending replay behavior has been qualified on that platform.
+            network_os = (existing_data or {}).get("configData", {}).get("networkOS", {})
+            if network_os.get("networkOSType") not in (None, "nx-os"):
+                raise RuntimeError(f"Cannot safely replay an unqualified IOS-XE no-pending delete for {pair!r}.")
+            if self.rest_send.check_mode:
+                would_reissue = True
+                continue
+            self._reissue_absent_remove(name, switch_id)
+            refreshed = self._preview_interfaces(payload)
+            confirmed, error = self._pending_preview_pairs(refreshed, [pair])
+            if error is not None or self._normalized_interface_pair(*pair) not in confirmed:
+                raise RuntimeError(f"Repeat remove did not produce exact pending deletion for {pair!r}: {error or 'no pending lines'}.")
+            self._validate_pending_absent_delete(refreshed, name, switch_id)
+        return super().reconcile_absent_deletes(model_instances) or would_reissue
 
     def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
