@@ -43,12 +43,24 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
-    EpManageInterfacesGet,
+    EpManageInterfacesListGet,
     EpManageInterfacesPreview,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import (
+    InterfaceOffsetPaginator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
+    EthernetMembershipIndex,
+    MembershipValidationError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    get_member_policy_descriptor,
+    get_member_policy_descriptor_for_parent,
+    normalize_port_channel_id,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.config_models import (
@@ -2109,46 +2121,216 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         derived.difference_update(self._normalized_deploy_pair(*pair) for pair in interfaces)
         return verification, derived
 
-    def _vpc_parent_generated_children(self, parents: set[tuple[str, str]]) -> set[tuple[str, str]]:
-        """Read exact vPC member and port-channel identities after an ambiguous deploy."""
-        children: set[tuple[str, str]] = set()
-        for switch_id, interface_name in sorted(parents):
-            endpoint = EpManageInterfacesGet()
+    def _vpc_ownership_inventory(self, switch_id: str) -> dict[str, dict]:
+        """Read one complete switch-scoped ownership snapshot without publishing partial state."""
+
+        def fetch_page(offset: int, page_size: int):
+            endpoint = EpManageInterfacesListGet()
             endpoint.fabric_name = self.fabric_name
             endpoint.switch_sn = switch_id
-            endpoint.interface_name = interface_name
-            response = self._request(path=endpoint.path, verb=endpoint.verb, operation_type=OperationType.QUERY)
-            if not isinstance(response, Mapping) or response.get("interfaceType") != "vpc":
-                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: invalid parent readback")
-            readback_pair = self._normalized_deploy_pair(response.get("switchId"), response.get("interfaceName"))
-            if readback_pair != self._normalized_deploy_pair(switch_id, interface_name):
-                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: parent identity differs")
-            config_data = response.get("configData")
-            network_os = config_data.get("networkOS") if isinstance(config_data, Mapping) else None
+            endpoint.endpoint_params.max = page_size
+            endpoint.endpoint_params.offset = offset
+            endpoint.endpoint_params.sort = "interfaceName:asc"
+            return self._request(path=endpoint.path, verb=endpoint.verb, operation_type=OperationType.QUERY)
+
+        def identity(record: Mapping[str, Any]) -> tuple[str, str]:
+            name = record.get("interfaceName")
+            declared_switch = record.get("switchId")
+            if declared_switch is not None and declared_switch != switch_id:
+                raise ValueError(f"interface row switchId {declared_switch!r} differs from {switch_id!r}")
+            pair = self._normalized_deploy_pair(switch_id, name)
+            if pair is None:
+                raise ValueError("interface row lacks a valid interfaceName")
+            return pair
+
+        records = InterfaceOffsetPaginator().collect(fetch_page=fetch_page, identity=identity, context=f"vPC ownership inventory for {switch_id!r}")
+        return {record["interfaceName"].strip().lower(): deepcopy(record) for record in records}
+
+    def _vpc_parent_generated_children(self, parents: set[tuple[str, str]], children: set[tuple[str, str]]) -> set[tuple[str, str]]:
+        """Prove reported children from fresh local relationships, never raw peer-slot order.
+
+        Inventories and indexes live only for this post-deploy verification call.
+        Shared member validation needs both complete snapshots; generated local
+        port-channels have their own explicit parent link and can also prove an
+        empty vPC side. No evidence record is sent back to the controller.
+        """
+        allowed: dict[str, set[str]] = {}
+        peers: dict[str, str] = {}
+        for switch_id, name in sorted(parents):
+            peer = self._get_vpc_peer_id(switch_id)
+            if not isinstance(peer, str) or not peer or peer == switch_id or peers.get(peer, switch_id) != switch_id:
+                raise RuntimeError(f"Cannot establish vPC child ownership on switch {switch_id!r}: no requested pair")
+            peers[switch_id] = peer
+            peers[peer] = switch_id
+            allowed.setdefault(switch_id, set()).add(name.lower())
+            allowed.setdefault(peer, set()).add(name.lower())
+        inventories: dict[str, dict[str, dict]] = {}
+        for switch_id, _name in sorted(children):
+            peer = peers.get(switch_id)
+            if switch_id not in allowed or not isinstance(peer, str) or peer not in allowed or peer == switch_id:
+                raise RuntimeError(f"Cannot establish vPC child ownership on switch {switch_id!r}: no requested pair")
+            for serial in (switch_id, peer):
+                if serial not in inventories:
+                    inventories[serial] = self._vpc_ownership_inventory(serial)
+
+        def envelope(record: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]:
+            config = record.get("configData")
+            network_os = config.get("networkOS") if isinstance(config, Mapping) else None
             policy = network_os.get("policy") if isinstance(network_os, Mapping) else None
             if not isinstance(policy, Mapping):
-                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: policy is unavailable")
-            peer = self._get_vpc_peer_id(switch_id)
-            if policy.get("peerSwitchId") not in (None, peer):
-                raise RuntimeError(f"Cannot establish generated children for vPC {(switch_id, interface_name)!r}: peer identity differs")
-            for peer_index, owner in ((1, switch_id), (2, peer)):
-                if not isinstance(owner, str) or not owner:
-                    continue
-                port_channel_id = policy.get(f"peer{peer_index}PortChannelId")
-                if isinstance(port_channel_id, int) and not isinstance(port_channel_id, bool) and 1 <= port_channel_id <= 4096:
-                    children.add((owner, f"port-channel{port_channel_id}"))
-                member_ports = policy.get(f"peer{peer_index}MemberPorts")
-                if not isinstance(member_ports, list):
-                    continue
-                for member_port in member_ports:
-                    normalized = self._normalized_deploy_pair(owner, member_port)
+                raise MembershipValidationError("interface has no configured ownership policy")
+            return config, network_os, policy
+
+        def local_port_channel(switch_id: str, port_channel_id: int, *, require_requested: bool = True) -> tuple[str, Any]:
+            name = f"port-channel{port_channel_id}"
+            record = inventories[switch_id].get(name, {})
+            config, network_os, policy = envelope(record)
+            parent_name = policy.get("primaryInterface")
+            if (
+                not isinstance(parent_name, str)
+                or InterfaceGroupValidators.interface_kind(parent_name) != "vpc"
+                or (require_requested and parent_name.lower() not in allowed[switch_id])
+            ):
+                raise MembershipValidationError(f"local port-channel {switch_id!r}/{name!r} does not name a requested vPC parent")
+            parent_name = parent_name.lower()
+            if record.get("interfaceType") != "portChannel" or normalize_port_channel_id(policy.get("portChannelId")) != port_channel_id:
+                raise MembershipValidationError(f"local port-channel {switch_id!r}/{name!r} has contradictory identity")
+            descriptor = None
+            for serial, other in ((switch_id, peers[switch_id]), (peers[switch_id], switch_id)):
+                parent = inventories[serial].get(parent_name, {})
+                parent_config, parent_os, parent_policy = envelope(parent)
+                candidate = get_member_policy_descriptor_for_parent(parent_policy.get("policyType"))
+                if (
+                    parent.get("interfaceType") != "vpc"
+                    or candidate is None
+                    or not candidate.pair_aware
+                    or parent_config.get("mode") != candidate.parent_wire_mode
+                    or parent_os.get("networkOSType") != candidate.parent_network_os
+                    or parent_policy.get("peerSwitchId") not in (None, other)
+                    or (descriptor is not None and candidate != descriptor)
+                ):
+                    raise MembershipValidationError(f"vPC parent {serial!r}/{parent_name!r} has contradictory pair or policy evidence")
+                descriptor = candidate
+                # This is a consistency check only. Local ownership comes from
+                # primaryInterface, not the position of either raw peer slot.
+                ids = [normalize_port_channel_id(parent_policy.get(f"peer{i}PortChannelId")) for i in (1, 2)]
+                if all(value is not None for value in ids) and port_channel_id not in ids:
+                    raise MembershipValidationError(f"local port-channel {switch_id!r}/{name!r} is absent from its declared vPC parent")
+            expected_policy = "trunkVpcMember" if descriptor.family == "trunk" else "accessVpcMember"
+            if (
+                policy.get("policyType") != expected_policy
+                or config.get("mode") != descriptor.parent_wire_mode
+                or network_os.get("networkOSType") != descriptor.parent_network_os
+            ):
+                raise MembershipValidationError(f"local port-channel {switch_id!r}/{name!r} has an incompatible vPC policy")
+            return parent_name, descriptor
+
+        try:
+            # primaryInterface is optional in the physical-member response model.
+            # Supply a missing pointer only in this copied evidence, after its
+            # same-switch generated port-channel independently proves the link.
+            for switch_id, inventory in inventories.items():
+                for record in inventory.values():
+                    if record.get("interfaceType") != "ethernet":
+                        continue
+                    try:
+                        _config, _os, policy = envelope(record)
+                    except MembershipValidationError:
+                        continue
+                    descriptor = get_member_policy_descriptor(policy.get("policyType"))
+                    if descriptor is None or not descriptor.pair_aware or policy.get("primaryInterface") is not None:
+                        continue
+                    try:
+                        port_channel_id = normalize_port_channel_id(policy.get("portChannelId"))
+                        if port_channel_id is None:
+                            continue
+                        # Orient unrelated vPC evidence too, so an opposite-peer
+                        # port with the same name cannot look like a local claim.
+                        # Reported children still require a requested parent.
+                        parent_name, parent_descriptor = local_port_channel(switch_id, port_channel_id, require_requested=False)
+                        if descriptor != parent_descriptor:
+                            continue
+                    except (MembershipValidationError, ValueError):
+                        continue
+                    policy["primaryInterface"] = parent_name
+
+            indexes: dict[frozenset[str], EthernetMembershipIndex] = {}
+
+            def validate_members(switch_id: str, parent_name: str, port_channel_id: int, member_name: str | None = None) -> None:
+                peer = peers[switch_id]
+                pair = frozenset({switch_id, peer})
+                if pair not in indexes:
+                    indexes[pair] = EthernetMembershipIndex(
+                        {serial: inventories[serial] for serial in pair}, peer_switch_ids={switch_id: peer, peer: switch_id}
+                    )
+                index = indexes[pair]
+                member_switch = switch_id
+                if member_name is None:
+                    member = next(
+                        (
+                            item
+                            for item in index.members.values()
+                            if item.record.get("interfaceType") == "ethernet"
+                            and item.descriptor is not None
+                            and item.descriptor.pair_aware
+                            and isinstance(envelope(item.record)[2].get("primaryInterface"), str)
+                            and envelope(item.record)[2]["primaryInterface"].lower() == parent_name
+                        ),
+                        None,
+                    )
+                    if member is None:
+                        for serial in pair:
+                            policy = envelope(inventories[serial][parent_name])[2]
+                            if any(policy.get(f"peer{i}MemberPorts") not in (None, []) for i in (1, 2)):
+                                raise MembershipValidationError(f"vPC {parent_name!r} has no physical records proving its non-empty membership")
+                        return
+                    member_switch, member_name = member.switch_id, member.interface_name
+                ownership = index.validate(member_switch, member_name)
+                owner = ownership.owner if ownership.owner.switch_id == switch_id else ownership.peer_owner
+                if (
+                    not ownership.pair_validated
+                    or owner is None
+                    or owner.switch_id != switch_id
+                    or owner.interface_name.lower() != parent_name
+                    or owner.port_channel_id != port_channel_id
+                    or ownership.peer_owner is None
+                    or {ownership.owner.switch_id, ownership.peer_owner.switch_id} != set(pair)
+                ):
+                    raise MembershipValidationError(f"reported child {switch_id!r} lacks exact ownership for {parent_name!r}")
+
+            proven: set[tuple[str, str]] = set()
+            for switch_id, name in sorted(children):
+                name = name.lower()
+                record = inventories[switch_id].get(name, {})
+                config, network_os, policy = envelope(record)
+                if InterfaceGroupValidators.interface_kind(name) == "port_channel":
+                    port_channel_id = normalize_port_channel_id(name)
+                    parent_name, _descriptor = local_port_channel(switch_id, port_channel_id)
+                    validate_members(switch_id, parent_name, port_channel_id)
+                elif InterfaceGroupValidators.interface_kind(name) == "ethernet":
+                    descriptor = get_member_policy_descriptor(policy.get("policyType"))
                     if (
-                        normalized is not None
-                        and InterfaceGroupValidators.interface_kind(normalized[1]) == "ethernet"
-                        and _DEPLOY_CHILD_NAME_RE.fullmatch(normalized[1])
+                        record.get("interfaceType") != "ethernet"
+                        or descriptor is None
+                        or not descriptor.pair_aware
+                        or config.get("mode") != descriptor.wire_mode
+                        or network_os.get("networkOSType") != descriptor.network_os
                     ):
-                        children.add(normalized)
-        return children
+                        raise MembershipValidationError(f"reported child {switch_id!r}/{name!r} is not a supported physical vPC member")
+                    port_channel_id = normalize_port_channel_id(policy.get("portChannelId"))
+                    if port_channel_id is None:
+                        raise MembershipValidationError(f"reported child {switch_id!r}/{name!r} has no local port-channel")
+                    parent_name, parent_descriptor = local_port_channel(switch_id, port_channel_id)
+                    declared_parent = policy.get("primaryInterface")
+                    if descriptor != parent_descriptor or not isinstance(declared_parent, str) or declared_parent.lower() != parent_name:
+                        raise MembershipValidationError(f"reported child {switch_id!r}/{name!r} has contradictory vPC parent evidence")
+                    validate_members(switch_id, parent_name, port_channel_id, name)
+                else:
+                    raise MembershipValidationError(f"unsupported reported vPC child {switch_id!r}/{name!r}")
+                proven.add((switch_id, name))
+            return proven
+        except (MembershipValidationError, ValueError, TypeError, AttributeError) as exc:
+            raise RuntimeError(f"Cannot establish generated vPC child ownership: {exc}") from exc
 
     def _classify_interface_deploy_results(
         self, response: ResponseType, interfaces: set[tuple[str, str]], derived: set[tuple[str, str]]
@@ -2232,7 +2414,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         vpc_parents = {pair for pair in parents if InterfaceGroupValidators.interface_kind(pair[1]) == "vpc"}
         vpc_switch_ids = {switch_id for switch_id, name in verification if InterfaceGroupValidators.interface_kind(name) == "vpc"}
         if unproven and vpc_parents and all(pair is not None and pair[0] in vpc_switch_ids and _DEPLOY_CHILD_NAME_RE.fullmatch(pair[1]) for pair in unproven):
-            derived.update(self._vpc_parent_generated_children(vpc_parents))
+            derived.update(self._vpc_parent_generated_children(vpc_parents, unproven))
         confirmed, children, error = self._classify_interface_deploy_results(response, interfaces, derived)
         if error is not None:
             raise RuntimeError(f"Interface deployment response is contradictory for {sorted(interfaces)!r}: {error}")

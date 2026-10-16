@@ -79,6 +79,42 @@ def _vpc_parent_body():
     }
 
 
+def _vpc_inventory_path(serial):
+    return f"/api/v1/manage/fabrics/fab1/switches/{serial}/interfaces?offset=0&max=500&sort=interfaceName%3Aasc"
+
+
+def _vpc_inventory_responses(first="SN2", parent_patch=None):
+    """Complete local member/port-channel evidence replaces positional parent-only proof."""
+    responses = []
+    for serial in (first, "SN1" if first == "SN2" else "SN2"):
+        peer, pc_id, member_name = ("SN2", 10, "Ethernet1/12") if serial == "SN1" else ("SN1", 20, "Ethernet1/13")
+        parent = _vpc_parent_body()
+        parent["switchId"] = serial
+        parent["configData"]["mode"] = "trunk"
+        parent["configData"]["networkOS"]["networkOSType"] = "nx-os"
+        parent["configData"]["networkOS"]["policy"].update(policyType="trunkVpcHost", peerSwitchId=peer)
+        if parent_patch and serial == "SN1":
+            parent.update(deepcopy(parent_patch))
+        rows = [parent]
+        for name, kind, policy_type in ((f"Port-channel{pc_id}", "portChannel", "trunkVpcMember"), (member_name, "ethernet", "vpcMember")):
+            rows.append(
+                {
+                    "switchId": serial,
+                    "interfaceName": name,
+                    "interfaceType": kind,
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {"policyType": policy_type, "portChannelId": f"port-channel{pc_id}", "primaryInterface": "vPC10"},
+                        },
+                    },
+                }
+            )
+        responses.append(_response(_vpc_inventory_path(serial), {"interfaces": rows, "meta": {"counts": {"total": 3, "remaining": 0}}}, code=200, verb="GET"))
+    return responses
+
+
 def _response(path, data, *, code=207, verb="POST"):
     return {"RETURN_CODE": code, "METHOD": verb, "REQUEST_PATH": path, "MESSAGE": "Multi-Status" if code == 207 else "OK", "DATA": deepcopy(data)}
 
@@ -329,14 +365,14 @@ def test_vpc_generated_peer_children_use_strict_scoped_fallback(entrypoint):
         [
             _response(DEPLOY, _deploy_body(children)),
             _response(PREVIEW, parent_preview),
-            _response(VPC_PARENT_GET, _vpc_parent_body(), code=200, verb="GET"),
+            *_vpc_inventory_responses(),
             _response(PREVIEW, _preview_body(peers | children)),
         ],
         targets=submitted,
     )
     orchestrator._vpc_peer_cache = {"SN1": "SN2"}
     getattr(orchestrator, entrypoint)()
-    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, VPC_PARENT_GET, PREVIEW]
+    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, _vpc_inventory_path("SN2"), _vpc_inventory_path("SN1"), PREVIEW]
     assert sender.calls[1]["payload"] == _payload(submitted)
     assert sender.calls[-1]["payload"] == _payload(submitted | children)
     assert not orchestrator._pending_interfaces
@@ -363,14 +399,19 @@ def test_vpc_unrelated_child_on_valid_pair_requires_membership_evidence(entrypoi
         [
             _response(DEPLOY, _deploy_body(submitted | {child})),
             _response(PREVIEW, _preview_body(peers)),
-            _response(VPC_PARENT_GET, _vpc_parent_body(), code=200, verb="GET"),
+            *_vpc_inventory_responses(first=child[0]),
         ],
         targets=submitted,
     )
     orchestrator._vpc_peer_cache = {"SN1": "SN2"}
-    with pytest.raises(RuntimeError, match="unrelated identity"):
+    with pytest.raises(RuntimeError, match="ownership"):
         getattr(orchestrator, entrypoint)()
-    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, VPC_PARENT_GET]
+    assert [call["path"] for call in sender.calls] == [
+        DEPLOY,
+        PREVIEW,
+        _vpc_inventory_path(child[0]),
+        _vpc_inventory_path("SN1" if child[0] == "SN2" else "SN2"),
+    ]
     assert orchestrator._pending_interfaces == submitted
 
 
@@ -381,20 +422,18 @@ def test_vpc_unrelated_child_on_valid_pair_requires_membership_evidence(entrypoi
 def test_vpc_child_requires_valid_parent_readback(parent_patch):
     submitted = {("SN1", "vPC10")}
     peers = submitted | {("SN2", "vPC10")}
-    parent = _vpc_parent_body()
-    parent.update(parent_patch)
     orchestrator, sender = _build(
         [
             _response(DEPLOY, _deploy_body(submitted | {("SN2", "Ethernet1/13")})),
             _response(PREVIEW, _preview_body(peers)),
-            _response(VPC_PARENT_GET, parent, code=200, verb="GET"),
+            *_vpc_inventory_responses(parent_patch=parent_patch),
         ],
         targets=submitted,
     )
     orchestrator._vpc_peer_cache = {"SN1": "SN2"}
-    with pytest.raises(RuntimeError, match="Cannot establish generated children"):
+    with pytest.raises(RuntimeError, match="ownership"):
         orchestrator.deploy_pending()
-    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, VPC_PARENT_GET]
+    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, _vpc_inventory_path("SN2"), _vpc_inventory_path("SN1")]
     assert orchestrator._pending_interfaces == submitted
 
 
