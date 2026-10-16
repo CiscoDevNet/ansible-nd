@@ -38,6 +38,7 @@ from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -137,7 +138,7 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         return reconcile_cidr_prefix(data, "ipv6", ("ipv6_prefix", "ipv6Prefix"), 6)
 
     @model_validator(mode="after")
-    def _validate_address_prefix_paired(self) -> PortChannelRoutedPolicyModel:
+    def _validate_address_prefix_paired(self, info: ValidationInfo) -> PortChannelRoutedPolicyModel:
         """
         # Summary
 
@@ -149,8 +150,8 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
         - If exactly one of `ip` / `prefix`, or exactly one of `ipv6` / `ipv6_prefix`, is set.
         """
-        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix")
-        require_address_prefix_pair(self.ipv6, self.ipv6_prefix, "ipv6", "ipv6_prefix")
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix", info)
+        require_address_prefix_pair(self.ipv6, self.ipv6_prefix, "ipv6", "ipv6_prefix", info)
         return self
 
     copy_description: bool | None = Field(default=None, alias="copyDescription", description="Propagate the port-channel description to all member interfaces")
@@ -276,7 +277,7 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         return reconcile_cidr_prefix(data, "ip", ("prefix",), 4)
 
     @model_validator(mode="after")
-    def _validate_address_prefix_paired(self) -> XePortChannelRoutedPolicyModel:
+    def _validate_address_prefix_paired(self, info: ValidationInfo) -> XePortChannelRoutedPolicyModel:
         """
         # Summary
 
@@ -288,7 +289,7 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
         - If exactly one of `ip` / `prefix` is set.
         """
-        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix")
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix", info)
         return self
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
