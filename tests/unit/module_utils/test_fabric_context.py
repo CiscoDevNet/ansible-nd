@@ -643,6 +643,36 @@ def test_fabric_context_00230() -> None:
         instance.get_platform_type("10.0.0.1")
 
 
+def test_fabric_context_00240() -> None:
+    """
+    # Summary
+
+    Verify `switch_map` fails closed when a 200 switches response body carries an embedded `code` error key.
+
+    ## Test
+
+    - GET (switches) returns 200 with DATA `{"code": 500, "message": "..."}`
+    - `switch_map` raises `RuntimeError` rather than accepting the payload as empty switch inventory
+
+    ## Classes and Methods
+
+    - FabricContext.switch_map
+    - FabricContext._load_switch_maps
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"returned an embedded error instead of switch inventory"
+    with pytest.raises(RuntimeError, match=match):
+        result = instance.switch_map  # pylint: disable=unused-variable
+
+
 def test_fabric_context_00250() -> None:
     """
     # Summary
