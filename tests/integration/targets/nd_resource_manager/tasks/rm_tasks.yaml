@@ -128,7 +128,14 @@
 
 - name: Ensure vPC pair exists once for nd_resource_manager tests
   ansible.builtin.include_tasks: vpc_pair_once.yaml
-  loop: "{{ test_items | map(attribute='fabric_type') | unique | reject('equalto', 'external') | list }}"
+  loop: >-
+    {{
+      test_items
+      | rejectattr('testcase', 'equalto', 'gathered')
+      | map(attribute='fabric_type')
+      | unique
+      | list
+    }}
   loop_control:
     loop_var: rm_vpc_fabric_type
   vars:
