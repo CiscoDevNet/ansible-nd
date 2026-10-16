@@ -15,6 +15,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class NotIssued:
+    """Sentinel type returned by a backend that deliberately issued no request."""
+
+    def __repr__(self) -> str:
+        return "NOT_ISSUED"
+
+
+# Returned instead of a response when a backend narrowed a scoped action down to nothing, so the
+# controller can report it as skipped rather than completed. A distinct object rather than `None`
+# because ND answers some endpoints with an empty body, which is a real response.
+NOT_ISSUED = NotIssued()
+
+
 @dataclass(frozen=True)
 class ConfigActionsDefaults:
     """
@@ -244,3 +257,44 @@ class ConfigActionsResult:
             "targets": {key: list(value) for key, value in self.targets.items()},
             "actions": [step.to_result() for step in self.actions],
         }
+
+
+class ConfigActionsFailed(Exception):
+    """
+    # Summary
+
+    Raised when a config action fails, carrying the partial result.
+
+    Without this the outcome of the steps that already succeeded is lost: a run whose save
+    completed and whose deploy then failed would report only the deploy error, leaving the
+    fabric holding saved-but-undeployed configuration with no record of it.
+
+    ## Raises
+
+    None
+    """
+
+    def __init__(self, message: str, result: ConfigActionsResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+class ConfigActionPartialFailure(Exception):
+    """
+    # Summary
+
+    Raised by a backend when an action fails after producing a response that must
+    remain visible in the action result.
+
+    `error` is the original failure. `response` contains the accepted work and
+    any verified progress completed before that failure.
+
+    ## Raises
+
+    None
+    """
+
+    def __init__(self, error: Exception, response: Any) -> None:
+        super().__init__(getattr(error, "msg", str(error)))
+        self.error = error
+        self.response = response

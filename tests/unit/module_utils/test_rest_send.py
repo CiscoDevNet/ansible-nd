@@ -17,8 +17,10 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from unittest.mock import patch
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDTransportError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -27,7 +29,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture 
 from ansible_collections.cisco.nd.tests.unit.module_utils.legacy_response_strategy import LegacyStrategy
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
-from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import RecordingSender, Sender
 
 
 def responses_rest_send(key: str):
@@ -1611,6 +1613,58 @@ def test_rest_send_01110():
 
     assert instance.response_current["RETURN_CODE"] == 200
     assert instance.result_current["success"] is True
+
+
+def test_rest_send_01111_one_attempt_timeout_does_not_sleep_after_failed_request():
+    """A one-attempt retry window must not delay after the only submission."""
+
+    def responses():
+        yield {
+            "RETURN_CODE": 500,
+            "METHOD": "POST",
+            "REQUEST_PATH": "/api/v1/test/one-attempt",
+            "MESSAGE": "Server Error",
+            "DATA": {},
+        }
+
+    sender = RecordingSender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(responses())
+
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.timeout = 1
+    instance.send_interval = 5
+    instance.path = "/api/v1/test/one-attempt"
+    instance.verb = HttpVerbEnum.POST
+    instance.payload = {"name": "item"}
+
+    with patch("ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send.sleep") as sleep:
+        instance.commit()
+
+    assert len(sender.requests) == 1
+    sleep.assert_not_called()
+
+
+def test_rest_send_01112_propagates_structured_transport_error():
+    """RestSend must not wrap Sender's structured transport error as ValueError."""
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.raise_method = "commit"
+    sender.raise_exception = NDTransportError(msg="connection lost", retryable=True)
+
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test/transport"
+    instance.verb = HttpVerbEnum.GET
+
+    with pytest.raises(NDTransportError, match="connection lost") as error:
+        instance.commit()
+
+    assert isinstance(error.value, ValueError)
+    assert error.value.retryable is True
 
 
 def test_rest_send_01120():

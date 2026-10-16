@@ -304,6 +304,81 @@ class TestRegisterApiCallNewFields:
         assert task.verbosity_level == 3
 
 
+class TestRecoveredAttempts:
+    """Tests for retaining failed attempts recovered by a later retry."""
+
+    @staticmethod
+    def _register_failure(results, path="/api/v1/fabrics", verb=HttpVerbEnum.POST):
+        results.path_current = path
+        results.verb_current = verb
+        results.verbosity_level_current = 2
+        results.action = "create"
+        results.state = "merged"
+        results.check_mode = False
+        results.operation_type = OperationType.CREATE
+        results.response_current = {"RETURN_CODE": 503, "MESSAGE": "Service unavailable"}
+        results.result_current = {"success": False, "retryable": True}
+        results.diff_current = {"name": "FAB1"}
+        results.register_api_call()
+
+    def test_mark_recovered_attempts_preserves_verbose_record_without_failing_result(self):
+        results = Results()
+        checkpoint = results.checkpoint()
+        self._register_failure(results)
+        _register_task(results, path="/api/v1/fabrics", verb=HttpVerbEnum.POST, verbosity_level=2)
+
+        results.build_final_result()
+        assert results.final_result["failed"] is True
+
+        results.mark_recovered_attempts(
+            checkpoint,
+            path="/api/v1/fabrics",
+            verb=HttpVerbEnum.POST,
+            reason="a later config request succeeded",
+        )
+        results.build_final_result()
+
+        assert len(results._tasks) == 2
+        assert results._tasks[0].recovered is True
+        assert results._tasks[0].failed is True
+        assert results._tasks[0].result["recovered"] is True
+        assert results._tasks[0].result["recovered_reason"] == "a later config request succeeded"
+        assert True not in results.failed
+        assert results.final_result["failed"] is False
+        assert results.final_result["result"][0]["recovered"] is True
+
+    def test_mark_recovered_attempts_filters_to_logical_request(self):
+        """A checkpoint cannot hide a failed call to another endpoint or verb."""
+        results = Results()
+        checkpoint = results.checkpoint()
+        self._register_failure(results)
+        self._register_failure(results, path="/api/v1/other", verb=HttpVerbEnum.GET)
+
+        results.mark_recovered_attempts(checkpoint, path="/api/v1/fabrics", verb="POST")
+
+        assert results._tasks[0].recovered is True
+        assert results._tasks[0].failed is True
+        assert results._tasks[1].recovered is False
+        assert results._tasks[1].failed is True
+        assert True in results.failed
+
+    @pytest.mark.parametrize(
+        "kwargs, error_type",
+        [
+            ({"checkpoint": "0"}, TypeError),
+            ({"checkpoint": -1}, ValueError),
+            ({"checkpoint": 1}, ValueError),
+            ({"checkpoint": 0, "path": 1}, TypeError),
+            ({"checkpoint": 0, "verb": 1}, TypeError),
+            ({"checkpoint": 0, "reason": 1}, TypeError),
+        ],
+    )
+    def test_mark_recovered_attempts_rejects_invalid_filters(self, kwargs, error_type):
+        results = Results()
+        with pytest.raises(error_type):
+            results.mark_recovered_attempts(**kwargs)
+
+
 # =============================================================================
 # Test: aggregate properties (path, verb, payload, verbosity_level)
 # =============================================================================

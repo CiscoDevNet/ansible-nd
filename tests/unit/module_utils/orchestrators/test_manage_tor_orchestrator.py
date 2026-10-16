@@ -53,7 +53,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module im
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
     ResponseGenerator,
 )
-from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import RecordingSender
 
 # =============================================================================
 # Test harness
@@ -71,7 +71,7 @@ def _build_rest_send(response_dicts: list[dict], params: dict[str, Any], control
     def responses():
         yield from response_dicts
 
-    sender = Sender()
+    sender = RecordingSender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = ResponseGenerator(responses())
 
@@ -440,6 +440,10 @@ def test_manage_tor_orchestrator_scoped_deploy_matches_on_switch_id_not_serial()
         _resp({"status": "Config save is completed"}, method="POST"),  # config_save
         _resp(switches, method="GET"),  # post-save deploy target resolution
         _resp({"status": "success"}, return_code=207, method="POST"),  # switchActions/deploy
+        _resp(  # post-deploy verification
+            {"switches": [{"switchId": "NODE-101", "additionalData": {"configSyncStatus": "inSync"}}]},
+            method="GET",
+        ),
     ]
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
     rest_send = _build_rest_send(responses, params)
@@ -458,7 +462,7 @@ def test_manage_tor_orchestrator_scoped_deploy_matches_on_switch_id_not_serial()
             only_switch_ids={"NODE-101"},
         )
 
-    assert rest_send.committed_payload == {"switchIds": ["NODE-101"]}
+    assert rest_send.sender.payload_for("switchActions/deploy") == {"switchIds": ["NODE-101"]}
 
 
 def test_manage_tor_orchestrator_run_config_actions_save_and_scoped_switch_deploy():
@@ -479,6 +483,10 @@ def test_manage_tor_orchestrator_run_config_actions_save_and_scoped_switch_deplo
         _resp({"status": "Config save is completed"}, method="POST"),  # config_save
         _resp(switches, method="GET"),  # post-save deploy target resolution
         _resp({"status": "success"}, return_code=207, method="POST"),  # switchActions/deploy
+        _resp(  # post-deploy verification
+            {"switches": [{"serialNumber": "S1", "additionalData": {"configSyncStatus": "inSync"}}]},
+            method="GET",
+        ),
     ]
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
     rest_send = _build_rest_send(responses, params)
@@ -497,8 +505,8 @@ def test_manage_tor_orchestrator_run_config_actions_save_and_scoped_switch_deplo
             only_switch_ids={"S1", "S2"},
         )
 
-    assert rest_send.path.endswith("/switchActions/deploy")
-    assert rest_send.committed_payload == {"switchIds": ["S1"]}
+    assert any(path.endswith("/switchActions/deploy") for path in rest_send.sender.paths())
+    assert rest_send.sender.payload_for("switchActions/deploy") == {"switchIds": ["S1"]}
 
 
 def test_manage_tor_orchestrator_run_config_actions_noop_issues_no_requests():

@@ -291,3 +291,65 @@ class Sender:
     @verb.setter
     def verb(self, value: HttpVerbEnum) -> None:
         self._verb = value
+
+
+class RecordingSender(Sender):
+    """
+    # Summary
+
+    `Sender()` that records every request in `requests`, as
+    ``{"verb", "path", "payload"}`` dicts in issue order.
+
+    For asserting on a whole request sequence. `RestSend.path` and
+    `RestSend.committed_payload` only expose the most recent request, which is
+    misleading whenever an operation issues a follow-up request such as a
+    post-deploy verification read.
+
+    ## Raises
+
+    None
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[dict[str, Any]] = []
+
+    def commit(self) -> None:
+        """
+        # Summary
+
+        Record the request being sent, then delegate to `Sender.commit()`.
+
+        ## Raises
+
+        -   `self.raise_exception` if set and `self.raise_method` == "commit"
+        """
+        self.requests.append({"verb": self._verb, "path": self._path, "payload": self._payload})
+        super().commit()
+
+    def paths(self) -> list[str]:
+        """
+        # Summary
+
+        Return the path of every request issued, in order.
+
+        ## Raises
+
+        None
+        """
+        return [request["path"] for request in self.requests]
+
+    def payload_for(self, path_fragment: str) -> Optional[dict[str, Any]]:
+        """
+        # Summary
+
+        Return the payload of the last request whose path contains `path_fragment`.
+
+        ## Raises
+
+        None
+        """
+        for request in reversed(self.requests):
+            if path_fragment in (request["path"] or ""):
+                return request["payload"]
+        return None
