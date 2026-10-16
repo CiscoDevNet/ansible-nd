@@ -240,6 +240,10 @@ class _FabricContext:
         self.platform_type = PlatformType(platform_type)
 
     @staticmethod
+    def validate_for_read() -> None:
+        """The synthetic fabric is local, present, and readable."""
+
+    @staticmethod
     def validate_for_mutation() -> None:
         """The synthetic fabric is local, present, and not frozen."""
 
@@ -390,6 +394,10 @@ def _state_machine(
     """Construct a state machine backed by authentic member and parent inventory."""
     if config_override is not None:
         config = config_override
+    elif state == "gathered":
+        # Gathered config is a list of optional read filters, not a write-state
+        # model.  An empty list intentionally queries the whole fabric.
+        config = []
     elif state == "deleted":
         config = [{"switch_ip": SWITCH_IP, "interface_name": case.interface_name}]
     else:

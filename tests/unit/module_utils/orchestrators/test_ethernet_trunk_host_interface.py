@@ -1143,3 +1143,52 @@ def test_ethernet_trunk_host_orchestrator_00480() -> None:
         result = orchestrator.query_all()
 
     assert result == []
+
+
+def test_ethernet_trunk_host_orchestrator_02000(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` under `state: gathered` excludes factory-default trunkHost
+    interfaces while retaining user-managed interfaces, and passes gathered filters
+    through to the shared Ethernet query implementation (PR #507 review).
+
+    ## Test
+
+    - Parent query returns one factory-default and one user-managed trunkHost interface
+    - `query_all(gathered_filters=[])` returns only the user-managed interface
+    - The empty gathered filter list is forwarded unchanged to the parent
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.query_all()
+    - EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default()
+    """
+
+    factory_default = {
+        "interfaceName": "Ethernet1/1",
+        "configData": {"networkOS": {"policy": {"allowedVlans": "none"}}},
+    }
+    user_managed = {
+        "interfaceName": "Ethernet1/2",
+        "configData": {"networkOS": {"policy": {"allowedVlans": "10"}}},
+    }
+    forwarded: dict[str, list[dict] | None] = {}
+
+    def fake_parent_query_all(self, model_instance=None, gathered_filters=None, **kwargs):  # pylint: disable=unused-argument
+        forwarded["gathered_filters"] = gathered_filters
+        return [factory_default, user_managed]
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base.EthernetBaseOrchestrator.query_all",
+        fake_parent_query_all,
+    )
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "gathered", "config": []})
+    result = orchestrator.query_all(gathered_filters=[])
+
+    assert result == [user_managed]
+    assert forwarded["gathered_filters"] == []
