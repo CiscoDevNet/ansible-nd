@@ -36,6 +36,26 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, query, staged ]
     default: merged
+  config_actions:
+    description:
+      - Controls optional deployment after Network mutations.
+      - O(config_actions.deploy) supplies the default deployment decision for
+        each Network. An explicit C(config[].deploy) value can override it when
+        O(config_actions.type=resource).
+      - O(config_actions.type=switch) deploys the affected switches.
+      - O(config_actions.type=resource) deploys by Network name.
+      - C(state=staged) always stages changes without deployment.
+    type: dict
+    suboptions:
+      deploy:
+        description: Whether to deploy pending Network changes after mutation.
+        type: bool
+        default: true
+      type:
+        description: Deployment scope.
+        type: str
+        default: switch
+        choices: [ switch, resource ]
   config:
     description:
       - List of Network definitions to manage.
@@ -105,14 +125,12 @@ options:
         description: Compatibility Network extension template name.
         type: str
       deploy:
-        description: Deploy pending changes for this Network.
+        description:
+          - Per-Network deployment override.
+          - Valid only when O(config_actions.type=resource).
+          - When omitted, inherits O(config_actions.deploy).
         type: bool
         default: true
-      deploy_type:
-        description: Deployment scope for this Network.
-        type: str
-        choices: [ switch, network ]
-        default: switch
       attach:
         description: Switch attachment entries for this Network.
         type: list
@@ -433,8 +451,9 @@ EXAMPLES = r"""
             interfaces:
               - mode: access
                 interface_range: Ethernet1/10
-        deploy: true
-        deploy_type: switch
+    config_actions:
+      deploy: true
+      type: switch
 
 - name: Create an L3 Network associated with a VRF
   cisco.nd.nd_manage_networks:
@@ -529,6 +548,11 @@ diff:
   returned: always
   type: list
   elements: dict
+config_actions:
+  description: Shared config-action planning and execution results.
+  returned: when an optional deployment is planned, executed, or skipped
+  type: list
+  elements: dict
 fabric_type:
   description:
     - Resolved fabric topology used by the workflow.
@@ -595,6 +619,8 @@ api_metadata:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_workflow_coordinator import (
@@ -626,6 +652,7 @@ def main():
             options=network_parent_argument_spec(),
         ),
     )
+    argument_spec.update(config_actions_spec(RESOURCE_CONFIG_ACTIONS))
 
     module = AnsibleModule(
         argument_spec=argument_spec,
