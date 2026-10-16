@@ -132,6 +132,9 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._timeout: int = 300
         self._unit_test: bool = False
         self._verb: HttpVerbEnum = HttpVerbEnum.GET
+        # Counts dispatches even if the transport raises before recording a response.
+        self.mutation_attempt_count = 0
+        self.deployment_attempt_count = 0
         self.performance_profile = None
 
         # See save_settings() and restore_settings()
@@ -349,6 +352,12 @@ class RestSend:  # pylint: disable=too-many-public-methods
 
             profile = self.performance_profile
             start_wall, start_cpu = (monotonic(), process_time()) if profile is not None else (0.0, 0.0)
+            if self.verb != HttpVerbEnum.GET:
+                request_path = str(self.path or "")
+                if "interfaceActions/deploy" in request_path:
+                    self.deployment_attempt_count += 1
+                elif "interfaceActions/preview" not in request_path:
+                    self.mutation_attempt_count += 1
             try:
                 self.sender.commit()
             except ValueError as error:

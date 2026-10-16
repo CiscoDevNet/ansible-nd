@@ -1776,6 +1776,36 @@ def test_transition_failure_stops_updates_creates_and_deployment():
     assert result.actual_after_by_resource[0].values == ["before"]
 
 
+def test_dispatched_write_without_response_or_readback_is_uncertain(monkeypatch):
+    """A timeout after dispatch cannot be reported as a definite no-change."""
+    events = []
+    orchestrator = FakeOrchestrator("only", events)
+    orchestrator.rest_send.mutation_attempt_count = 0
+
+    def timed_out_update(_model, **_kwargs):
+        orchestrator.rest_send.mutation_attempt_count += 1
+        raise TimeoutError("write response was lost")
+
+    monkeypatch.setattr(orchestrator, "update", timed_out_update)
+    snapshot = FakeSnapshot(events)
+
+    def failed_refresh(_switch_ids):
+        raise RuntimeError("authoritative readback unavailable")
+
+    monkeypatch.setattr(snapshot, "refresh", failed_refresh)
+    workflow_plan = plan(resource(0, orchestrator, updates=[FakeModel("loopback1")], actual=("before",)))
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=False).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert result.changed is True  # Conservative: a controller mutation may have been accepted.
+    assert result.mutation_requests == 1
+    assert result.items[0].status == "uncertain"
+    assert result.actual_after_by_resource == {}
+    assert "readback unavailable" in "; ".join(result.errors)
+
+
 def test_preflight_failure_sends_no_writes_and_leaves_every_item_not_attempted():
     events = []
     orchestrator = FakeOrchestrator("only", events, fail_preflight=True)

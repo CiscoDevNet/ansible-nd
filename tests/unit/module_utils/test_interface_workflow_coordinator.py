@@ -1420,6 +1420,52 @@ def test_vpc_pair_map_paginates_intended_pairs_and_counts_actual_gets(monkeypatc
     assert coordinator._vpc_pair_gets == 2
 
 
+def test_vpc_pair_map_follows_short_page_next_link_without_counts(monkeypatch):
+    """An optional next link is authoritative even below the requested page size."""
+    responses = iter(
+        [
+            {
+                "vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}],
+                "meta": {"links": {"next": "/api/v1/manage/fabrics/fabric_1/vpcPairs?offset=1&max=500"}},
+            },
+            {"vpcPairs": [{"switchId": "SERIAL3", "peerSwitchId": "SERIAL4"}]},
+        ]
+    )
+    paths = []
+
+    def request(*_args, **kwargs):
+        paths.append(kwargs["path"])
+        return next(responses)
+
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(coordinator, "_request", request)
+    pair_map = coordinator._vpc_pair_map(
+        resources=[{"type": "vpc_access", "config": [{"switch_ip": "192.0.2.3"}]}],
+        fabric_context=FakeFabricContext(),
+        rest_send=object(),
+    )
+
+    assert pair_map["192.0.2.3"] == "SERIAL4"
+    assert len(paths) == coordinator._vpc_pair_gets == 2
+    assert "offset=1" in paths[1]
+
+
+@pytest.mark.parametrize("next_link", ["/vpcPairs?offset=0", "/vpcPairs?offset=invalid", "/vpcPairs?max=500"])
+def test_vpc_pair_map_rejects_nonprogressing_next_link(monkeypatch, next_link):
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(
+        coordinator,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2"}],
+            "meta": {"links": {"next": next_link}},
+        },
+    )
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="next link"):
+        coordinator._vpc_pair_map(resources=[{"type": "vpc_access", "config": []}], fabric_context=FakeFabricContext(), rest_send=object())
+
+
 def test_vpc_pair_map_rejects_self_pair(monkeypatch):
     coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
     monkeypatch.setattr(

@@ -125,6 +125,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         super().model_post_init(__context)
         self._member_owners_cache: dict[str, dict[str, str]] = {}
         self._membership_peer_cache: dict[str, str] = {}
+        self._accepted_post_write_model: ModelType | None = None
 
     def _resolve_membership_peer_switch_id(self, switch_id: str) -> str:
         """Return the reciprocal authoritative vPC peer used to orient ownership."""
@@ -355,6 +356,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the update API request fails.
         """
+        self._accepted_post_write_model = None
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             previous_model = kwargs.get("previous_model")
@@ -368,9 +370,34 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            # The PUT is accepted before the optional member preview. Preserve
+            # that evidence even if the later read-only preview fails.
+            self._accepted_post_write_model = model_instance
             self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
-            self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed_members)
+            if self.deploy or getattr(self, "workflow_deploy_requested", False):
+                try:
+                    self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed_members)
+                except Exception as preview_error:
+                    try:
+                        observed = self.query_one(model_instance)
+                        if (
+                            not isinstance(observed, Mapping)
+                            or str(observed.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+                        ):
+                            raise RuntimeError("exact interface identity was not returned")
+                        if observed.get("switchId") not in (None, switch_id):
+                            raise RuntimeError("exact switch identity was not returned")
+                        self._accepted_post_write_model = self.model_class.from_response(
+                            {**observed, "interfaceName": model_instance.interface_name, "switchIp": model_instance.switch_ip}
+                        )
+                    except Exception as readback_error:
+                        raise RuntimeError(
+                            f"Member preview failed after the port-channel PUT was accepted: {preview_error}; "
+                            f"authoritative readback failed: {readback_error}"
+                        ) from preview_error
+                    raise RuntimeError("Member preview failed after the port-channel PUT was accepted; current ND intent was read back.") from preview_error
+            self._accepted_post_write_model = None
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
@@ -939,6 +966,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             raise RuntimeError(f"Absent port-channel delete preview does not prove removal of {interface_name!r}.")
 
         running_members: set[str] = set()
+        bare_on_members: set[str] = set()
         running_member = None
         for line in running_lines[1:]:
             if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
@@ -947,6 +975,11 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 running_member = None
             elif running_member is not None and re.fullmatch(rf"channel-group {po_id} (?:force )?mode (?:active|passive|on)", line):
                 running_members.add(running_member)
+            elif running_member is not None and line == f"channel-group {po_id}":
+                # NX-OS renders a deployed static (mode on) membership without
+                # the mode suffix. Its exact on-mode detach must still be proven.
+                running_members.add(running_member)
+                bare_on_members.add(running_member)
 
         allowed_member_command = (
             r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
@@ -970,7 +1003,15 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 continue
             if current_member is None:
                 raise RuntimeError(f"Absent port-channel delete preview includes an unproven command {line!r}.")
-            if re.fullmatch(rf"no channel-group {po_id} force mode (?:active|passive|on)", line):
+            if current_member in bare_on_members and line == f"no channel-group {po_id} force":
+                # ND renders the corresponding static detach without a mode
+                # suffix, matching the bare running channel-group command.
+                detached_members.add(current_member)
+                continue
+            detach = re.fullmatch(rf"no channel-group {po_id} force mode (active|passive|on)", line)
+            if detach:
+                if current_member in bare_on_members and detach.group(1) != "on":
+                    raise RuntimeError(f"Absent port-channel delete preview lacks an on-mode detach for {current_member!r}.")
                 detached_members.add(current_member)
                 continue
             if not (

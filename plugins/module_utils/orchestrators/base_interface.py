@@ -140,6 +140,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     """
 
     deploy: bool = False
+    workflow_deploy_requested: bool = Field(default=False, exclude=True, repr=False)
     interface_state_snapshot: InterfaceStateSnapshot | None = Field(default=None, exclude=True, repr=False)
 
     # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets

@@ -36,7 +36,9 @@ options:
   resources:
     description:
     - Ordered interface resource groups to validate and plan together.
-    - Repeated values of O(resources[].type) are supported; results retain C(resource_index) so groups are not collapsed.
+    - Repeated values of O(resources[].type) are supported for non-overridden states; results retain C(resource_index) so groups are not collapsed.
+    - When a type uses V(overridden), place every desired interface of that type in one resource group's O(resources[].config).
+      Multiple groups of that type are rejected before writes.
     - The coordinator rejects ownership, policy-transition, delete/write, override, and physical-member conflicts across groups.
     type: list
     elements: dict

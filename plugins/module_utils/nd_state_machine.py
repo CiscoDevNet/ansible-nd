@@ -359,6 +359,25 @@ class NDStateMachine:
         try:
             pending_bulk: list[tuple[NDBaseModel, NDBaseModel | None, dict[str, Any], str]] = []
 
+            def run_singular_update(item: NDBaseModel, previous: NDBaseModel | None) -> None:
+                try:
+                    self._execute_operation(
+                        self.model_orchestrator.update,
+                        item,
+                        previous_model=previous,
+                        error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+                    )
+                except Exception:
+                    accepted = getattr(self.model_orchestrator, "_accepted_post_write_model", None)
+                    if (
+                        accepted is not None
+                        and getattr(accepted, "switch_ip", None) == getattr(item, "switch_ip", None)
+                        and str(getattr(accepted, "interface_name", "")).casefold() == str(getattr(item, "interface_name", "")).casefold()
+                    ):
+                        accepted_updates.append(accepted)
+                    raise
+                accepted_updates.append(item)
+
             def flush_bulk() -> None:
                 if not pending_bulk:
                     return
@@ -366,13 +385,7 @@ class NDStateMachine:
                 pending_bulk.clear()
                 if len(batch) == 1:
                     item, previous, _payload, _mode = batch[0]
-                    self._execute_operation(
-                        self.model_orchestrator.update,
-                        item,
-                        previous_model=previous,
-                        error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
-                    )
-                    accepted_updates.append(item)
+                    run_singular_update(item, previous)
                     return
                 orchestrator = self.model_orchestrator
                 for item, previous, _payload, _mode in batch:
@@ -429,13 +442,7 @@ class NDStateMachine:
                     pending_bulk.append((item, previous, payload, mode))
                     continue
                 flush_bulk()
-                self._execute_operation(
-                    self.model_orchestrator.update,
-                    item,
-                    previous_model=previous,
-                    error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
-                )
-                accepted_updates.append(item)
+                run_singular_update(item, previous)
             flush_bulk()
         except Exception:
             self.existing = execution_baseline.copy()

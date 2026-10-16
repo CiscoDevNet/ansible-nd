@@ -352,6 +352,7 @@ class InterfaceWorkflowPlanner:
             raise InterfaceWorkflowValidationError("resources must be a list.")
 
         validated: list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]] = []
+        groups_by_type: dict[str, list[tuple[int, str]]] = {}
         for resource_index, resource in enumerate(resources):
             if not isinstance(resource, dict):
                 raise InterfaceWorkflowValidationError(f"resources[{resource_index}] must be a dictionary.")
@@ -369,6 +370,14 @@ class InterfaceWorkflowPlanner:
             adapter = get_interface_family_adapter(resource_type)
             proposed = adapter.validate_config(resource["config"], state, resource_index)
             validated.append((resource_index, adapter, state, proposed))
+            groups_by_type.setdefault(adapter.resource_type, []).append((resource_index, state))
+        for resource_type, groups in groups_by_type.items():
+            if len(groups) > 1 and any(state == "overridden" for _index, state in groups):
+                indices = ", ".join(f"resources[{index}]" for index, _state in groups)
+                raise InterfaceWorkflowValidationError(
+                    f"Repeated type '{resource_type}' with state 'overridden' in {indices} is not supported. "
+                    "Put all desired interfaces of this type in one overridden group's config list."
+                )
         return validated
 
     def _target_switch_ids(self, validated: list[tuple[int, InterfaceFamilyAdapter, str, NDConfigCollection]]) -> tuple[str, ...]:
@@ -1986,6 +1995,11 @@ class InterfaceWorkflowPlanner:
                             network_os_type=self._wire_network_os_type(current),
                             child_network_os_type=child_network_os_type,
                         )
+                        if reason is None and str((current.get("operData") or {}).get("mode") or "").casefold() != "routed":
+                            reason = (
+                                "the parent is configured as routed but is not operationally discovered as routed; "
+                                "deploy the parent in a separate task and wait for routed discovery before creating the child"
+                            )
                     if reason is None:
                         continue
                 add(

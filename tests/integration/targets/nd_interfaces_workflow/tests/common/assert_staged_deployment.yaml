@@ -20,12 +20,13 @@
       - nd_iw_staged_deploy_only.execution.mutations_sent == 0
       - nd_iw_staged_deploy_only.execution.deployments_sent > 0
 
-- name: "Read target switch sync state before {{ nd_iw_staged_label }} replay"
-  cisco.nd.nd_rest:
-    method: get
-    path: "/api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name }}/switches?max=500&offset=0"
-  register: nd_iw_staged_switch_status
-  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+- name: "Reset complete switch sync inventory before {{ nd_iw_staged_label }} replay"
+  ansible.builtin.set_fact:
+    nd_iw_staged_switch_rows: []
+    nd_iw_staged_switch_offset: 0
+
+- name: "Read every switch sync page before {{ nd_iw_staged_label }} replay"
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_staged_switch_sync_page.yaml"
 
 - name: "Identify exact {{ nd_iw_staged_label }} deployment switches"
   ansible.builtin.set_fact:
@@ -33,13 +34,21 @@
       {{ nd_iw_staged_deploy_only.execution.deployment.targets
          | map(attribute='switch_id') | unique | list }}
 
+- name: "Reset exact {{ nd_iw_staged_label }} switch sync classifications"
+  ansible.builtin.set_fact:
+    nd_iw_staged_deploy_sync_results: []
+
+- name: "Classify each exact {{ nd_iw_staged_label }} deployment switch"
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_staged_switch_sync_item.yaml"
+  loop: "{{ nd_iw_staged_deploy_switch_ids }}"
+  loop_control:
+    loop_var: nd_iw_staged_switch_id
+
 - name: "Classify {{ nd_iw_staged_label }} replay sync precondition"
   ansible.builtin.set_fact:
     nd_iw_staged_deploy_all_sync: >-
-      {{ (nd_iw_staged_switch_status.current.switches
-          | selectattr('switchId', 'in', nd_iw_staged_deploy_switch_ids)
-          | selectattr('additionalData.configSyncStatus', 'equalto', 'inSync')
-          | list | length) == (nd_iw_staged_deploy_switch_ids | length) }}
+      {{ nd_iw_staged_deploy_sync_results | length == nd_iw_staged_deploy_switch_ids | length
+         and (nd_iw_staged_deploy_sync_results | reject('equalto', true) | list | length) == 0 }}
 
 - name: "Replay deployed {{ nd_iw_staged_label }} to prove full idempotence"
   cisco.nd.nd_interfaces_workflow:

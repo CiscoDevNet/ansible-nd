@@ -391,6 +391,7 @@ class InterfaceWorkflowExecutor:
         exact_207_classifier: Callable[[], tuple[set[Target], bool]] | None = None,
     ) -> bool:
         markers = self._request_markers(orchestrator.rest_send)
+        attempts_before = getattr(orchestrator.rest_send, "mutation_attempt_count", 0)
         create_targets = {item.target for item in items if item.action == "create"}
         pending_before = set(orchestrator.pending_deploys) if create_targets else set()
         try:
@@ -403,6 +404,8 @@ class InterfaceWorkflowExecutor:
                 outcomes = {item.target: (("succeeded", None) if item.target in accepted else ("failed", error)) for item in items}
             else:
                 outcomes = self._classify_response((item.target for item in items), response, result, error)
+            if not response and getattr(orchestrator.rest_send, "mutation_attempt_count", 0) > attempts_before:
+                outcomes = {item.target: ("uncertain", f"{error}; write was dispatched but no response was recorded") for item in items}
             # The standalone bulk-create path can recover exact accepted names
             # after a flat HTTP 500. Its recovery GET is not a write result;
             # only newly queued exact targets may override failed/uncertain.
@@ -433,6 +436,7 @@ class InterfaceWorkflowExecutor:
             orchestrator.rest_send.check_mode = False
             orchestrator.rest_send.params["check_mode"] = False
             orchestrator.deploy = False
+            orchestrator.workflow_deploy_requested = self.deploy
             if orchestrator.results is not None:
                 orchestrator.results.check_mode = False
         try:
@@ -1304,19 +1308,23 @@ class InterfaceWorkflowExecutor:
             if id(rest_send) in seen:
                 continue
             seen.add(id(rest_send))
+            recorded_mutations = 0
+            recorded_deployments = 0
             for response, result in zip(rest_send.responses, rest_send.results):
                 method = str(response.get("METHOD") or "").upper()
                 if method == "GET" or method.endswith(".GET"):
                     continue
                 path = str(response.get("REQUEST_PATH") or "")
                 if "interfaceActions/deploy" in path:
-                    deploy_requests += 1
+                    recorded_deployments += 1
                 elif "interfaceActions/preview" in path:
                     # The preview endpoint is a read-only POST, not an intent mutation.
                     continue
                 else:
-                    mutation_requests += 1
+                    recorded_mutations += 1
                     mutation_changed = mutation_changed or result.get("changed") is True
+            mutation_requests += max(recorded_mutations, getattr(rest_send, "mutation_attempt_count", 0))
+            deploy_requests += max(recorded_deployments, getattr(rest_send, "deployment_attempt_count", 0))
         return mutation_requests, deploy_requests, mutation_changed
 
     def _reconcile(
@@ -1420,7 +1428,7 @@ class InterfaceWorkflowExecutor:
         failed = not phases_ok or bool(self._errors)
         deployment_changed = any(target["status"] in {"succeeded", "uncertain"} for target in self._deployment["targets"])
         exact_mutation_success = any(item.status == "succeeded" for item in self._items)
-        changed = mutation_changed or exact_mutation_success or actual_changed or deployment_changed
+        changed = mutation_changed or exact_mutation_success or actual_changed or deployment_changed or any(item.status == "uncertain" for item in self._items)
         if failed:
             item_statuses = {item.status for item in self._items}
             status = "partial_failure" if changed or item_statuses & {"succeeded", "uncertain"} else "failed"

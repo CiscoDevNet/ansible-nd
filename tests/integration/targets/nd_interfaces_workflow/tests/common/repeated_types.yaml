@@ -39,6 +39,35 @@
       - nd_iw_repeated_result.execution.deployments_sent == 0
   when: nd_iw_repeated_case_candidates | length > 0
 
+- name: Reject repeated overridden type groups before any write
+  vars:
+    nd_iw_repeated_case: "{{ nd_iw_repeated_case_candidates | first }}"
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_repeated_case.family }}"
+        state: overridden
+        config: "{{ nd_iw_repeated_case.create_config }}"
+      - type: "{{ nd_iw_repeated_case.family }}"
+        state: merged
+        config: "{{ nd_iw_repeated_case.secondary }}"
+    config_actions:
+      deploy: false
+  check_mode: true
+  register: nd_iw_repeated_override_rejection
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+  when: nd_iw_repeated_case_candidates | length > 0
+
+- name: Verify repeated overridden type rejection is exact and unchanged
+  ansible.builtin.assert:
+    that:
+      - nd_iw_repeated_override_rejection.failed | default(false)
+      - not nd_iw_repeated_override_rejection.changed | default(false)
+      - "'Repeated type' in nd_iw_repeated_override_rejection.msg"
+      - "'resources[0], resources[1]' in nd_iw_repeated_override_rejection.msg"
+  when: nd_iw_repeated_case_candidates | length > 0
+
 - name: Require a secondary fixture for repeated-type coverage
   ansible.builtin.assert:
     that:

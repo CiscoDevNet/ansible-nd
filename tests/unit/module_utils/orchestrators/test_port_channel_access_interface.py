@@ -344,6 +344,39 @@ def test_absent_port_channel_replay_proves_its_own_member_detach() -> None:
         orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
 
 
+@pytest.mark.parametrize(
+    ("running_group", "pending_detach", "accepted"),
+    [
+        ("channel-group 982", "no channel-group 982 force", True),
+        ("channel-group 982", "no channel-group 982 force mode on", True),
+        ("channel-group 982", "no channel-group 982 force mode active", False),
+        ("channel-group 982 mode active", "no channel-group 982 force", False),
+        ("channel-group 983", "no channel-group 982 force mode on", False),
+    ],
+)
+def test_absent_port_channel_replay_accepts_only_exact_bare_on_mode_member(running_group: str, pending_detach: str, accepted: bool) -> None:
+    """NX-OS static Po running CLI omits mode on, but the detach must prove it."""
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "combinedConfigs": [
+                    {"configType": "running", "config": f"interface port-channel982\ninterface Ethernet1/46\n{running_group}\n"},
+                    {"configType": "pending", "config": f"no interface port-channel982\ninterface Ethernet1/46\n{pending_detach}\n"},
+                ],
+            }
+        ]
+    }
+
+    if accepted:
+        orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+    else:
+        with pytest.raises(RuntimeError, match="on-mode detach|unproven member"):
+            orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
 @pytest.mark.parametrize("network_os_type,expected", [("nx-os", True), ("ios-xe", False), (None, False)])
 def test_absent_access_delete_accepts_only_nxos_policyless_discovery_echo(network_os_type, expected) -> None:
     """An NX-OS discovered Po with no owning policy can replay deletion."""
@@ -379,6 +412,54 @@ def test_deferred_port_channel_deploy_retains_exact_member_context() -> None:
     instance._prepare_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
 
     assert instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")]) == {("ethernet1/1", "FDO11111AAA")}
+
+
+def test_ios_xe_stage_only_member_removal_skips_read_only_preview(monkeypatch) -> None:
+    """A stage-only PUT does not need to discover physical deployment targets."""
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance.workflow_deploy_requested = False
+    model = _build_xe_pc_model(ports=[])
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_removed_xe_members", lambda *_args: ["GigabitEthernet1/0/1"])
+    monkeypatch.setattr(instance, "_prepare_deploy_context", lambda *_args: None)
+    monkeypatch.setattr(instance, "_queue_deploy", lambda *_args: None)
+    monkeypatch.setattr(instance, "_request", lambda **_kwargs: {"status": "accepted"})
+    monkeypatch.setattr(instance, "_preview_and_queue_removed_xe_members", lambda *_args: pytest.fail("staging-only preview"))
+
+    assert instance.update(model) == {"status": "accepted"}
+
+
+def test_ios_xe_workflow_deploy_preview_failure_preserves_accepted_put_and_reads_back(monkeypatch) -> None:
+    """The workflow's overall deploy intent retains preview and failure-only GET."""
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance.workflow_deploy_requested = True
+    model = _build_xe_pc_model(ports=[])
+    reads = []
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_removed_xe_members", lambda *_args: ["GigabitEthernet1/0/1"])
+    monkeypatch.setattr(instance, "_prepare_deploy_context", lambda *_args: None)
+    monkeypatch.setattr(instance, "_queue_deploy", lambda *_args: None)
+
+    def preview_failure(*_args):
+        raise RuntimeError("preview unavailable")
+
+    monkeypatch.setattr(instance, "_preview_and_queue_removed_xe_members", preview_failure)
+
+    def request(**kwargs):
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            reads.append("exact")
+            return {**model.to_payload(), "interfaceName": "Port-channel101", "switchId": "FDO11111AAA"}
+        return {"status": "accepted"}
+
+    monkeypatch.setattr(instance, "_request", request)
+    with pytest.raises(RuntimeError, match="PUT was accepted; current ND intent was read back"):
+        instance.update(model)
+
+    assert reads == ["exact"]
+    assert instance._accepted_post_write_model is not None
+    assert instance._accepted_post_write_model.get_identifier_value() == model.get_identifier_value()
 
 
 def test_unchanged_port_channel_with_current_member_previews_removed_member() -> None:

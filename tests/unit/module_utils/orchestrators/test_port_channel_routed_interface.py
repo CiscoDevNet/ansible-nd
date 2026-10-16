@@ -219,6 +219,7 @@ def test_xe_routed_workflow_staging_retains_exact_removed_member_target() -> Non
 
     instance = _recording_routed_orchestrator()
     instance.deploy = False
+    instance.workflow_deploy_requested = True
     _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16"])
     instance._switch_interfaces_cache[SWITCH_ID]["gigabitethernet1/0/17"]["operData"]["portChannelId"] = -1
     member = ("GigabitEthernet1/0/16", SWITCH_ID)
@@ -304,7 +305,7 @@ def test_xe_routed_update_rejects_pending_cli_for_another_channel_group() -> Non
 
     with pytest.raises(RuntimeError, match="does not prove channel-group 120 removal"):
         instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=["GigabitEthernet1/0/16"]))
-    assert len(instance._writes) == 1
+    assert [write["verb"] for write in instance._writes] == [HttpVerbEnum.PUT, HttpVerbEnum.GET]
     assert instance.pending_deploys == (("port-channel120", SWITCH_ID),)
     assert instance._deployments == []
 
@@ -319,7 +320,7 @@ def test_xe_routed_detach_rejects_other_pending_commands_on_same_member() -> Non
 
     with pytest.raises(RuntimeError, match="unrelated CLI"):
         instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=["GigabitEthernet1/0/16"]))
-    assert len(instance._writes) == 1
+    assert [write["verb"] for write in instance._writes] == [HttpVerbEnum.PUT, HttpVerbEnum.GET]
     assert instance.pending_deploys == (("port-channel120", SWITCH_ID),)
     assert instance._deployments == []
 

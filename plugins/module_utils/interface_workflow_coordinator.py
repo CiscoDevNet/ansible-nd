@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vpc_pairs import (
@@ -182,19 +183,34 @@ class InterfaceWorkflowCoordinator:
             metadata = data.get("meta") or data.get("metadata") or {}
             counts = metadata.get("counts") if isinstance(metadata, dict) else {}
             counts = counts if isinstance(counts, dict) else {}
+            links = metadata.get("links") if isinstance(metadata, dict) else {}
+            links = links if isinstance(links, dict) else {}
+            next_link = links.get("next")
+            next_offset = None
+            if next_link:
+                if not isinstance(next_link, str):
+                    raise InterfaceWorkflowValidationError("The Nexus Dashboard vPC-pair next link must be a URL string.")
+                raw_offsets = parse_qs(urlsplit(next_link).query).get("offset", [])
+                if len(raw_offsets) != 1:
+                    raise InterfaceWorkflowValidationError("The Nexus Dashboard vPC-pair next link lacks one offset.")
+                next_offset = self._coerce_nonnegative_int(raw_offsets[0])
+                if next_offset is None or next_offset <= offset:
+                    raise InterfaceWorkflowValidationError(f"The Nexus Dashboard vPC-pair next link does not advance past offset {offset}.")
             total = self._coerce_nonnegative_int(counts.get("total"))
             remaining = self._coerce_nonnegative_int(counts.get("remaining"))
+            if next_offset is not None and (total is not None and offset + len(page) >= total or remaining == 0):
+                raise InterfaceWorkflowValidationError("The Nexus Dashboard vPC-pair next link contradicts terminal counts metadata.")
             if total is not None:
-                has_next = offset + len(page) < total
+                has_next = offset + len(page) < total or next_offset is not None
             elif remaining is not None:
-                has_next = remaining > 0
+                has_next = remaining > 0 or next_offset is not None
             else:
-                has_next = len(page) >= VPC_PAIR_PAGE_SIZE
+                has_next = next_offset is not None or len(page) >= VPC_PAIR_PAGE_SIZE
             if not has_next:
                 break
             if not page:
                 raise InterfaceWorkflowValidationError(f"The Nexus Dashboard vPC-pair response reports more records after empty offset {offset}.")
-            offset += len(page)
+            offset = next_offset if next_offset is not None else offset + len(page)
 
         declared_peer_by_switch_id: dict[str, str] = {}
         for record in records:

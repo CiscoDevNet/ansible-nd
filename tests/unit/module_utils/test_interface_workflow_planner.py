@@ -167,9 +167,10 @@ def _wire_interface(
     *,
     network_os_type: str = "nx-os",
     mode: str = "access",
+    oper_mode: str | None = None,
     **policy: Any,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "interfaceName": name,
         "interfaceType": interface_type,
         "configData": {
@@ -180,6 +181,9 @@ def _wire_interface(
             },
         },
     }
+    if oper_mode is not None:
+        result["operData"] = {"mode": oper_mode}
+    return result
 
 
 def _summary_row(
@@ -751,7 +755,7 @@ def test_implicit_transition_is_generic_across_non_vpc_adapters(
     inventory = [current]
     if resource_type.startswith("subinterface_"):
         parent_name = interface_name.rsplit(".", 1)[0]
-        inventory.append(_wire_interface(parent_name, "ethernet", "routedHost", mode="routed"))
+        inventory.append(_wire_interface(parent_name, "ethernet", "routedHost", mode="routed", oper_mode="routed"))
     planner, _recorder = _planner(
         responses=[{"interfaces": inventory}],
         summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
@@ -870,6 +874,7 @@ def test_ios_xe_managed_subinterface_full_and_admin_variants_transition_in_both_
         "iosXeRoutedHost",
         network_os_type="ios-xe",
         mode="routed",
+        oper_mode="routed",
     )
     current = _wire_interface(
         "GigabitEthernet3.10",
@@ -2279,6 +2284,7 @@ def test_subinterface_write_accepts_existing_routed_port_channel_parent(
 ) -> None:
     """Both subinterface families accept the routed NX-OS port-channel parent."""
     parent = _wire_interface("port-channel10", "portChannel", "l3Po", mode="routed")
+    parent["operData"] = {"mode": "routed"}
     planner, _recorder = _planner(responses=[{"interfaces": [parent]}])
     child = {
         "switch_ip": "192.0.2.1",
@@ -2311,6 +2317,7 @@ def test_ios_xe_subinterface_write_accepts_matching_routed_parent_contract(
         network_os_type="ios-xe",
         mode="routed",
     )
+    parent["operData"] = {"mode": "routed"}
     planner, _recorder = _planner(responses=[{"interfaces": [parent]}])
     planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE, "192.0.2.2": PlatformType.IOS_XE}
     child = {
@@ -2327,6 +2334,51 @@ def test_ios_xe_subinterface_write_accepts_matching_routed_parent_contract(
     plan = planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [child]}])
 
     assert len(plan.resources[0].operations.creates) == 1
+
+
+@pytest.mark.parametrize("oper_mode", [None, "access", "trunk"])
+def test_previously_staged_routed_parent_requires_operational_discovery(oper_mode: str | None) -> None:
+    """A routed policy staged in an earlier task cannot authorize a child write yet."""
+    parent = _wire_interface("port-channel10", "portChannel", "l3Po", mode="routed")
+    if oper_mode is not None:
+        parent["operData"] = {"mode": oper_mode}
+    planner, recorder = _planner(responses=[{"interfaces": [parent]}])
+    child = {
+        "switch_ip": "192.0.2.1",
+        "interface_name": "port-channel10.10",
+        "config_data": {"network_os": {"policy": {"vlan_id": 10}}},
+    }
+
+    with pytest.raises(InterfaceWorkflowConflictError, match="deploy the parent in a separate task") as exc_info:
+        planner.plan([{"type": "subinterface_managed", "state": "merged", "config": [child]}])
+
+    assert "subinterface_parent_prerequisite" in {conflict.code for conflict in exc_info.value.conflicts}
+    assert all(call.get("verb") in (None, HttpVerbEnum.GET) for call in recorder.calls)
+
+
+def test_repeated_overridden_type_fails_before_inventory_read() -> None:
+    """Two groups of one overridden family must not mutate once and fail on replay."""
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"})
+    resources = [
+        {"type": "loopback", "state": "overridden", "config": [_loopback("192.0.2.1", "loopback981")]},
+        {"type": "loopback", "state": "merged", "config": [_loopback("192.0.2.1", "loopback982")]},
+    ]
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"Repeated type 'loopback'.*resources\[0\], resources\[1\].*one overridden group"):
+        planner.plan(resources)
+
+    assert recorder.calls == []
+
+
+def test_one_overridden_group_can_contain_multiple_desired_interfaces_and_replay() -> None:
+    """The supported grouping stays idempotent on a second run."""
+    desired = [_loopback("192.0.2.1", "loopback981"), _loopback("192.0.2.1", "loopback982")]
+    group = [{"type": "loopback", "state": "overridden", "config": desired}]
+    first, _first_recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": []}])
+    assert first.plan(group).mutation_count == 2
+    current = [_wire_loopback("loopback981", "loopback", ip="198.51.100.10/32"), _wire_loopback("loopback982", "loopback", ip="198.51.100.10/32")]
+    replay, _replay_recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": current}])
+    assert replay.plan(group).mutation_count == 0
 
 
 @pytest.mark.parametrize(
@@ -3269,12 +3321,12 @@ def test_twelve_family_plan_shares_one_inventory_fetch_per_switch() -> None:
         responses=[
             {
                 "interfaces": [
-                    _wire_interface("Ethernet1/3", "ethernet", "routedHost", mode="routed"),
+                    _wire_interface("Ethernet1/3", "ethernet", "routedHost", mode="routed", oper_mode="routed"),
                 ]
             },
             {
                 "interfaces": [
-                    _wire_interface("Ethernet1/4", "ethernet", "routedHost", mode="routed"),
+                    _wire_interface("Ethernet1/4", "ethernet", "routedHost", mode="routed", oper_mode="routed"),
                 ]
             },
         ],

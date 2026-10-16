@@ -783,6 +783,28 @@ def test_standalone_partial_bulk_reconciles_only_accepted_update() -> None:
     assert machine.existing.get(("192.168.12.151", "loopback11")).config_data.network_os.policy.description == "stale description"
 
 
+def test_standalone_post_write_failure_retains_accepted_update_in_after() -> None:
+    """A later preview failure must not replace an accepted PUT with old state."""
+
+    class AcceptedThenPreviewFailed(_ExistingConfiguredLoopbackSpy):
+        def model_post_init(self, context) -> None:
+            super().model_post_init(context)
+            self._accepted_post_write_model = None
+
+        def update(self, model_instance, **_kwargs):
+            self._accepted_post_write_model = model_instance
+            raise RuntimeError("member preview failed after accepted PUT")
+
+    spy = AcceptedThenPreviewFailed(rest_send=_build_rest_send())
+    machine = NDStateMachine(module=_build_module("replaced", False, _bulk_replacement_config()[:1]), model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match="member preview failed after accepted PUT"):
+        machine.manage_state()
+
+    assert {item.interface_name for item in machine.sent} == {"loopback10"}
+    assert machine.existing.get(("192.168.12.151", "loopback10")).config_data.network_os.policy.description == "updated description"
+
+
 def test_nd_state_machine_00200() -> None:
     """
     # Summary
