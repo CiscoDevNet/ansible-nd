@@ -1,0 +1,15 @@
+---
+- name: "{{ nd4x_identity_assert_label }}: Assert every reserved link identity"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_identity_collection
+        | selectattr('src_interface_name', 'equalto', nd4x_reserved_interface)
+        | list
+        | length == 1
+    fail_msg: >-
+      {{ nd4x_identity_assert_label }} is missing reserved interface
+      {{ nd4x_reserved_interface }}.
+  loop: "{{ nd4x_reserved_interfaces }}"
+  loop_control:
+    loop_var: nd4x_reserved_interface

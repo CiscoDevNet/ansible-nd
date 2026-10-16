@@ -1,0 +1,406 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_output_level | default('debug') }}"
+  register: nd4x_links_version
+
+- name: "ND4X PREFLIGHT: Record nd_manage_links harness support"
+  ansible.builtin.set_fact:
+    nd4x_links_supported: >-
+      {{ nd4x_links_version.current.platformVersion is version('4.2.0', '>=') }}
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping nd_manage_links ND 4.x harness scenarios because controller
+      version {{ nd4x_links_version.current.platformVersion }} is older than 4.2.0.
+  when: not nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify link test variables are present"
+  ansible.builtin.assert:
+    that:
+      - test_switch_a is defined
+      - test_switch_b is defined
+      - test_fabric_numbered is defined
+    fail_msg: >-
+      nd_manage_links harness scenarios require the switch and fabric variables
+      initialized by the target's existing tasks/main.yml.
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Build enabled harness scope"
+  ansible.builtin.set_fact:
+    nd4x_links_preflight_scopes:
+      - name: numbered
+        enabled: "{{ run_numbered | bool }}"
+        src_fabric: "{{ test_fabric_numbered }}"
+        dst_fabric: "{{ test_fabric_numbered }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.numbered }}"
+        validate_interfaces: true
+      - name: unnumbered
+        enabled: "{{ run_unnumbered | bool }}"
+        src_fabric: "{{ test_fabric_unnumbered }}"
+        dst_fabric: "{{ test_fabric_unnumbered }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.unnumbered }}"
+        validate_interfaces: true
+      - name: preprovision
+        enabled: "{{ run_preprovision | bool }}"
+        src_fabric: "{{ test_fabric_preprovision }}"
+        dst_fabric: "{{ test_fabric_preprovision }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.preprovision }}"
+        # Preprovision deliberately supports endpoints before switches are
+        # online, so physical interface existence cannot be required here.
+        validate_interfaces: false
+      - name: layer2Dci
+        enabled: "{{ run_layer2_dci | bool }}"
+        src_fabric: "{{ test_fabric_l2dci_src }}"
+        dst_fabric: "{{ test_fabric_l2dci_dst }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.layer2Dci }}"
+        validate_interfaces: true
+      - name: multisiteOverlay
+        enabled: "{{ run_multisite_overlay | bool }}"
+        src_fabric: "{{ test_fabric_msite_src }}"
+        dst_fabric: "{{ test_fabric_msite_dst }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.multisiteOverlay }}"
+        validate_interfaces: true
+      - name: multisiteUnderlay
+        enabled: "{{ run_multisite_underlay | bool }}"
+        src_fabric: "{{ test_fabric_msite_src }}"
+        dst_fabric: "{{ test_fabric_msite_dst }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.multisiteUnderlay }}"
+        validate_interfaces: true
+      - name: ebgpVrfLite
+        enabled: "{{ run_ebgp_vrf_lite | bool }}"
+        src_fabric: "{{ test_fabric_vrflite_src }}"
+        dst_fabric: "{{ test_fabric_vrflite_dst }}"
+        interfaces: "{{ nd4x_links_reserved_interfaces.ebgpVrfLite }}"
+        validate_interfaces: true
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Require explicit dedicated-scope ownership"
+  ansible.builtin.assert:
+    that:
+      - nd4x_links_scope_owner | length >= 3
+      - nd4x_links_scope_owner is match('^[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}$')
+      - nd4x_links_scope_isolated | bool
+    fail_msg: >-
+      ND4X nd_manage_links harness requires an explicit ownership marker and
+      an isolation confirmation. Set
+      nd_test_nd4x_links_scope_owner=<unique-run-or-team-id> and
+      nd_test_nd4x_links_scope_isolated=true. Use dedicated fabrics, switches,
+      and reserved interfaces for the run.
+  when:
+    - nd4x_links_supported | bool
+    - nd4x_links_preflight_scopes | selectattr('enabled', 'equalto', true) | list | length > 0
+
+- name: "ND4X PREFLIGHT: Report dedicated-scope ownership"
+  ansible.builtin.debug:
+    msg:
+      scope_owner: "{{ nd4x_links_scope_owner }}"
+      isolated: "{{ nd4x_links_scope_isolated | bool }}"
+      lock_path: "{{ nd4x_scope_lock_path }}"
+  when:
+    - nd4x_links_supported | bool
+    - nd4x_links_preflight_scopes | selectattr('enabled', 'equalto', true) | list | length > 0
+
+- name: "ND4X PREFLIGHT: Build unique required fabrics and reserved interfaces"
+  ansible.builtin.set_fact:
+    nd4x_links_preflight_fabrics: >-
+      {%- set fabrics = [] -%}
+      {%- for scope in nd4x_links_preflight_scopes if scope.enabled | bool -%}
+        {%- if scope.src_fabric not in fabrics -%}
+          {%- set _ = fabrics.append(scope.src_fabric) -%}
+        {%- endif -%}
+        {%- if scope.dst_fabric not in fabrics -%}
+          {%- set _ = fabrics.append(scope.dst_fabric) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ fabrics }}
+    nd4x_links_preflight_interfaces: >-
+      {%- set interfaces = [] -%}
+      {%- for scope in nd4x_links_preflight_scopes if scope.enabled | bool -%}
+        {%- for interface_name in scope.interfaces -%}
+          {%- if interface_name not in interfaces -%}
+            {%- set _ = interfaces.append(interface_name) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ interfaces }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify every required fabric exists"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item }}"
+    method: get
+  loop: "{{ nd4x_links_preflight_fabrics }}"
+  register: nd4x_links_fabric_queries
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Assert every required fabric is reachable"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: >-
+      Required nd_manage_links harness fabric is unavailable:
+      {{ item.item }} (HTTP {{ item.status | default('unknown') }}).
+  loop: "{{ nd4x_links_fabric_queries.results }}"
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Read switch inventory for every required fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item }}/switches"
+    method: get
+  loop: "{{ nd4x_links_preflight_fabrics }}"
+  register: nd4x_links_switch_queries
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify both test switches exist in every required fabric"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - >-
+        (
+          item.jsondata.switches | default([])
+          | selectattr('hostname', 'equalto', test_switch_a)
+          | list | length
+        ) == 1
+      - >-
+        (
+          item.jsondata.switches | default([])
+          | selectattr('hostname', 'equalto', test_switch_b)
+          | list | length
+        ) == 1
+    fail_msg: >-
+      Required switches {{ test_switch_a }} and {{ test_switch_b }} were not
+      found uniquely in fabric {{ item.item }}.
+  loop: "{{ nd4x_links_switch_queries.results }}"
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Build physical interface inventory targets"
+  ansible.builtin.set_fact:
+    nd4x_links_interface_inventory_targets: >-
+      {%- set targets = [] -%}
+      {%- for scope in nd4x_links_preflight_scopes
+            if scope.enabled | bool and scope.validate_interfaces | bool -%}
+        {%- for endpoint in [
+              {'fabric': scope.src_fabric, 'switch_name': test_switch_a},
+              {'fabric': scope.dst_fabric, 'switch_name': test_switch_b}
+            ] -%}
+          {%- for result in nd4x_links_switch_queries.results
+                if result.item == endpoint.fabric -%}
+            {%- set matches = result.jsondata.switches | default([])
+                 | selectattr('hostname', 'equalto', endpoint.switch_name)
+                 | list -%}
+            {%- if matches | length == 1 -%}
+              {%- set switch = matches[0] -%}
+              {%- set _ = targets.append({
+                    'scope': scope.name,
+                    'fabric': endpoint.fabric,
+                    'switch_name': endpoint.switch_name,
+                    'switch_id': switch.switchId | default(switch.serialNumber, true) | default(''),
+                    'interfaces': scope.interfaces
+                  }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ targets }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify required switch identifiers are available"
+  ansible.builtin.assert:
+    that:
+      - nd4x_links_interface_inventory_targets | length > 0
+      - item.switch_id | length > 0
+    fail_msg: >-
+      Could not resolve a switch identifier for the reserved interface scope
+      {{ item.scope }} on {{ item.fabric }}/{{ item.switch_name }}.
+  loop: "{{ nd4x_links_interface_inventory_targets }}"
+  when:
+    - nd4x_links_supported | bool
+    - nd4x_links_preflight_scopes | selectattr('enabled', 'equalto', true) | selectattr('validate_interfaces', 'equalto', true) | list | length > 0
+
+- name: "ND4X PREFLIGHT: Validate physical interface inventory"
+  ansible.builtin.include_tasks: nd4x_demo_validate_interface_inventory.yml
+  vars:
+    nd4x_interface_inventory_label: ND4X PREFLIGHT
+  when:
+    - nd4x_links_supported | bool
+    - nd4x_links_interface_inventory_targets | length > 0
+
+- name: "ND4X PREFLIGHT: Read managed links in every required fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/links?fabricName={{ item }}&max={{ nd4x_links_page_size }}&offset=0"
+    method: get
+  loop: "{{ nd4x_links_preflight_fabrics }}"
+  register: nd4x_links_scope_queries
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Assert managed-link queries succeeded"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - not item.failed | default(false) | bool
+      - item.jsondata is mapping
+      - item.jsondata.links is defined
+      - item.jsondata.links is sequence
+      - item.jsondata.meta is mapping
+      - item.jsondata.meta.counts is mapping
+      - item.jsondata.meta.counts.remaining is defined
+      - (item.jsondata.meta.counts.remaining | string) == '0'
+    fail_msg: >-
+      Could not safely inspect the complete managed-link collection for fabric
+      {{ item.item }}. Expected HTTP 200 with a links collection, got status
+      {{ item.status | default('unknown') }}, failed={{ item.failed | default(false) }},
+      response={{ item.jsondata | default('missing') }}.
+  loop: "{{ nd4x_links_scope_queries.results }}"
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Collect links using reserved interfaces"
+  ansible.builtin.set_fact:
+    nd4x_links_reserved_existing: >-
+      {%- set links = [] -%}
+      {%- for result in nd4x_links_scope_queries.results -%}
+        {%- for link in result.jsondata.links | default([]) -%}
+          {%- if link.srcInterfaceName in nd4x_links_preflight_interfaces
+                or link.dstInterfaceName in nd4x_links_preflight_interfaces -%}
+            {%- set _ = links.append(link) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ links }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Collect the complete managed-link collection"
+  ansible.builtin.set_fact:
+    nd4x_links_all_existing: >-
+      {%- set links = [] -%}
+      {%- for result in nd4x_links_scope_queries.results -%}
+        {%- for link in result.jsondata.links | default([]) -%}
+          {%- set _ = links.append(link) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ links }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Reject links outside the harness-owned policy set"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_links_reserved_existing
+        | rejectattr('configData.policyType', 'defined')
+        | list
+        | length == 0
+      - >-
+        nd4x_links_reserved_existing
+        | selectattr('configData.policyType', 'defined')
+        | rejectattr(
+            'configData.policyType',
+            'in',
+            ['numbered', 'unnumbered', 'preprovision', 'layer2Dci', 'multisiteOverlay', 'multisiteUnderlay', 'ebgpVrfLite']
+          )
+        | list
+        | length == 0
+    fail_msg: >-
+      A reserved nd_manage_links endpoint is already owned by an unknown
+      policy or resource. Existing reserved links:
+      {{ nd4x_links_reserved_existing }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Identify reserved links outside the owned endpoint pairs"
+  ansible.builtin.set_fact:
+    nd4x_links_unowned_existing: >-
+      {%- set unowned = [] -%}
+      {%- for link in nd4x_links_reserved_existing -%}
+        {%- set ownership = namespace(owned=false) -%}
+        {%- for scope in nd4x_links_preflight_scopes if scope.enabled | bool -%}
+          {%- if link.srcFabricName == scope.src_fabric
+                and link.dstFabricName == scope.dst_fabric
+                and link.srcSwitchName == test_switch_a
+                and link.dstSwitchName == test_switch_b
+                and link.srcInterfaceName in scope.interfaces
+                and link.dstInterfaceName in scope.interfaces -%}
+            {%- set ownership.owned = true -%}
+          {%- endif -%}
+          {%- if link.srcFabricName == scope.dst_fabric
+                and link.dstFabricName == scope.src_fabric
+                and link.srcSwitchName == test_switch_b
+                and link.dstSwitchName == test_switch_a
+                and link.srcInterfaceName in scope.interfaces
+                and link.dstInterfaceName in scope.interfaces -%}
+            {%- set ownership.owned = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if not ownership.owned -%}
+          {%- set _ = unowned.append(link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ unowned }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Reject reserved endpoints owned by another link"
+  ansible.builtin.assert:
+    that:
+      - nd4x_links_unowned_existing | length == 0
+    fail_msg: >-
+      A reserved endpoint is owned by a link outside the configured
+      nd_manage_links harness scope: {{ nd4x_links_unowned_existing }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Identify links outside the overridden safety scope"
+  ansible.builtin.set_fact:
+    nd4x_links_destructive_unowned_existing: >-
+      {%- set unowned = [] -%}
+      {%- for link in nd4x_links_all_existing -%}
+        {%- set ownership = namespace(owned=false) -%}
+        {%- for scope in nd4x_links_preflight_scopes if scope.enabled | bool -%}
+          {%- if link.srcFabricName == scope.src_fabric
+                and link.dstFabricName == scope.dst_fabric
+                and link.srcSwitchName == test_switch_a
+                and link.dstSwitchName == test_switch_b
+                and link.srcInterfaceName in scope.interfaces
+                and link.dstInterfaceName in scope.interfaces -%}
+            {%- set ownership.owned = true -%}
+          {%- endif -%}
+          {# A managed link is endpoint-symmetric, so the reverse identity is
+             also within the explicitly reserved scope. #}
+          {%- if link.srcFabricName == scope.dst_fabric
+                and link.dstFabricName == scope.src_fabric
+                and link.srcSwitchName == test_switch_b
+                and link.dstSwitchName == test_switch_a
+                and link.srcInterfaceName in scope.interfaces
+                and link.dstInterfaceName in scope.interfaces -%}
+            {%- set ownership.owned = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if not ownership.owned -%}
+          {%- set _ = unowned.append(link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ unowned }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Reject unrelated managed links before overridden tests"
+  ansible.builtin.assert:
+    that:
+      - nd4x_links_destructive_unowned_existing | length == 0
+    fail_msg: >-
+      Refusing overridden nd_manage_links coverage because the complete
+      managed-link collection contains resources outside the reserved
+      fabrics, switches, interfaces, or endpoint identities. Overridden may
+      remove those resources; isolate the test scope or clean the unrelated
+      links first: {{ nd4x_links_destructive_unowned_existing }}
+  when:
+    - nd4x_links_supported | bool
+    - nd_test_nd4x_links_run_overridden | default(false) | bool
+
+- name: "ND4X PREFLIGHT: Require destructive-test opt-in when overridden coverage is enabled"
+  ansible.builtin.assert:
+    that:
+      - nd4x_links_destructive_tests_enabled | bool
+    fail_msg: >-
+      Overridden nd_manage_links harness coverage is destructive. Set
+      nd_test_nd4x_links_destructive_tests=true only on a dedicated testbed.
+  when:
+    - nd4x_links_supported | bool
+    - nd_test_nd4x_links_run_overridden | default(false) | bool

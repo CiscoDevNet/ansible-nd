@@ -1,0 +1,50 @@
+---
+- name: "{{ nd4x_scope_assert_label }}: Read reserved link scope"
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_scope_query.path }}"
+    method: get
+  loop: "{{ nd4x_scope_queries }}"
+  loop_control:
+    loop_var: nd4x_scope_query
+  register: nd4x_scope_query_results
+
+- name: "{{ nd4x_scope_assert_label }}: Assert cleanup queries succeeded"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - not item.failed | default(false) | bool
+      - item.jsondata is mapping
+      - item.jsondata.links is defined
+      - item.jsondata.links is sequence
+      - item.jsondata.meta is mapping
+      - item.jsondata.meta.counts is mapping
+      - item.jsondata.meta.counts.remaining is defined
+      - (item.jsondata.meta.counts.remaining | string) == '0'
+    fail_msg: >-
+      Could not verify that the {{ nd4x_scope_assert_label }} reserved scope
+      is clean. Expected HTTP 200 with a links collection from
+      {{ item.item.path }}, got status {{ item.status | default('unknown') }},
+      failed={{ item.failed | default(false) }}, response={{ item.jsondata | default('missing') }}.
+  loop: "{{ nd4x_scope_query_results.results }}"
+
+- name: "{{ nd4x_scope_assert_label }}: Collect links on reserved interfaces"
+  ansible.builtin.set_fact:
+    nd4x_reserved_scope_links: >-
+      {%- set links = [] -%}
+      {%- for result in nd4x_scope_query_results.results -%}
+        {%- for link in result.jsondata.links | default([]) -%}
+          {%- if link.srcInterfaceName in nd4x_reserved_interfaces
+                or link.dstInterfaceName in nd4x_reserved_interfaces -%}
+            {%- set _ = links.append(link) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ links }}
+
+- name: "{{ nd4x_scope_assert_label }}: Assert reserved scope is clean"
+  ansible.builtin.assert:
+    that:
+      - nd4x_reserved_scope_links | length == 0
+    fail_msg: >-
+      Reserved nd_manage_links scope is not clean after cleanup:
+      {{ nd4x_reserved_scope_links | map(attribute='linkId') | list }}
