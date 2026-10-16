@@ -1,18 +1,21 @@
 ---
-# Runner playbook for nd_policy integration tests.
+# Runner playbook for nd_manage_policy integration tests.
 #
 # Usage:
-#   ansible-playbook -i tests/integration/inventory.networking \
-#     tests/integration/targets/nd_policy/run_tests.yaml \
+#   ansible-playbook --inventory /absolute/path/to/inventory.networking \
+#     tests/integration/targets/nd_manage_policy/run_tests.yaml \
 #     -e testcase=merged \
 #     -e @tests/integration/integration_config.yml
 #
-# To override fabric/switch at runtime:
-#   ansible-playbook -i tests/integration/inventory.networking \
-#     tests/integration/targets/nd_policy/run_tests.yaml \
-#     -e testcase=merged \
-#     -e fabric_name=my_fabric \
-#     -e switch_serial_1=FDO12345678
+# The committed inventory.networking is a placeholder template. Copy it to a
+# private local path, fill in credentials there, and pass that path through
+# --inventory. Copy integration_config.yml.template to the ignored local
+# integration_config.yml; never commit real credentials or inventory values.
+#
+# Harness:
+#   ansible-test network-integration nd_manage_policy \
+#     --inventory /absolute/path/to/inventory.networking \
+#     --tags never,nd4x_demo,nd4x_demo_preflight -vv
 
 - name: ND Policy Integration Tests
   hosts: nd

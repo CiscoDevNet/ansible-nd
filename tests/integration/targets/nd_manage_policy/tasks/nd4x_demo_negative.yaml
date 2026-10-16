@@ -1,0 +1,511 @@
+---
+- name: Run validation, lifecycle, and template-input scenarios
+  block:
+    - name: "NEGATIVE SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "NEGATIVE: Missing fabric_name must fail"
+      cisco.nd.nd_manage_policy:
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_missing_fabric
+      ignore_errors: true
+
+    - name: "NEGATIVE: Verify missing fabric_name failure"
+      ansible.builtin.assert:
+        that:
+          - nd4x_missing_fabric.failed | bool
+
+    - name: "NEGATIVE: Merged state without config must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+      register: nd4x_missing_config
+      ignore_errors: true
+
+    - name: "NEGATIVE: Verify missing config failure"
+      ansible.builtin.assert:
+        that:
+          - nd4x_missing_config.failed | bool
+
+    - name: "NEGATIVE: Duplicate descriptions must fail atomically"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        use_description_as_key: true
+        config:
+          - name: switch_freeform
+            description: "ND4X-negative-duplicate"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: switch_freeform
+            description: "ND4X-negative-duplicate"
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_duplicate_description
+      ignore_errors: true
+
+    - name: "NEGATIVE: Empty description with description key must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        use_description_as_key: true
+        config:
+          - name: switch_freeform
+            description: ""
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_empty_description
+      ignore_errors: true
+
+    - name: "NEGATIVE: Invalid template name must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: this_template_does_not_exist_12345
+            template_inputs:
+              CONF: "test"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_invalid_template
+      ignore_errors: true
+
+    - name: "NEGATIVE: Invalid switch serial must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: INVALID_SERIAL_999
+      register: nd4x_invalid_switch
+      ignore_errors: true
+
+    - name: "NEGATIVE: Missing policy ID must fail even with description key"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        use_description_as_key: true
+        config:
+          - name: POLICY-99999999
+            description: "ND4X-negative-ghost"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_missing_policy_id
+      ignore_errors: true
+
+    - name: "NEGATIVE: Mixed config shapes must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "ND4X-negative-two-level"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: switch_freeform
+            description: "ND4X-negative-gathered"
+            template_inputs:
+              CONF: "no ip domain-lookup"
+            switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_mixed_shapes
+      ignore_errors: true
+
+    - name: "NEGATIVE: Policy plus empty switch list must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "ND4X-negative-empty-switch"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch: []
+      register: nd4x_empty_switch_merged
+      ignore_errors: true
+
+    - name: "NEGATIVE: Deleted policy plus empty switch list must fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: POLICY-99999999
+          - switch: []
+      register: nd4x_empty_switch_deleted
+      ignore_errors: true
+
+    - name: "NEGATIVE: Empty switch list without policies is a no-op"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - switch: []
+      register: nd4x_empty_switch_noop
+
+    - name: "NEGATIVE: Assert validation failures and no-op behavior"
+      ansible.builtin.assert:
+        that:
+          - nd4x_duplicate_description.failed | bool
+          - nd4x_empty_description.failed | bool
+          - nd4x_invalid_template.failed | bool
+          - nd4x_invalid_switch.failed | bool
+          - nd4x_missing_policy_id.failed | bool
+          - nd4x_mixed_shapes.failed | bool
+          - nd4x_empty_switch_merged.failed | bool
+          - nd4x_empty_switch_deleted.failed | bool
+          - not nd4x_empty_switch_noop.changed | bool
+          - "'switch' in (nd4x_empty_switch_merged.msg | lower)"
+          - "'switch_freeform' in nd4x_empty_switch_merged.msg"
+
+    - name: "LIFECYCLE: Create a policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-lifecycle-created"
+            priority: 500
+            template_inputs:
+              CONF: "ip tcp path-mtu-discovery"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "LIFECYCLE: Delete the policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "LIFECYCLE: Verify template-name deletion removed the created policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_lifecycle_after_delete
+
+    - name: "LIFECYCLE: Assert created lifecycle policy is absent"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_lifecycle_after_delete.gathered
+            | selectattr('description', 'equalto', 'ND4X-lifecycle-created')
+            | list
+            | length == 0
+
+    - name: "LIFECYCLE: Re-create the policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-lifecycle-recreated"
+            priority: 500
+            template_inputs:
+              CONF: "ip tcp path-mtu-discovery"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "LIFECYCLE: Gather the recreated policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_lifecycle_after_recreate
+
+    - name: "LIFECYCLE: Verify recreated policy state"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_lifecycle_after_recreate.gathered
+            | selectattr('description', 'equalto', 'ND4X-lifecycle-recreated')
+            | selectattr('priority', 'equalto', 500)
+            | selectattr('template_inputs.CONF', 'equalto', 'ip tcp path-mtu-discovery')
+            | list
+            | length == 1
+
+    - name: "TIV: Create valid template-input policy through harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-tiv-valid"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "TIV: Unknown template input key must fail before write"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: clock_timezone
+            description: "ND4X-tiv-unknown-key"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              BOGUS_TEMPLATE_KEY: invalid
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_unknown_template_key
+      ignore_errors: true
+
+    - name: "TIV: Wrong template input type must fail before write"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: clock_timezone
+            description: "ND4X-tiv-bad-type"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: not-a-number
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_wrong_template_type
+      ignore_errors: true
+
+    - name: "TIV: Verify template-input validation failures are non-mutating"
+      ansible.builtin.assert:
+        that:
+          - nd4x_unknown_template_key.failed | bool
+          - not nd4x_unknown_template_key.changed | bool
+          - (nd4x_unknown_template_key | to_json | lower) is search('unknown templateinput key')
+          - (nd4x_unknown_template_key | to_json | lower) is search('bogus_template_key')
+          - (nd4x_unknown_template_key.after | default([])) | length == 0
+          - >-
+            nd4x_unknown_template_key.proposed
+            | default([])
+            | selectattr('templateName', 'equalto', 'clock_timezone')
+            | list
+            | length == 1
+          - nd4x_wrong_template_type.failed | bool
+          - not nd4x_wrong_template_type.changed | bool
+          - (nd4x_wrong_template_type | to_json | lower) is search('hour_offset')
+          - (nd4x_wrong_template_type | to_json | lower) is search('expects integer')
+          - (nd4x_wrong_template_type.after | default([])) | length == 0
+          - >-
+            nd4x_wrong_template_type.proposed
+            | default([])
+            | selectattr('templateName', 'equalto', 'clock_timezone')
+            | list
+            | length == 1
+
+    - name: "TIV: Create three entries using one template"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-tiv-cache-lacp"
+            priority: 110
+            template_inputs:
+              featureName: lacp
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-tiv-cache-lldp"
+            priority: 111
+            template_inputs:
+              featureName: lldp
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-tiv-cache-bfd"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "TIV: Gather valid entry for gathered-to-merged replay"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "ND4X-tiv-valid"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_tiv_gathered
+
+    - name: "TIV: Replay gathered entry through harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - "{{ nd4x_tiv_gathered.gathered[0] }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "TIV: Check-mode unknown key must still fail"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: clock_timezone
+            description: "ND4X-tiv-check-mode"
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              ANOTHER_BOGUS_KEY: x
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      check_mode: true
+      register: nd4x_check_mode_unknown_key
+      ignore_errors: true
+
+    - name: "TIV: Verify check-mode validation behavior"
+      ansible.builtin.assert:
+        that:
+          - nd4x_check_mode_unknown_key.failed | bool
+          - not nd4x_check_mode_unknown_key.changed | bool
+          - (nd4x_check_mode_unknown_key | to_json | lower) is search('unknown templateinput key')
+          - (nd4x_check_mode_unknown_key | to_json | lower) is search('another_bogus_key')
+          - (nd4x_check_mode_unknown_key.after | default([])) | length == 0
+          - >-
+            nd4x_check_mode_unknown_key.proposed
+            | default([])
+            | selectattr('templateName', 'equalto', 'clock_timezone')
+            | list
+            | length == 1
+
+  always:
+    - name: "NEGATIVE CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml

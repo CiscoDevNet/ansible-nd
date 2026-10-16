@@ -1,0 +1,591 @@
+---
+- name: Run deleted-state and pending-cleanup scenarios
+  block:
+    - name: "DELETED SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "DELETED SETUP: Create policies for deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-deleted-timezone"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "ND4X-deleted-summertime"
+            priority: 102
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-deleted-freeform"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Delete one policy by template name"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted timezone policy is absent
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-timezone')]"
+                exists: false
+      register: nd4x_deleted_by_template
+
+    - name: "DELETED: Repeat clock_timezone deletion to exercise pending cleanup"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_deleted_repeat
+
+    - name: "DELETED: Verify repeated deletion reports cleanup change"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_repeat.apply.changed | bool
+        fail_msg: >-
+          Repeated clock_timezone deletion did not report changed=true; the
+          pending-cleanup deploy behavior is not preserved.
+
+    - name: "DELETED: Delete multiple policies by description"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: clock_summertime
+            description: "ND4X-deleted-summertime"
+          - name: switch_freeform
+            description: "ND4X-deleted-freeform"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Verify multiple policy deletion
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-summertime')]"
+                exists: false
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-freeform')]"
+                exists: false
+
+    - name: "DELETED SETUP: Create normal template pending-cleanup fixture"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-deleted-pending-timezone"
+            priority: 121
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Gather pending-cleanup policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+            description: "ND4X-deleted-pending-timezone"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_pending_gathered
+
+    - name: "DELETED: Capture pending-cleanup policy ID"
+      ansible.builtin.set_fact:
+        nd4x_pending_id: "{{ nd4x_pending_gathered.gathered[0].policy_id }}"
+
+    - name: "DELETED: Mark normal policy for deletion without deploy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - name: "{{ nd4x_pending_id }}"
+            description: "ND4X-deleted-pending-timezone"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Deploy pending normal-template cleanup"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: "{{ nd4x_pending_id }}"
+            description: "ND4X-deleted-pending-timezone"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Gather after normal-template pending cleanup"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_pending_after_gathered
+
+    - name: "DELETED: Verify normal-template pending policy is absent"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_pending_after_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-deleted-pending-timezone')
+            | list
+            | length == 0
+
+    - name: "DELETED SETUP: Create PYTHON-content pending-cleanup fixture"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-deleted-pending-python"
+            priority: 125
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Gather PYTHON-content policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "ND4X-deleted-pending-python"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_python_pending_gathered
+
+    - name: "DELETED: Capture PYTHON-content policy ID"
+      ansible.builtin.set_fact:
+        nd4x_python_pending_id: "{{ nd4x_python_pending_gathered.gathered[0].policy_id }}"
+
+    - name: "DELETED: Mark PYTHON-content policy for deletion without deploy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - name: "{{ nd4x_python_pending_id }}"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Deploy PYTHON-content pending cleanup"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: "{{ nd4x_python_pending_id }}"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Gather after PYTHON-content pending cleanup"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_python_pending_after_gathered
+
+    - name: "DELETED: Verify PYTHON-content pending policy is absent"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_python_pending_after_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-deleted-pending-python')
+            | list
+            | length == 0
+
+    - name: "DELETED: Exercise description-key deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-deleted-by-description"
+            priority: 300
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Delete by description key"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - description: "ND4X-deleted-by-description"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Gather after description-key deletion"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_description_after_gathered
+
+    - name: "DELETED: Verify description-key policy is absent"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_description_after_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-deleted-by-description')
+            | list
+            | length == 0
+
+    - name: "DELETED SETUP: Create template-name deletion fixtures"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-deleted-default-timezone"
+            priority: 401
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Delete one policy by default template name"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Verify default-key timezone deletion
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-default-timezone')]"
+                exists: false
+
+    - name: "DELETED: Repeat default template-name deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED SETUP: Create multiple template-name deletion fixtures"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "ND4X-deleted-default-summertime"
+            priority: 402
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-deleted-default-freeform"
+            priority: 403
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "DELETED: Delete multiple policies by default template name"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_summertime
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Verify multiple default-key deletions
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-default-summertime')]"
+                exists: false
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-default-freeform')]"
+                exists: false
+
+  always:
+    - name: "DELETED CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
