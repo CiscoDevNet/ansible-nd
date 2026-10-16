@@ -34,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from pydantic import ValidationError
 
 # pylint: disable=unused-variable
+# pylint: disable=too-many-lines
 
 
 @contextmanager
@@ -180,7 +181,7 @@ def test_ethernet_routed_interface_00030():
     """
     with does_not_raise():
         omitted = NexusEthernetRoutedPolicyModel()
-        none_valued = NexusEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1")
+        none_valued = NexusEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1", prefix=30)
         wire = NexusEthernetRoutedPolicyModel.model_validate({"ip": "10.1.1.1", "prefix": 30})
     for instance in (omitted, none_valued, wire):
         assert instance.policy_type == "routedHost"
@@ -254,20 +255,23 @@ def test_ethernet_routed_interface_00050():
     """
     # Summary
 
-    Verify CIDR `ip` input is normalized to bare IPv4 host form (issue #401 behavior via `IPv4Host`).
+    Verify CIDR `ip` input is normalized to bare IPv4 host form (issue #401 behavior via `IPv4Host`) and its mask is kept: it fills
+    `prefix` instead of being dropped (issue #584).
 
     ## Test
 
-    - Construct with `ip="10.99.99.1/30"`
-    - `ip` is stored as "10.99.99.1"
+    - Construct with `ip="10.99.99.1/30"` and no `prefix`
+    - `ip` is stored as "10.99.99.1" and `prefix` as 30
 
     ## Classes and Methods
 
     - NexusEthernetRoutedPolicyModel.__init__()
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
     """
     with does_not_raise():
         instance = NexusEthernetRoutedPolicyModel(policy_type="routedHost", ip="10.99.99.1/30")
     assert instance.ip == "10.99.99.1"
+    assert instance.prefix == 30
 
 
 def test_ethernet_routed_interface_00060():
@@ -370,7 +374,7 @@ def test_ethernet_routed_interface_00081():
     """
     with does_not_raise():
         omitted = XeEthernetRoutedPolicyModel()
-        none_valued = XeEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1")
+        none_valued = XeEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1", prefix=30)
         wire = XeEthernetRoutedPolicyModel.model_validate({"ip": "10.1.1.1", "prefix": 30})
     for instance in (omitted, none_valued, wire):
         assert instance.policy_type == "iosXeRoutedHost"
@@ -688,7 +692,9 @@ def test_ethernet_routed_interface_00160():
     - NexusEthernetRoutedNetworkOSModel.model_validate()
     """
     with pytest.raises(ValidationError):
-        result = NexusEthernetRoutedNetworkOSModel.model_validate({"networkOSType": "nx-os", "policy": {"policyType": "iosXeRoutedHost", "ip": "10.1.1.1"}})
+        result = NexusEthernetRoutedNetworkOSModel.model_validate(
+            {"networkOSType": "nx-os", "policy": {"policyType": "iosXeRoutedHost", "ip": "10.1.1.1", "prefix": 30}}
+        )
 
 
 def test_ethernet_routed_interface_00165():
@@ -1003,3 +1009,82 @@ def test_ethernet_routed_interface_00230() -> None:
     explicit_config["config_data"]["network_os"]["policy"]["mtu"] = 8000
     explicit = EthernetRoutedInterfaceModel.from_config(explicit_config)
     assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000
+
+
+@pytest.mark.parametrize(
+    "model_cls, policy, expected",
+    [
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 24}, {"ip": "10.1.1.1", "prefix": 24}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1", "prefix": 30}, {"ip": "10.1.1.1", "prefix": 30}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/31"}, {"ip": "10.1.1.1", "prefix": 31}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 24}, {"ip": "10.1.1.1", "prefix": 24}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1", "prefix": 30}, {"ip": "10.1.1.1", "prefix": 30}),
+    ],
+)
+def test_ethernet_routed_interface_00240(model_cls, policy, expected) -> None:
+    """
+    # Summary
+
+    Verify CIDR input never loses its mask (issue #584): the mask fills `prefix` when that field is absent, an agreeing explicit
+    `prefix` is accepted, the address is serialized in bare host form, and a plain address / prefix pair is unchanged, on both OS
+    branches.
+
+    ## Test
+
+    - `ip: 10.1.1.1/24` with no `prefix` yields `ip: 10.1.1.1`, `prefix: 24` on both models
+    - CIDR input with an agreeing explicit `prefix`, and a bare address with a `prefix`, are accepted as given
+    - `/31` (the top of the field's range) derives `prefix: 31`
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - XeEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - reconcile_cidr_prefix()
+    """
+    with does_not_raise():
+        dumped = model_cls(**policy).model_dump(by_alias=True, exclude_none=True)
+    for key, value in expected.items():
+        assert dumped[key] == value
+
+
+@pytest.mark.parametrize(
+    "model_cls, policy, match",
+    [
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 30}, r"ip.*/24.*prefix.*30"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 16}, r"ip.*/24.*prefix.*16"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        (NexusEthernetRoutedPolicyModel, {"prefix": 24}, r"ip and prefix are required together"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        (XeEthernetRoutedPolicyModel, {"prefix": 24}, r"ip and prefix are required together"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/32"}, r"prefix"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/0"}, r"prefix"),
+    ],
+)
+def test_ethernet_routed_interface_00250(model_cls, policy, match) -> None:
+    """
+    # Summary
+
+    Verify both routed ethernet policies reject a CIDR mask that contradicts the explicit `prefix`, half of an `ip` / `prefix` pair,
+    and a derived prefix outside the field's 1-31 range, all before any controller call (issue #584). ND itself rejects an `ip`
+    without `prefix` (HTTP 400 "Validation failed for following fields: [prefix]") but silently stores a `prefix` without `ip`;
+    both halves are rejected here (lab-verified on ND 4.2.1.10 and 4.3.1.175, 2026-10-16).
+
+    ## Test
+
+    - A CIDR mask that differs from the sibling `prefix` raises, naming both values
+    - An `ip` without its `prefix`, or a `prefix` without its `ip`, raises on both models
+    - `/32` and `/0` derive a prefix outside 1-31 and raise on the `prefix` field
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - NexusEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - XeEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - XeEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - reconcile_cidr_prefix()
+    - require_address_prefix_pair()
+    """
+    with pytest.raises(ValidationError, match=match):
+        result = model_cls(**policy)

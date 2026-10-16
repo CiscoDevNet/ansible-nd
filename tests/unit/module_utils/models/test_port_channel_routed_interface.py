@@ -667,3 +667,57 @@ def test_port_channel_routed_interface_00410(model_cls, policy, match):
     """
     with pytest.raises(ValidationError, match=match):
         model_cls(**policy)
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type, interface_name, policy",
+    [
+        ("nx-os", "l3Po", "port-channel501", {"ip": "10.99.31.5", "prefix": 30}),
+        ("nx-os", "l3Po", "port-channel501", {"ipv6": "2001:db8:501::1", "ipv6_prefix": 64}),
+        ("ios-xe", "iosXeL3PortChannel", "Port-channel501", {"ip": "10.99.31.9", "prefix": 30}),
+    ],
+)
+def test_port_channel_routed_interface_00420(network_os_type, policy_type, interface_name, policy) -> None:
+    """
+    # Summary
+
+    Verify a merged update can add an address / prefix pair to an existing routed port-channel that has neither. `NDBaseModel.merge()`
+    assigns one field at a time under `validate_assignment`, so the pair rule must not fire on the transient half pair between the two
+    assignments (issue #584 follow-on; the ethernet routed model hit the same failure in its merge regression test).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy sets only adminState/mtu
+    - `proposed` sets the address and its prefix (IPv4 on both OS branches, IPv6 on NX-OS)
+    - `merge()` succeeds and both halves land
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - PortChannelRoutedPolicyModel._validate_address_prefix_paired()
+    - XePortChannelRoutedPolicyModel._validate_address_prefix_paired()
+    """
+    existing = PortChannelRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": interface_name,
+            "interfaceType": "portChannel",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, "mtu": 9216}},
+            },
+        }
+    )
+    proposed = PortChannelRoutedInterfaceModel.model_validate(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": interface_name,
+            "config_data": {"network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, **policy}}},
+        }
+    )
+    with does_not_raise():
+        existing.merge(proposed)
+    merged = existing.config_data.network_os.policy
+    for key, value in policy.items():
+        assert getattr(merged, key) == value
+    assert merged.mtu == 9216
