@@ -232,20 +232,19 @@ def test_invalid_preview_never_confirms_deployment(entrypoint, preview):
 
 
 @pytest.mark.parametrize("entrypoint", ENTRYPOINTS)
-@pytest.mark.parametrize("converges", [False, True])
-def test_pending_preview_reads_are_bounded_without_redeployment(entrypoint, converges):
-    previews = [_preview_body(lines=1)] * 3
-    if converges:
-        previews[2] = _preview_body()
-    orchestrator, sender = _build([_response(DEPLOY, {})] + [_response(PREVIEW, body) for body in previews])
-    if converges:
+@pytest.mark.parametrize("later_lines", [0, 1])
+def test_pending_preview_is_checked_once_without_redeployment(entrypoint, later_lines):
+    """A pending first check fails even when a later response would be clean."""
+    later_response = _response(PREVIEW, _preview_body(lines=later_lines))
+    orchestrator, sender = _build([_response(DEPLOY, {}), _response(PREVIEW, _preview_body(lines=1)), later_response])
+    with pytest.raises(RuntimeError, match="pending configuration remains"):
         getattr(orchestrator, entrypoint)()
-        assert not orchestrator._pending_interfaces
-    else:
-        with pytest.raises(RuntimeError, match="pending configuration remains"):
-            getattr(orchestrator, entrypoint)()
-        assert orchestrator._pending_interfaces == TARGETS
-    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, PREVIEW, PREVIEW]
+    assert orchestrator._pending_interfaces == TARGETS
+    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW]
+    if entrypoint == "deploy_pending":
+        assert orchestrator.deploy_accepted_mutations() == {"interfaces": [], "switches": []}
+        assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW]
+    assert sender.gen.next == later_response
 
 
 @pytest.mark.parametrize("entrypoint", ENTRYPOINTS)
@@ -510,23 +509,21 @@ def test_mixed_success_failure_207_keeps_queue_and_skips_preview(entrypoint):
 
 @pytest.mark.parametrize("confirmed", [False, True])
 def test_module_finalizer_reports_deployed_only_after_preview_proof(confirmed):
-    previews = [_preview_body()] if confirmed else [_preview_body(lines=1)] * 3
-    orchestrator, sender = _build([_response(DEPLOY, {"results": [_deploy_body()["results"][0]]})] + [_response(PREVIEW, body) for body in previews])
+    preview = _preview_body(lines=0 if confirmed else 1)
+    orchestrator, sender = _build([_response(DEPLOY, {"results": [_deploy_body()["results"][0]]}), _response(PREVIEW, preview)])
     note = nd_manage_interface_group._finalize_accepted_intent(SimpleNamespace(model_orchestrator=orchestrator), False, logging.getLogger(__name__))
     assert ("those changes were deployed" in note) is confirmed
     assert ("outcome could not be confirmed" in note) is not confirmed
     assert orchestrator._pending_interfaces == (set() if confirmed else TARGETS)
-    assert sum(call["path"] == DEPLOY for call in sender.calls) == 1
+    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW]
 
 
 @pytest.mark.parametrize("confirmed", [False, True])
 def test_module_preserves_primary_failure_after_accepted_write(monkeypatch, confirmed):
     """A real accepted PUT is queued before main enters its failure finalizer."""
     path = "/api/v1/manage/fabrics/fab1/interfaceGroups/test-group"
-    previews = [_preview_body()] if confirmed else [_preview_body(lines=1)] * 3
-    orchestrator, sender = _build(
-        [_response(path, {}, code=204, verb="PUT"), _response(DEPLOY, {})] + [_response(PREVIEW, body) for body in previews], targets=set()
-    )
+    preview = _preview_body(lines=0 if confirmed else 1)
+    orchestrator, sender = _build([_response(path, {}, code=204, verb="PUT"), _response(DEPLOY, {}), _response(PREVIEW, preview)], targets=set())
     before_group = InterfaceGroupConfigModel.from_config(
         {
             "interface_group_name": "test-group",
@@ -579,5 +576,4 @@ def test_module_preserves_primary_failure_after_accepted_write(monkeypatch, conf
     assert result["changed"] is True
     assert result["after"] == [after_group.to_config()]
     assert orchestrator._pending_interfaces == (set() if confirmed else TARGETS)
-    assert [call["path"] for call in sender.calls[:2]] == [path, DEPLOY]
-    assert sum(call["path"] == DEPLOY for call in sender.calls) == 1
+    assert [call["path"] for call in sender.calls] == [path, DEPLOY, PREVIEW]

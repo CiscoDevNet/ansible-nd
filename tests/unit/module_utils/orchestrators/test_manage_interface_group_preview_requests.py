@@ -356,13 +356,21 @@ def test_invalid_missing_peer_reply_cannot_confirm_or_mutate_queue(preview):
 
 @pytest.mark.parametrize("entrypoint", ENTRYPOINTS)
 def test_pending_missing_peer_remains_queued_without_redeployment(entrypoint):
+    """One verification round retains its bounded request for a missing peer."""
     submitted = {("SN1", "vPC10")}
     local = _preview_body(submitted)
     peer = _preview_body({("SN2", "vPC10")})
     pending_peer = _preview_body({("SN2", "vPC10")}, lines=1)
-    replies = [_response(DEPLOY, {}), _response(PREVIEW, local), _response(PREVIEW, peer)]
-    for _attempt in range(3):
-        replies.extend([_response(PREVIEW, local), _response(PREVIEW, pending_peer)])
+    later_response = _response(PREVIEW, local)
+    replies = [
+        _response(DEPLOY, {}),
+        _response(PREVIEW, local),
+        _response(PREVIEW, peer),
+        _response(PREVIEW, local),
+        _response(PREVIEW, pending_peer),
+        later_response,
+        _response(PREVIEW, peer),
+    ]
     orchestrator, sender = _build(replies, targets=submitted)
     orchestrator._vpc_peer_cache = dict(PEERS)
 
@@ -370,12 +378,15 @@ def test_pending_missing_peer_remains_queued_without_redeployment(entrypoint):
         getattr(orchestrator, entrypoint)()
 
     assert orchestrator._pending_interfaces == submitted
-    assert len(sender.calls) == 9
-    assert sum(call["path"] == DEPLOY for call in sender.calls) == 1
+    assert [call["path"] for call in sender.calls] == [DEPLOY, PREVIEW, PREVIEW, PREVIEW, PREVIEW]
+    # Parent ownership is prepared once, followed by one verification round.
+    # Each requests the missing peer once; neither retries a pending result.
+    assert all(_requested(call) == {("SN1", "vpc10")} for call in sender.calls[1::2])
     assert all(_requested(call) == {("SN2", "vpc10")} for call in sender.calls[2::2])
     if entrypoint == "deploy_pending":
         assert orchestrator.deploy_accepted_mutations() == {"interfaces": [], "switches": []}
-        assert len(sender.calls) == 9
+        assert len(sender.calls) == 5
+    assert sender.gen.next == later_response
 
 
 @pytest.mark.parametrize("entrypoint", ENTRYPOINTS)

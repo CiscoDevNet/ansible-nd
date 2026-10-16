@@ -2364,15 +2364,12 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         return observed == expected and not children, children, None
 
     def _verify_interface_deployment(self, verification: set[tuple[str, str]]) -> None:
-        """Bound read-only verification without resubmitting an ambiguous deploy."""
-        pending: set[tuple[str, str]] = set()
-        for _attempt in range(_RECONCILIATION_ATTEMPTS):
-            _preview, pending, error = self._collect_interface_preview(verification)
-            if error is not None:
-                raise RuntimeError(f"Interface deployment could not be confirmed for {sorted(verification)!r}: {error}")
-            if not pending:
-                return
-        raise RuntimeError(f"Interface deployment could not be confirmed; pending configuration remains on {sorted(pending)!r}")
+        """Verify an ambiguous deploy once, retaining both-peer evidence checks."""
+        _preview, pending, error = self._collect_interface_preview(verification)
+        if error is not None:
+            raise RuntimeError(f"Interface deployment could not be confirmed for {sorted(verification)!r}: {error}")
+        if pending:
+            raise RuntimeError(f"Interface deployment could not be confirmed; pending configuration remains on {sorted(pending)!r}")
 
     def _deploy_interfaces(self, interfaces: set[tuple[str, str]]) -> ResponseType:
         """Clear no target until exact deploy results or scoped preview confirm it.
