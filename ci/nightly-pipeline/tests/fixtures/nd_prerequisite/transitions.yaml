@@ -1,0 +1,6 @@
+---
+cases:
+  http_207: {status: 207, object_failures: [{switchId: SERIAL00002, message: simulated-partial-failure}]}
+  api_errors: {success_sequence: [false, false, false]}
+  restore_success: {mismatched_domains: []}
+  restore_mismatch: {mismatched_domains: [switches]}

@@ -1,0 +1,85 @@
+# Dockerfile for the Cisco Nexus Dashboard (cisco.nd) Ansible nightly test image.
+#   https://github.com/CiscoDevNet/ansible-nd
+# Build:  docker build -t ansible_nd_setup -f Dockerfile_nd .
+FROM python:3.12.3
+
+# Avoid interactive debconf dialogs during apt installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# When building as root, pip prints a warning; silence it in the image.
+ENV PIP_ROOT_USER_ACTION=ignore
+
+# Metadata
+LABEL maintainer="nightly@example.com"
+LABEL description="Cisco Nexus Dashboard (cisco.nd) Ansible nightly test runner"
+
+ENV HOME=/root \
+    BASE_DIRECTORY=/root/ansible \
+    COLLECTIONS_DIRECTORY=/root/ansible/collections/ansible_collections/cisco/nd
+
+# Install OS packages required for building Python packages, git and ssh.
+# libxml2-dev / libxslt1-dev are added (vs the DCNM image) so lxml -- a cisco.nd
+# runtime dependency -- can build from source if a wheel is unavailable.
+RUN apt-get update \
+    && apt-get install -y -qq --no-install-recommends \
+       git \
+       ssh \
+       build-essential \
+       python3-dev \
+       libssl-dev \
+       libffi-dev \
+       libxml2-dev \
+       libxslt1-dev \
+       curl \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create needed directories (match Jenkinsfile expectations)
+RUN mkdir -p ${BASE_DIRECTORY} \
+    && mkdir -p ${COLLECTIONS_DIRECTORY} \
+    && mkdir -p ${BASE_DIRECTORY}/collections \
+    && mkdir -p ${BASE_DIRECTORY}/playbooks \
+    && mkdir -p /root/.ssh \
+    && chmod 700 /root/.ssh
+
+# Upgrade pip, create a virtualenv at $BASE_DIRECTORY/venv and install Python deps there.
+#
+# Runtime deps (from cisco.nd requirements.txt): requests_toolbelt, jsonpath-ng,
+#   lxml, pydantic==2.12.5.
+# `ansible` (community package) bundles ansible.netcommon (>=2.6.1, required by
+#   cisco.nd galaxy.yml) and ansible.utils, so no separate ansible-galaxy step is
+#   needed for the httpapi connection.
+# `ansible-lint` is required by the pipeline's lint stage (the DCNM image omitted it).
+# black / flake8 / pexpect / yamllint / pytest-xdist / coverage are lint/test tooling
+#   carried over from the DCNM image for parity.
+# NOTE (vs DCNM): pydantic bumped 2.11.4 -> 2.12.5; deepdiff dropped (cisco.nd does
+#   not use it); requests_toolbelt / jsonpath-ng / lxml / ansible-lint added.
+RUN python -m pip install --upgrade pip setuptools wheel virtualenv \
+    && python -m virtualenv ${BASE_DIRECTORY}/venv \
+    && ${BASE_DIRECTORY}/venv/bin/pip install --upgrade pip setuptools wheel \
+    && ${BASE_DIRECTORY}/venv/bin/pip install \
+       ansible \
+       ansible-lint \
+       requests \
+       requests_toolbelt \
+       jsonpath-ng \
+       lxml \
+       pydantic==2.12.5 \
+       black==24.3.0 \
+       flake8 \
+       pexpect \
+       yamllint \
+       pytest-xdist \
+       coverage==4.5.4
+
+# Put the venv bin on PATH so ansible and ansible-galaxy are available by default
+ENV PATH=${BASE_DIRECTORY}/venv/bin:${PATH}
+
+# Make id_rsa permissions safe if the key exists in the image later
+RUN [ -f "$HOME/.ssh/id_rsa" ] && chmod 600 $HOME/.ssh/id_rsa || true
+
+WORKDIR ${BASE_DIRECTORY}
+
+# By default, run a shell. CI (Jenkins) runs commands inside the container.
+# (The DCNM file had duplicate CMDs; consolidated to a single effective one here.)
+CMD ["/bin/bash"]

@@ -1,0 +1,17 @@
+---
+# verify_logical_interface_namespace is read-only and protects target setup
+# files from deleting pre-existing loopbacks, SVIs, port-channels, or subifs.
+- name: "verify_logical_interface_namespace guard {{ _ndp_operation.switch_ref }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.expected_state == 'absent'
+      - _ndp_operation.interfaces | length > 0
+      - _ndp_operation.interfaces | unique | list | length == _ndp_operation.interfaces | length
+      - _ndp_operation.interface_type in ['loopback', 'svi', 'port_channel', 'subinterface']
+    fail_msg: >-
+      The planner emitted an invalid logical-interface namespace verification
+      operation for {{ _ndp_operation.switch_ref }}.
+    success_msg: >-
+      Reserved {{ _ndp_operation.interface_type }} namespace is unused:
+      {{ _ndp_operation.interfaces | join(', ') }}.
+  run_once: true
