@@ -5,6 +5,9 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
+import logging
+from collections.abc import Sequence
+from copy import deepcopy
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
@@ -18,6 +21,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd 
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
+
+log = logging.getLogger(__name__)
 
 
 class NDStateMachine:
@@ -203,21 +208,44 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> ResponseType | None:
-        """Execute an API operation with standardized error handling."""
+    ) -> bool:
+        """
+        # Summary
+
+        Execute an API operation with standardized error handling. Returns `True` when the operation returned, or was skipped because
+        the module runs in check mode (a dry run reports intended state), and `False` when it raised and `ignore_errors` swallowed the
+        failure. Callers apply an `existing` mutation only on `True`, so a failed request never appears in `after` (issue #597).
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If the operation raises and `ignore_errors` is false.
+        """
         try:
             if not self.check_mode:
-                return operation(*args, **kwargs)
-            return None
+                operation(*args, **kwargs)
+            return True
         except Exception as e:
             error_msg = f"{error_msg_prefix}: {e}"
             if not self.ignore_errors:
                 raise NDStateMachineError(error_msg) from e
-        return None
+        return False
 
     def _manage_create_update_state(self) -> None:
         """
-        Handle merged/replaced/overridden states.
+        # Summary
+
+        Handle merged/replaced/overridden states. Classification reads `existing` but never mutates it; each item is applied to
+        `existing` (which `NDOutput` reports as `after`) only after its request is accepted, or in check mode, so a failed run reports
+        `after` and `changed` that describe controller state (issue #597).
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If classifying a proposed item fails and `ignore_errors` is false.
+        - If an update or create request fails and `ignore_errors` is false.
         """
         execution_baseline = self.existing.copy()
         items_to_create: list[NDBaseModel] = []
@@ -261,16 +289,14 @@ class NDStateMachine:
                     items_with_no_diff.append(existing_match or final_candidate)
                     continue
 
-                # Prepare final config based on state
-                if self.state == "merged":
-                    # Merge with existing
-                    final_item = self.existing.merge(proposed_item)
+                # Build the item to send WITHOUT touching self.existing (issue #597). `NDBaseModel.merge`
+                # mutates self in place, so merged state merges into a deep copy of the existing match;
+                # the copy is applied to `existing` only once the controller accepts it.
+                if self.state == "merged" and existing_match is not None:
+                    final_item = existing_match.model_copy(deep=True).merge(proposed_item)
+                elif self.state == "merged":
+                    final_item = proposed_item
                 else:
-                    # Replace or creates
-                    if diff_status == "changed":
-                        self.existing.replace(final_candidate)
-                    else:
-                        self.existing.add(final_candidate)
                     final_item = final_candidate
 
                 # Categorize by operation type
@@ -288,7 +314,7 @@ class NDStateMachine:
                     raise NDStateMachineError(error_msg) from e
 
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
-        # preflight and before this method mutates self.existing (PR #362 review).
+        # preflight and before this method applies anything to self.existing (PR #362 review).
 
         # ``deploy: true`` is an execution-state request, not merely an intent
         # mutation request.  A previous run can have accepted the PUT/POST and
@@ -301,57 +327,80 @@ class NDStateMachine:
                 if self.model_orchestrator.reconcile_no_diff(items_with_no_diff):
                     self.output.mark_changed()
             except Exception as e:
-                # Planning above mutates ``self.existing`` before any I/O so
-                # check mode can expose the intended result. Reconciliation is
-                # the first runtime action; if its read-only preview is
-                # contradictory or otherwise fails, no proposed mutation has
-                # been accepted and failure output must retain the execution
-                # baseline rather than advertise every planned create/update.
-                self.existing = execution_baseline.copy()
+                # Reconciliation is the first runtime action. Planning never applies anything to ``self.existing``
+                # (issue #597), so on failure ``after`` already describes the execution baseline; only the
+                # error needs normalizing.
                 self.output.assign(after=self.existing)
                 raise NDStateMachineError(f"Failed to reconcile unchanged resources: {e}") from e
 
-        # Execute updates (always individual). Planning above mutates
-        # ``self.existing`` before I/O so check mode can expose the intended
-        # result. If a real update fails, rebuild ``after`` from the execution
-        # baseline plus only the preceding updates the controller accepted;
-        # otherwise a rejected and every not-yet-attempted update appear as
-        # successful in changed/after output.
-        accepted_updates: list[NDBaseModel] = []
-        try:
-            for item in items_to_update:
-                self._execute_operation(
-                    self.model_orchestrator.update,
-                    item,
-                    previous_model=execution_baseline.get(item.get_identifier_value()),
-                    error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
-                )
-                accepted_updates.append(item)
-        except Exception:
-            self.existing = execution_baseline.copy()
-            for item in accepted_updates:
-                if not self.existing.replace(item):
-                    self.existing.add(item)
-            if accepted_updates:
-                self.sent.add_many(accepted_updates)
-            self.output.assign(after=self.existing)
-            raise
+        # Execute updates (always individual); apply each only once accepted (issue #597). Nothing is applied
+        # before acceptance, so when an update fails ``self.existing`` already equals the execution baseline plus
+        # the accepted updates and no rollback is needed. ``previous_model`` is read from the baseline so the
+        # orchestrator always sees the pre-run controller model, independent of apply order.
+        for item in items_to_update:
+            if self._execute_operation(
+                self.model_orchestrator.update,
+                item,
+                previous_model=execution_baseline.get(item.get_identifier_value()),
+                error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+            ):
+                self._apply_accepted([item])
 
-        # Execute creates (bulk or individual)
+        # Execute creates (bulk or individual); apply each only once accepted.
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                self._create_bulk_deferred(items_to_create)
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
-
-        # Mark as sent only after successful API operations
-        successfully_sent = items_to_update + items_to_create
-        if successfully_sent:
-            self.sent.add_many(successfully_sent)
+                    if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
+                        self._apply_accepted([item])
 
         # Log operation
         self.output.assign(after=self.existing)
+
+    def _apply_accepted(self, items: Sequence[NDBaseModel]) -> None:
+        """
+        # Summary
+
+        Record controller-accepted create/update items: apply each to `existing` (replace when the identifier is already present,
+        else add) and add it to `sent`. Called only after an item's request succeeded, in check mode (a dry run reports intended
+        state), or for the accepted subset of a failed bulk create (issue #597).
+
+        ## Raises
+
+        None
+        """
+        for item in items:
+            if self.existing.get(item.get_identifier_value()) is not None:
+                self.existing.replace(item)
+            else:
+                self.existing.add(item)
+        if items:
+            self.sent.add_many(list(items))
+
+    def _create_bulk_deferred(self, items: list[NDBaseModel]) -> list[NDBaseModel]:
+        """
+        # Summary
+
+        Send one bulk create and apply to `existing` only the items the controller accepted (issue #597). On success that is every
+        item. On a failed request, whether it propagates or `ignore_errors` swallows it, the orchestrator's `accepted_mutations` hook
+        names the accepted subset (interface orchestrators read their deploy queue; the base default is none), which is applied before
+        the error propagates so `after` and `changed` describe controller state. Returns the applied items.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If the bulk create fails and `ignore_errors` is false; re-raised after the accepted subset is applied.
+        """
+        try:
+            succeeded = self._execute_operation(self.model_orchestrator.create_bulk, items, error_msg_prefix="Failed to create in bulk")
+        except NDStateMachineError:
+            self._apply_accepted(self._hook_result("accepted_mutations", items))
+            raise
+        accepted = list(items) if succeeded else self._hook_result("accepted_mutations", items)
+        self._apply_accepted(accepted)
+        return accepted
 
     def _warn_unsupported(self, collection) -> None:
         """Warn once per object whose type this module preserves read-only."""
@@ -408,23 +457,97 @@ class NDStateMachine:
         self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
-        """Delete a list of items individually or in bulk."""
+        """
+        # Summary
+
+        Delete `items` in bulk or one at a time, applying to `removed` and `existing` (reported as `after`) only the removals the
+        controller accepted (issue #597, final review). A bulk delete is all-or-nothing from the state machine's view: every item on
+        success, none when `ignore_errors` swallows the failure. Per-item deletes are applied per accepted item: a swallowed failure is
+        not recorded as removed, and when a failure propagates the items deleted before it are applied first, so `after` and `changed`
+        describe controller state.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a delete request fails and `ignore_errors` is false; re-raised after the removals accepted before it are applied.
+        """
         if not items:
             return
 
-        # Execute deletes (bulk or individual)
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
-        else:
+            succeeded = self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            self._apply_removed(items if succeeded else [])
+            return
+
+        accepted: list[NDBaseModel] = []
+        try:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
+                    accepted.append(item)
+        except NDStateMachineError:
+            self._apply_removed(accepted)
+            raise
+        self._apply_removed(accepted)
 
-        # Mark as removed only after successful API operations, mirroring ``sent``.
-        self.removed.add_many(items)
+    def _apply_removed(self, accepted: Sequence[NDBaseModel]) -> None:
+        """
+        # Summary
 
-        # Batch remove from collection (single index rebuild)
-        keys_to_delete = [item.get_identifier_value() for item in items]
-        self.existing.delete_many(keys_to_delete)
+        Record controller-accepted removals: add them to `removed` and drop them from `existing` (one index rebuild), then refresh
+        `after`. Marks items as removed only after their API operation succeeded, mirroring `sent` (issue #597, final review).
 
-        # Log deletion
+        ## Raises
+
+        None
+        """
+        self.removed.add_many(list(accepted))
+        self.existing.delete_many([item.get_identifier_value() for item in accepted])
+        self.output.assign(after=self.existing)
+
+    def _hook_result(self, name: str, items: Sequence[NDBaseModel]) -> list[NDBaseModel]:
+        """
+        # Summary
+
+        Call the orchestrator failure-path hook `name` (`accepted_mutations` or `unaccepted_removals`) with `items` and return its result
+        as a list. A hook that raises is logged and treated as naming nothing, so a defective hook never replaces the original error and
+        never raises from `reconcile_after_failure` (issue #597, final review).
+
+        ## Raises
+
+        None
+        """
+        try:
+            return list(getattr(self.model_orchestrator, name)(list(items)))
+        except Exception:  # pylint: disable=broad-exception-caught
+            log.exception("%s.%s hook failed; treating it as naming no items", type(self.model_orchestrator).__name__, name)
+            return []
+
+    def reconcile_after_failure(self) -> None:
+        """
+        # Summary
+
+        Restore to `existing` (reported as `after`) the removed items whose delete-side request the controller has not accepted, so a
+        failure after `manage_state` (an interface orchestrator's `remove_pending`, whose `delete_bulk` only queues) does not report
+        interfaces the controller still holds as gone (issue #597). The orchestrator's `unaccepted_removals` hook names them (interface
+        orchestrators read their delete-side queues; the base default is none). Each is re-added from `before` and dropped from
+        `removed`. Idempotent and safe to call when nothing failed or nothing was removed. Called by `fail_from_exception`.
+
+        ## Raises
+
+        None
+        """
+        if len(self.removed) == 0:
+            return
+        unaccepted = self._hook_result("unaccepted_removals", list(self.removed))
+        if not unaccepted:
+            return
+        unaccepted_keys = {item.get_identifier_value() for item in unaccepted}
+        for key in unaccepted_keys:
+            before_item = self.before.get(key)
+            if before_item is not None and self.existing.get(key) is None:
+                self.existing.add(deepcopy(before_item))
+        still_removed = [item for item in self.removed if item.get_identifier_value() not in unaccepted_keys]
+        self.removed = NDConfigCollection(model_class=self.model_class)
+        self.removed.add_many(still_removed)
         self.output.assign(after=self.existing)

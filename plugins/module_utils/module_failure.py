@@ -30,6 +30,7 @@ STATE_MACHINE_ERROR_PREFIX = "Module execution failed"
 UNHANDLED_ERROR_LOG = "Unhandled exception during module execution"
 UNHANDLED_ERROR_PREFIX = "Module failed"
 FORMAT_FAILURE_LOG = "Formatting module output for the failure result failed; reporting the original error without it"
+RECONCILE_FAILURE_LOG = "Reconciling the module output after the failure failed; reporting the output as it stands"
 
 
 def fail_from_exception(module: AnsibleModule, module_log: logging.Logger, nd_state_machine: NDStateMachine | None, error: BaseException) -> NoReturn:
@@ -45,6 +46,7 @@ def fail_from_exception(module: AnsibleModule, module_log: logging.Logger, nd_st
     The message also carries the `finalize_accepted_intent` note when the state machine's orchestrator is an
     `NDBaseInterfaceOrchestrator` with controller-accepted mutations to deploy, and the traceback when `output_level` is `debug`.
     A failure inside `output.format()` is logged and the result is reported without the output, so it cannot mask `error`.
+    Before formatting, `reconcile_after_failure` restores unaccepted delete-side removals to `after` (issue #597); a failure there is logged the same way.
 
     ## Raises
 
@@ -61,6 +63,12 @@ def fail_from_exception(module: AnsibleModule, module_log: logging.Logger, nd_st
 
     output: dict[str, Any] = {}
     if nd_state_machine is not None:
+        # Restore unaccepted delete-side removals to `after` before formatting (issue #597). A reconcile failure is logged and
+        # the output is formatted as it stands, so it can never mask `error`.
+        try:
+            nd_state_machine.reconcile_after_failure()
+        except Exception:  # pylint: disable=broad-except
+            module_log.exception(RECONCILE_FAILURE_LOG)
         try:
             output = nd_state_machine.output.format()
         except Exception:  # pylint: disable=broad-except
