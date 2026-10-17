@@ -421,14 +421,17 @@ class NetworkWorkflowCoordinator:
             self._trace("parent_deferred_deploys_start", deploy_payload_count=len(deploy_payloads))
             for deploy_payload in deploy_payloads:
                 if deploy_payload:
-                    self._trace("parent_deferred_deploy_start", deploy_payload=deploy_payload)
+                    undeploy = deploy_payload.get("_undeploy", False)
+                    request_payload = {key: value for key, value in deploy_payload.items() if key != "_undeploy"}
+                    self._trace("parent_deferred_deploy_start", deploy_payload=request_payload)
                     deploy_trace = self._deploy_network_attachments(
                         parent_module_args,
                         self.strategy,
-                        deploy_payload,
+                        request_payload,
+                        undeploy=undeploy,
                     )
                     self._merge_api_trace(parent_result, deploy_trace)
-                    self._trace("parent_deferred_deploy_end", deploy_payload=deploy_payload)
+                    self._trace("parent_deferred_deploy_end", deploy_payload=request_payload)
 
         # Step 6 — aggregate and structure results
         result = self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
@@ -686,9 +689,8 @@ class NetworkWorkflowCoordinator:
 
         ND rejects Network removal while attached or pending attachment changes are
         present.  For ``state=deleted`` the requested ``attach`` block and
-        per-Network ``deploy`` boolean are intentionally ignored; only
-        ``deploy_type`` controls whether the pre-delete deployment is scoped to
-        switches or to the Network.
+        per-Network ``deploy`` is ignored. Standalone/MSD cleanup honors
+        ``deploy_type``; MCFG parent cleanup uses OneManage Network deployment.
         """
         return self._network_state_machine().run_deleted(module_args, strategy)
 
@@ -1044,15 +1046,16 @@ class NetworkWorkflowCoordinator:
         *target_maps: dict[str, set[str]],
     ) -> list[dict[str, Any]]:
         """Build deploy requests from one or more Network/switch maps."""
-        return self.attachments.build_deploy_payloads(config, *target_maps)
+        return self.attachments.build_deploy_payloads(config, *target_maps, strategy=self.strategy)
 
     def _build_delete_deploy_payloads(
         self,
         config: list[dict],
         *target_maps: dict[str, set[str]],
+        strategy: BaseNetworkStrategy | None = None,
     ) -> list[dict[str, Any]]:
         """Build delete cleanup deploy requests from Network/switch maps."""
-        return self.attachments.build_delete_deploy_payloads(config, *target_maps)
+        return self.attachments.build_delete_deploy_payloads(config, *target_maps, strategy=strategy)
 
     def _build_pending_network_deploy_payloads(
         self,
@@ -1139,6 +1142,7 @@ class NetworkWorkflowCoordinator:
         module_args: dict,
         strategy: BaseNetworkStrategy,
         deploy_payload: dict[str, Any],
+        undeploy: bool = False,
     ) -> dict[str, Any]:
         """Deploy pending Network attachment changes once."""
         if self.module.check_mode:
@@ -1147,7 +1151,7 @@ class NetworkWorkflowCoordinator:
                 "failed": False,
                 "check_mode_deploy_payloads": [deploy_payload],
             }
-        return self.attachments.deploy_network_attachments(module_args, strategy, deploy_payload)
+        return self.attachments.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=undeploy)
 
     # ── Child task runner ─────────────────────────────────────────
 

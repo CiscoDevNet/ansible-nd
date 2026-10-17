@@ -120,16 +120,22 @@ options:
           - Applies only to parent/standalone Network attachments, not child
             fabric override entries.
           - For C(state=deleted), the C(deploy) value is ignored; the module
-            deattaches existing attachments, deploys the detach using
-            C(deploy_type), and then removes the Network.
+            detaches existing attachments, deploys the detach at the selected
+            scope, and then removes the Network.
         type: bool
         default: true
       deploy_type:
         description:
-          - Scope of the deploy operation when C(deploy=true).
+          - Scope of Network deployment and undeployment.
           - C(switch) deploys only the switches affected by this Network
             attachment operation when switch identifiers are available.
           - C(network) deploys the pending Network changes for this Network.
+          - Standalone and MSD attachment removals and Network deletion use
+            the selected scope. C(switch) also deploys other pending changes
+            on the affected switches.
+          - MCFG parent deployment uses the OneManage Network endpoint
+            regardless of C(deploy_type).
+          - Network deletion waits for detach deployment before removal.
         type: str
         choices: [ switch, network ]
         default: switch

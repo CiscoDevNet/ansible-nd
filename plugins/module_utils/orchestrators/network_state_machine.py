@@ -305,14 +305,26 @@ class NetworkStateMachine:
         post_attach: dict[str, Any],
         defer_deploy: bool,
     ) -> dict[str, Any]:
-        """Deploy or defer pending work produced by attachment phases."""
+        """
+        Deploy or defer pending work produced by attachment phases.
+
+        ## Raises
+
+        ### ValueError
+
+        - If an attachment removal has no affected switch ID for undeploy.
+        """
+        detach_targets = pre_attach.get("deploy_targets", {})
+        detach_payloads = self.coordinator._build_delete_deploy_payloads(config, detach_targets, strategy=strategy) if detach_targets else []
+        if detach_targets and not detach_payloads:
+            raise ValueError("Cannot deploy Network attachment removals without affected switch IDs.")
         deploy_payloads = self.coordinator._build_deploy_payloads(
             config,
-            pre_attach.get("deploy_targets", {}),
+            {},
             post_attach.get("deploy_targets", {}),
         )
         self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads:
+        if not deploy_payloads and not detach_targets:
             deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
                 result,
                 config,
@@ -320,7 +332,7 @@ class NetworkStateMachine:
                 strategy,
             )
             self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads and self._should_query_pending_networks(result, config):
+        if not deploy_payloads and not detach_targets and self._should_query_pending_networks(result, config):
             self._trace("deploy_pending_query_start")
             current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
             self.coordinator._merge_api_trace(result, query_trace)
@@ -331,11 +343,11 @@ class NetworkStateMachine:
                 strategy,
             )
             self._trace("deploy_pending_query_end", current_count=len(current_networks), payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads:
+        if not deploy_payloads and not detach_payloads:
             return result
 
         if defer_deploy:
-            result["_deferred_deploy_payloads"] = deploy_payloads
+            result["_deferred_deploy_payloads"] = [{"_undeploy": True, **payload} for payload in detach_payloads] + deploy_payloads
             return result
 
         if self._check_mode():
@@ -344,11 +356,16 @@ class NetworkStateMachine:
                 {
                     "changed": True,
                     "failed": False,
-                    "check_mode_deploy_payloads": deploy_payloads,
+                    "check_mode_deploy_payloads": detach_payloads + deploy_payloads,
                 },
             )
             return result
 
+        for deploy_payload in detach_payloads:
+            self._trace("undeploy_start", deploy_payload=deploy_payload)
+            deploy_trace = self.coordinator._deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
+            self.coordinator._merge_api_trace(result, deploy_trace)
+            self._trace("undeploy_end", deploy_payload=deploy_payload)
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
             deploy_trace = self.coordinator._deploy_network_attachments(
@@ -526,16 +543,14 @@ class NetworkStateMachine:
         target_network_names = wait_network_names
         if target_network_names is None:
             target_network_names = self.coordinator._configured_network_names(config)
-        is_mcfg_parent = bool(getattr(strategy, "is_parent", False) and getattr(strategy, "is_multicluster", False))
         delete_deploy_targets: dict[str, set[str]] = {}
-        if not is_mcfg_parent:
-            delete_deploy_targets = {network_name: set() for network_name in target_network_names if network_name}
         for network_name, switch_ids in (detach_trace.get("deploy_targets", {}) if detach_trace else {}).items():
             delete_deploy_targets.setdefault(network_name, set()).update(switch_ids or set())
 
         deploy_payloads = self.coordinator._build_delete_deploy_payloads(
             config,
             delete_deploy_targets,
+            strategy=strategy,
         )
         self._trace("delete_deploy_payloads_built", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if self._check_mode():
@@ -556,6 +571,7 @@ class NetworkStateMachine:
                     api_args,
                     strategy,
                     deploy_payload,
+                    undeploy=True,
                 )
             )
             self._trace("delete_deploy_end", deploy_payload=deploy_payload)
