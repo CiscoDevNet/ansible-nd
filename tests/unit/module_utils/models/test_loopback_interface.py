@@ -298,12 +298,33 @@ def test_loopback_interface_00067():
     assert isinstance(instance.route_map_tag, int)
 
 
-@pytest.mark.parametrize("value", [True, 1.0, -1, 4294967296, "not-a-number", "1.5"])
-def test_loopback_route_map_tag_rejects_non_integer_or_out_of_range_values(value) -> None:
-    """The loopback tag must remain a valid integer in the ND wire payload."""
+def test_loopback_interface_00068():
+    """Legacy numeric-string input must become an integer in the full ND request payload."""
+    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    config["config_data"]["network_os"]["policy"]["route_map_tag"] = "54321"
+    policy_from_string = LoopbackInterfaceModel.from_config(config).to_payload()["configData"]["networkOS"]["policy"]
+    assert policy_from_string["routeMapTag"] == 54321
+    assert isinstance(policy_from_string["routeMapTag"], int)
+
+    config["config_data"]["network_os"]["policy"]["route_map_tag"] = 54321
+    policy_from_integer = LoopbackInterfaceModel.from_config(config).to_payload()["configData"]["networkOS"]["policy"]
+    assert policy_from_integer == policy_from_string
+
+
+@pytest.mark.parametrize("value", [True, False, 1.0, "not-a-number", "1.5", ""])
+def test_loopback_route_map_tag_rejects_non_integer_values(value) -> None:
+    """The loopback tag must remain an integer in the ND wire payload."""
 
     with pytest.raises(ValidationError, match="route_map_tag"):
         NexusLoopbackPolicyModel(route_map_tag=value, policy_type="loopback")
+
+
+@pytest.mark.parametrize("value,expected", [(-1, -1), (4294967296, 4294967296), ("-1", -1), ("4294967296", 4294967296)])
+def test_loopback_route_map_tag_does_not_reject_nd_accepted_values(value, expected) -> None:
+    """ND 4.3.1 accepted and echoed these staged values; the model must read them back without failing."""
+
+    policy = NexusLoopbackPolicyModel(route_map_tag=value, policy_type="loopback")
+    assert policy.model_dump(by_alias=True)["routeMapTag"] == expected
 
 
 # =============================================================================

@@ -147,23 +147,25 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
         default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
     )
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: int | None = Field(default=None, alias="routeMapTag", ge=0, le=4294967295, description="Route-Map tag associated with interface IP")
+    route_map_tag: int | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
 
     # TODO(4.2.1) loopback-route-map-tag-string-echo: Revalidate the historical
     # numeric-string GET echo before removing read-side compatibility.
     # Accept older playbooks and any GET echo that spells this numeric tag as a
     # string, while always serializing the integer required by both schemas.
+    # Do not impose a range absent from intLoopbackTemplate: ND 4.3.1 accepted
+    # and echoed values outside 0..4294967295 in a staged live probe.
     @field_validator("route_map_tag", mode="before")
     @classmethod
     def coerce_route_map_tag(cls, value):
         """
         # Summary
 
-        Normalize an integer or decimal-string tag to the integer wire type.
+        Normalize an integer or signed decimal-string tag to the integer wire type.
 
         ## Raises
 
-        None
+        ValueError: The tag is a boolean or is not an ASCII decimal integer.
         """
         if value is None:
             return value
@@ -171,8 +173,10 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
             raise ValueError("route_map_tag must be an integer, not a boolean")
         if isinstance(value, int):
             return value
-        if isinstance(value, str) and value.isascii() and value.isdecimal():
-            return int(value)
+        if isinstance(value, str) and value.isascii():
+            digits = value[1:] if value.startswith(("+", "-")) else value
+            if digits.isdecimal():
+                return int(value)
         raise ValueError("route_map_tag must be a decimal integer")
 
 
