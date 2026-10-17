@@ -17,7 +17,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsGet, EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -44,7 +44,7 @@ class _Sentinel(Enum):
     UNSET = 0
 
 
-class FabricContext:
+class FabricContext:  # pylint: disable=too-many-instance-attributes
     """
     # Summary
 
@@ -63,6 +63,7 @@ class FabricContext:
     - Via `get_switch_ip` if no switch matches the given switch ID.
     - Via `get_platform_type` if no switch matches the given management IP.
     - Via `fabric_summary` if the summary payload carries an embedded `code` error key.
+    - Via `fabric_details` if the fabric details request fails or its payload carries an embedded `code` error key.
     - Via the `switches` / `switch_map` accessors if the fabric does not exist.
     """
 
@@ -80,6 +81,8 @@ class FabricContext:
         self._fabric_name = fabric_name
         # `_Sentinel.UNSET` distinguishes "not yet fetched" from "fetched but the fabric does not exist" (None).
         self._fabric_summary: dict | None | Literal[_Sentinel.UNSET] = _Sentinel.UNSET
+        # Same tri-state as `_fabric_summary`: `_Sentinel.UNSET` is "not yet fetched", `None` is "fetched, the fabric does not exist".
+        self._fabric_details: dict | None | Literal[_Sentinel.UNSET] = _Sentinel.UNSET
         self._switches: list[dict] | None = None
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
@@ -160,6 +163,35 @@ class FabricContext:
             self._fabric_summary = result if result else None
         return self._fabric_summary
 
+    @property
+    def fabric_details(self) -> dict | None:
+        """
+        # Summary
+
+        Return the cached full fabric body, fetching it from the `/api/v1/manage/fabrics/{fabric_name}` endpoint on first access. Unlike
+        `fabric_summary`, whose `management` object carries only a handful of keys, this body holds every fabric setting (for example
+        `management.mplsHandoff`). It is fetched only by callers that need a setting the summary lacks.
+
+        Returns `None` if the fabric does not exist.
+
+        Fails closed like `fabric_summary`: a payload carrying an embedded `code` key is rejected with `RuntimeError`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the request fails with any non-success status other than 404.
+        - If the payload carries an embedded `code` error key instead of the fabric body.
+        """
+        if self._fabric_details is _Sentinel.UNSET:
+            ep = EpManageFabricsGet()
+            ep.fabric_name = self._fabric_name
+            result = self._query_get(ep.path)
+            if result and "code" in result:
+                raise RuntimeError(f"GET {ep.path} returned an embedded error instead of fabric details: {result.get('message', result)}")
+            self._fabric_details = result if result else None
+        return self._fabric_details
+
     def fabric_exists(self) -> bool:
         """
         # Summary
@@ -226,7 +258,7 @@ class FabricContext:
         """
         # Summary
 
-        Drop all cached state so the next access to `fabric_summary`, `switches`, `switch_map`, `switch_map_by_id`, or the
+        Drop all cached state so the next access to `fabric_summary`, `fabric_details`, `switches`, `switch_map`, `switch_map_by_id`, or the
         `platformType` lookup re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
@@ -234,6 +266,7 @@ class FabricContext:
         None
         """
         self._fabric_summary = _Sentinel.UNSET
+        self._fabric_details = _Sentinel.UNSET
         self._switches = None
         self._switch_map = None
         self._switch_map_by_id = None
