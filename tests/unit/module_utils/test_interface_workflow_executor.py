@@ -2943,7 +2943,8 @@ def test_workflow_mixed_policies_share_one_bulk_update() -> None:
     assert svis.pending_deploys == (("Vlan100", "SERIAL1"),)
 
 
-def test_workflow_vpc_pair_qualified_bulk_result_is_exact_success() -> None:
+@pytest.mark.parametrize("vpc_result_name", ["SERIAL1~SERIAL2~vpc10", "SERIAL2~SERIAL1~vpc10"])
+def test_workflow_vpc_pair_qualified_bulk_result_is_exact_success(vpc_result_name) -> None:
     class BulkFake(BulkUpdateOrchestrator, FakeOrchestrator):
         pass
 
@@ -2958,7 +2959,7 @@ def test_workflow_vpc_pair_qualified_bulk_result_is_exact_success() -> None:
             super().modify_bulk_prepared(payloads, **kwargs)
             for row in self.rest_send.response_current["DATA"]["results"]:
                 if row["name"].endswith("~vpc10"):
-                    row["name"] = "SERIAL1~SERIAL2~vpc10"
+                    row["name"] = vpc_result_name
 
     events = []
     vpcs = PairBulkFake("vpc", events)

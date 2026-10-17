@@ -623,6 +623,8 @@ class InterfaceWorkflowPlanner:
     def _vpc_record_fingerprint(current: Mapping[str, Any], local_switch_id: str | None = None, peer_switch_id: str | None = None) -> Any:
         """Return configured vPC state, optionally binding peer fields to physical switch IDs.
 
+        TODO(4.3.1) vpc-peer-field-echo-orientation: Recheck both echo forms
+        against the controller before simplifying this comparison.
         Some ND echoes preserve the original peer1/peer2 orientation; ND 4.3.1 can instead
         echo peer1 as the reporting switch and peer2 as its peer. Both forms are compared
         explicitly by ``_vpc_records_match``. Member-port spelling and ordering are only
@@ -937,6 +939,8 @@ class InterfaceWorkflowPlanner:
     ) -> bool:
         """Recognize only an exact, preview-proven child deletion tombstone.
 
+        TODO(4.3.1) staged-subinterface-delete-echo: Recheck this tombstone
+        shape before changing the preview-proven exception.
         ND 4.3.1 can retype a deleted managed subinterface as structural
         ``ethernet`` while retaining a ``userDefined/interface_delete`` row.
         The row alone is not ownership proof: require the one-child preview to

@@ -13,7 +13,7 @@ short_description: Manage multiple Cisco Nexus Dashboard interface families with
 description:
 - Coordinates several interface resource families in one module execution.
 - Validates and plans every resource group before the first possible mutation.
-- Fetches the complete configured-interface inventory once per targeted switch and shares it across all requested families.
+- Shares a complete configured-interface snapshot across the requested families on each targeted switch.
 - Keeps that complete family inventory internal for planning and safety while reporting only explicitly requested identities for
   V(merged), V(replaced), and V(deleted). V(overridden) continues to report its complete authoritative family scope.
 - Each O(resources[].config) uses the authoritative input contract and validation logic of the standalone module selected by
@@ -23,8 +23,8 @@ description:
 - Normal mode executes the complete validated plan in dependency-safe order and consolidates compatible deferred remove and deploy
   actions. A newly routed parent needed by a same-workflow subinterface is an exception that requires an earlier parent deployment.
   Successful mutations return projected intended state by default; O(verify.enabled=true) refetches affected switches to report observed
-  controller state. The module can also deploy previously staged intent for explicitly requested interfaces when the current workflow
-  has no interface mutations.
+  controller state. With O(config_actions.deploy=true), the module can also deploy previously staged intent for explicitly requested
+  interfaces, alongside new interface mutations or on its own.
 author:
 - Mike Wiebe (@mikewiebe)
 options:
@@ -112,8 +112,8 @@ options:
     - Controls actions coordinated after all interface mutation groups complete.
     - A mutation failure stops later mutation writes. When O(config_actions.deploy=true), any earlier targets backed by exact controller
       success evidence are still deployed together in one failure-path request; failed, uncertain, and unattempted targets are excluded.
-    - A zero-mutation workflow can deploy previously staged controller intent for explicitly requested interfaces when the already-fetched
-      fabric switch record has an explicit out-of-sync or pending status.
+    - Previously staged controller intent for explicitly requested interfaces can be deployed alongside new changes or in a
+      zero-mutation workflow when the fabric switch record has an explicit out-of-sync or pending status.
     type: dict
     suboptions:
       deploy:
@@ -172,8 +172,7 @@ notes:
   missing, self-referential, conflicting, or inverse-inconsistent pair records.
 - vPC identity is pair-scoped. Equal vPC names on different pairs are planned independently, while both peer echoes for one pair are
   required and treated as one resource.
-- Controller/orchestrator-resolved vPC C(peerSwitchId) is internal routing metadata. It is injected into mutation payloads but omitted as
-  C(peer_switch_id) from public target and family snapshots and from operation C(changes).
+- vPC peer identity is resolved by the module and is not exposed as a user-configurable C(peer_switch_id) field or an operation change.
 - For V(merged) and V(replaced), O(resources[].type) is the desired policy family. An explicitly listed interface using another eligible
   policy in the same structural interface domain is changed with one destination-family replacement request; no separate transition
   option is required.
@@ -207,10 +206,8 @@ notes:
   port under V(iosXeRoutedHost) but clears its configurable policy fields to the IOS-XE template defaults.
 - An unconfigured default V(trunkHost) physical interface retains the ordinary bulk-create path and is never converted into a
   per-interface transition, preserving the workflow's scale advantage.
-- Raw interface inventories and interface-summary safety rows use the same interface-scoped paginator. It advances by actual rows,
-  validates total/remaining/next-offset metadata, and rejects duplicates, repeats, contradictions, no progress, and page-limit
-  exhaustion. A cache is published only after the complete retrieval succeeds. Reads are shared for the complete workflow rather than
-  repeated per resource group or interface, although pagination can require multiple GETs for a switch.
+- Interface inventory and safety data must be complete and internally consistent before planning or mutation; incomplete or
+  contradictory controller results cause the workflow to fail safely.
 - O(verify.enabled) affects only the post-write refresh for a completely successful mutating workflow. Its default V(false) avoids those
   additional inventory GETs and reports projected state with C(resources[].after_verified=false). Initial discovery, validation, and
   safety reads are unchanged.
@@ -219,25 +216,20 @@ notes:
 - On supported ND 4.3.1 controllers, eligible NX-OS logical creates can be grouped across interface families after exact identity,
   vPC-pair, member, and routed-parent safety checks. Unqualified creates, including IOS-XE and member-bearing parents, retain their
   established family paths. Physical Ethernet interfaces already exist and are managed through policy assignments instead of logical creates.
-- Deployment-only candidate detection reuses the fabric switch records already fetched to resolve switch identities. It sends no
-  additional GET request. Only an explicitly normalized out-of-sync or pending switch status qualifies; an in-sync, missing, or unknown status does
-  not cause deployment.
-- Deployment-only requests contain only explicitly requested interface identities and are combined with any mutation-produced targets in
-  one de-duplicated final deployment POST, apart from an earlier exact routed-parent barrier when required. The switch status is coarser
-  than an interface status, so an explicitly requested interface can be
-  harmlessly redeployed when different pending intent keeps the same switch out of sync; unrelated interfaces are never added.
-- For a vPC identity, an explicit out-of-sync or pending status on either authoritative peer qualifies the pair-scoped target. The consolidated
-  request retains the vPC orchestrator's primary-switch target convention.
+- Only an explicitly reported out-of-sync or pending switch status qualifies an explicitly requested interface for staged-intent
+  deployment; an in-sync, missing, or unknown status does not.
+- Previously staged intent is deployed only for explicitly requested interface identities, together with eligible mutation-produced
+  targets. A routed-parent dependency can require an earlier parent deployment. Switch status is coarser than interface status, so an
+  explicitly requested interface can be harmlessly redeployed when different pending intent keeps the same switch out of sync;
+  unrelated interfaces are never added.
+- For a vPC identity, an explicit out-of-sync or pending status on either authoritative peer qualifies the pair-scoped target.
 - Deployment-only replay cannot reconstruct interfaces implicitly removed by a prior V(overridden) task because those omitted identities
   are not explicit in the later task. Include an interface explicitly when a later deployment-only action must target it.
 - A successful deployment-only run, or its check-mode preview, reports C(changed=true), C(planned_changed=false), and
   C(mutation_count=0). Its per-resource C(changed) values remain false because controller intent did not change.
-- The authoritative vPC-pair map is shared with all vPC resource orchestrators, preventing repeated per-resource peer-lookup GETs.
-- The shared snapshot is execution-scoped and is never accepted from arbitrary caller input or persisted across Ansible tasks.
-- Normal-mode execution reuses the current standalone interface models and orchestrator contracts for validation, normalization, and
-  mutation payload construction. Final deployment orchestration is workflow-owned. A successful mutation run consolidates all pending targets
-  into one deployment request. If a later mutation fails and deployment is enabled, only earlier targets with exact success evidence are
-  consolidated into one failure-path deployment request; targets whose mutations failed, are uncertain, or were not attempted are never sent.
+- Normal-mode execution applies the standalone interface modules' validation and safety contracts. When deployment is enabled,
+  compatible targets are consolidated; if a later mutation fails, only earlier targets with confirmed success may still be deployed.
+  Failed, uncertain, and unattempted mutation targets are excluded.
 - For V(merged), V(replaced), and V(deleted), C(resources[].before) and C(resources[].after) contain only identities explicitly listed in
   that resource group. Aggregate-interface members remain visible inside the requested port-channel or vPC policy instead of being mixed
   into the result as unrelated Ethernet-family records.
@@ -255,21 +247,20 @@ notes:
   documentation applies, but its standalone-module C(current), C(previous), C(sent), and raw REST debug-key descriptions do not describe
   this workflow's return shape.
 - At O(output_level=debug), C(resources[].family_before) and C(resources[].family_after) expose the complete selected-family collections
-  used for diagnostics. Result projection is in-memory and sends no additional controller GET requests.
-- The dependency scheduler prefers deletes and deferred normalize/reset operations, then transitions, updates, and creates. Exact
-  parent/child and parent/member edges override that preference when safety requires the parent first or the child first. Deferred
-  deletes are flushed between dependency layers, and deployments are consolidated across compatible resource groups.
+  used for diagnostics.
+- Parent/child, parent/member, delete, and policy-transition operations are ordered by their safety dependencies, even when that
+  differs from resource-group input order.
 - The Ethernet V(routedHost) to V(accessHost) and V(accessHost) to V(trunkHost) cross-policy PUTs have been live-qualified during this
   development effort. Destination orchestrators exist for port-channel, vPC, managed and unmanaged subinterface, SVI, loopback, and other
   Ethernet transitions, but those source/destination combinations must be live-qualified against the intended Nexus Dashboard release
   and fabric type before production use. Architectural support is not a claim of live qualification.
 - In particular, NX-OS and IOS-XE loopback policy-to-policy PUT combinations have not yet been live-qualified through this workflow.
   IOS-XE loopback integration coverage requires an explicitly declared IOS-XE test switch and is not inferred from NX-OS inventory.
-- The executor stops after the first failed mutation phase, does not replay mixed-success requests, and reports succeeded, failed,
-  uncertain, skipped, and not-attempted items. It refreshes affected switches after successful writes only when O(verify.enabled=true),
-  but always attempts reconciliation after partial or failed writes. For HTTP 207 responses, only an exact per-item V(success) is
-  successful; missing, warning, notexecuted, unknown, and omitted-target outcomes fail closed while identifiable successes remain
-  reported separately.
+- The workflow stops after a failed mutation phase, does not blindly retry mixed-success requests, and reports succeeded, failed,
+  uncertain, skipped, and not-attempted items. It refreshes affected switches after successful writes when O(verify.enabled=true)
+  and attempts reconciliation after partial or failed writes. For bulk modify, only exact per-interface success proves an update;
+  unconfirmed outcomes fail safely while identifiable successes remain reported separately. Exact omitted-target classification
+  for remove/reset responses is tracked separately in issue #533 (IFACE-007).
 """
 
 EXAMPLES = r"""

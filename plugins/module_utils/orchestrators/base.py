@@ -116,7 +116,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         ### Exception
 
         - If the request fails (non-success result from the controller).
-        - If `not_found_ok` is False and the controller returns a 404.
+        - For any GET that returns 204 (no content); an empty query-all list
+          must be a successful 200 response with an explicit empty result.
+        - For any GET that returns 404 unless `not_found_ok` is True; only
+          callers explicitly requesting optional-not-found semantics get `{}`.
+          This shared contract applies to all Gen3 orchestrators, not just
+          interface inventory reads. Non-GET 204 handling is unchanged.
         """
         self.rest_send.path = path
         self.rest_send.verb = verb

@@ -138,6 +138,8 @@ class InterfaceStateSnapshot:
                 raise ValueError(f"switchId must be a non-empty string, received {returned_switch_id!r}")
             if returned_switch_id is not None and returned_switch_id != switch_id:
                 config_data = interface.get("configData")
+                # TODO(4.3.1) peer-vpc-operational-echo: Recheck this exception
+                # when the switch-scoped inventory identity contract changes.
                 # ND 4.3.1 can include an operational vPC echo owned by the
                 # primary peer in the secondary peer's switch-scoped inventory.
                 # It has no policy intent and must not become secondary state.

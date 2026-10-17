@@ -842,6 +842,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             ):
                 raise ValueError(f"Bulk interface modify requires shared family context for {switch_id}/{name}.")
             current = snapshot.cached_interface(switch_id, name)
+            # TODO(4.3.1) interface-modify-upserts-unpaired-vpc: Recheck
+            # whether modify remains an upsert before relaxing this guard.
             if (
                 current is None
                 or current.get("switchId") != switch_id
@@ -953,21 +955,35 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 exact = False
                 continue
             response_name = row["name"].strip().casefold()
-            # ND 4.3.1 uses ``switchId~name`` for successful modify rows but
-            # can use ``switchId:name`` for failed rows in the *same* 207.
+            # TODO(4.3.1) interface-modify-207-result-name-separators: ND uses
+            # ``~`` for success and may use ``:`` for failure in one response.
             if "~" in response_name and ":" in response_name:
                 exact = False
                 continue
             separator = "~" if "~" in response_name else ":" if ":" in response_name else None
             if separator is not None:
                 parts = response_name.split(separator)
-                if len(parts) not in (2, 3) or parts[0] not in switch_ids or any(not part for part in parts):
+                if len(parts) not in (2, 3) or any(not part for part in parts):
                     exact = False
                     continue
-                key = (parts[0], parts[-1])
-                if len(parts) == 3 and (peer_switch_ids is None or (peer_switch_ids.get(key) or "").casefold() != parts[1]):
-                    exact = False
-                    continue
+                if len(parts) == 3:
+                    # ND may echo either peer first. Accept only an unambiguous
+                    # requested owner whose authoritative peer is the other ID.
+                    candidates = (
+                        (owner, parts[2])
+                        for owner, peer in ((parts[0], parts[1]), (parts[1], parts[0]))
+                        if owner != peer and owner in switch_ids and str((peer_switch_ids or {}).get((owner, parts[2])) or "").casefold() == peer
+                    )
+                    matches = [candidate for candidate in candidates if candidate in requested]
+                    if len(matches) != 1:
+                        exact = False
+                        continue
+                    key = matches[0]
+                else:
+                    if parts[0] not in switch_ids:
+                        exact = False
+                        continue
+                    key = (parts[0], parts[1])
             else:
                 if len(switch_ids) != 1:
                     exact = False

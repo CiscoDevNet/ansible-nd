@@ -700,7 +700,8 @@ def test_cross_switch_bare_result_is_ambiguous_but_exact_success_survives(monkey
     assert orchestrator.pending_deploys == (("loopback1", "S1"),)
 
 
-def test_vpc_pair_qualified_207_is_exact_and_wrong_peer_fails_closed(monkeypatch) -> None:
+@pytest.mark.parametrize("result_name", ["S1~P1~vpc1", "P1~S1~vpc1"])
+def test_vpc_pair_qualified_207_is_exact_and_wrong_peer_fails_closed(monkeypatch, result_name) -> None:
     orchestrator = _orchestrator()
     current = deepcopy(orchestrator.state_snapshot._interfaces_by_switch["S1"]["loopback1"])
     current["interfaceName"] = "vpc1"
@@ -718,7 +719,7 @@ def test_vpc_pair_qualified_207_is_exact_and_wrong_peer_fails_closed(monkeypatch
             "DATA": {
                 "results": [
                     {"name": "S1~loopback1", "status": "success"},
-                    {"name": "S1~P1~vpc1", "status": "success"},
+                    {"name": result_name, "status": "success"},
                 ]
             },
         }
@@ -753,6 +754,71 @@ def test_vpc_pair_qualified_207_is_exact_and_wrong_peer_fails_closed(monkeypatch
     with pytest.raises(RuntimeError, match="1 were accepted"):
         orchestrator.modify_bulk_prepared(payloads)
     assert orchestrator.pending_deploys == (("loopback1", "S1"),)
+
+
+def test_vpc_207_peer_first_with_secondary_as_submitted_owner(monkeypatch) -> None:
+    """ND's primary-first result must still match a secondary-owned request."""
+    orchestrator = _orchestrator()
+    current = deepcopy(orchestrator.state_snapshot._interfaces_by_switch["S1"]["loopback1"])
+    current["interfaceName"] = "vpc1"
+    current["switchId"] = "P1"
+    current["interfaceType"] = "vpc"
+    current["configData"]["networkOS"]["policy"] = {"policyType": "accessVpcHost", "peerSwitchId": "S1"}
+    orchestrator.state_snapshot._interfaces_by_switch["P1"] = {"vpc1": current}
+    vpc = _payload("vpc1", switch_id="P1", policy_type="accessVpcHost", interface_type="vpc")
+    vpc["configData"]["networkOS"]["policy"]["peerSwitchId"] = "S1"
+
+    def accepted(self, **_kwargs):
+        response = {
+            "RETURN_CODE": 207,
+            "DATA": {
+                "results": [
+                    {"name": "S1~loopback1", "status": "success"},
+                    {"name": "S1~P1~vpc1", "status": "success"},
+                ]
+            },
+        }
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        return response["DATA"]
+
+    monkeypatch.setattr(_ModifyStub, "_request", accepted)
+    orchestrator.modify_bulk_prepared([_payload("loopback1"), vpc])
+    assert orchestrator.pending_deploys == (("loopback1", "S1"), ("vpc1", "P1"))
+
+
+@pytest.mark.parametrize(
+    ("rows", "requested", "peers", "expected_accepted", "expected_exact"),
+    [
+        (
+            [{"name": "S1~P1~vpc1", "status": "success"}],
+            {("s1", "vpc1"): ("S1", "vpc1"), ("p1", "vpc1"): ("P1", "vpc1")},
+            {("s1", "vpc1"): "p1", ("p1", "vpc1"): "s1"},
+            set(),
+            False,
+        ),
+        (
+            [{"name": "S1~P1~vpc1", "status": "success"}, {"name": "P1~S1~vpc1", "status": "success"}],
+            {("p1", "vpc1"): ("P1", "vpc1")},
+            {("p1", "vpc1"): "s1"},
+            set(),
+            False,
+        ),
+        (
+            [{"name": "S1~P1~vpc1", "status": "failed"}],
+            {("p1", "vpc1"): ("P1", "vpc1")},
+            {("p1", "vpc1"): "s1"},
+            set(),
+            True,
+        ),
+    ],
+)
+def test_vpc_207_ambiguous_duplicate_and_failure_rows_fail_closed(rows, requested, peers, expected_accepted, expected_exact) -> None:
+    orchestrator = _orchestrator()
+    orchestrator.rest_send.response_current = {"DATA": {"results": rows}}
+    accepted, exact = orchestrator._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peers)
+    assert accepted == expected_accepted
+    assert exact is expected_exact
 
 
 @pytest.mark.parametrize(

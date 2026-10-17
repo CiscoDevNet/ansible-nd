@@ -149,6 +149,8 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: int | None = Field(default=None, alias="routeMapTag", ge=0, le=4294967295, description="Route-Map tag associated with interface IP")
 
+    # TODO(4.2.1) loopback-route-map-tag-string-echo: Revalidate the historical
+    # numeric-string GET echo before removing read-side compatibility.
     # Accept older playbooks and any GET echo that spells this numeric tag as a
     # string, while always serializing the integer required by both schemas.
     @field_validator("route_map_tag", mode="before")
