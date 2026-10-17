@@ -141,7 +141,7 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     # TODO(4.2.1) interface-get-field-normalization
     # ND 4.2.1 GET echoes routingTag as an integer even though the template defines it as a string (string in,
-    # int out). Same drift as loopback routeMapTag - keep the coerce validators in sync.
+    # int out). Same drift as the SVI and routed port-channel routingTag - keep the coerce validators in sync.
     @field_validator("routing_tag", mode="before")
     @classmethod
     def coerce_routing_tag(cls, value):
