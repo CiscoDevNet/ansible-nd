@@ -59,7 +59,7 @@ SAMPLE_API_RESPONSE = {
                 "ip": "10.1.1.1",
                 "vrfInterface": "management",
                 "policyType": "loopback",
-                "routeMapTag": "12345",
+                "routeMapTag": 12345,
                 "description": "mgmt loopback",
             },
         },
@@ -79,7 +79,7 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "ip": "10.1.1.1",
                 "vrf": "management",
                 "policy_type": "loopback",
-                "route_map_tag": "12345",
+                "route_map_tag": 12345,
                 "description": "mgmt loopback",
             },
         },
@@ -148,7 +148,7 @@ def test_loopback_interface_00020():
     assert instance.ip == "10.1.1.1"
     assert instance.vrf == "management"
     assert instance.policy_type == "loopback"
-    assert instance.route_map_tag == "100"
+    assert instance.route_map_tag == 100
     assert instance.description == "test"
 
 
@@ -179,7 +179,7 @@ def test_loopback_interface_00030():
     assert instance.ip == "10.2.2.2"
     assert instance.vrf == "default"
     assert instance.policy_type == "loopback"
-    assert instance.route_map_tag == "200"
+    assert instance.route_map_tag == 200
 
 
 def test_loopback_interface_00040():
@@ -240,12 +240,12 @@ def test_loopback_interface_00065():
     """
     # Summary
 
-    Verify `route_map_tag` coerces an integer to a string.
+    Verify an integer route-map tag remains an integer on the wire.
 
     ## Test
 
     - Construct with route_map_tag=12345 (int)
-    - Value is coerced to "12345" (str)
+    - Value and serialized alias remain 12345 (int)
 
     ## Classes and Methods
 
@@ -253,20 +253,20 @@ def test_loopback_interface_00065():
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(route_map_tag=12345, policy_type="loopback")
-    assert instance.route_map_tag == "12345"
-    assert isinstance(instance.route_map_tag, str)
+    assert instance.route_map_tag == 12345
+    assert instance.model_dump(by_alias=True)["routeMapTag"] == 12345
 
 
 def test_loopback_interface_00066():
     """
     # Summary
 
-    Verify `route_map_tag` accepts a string unchanged.
+    Verify a decimal-string tag from an older playbook is normalized.
 
     ## Test
 
     - Construct with route_map_tag="12345" (str)
-    - Value remains "12345"
+    - Value is serialized as integer 12345
 
     ## Classes and Methods
 
@@ -274,19 +274,19 @@ def test_loopback_interface_00066():
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(route_map_tag="12345", policy_type="loopback")
-    assert instance.route_map_tag == "12345"
+    assert instance.route_map_tag == 12345
 
 
 def test_loopback_interface_00067():
     """
     # Summary
 
-    Verify `route_map_tag` coerces an integer via the camelCase alias (API response path).
+    Verify an integer API echo remains an integer through the alias.
 
     ## Test
 
     - Construct with routeMapTag=12345 (int, camelCase alias)
-    - Value is coerced to "12345" (str)
+    - Value remains 12345 (int)
 
     ## Classes and Methods
 
@@ -294,8 +294,16 @@ def test_loopback_interface_00067():
     """
     with does_not_raise():
         instance = NexusLoopbackPolicyModel(routeMapTag=12345, policyType="loopback")
-    assert instance.route_map_tag == "12345"
-    assert isinstance(instance.route_map_tag, str)
+    assert instance.route_map_tag == 12345
+    assert isinstance(instance.route_map_tag, int)
+
+
+@pytest.mark.parametrize("value", [True, 1.0, -1, 4294967296, "not-a-number", "1.5"])
+def test_loopback_route_map_tag_rejects_non_integer_or_out_of_range_values(value) -> None:
+    """The loopback tag must remain a valid integer in the ND wire payload."""
+
+    with pytest.raises(ValidationError, match="route_map_tag"):
+        NexusLoopbackPolicyModel(route_map_tag=value, policy_type="loopback")
 
 
 # =============================================================================
@@ -2638,7 +2646,7 @@ def test_loopback_interface_00740():
         existing.merge(proposed)
     policy = existing.config_data.network_os.policy
     assert policy.description == "merged onto None"
-    assert policy.route_map_tag == "54321"
+    assert policy.route_map_tag == 54321
     assert policy.vrf == "blue"
     assert policy.admin_state is True
     assert policy.ip == "10.1.1.1"

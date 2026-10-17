@@ -132,8 +132,9 @@ options:
                     description:
                     - The route-map tag associated with the interface IP address.
                     - The ND default is V(12345).
+                    - Decimal strings from older playbooks are accepted and sent to ND as integers.
                     - Applies when policy_type is C(loopback).
-                    type: str
+                    type: int
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.

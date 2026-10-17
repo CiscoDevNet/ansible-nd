@@ -28,7 +28,8 @@ The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 
 
 from __future__ import annotations
 
-from typing import ClassVar
+import re
+from typing import ClassVar, Sequence
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -82,9 +83,16 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
     model_class: ClassVar[type[NDBaseModel]] = LoopbackInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
+    # TODO(4.3.1) ios-xe-loopback-remove-case: Recheck whether ND removal
+    # accepts lowercase names and still generates device-side deletion.
+    # IOS-XE needs the switch-canonical Loopback<N> spelling on the removal wire.
+    # Lowercase removal drops intent without generating `no interface Loopback<N>`.
+    xe_removal_requires_discovery: ClassVar[bool] = False
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -93,6 +101,53 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def preflight_delete(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """Reject IOS-XE operational-only or malformed targets before any removal.
+
+        Unlike other IOS-XE logical interfaces, a canonical Loopback<N> remove
+        generates a device-side delete even while discovery says ``unknown``.
+        This was verified on ND 4.3.1 / C9Kv, including CLI readback.
+        """
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._switch_interfaces(switch_id)
+            self._delete_side_name(model_instance.interface_name, switch_id)
+
+    def _check_overridden_removals_discovered(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """Apply the same ownership check to managed loopbacks removed by override."""
+        if self.rest_send.params.get("state") != "overridden":
+            return
+        proposed = {(model.switch_ip, model.interface_name.strip().lower()) for model in model_instances}
+        switch_map = self.fabric_context.switch_map
+        for iface in self.query_all() or []:
+            switch_ip = iface.get("switchIp")
+            name = str(iface.get("interfaceName") or "")
+            if switch_ip in switch_map and (switch_ip, name.strip().lower()) not in proposed:
+                self._delete_side_name(name, switch_map[switch_ip])
+
+    def _delete_side_name(self, name: str, switch_id: str) -> str:
+        """Use canonical IOS-XE spelling so ND queues an actual switch-side remove."""
+        # Normal state planning and the delete preflight have already loaded
+        # the complete switch inventory. Do not add a GET during queueing.
+        record = self._switch_interfaces_cache.get(switch_id, {}).get(name.strip().lower())
+        if not isinstance(record, dict) or record.get("interfaceType") != "loopback":
+            return name
+        config_data = record.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        if network_os.get("networkOSType") != "ios-xe":
+            return name
+        if config_data.get("mode") == "unknown" and not network_os.get("policy"):
+            raise RuntimeError(
+                f"Cannot delete IOS-XE loopback {name} on {switch_id}: "
+                "Nexus Dashboard has only an operational-only row and no policy from which to generate a device removal."
+            )
+        if not network_os.get("policy"):
+            raise RuntimeError(f"Cannot delete IOS-XE loopback {name} on {switch_id}: managed policy is missing")
+        match = re.fullmatch(r"loopback([0-9]+)", name.strip(), flags=re.IGNORECASE)
+        if match is None:
+            raise RuntimeError(f"Cannot safely canonicalize IOS-XE loopback name {name!r} on {switch_id}")
+        return f"Loopback{match.group(1)}"
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -159,8 +214,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         None
         """
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
-        self._queue_remove(model_instance.interface_name, switch_id)
-        self._queue_deploy(model_instance.interface_name, switch_id)
+        name = self._delete_side_name(model_instance.interface_name, switch_id)
+        self._queue_remove(name, switch_id)
+        self._queue_deploy(name, switch_id)
 
     def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
         """
@@ -201,8 +257,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._queue_remove(model_instance.interface_name, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
+            name = self._delete_side_name(model_instance.interface_name, switch_id)
+            self._queue_remove(name, switch_id)
+            self._queue_deploy(name, switch_id)
 
     def query_one(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
