@@ -1,0 +1,461 @@
+---
+- name: "MERGED SAFETY: Refuse pre-existing reserved SVI state"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_assert_reserved_absent.yaml
+  vars:
+    nd4x_reserved_fabric_name: "{{ test_fabric_name }}"
+    nd4x_reserved_switch_id: "{{ test_switch_id }}"
+    nd4x_reserved_interface_names: >-
+      {{ cleanup_config | map(attribute='interface_name') | list }}
+
+- name: Run nd_interface_svi merged harness tests
+  block:
+    - name: "MERGED SETUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
+
+    - name: "MERGED CREATE: Create vlan333 with full config"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_333 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vlan333 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan333
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vlan333
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.99.1"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Ansible integration test vlan333
+      register: merged_create_333
+
+    - name: "MERGED CREATE: Verify vlan333 creation and idempotency"
+      vars:
+        vlan333_after: >-
+          {{
+            merged_create_333.first_run_result.after
+            | selectattr('switch_ip', 'equalto', test_switch_ip)
+            | selectattr('interface_name', 'equalto', 'vlan333')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - merged_create_333.check_mode_result.changed | bool
+          - merged_create_333.first_run_result.changed | bool
+          - vlan333_after.config_data.network_os.policy.ip == "10.99.99.1"
+          - merged_create_333.idempotency_attempts == 1
+          - not merged_create_333.second_run_result.changed | bool
+
+    - name: "MERGED MULTI: Create vlan334 and vlan335 together"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_334 }}"
+          - "{{ svi_335 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vlan334 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan334
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.100.1"
+          - name: Validate vlan335 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan335
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.101.1"
+      register: merged_create_334_335
+
+    - name: "MERGED MULTI: Verify vlan334 and vlan335 creation"
+      ansible.builtin.assert:
+        that:
+          - merged_create_334_335.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan334')
+            | list | length == 1
+          - merged_create_334_335.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan335')
+            | list | length == 1
+          - merged_create_334_335.nd_query_results | length == 2
+
+    - name: "MERGED CREATE: Create vlan336 as a separate config group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_336 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vlan336 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan336
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vlan336
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.102.1"
+      register: merged_create_336
+
+    - name: "MERGED CREATE: Verify vlan336 creation"
+      ansible.builtin.assert:
+        that:
+          - merged_create_336.first_run_result.changed | bool
+          - merged_create_336.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan336')
+            | list | length == 1
+
+    - name: "MERGED IDEMPOTENT: Re-apply vlan333"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_333 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: merged_idempotent_333
+
+    - name: "MERGED IDEMPOTENT: Verify vlan333 no-change result"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_333.check_mode_result.changed | bool
+          - not merged_idempotent_333.first_run_result.changed | bool
+          - not merged_idempotent_333.second_run_result.changed | bool
+
+    - name: "MERGED IDEMPOTENT: Re-apply vlan334 and vlan335"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_334 }}"
+          - "{{ svi_335 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: merged_idempotent_334_335
+
+    - name: "MERGED IDEMPOTENT: Verify multi-SVI no-change result"
+      ansible.builtin.assert:
+        that:
+          - not merged_idempotent_334_335.check_mode_result.changed | bool
+          - not merged_idempotent_334_335.first_run_result.changed | bool
+
+    - name: "MERGED UPDATE: Update vlan333 description and policy fields"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_333_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated vlan333 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan333
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.99.2"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Updated vlan333 description
+      register: merged_update_333
+
+    - name: "MERGED UPDATE: Verify vlan333 returned values"
+      vars:
+        vlan333_after: >-
+          {{
+            merged_update_333.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan333')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - vlan333_after.config_data.network_os.policy.description
+            == "Updated vlan333 description"
+          - vlan333_after.config_data.network_os.policy.ip == "10.99.99.2"
+          - vlan333_after.config_data.network_os.policy.ip_redirects == false
+          - vlan333_after.config_data.network_os.policy.pim_sparse == true
+          - vlan333_after.config_data.network_os.policy.pim_dr_priority == 50
+          - vlan333_after.config_data.network_os.policy.advertise_subnet_in_underlay
+            == true
+          - not merged_update_333.second_run_result.changed | bool
+
+    - name: "MERGED UPDATE: Update vlan334 and vlan335 together"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_334_updated }}"
+          - "{{ svi_335_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated vlan334 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan334
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.100.2"
+          - name: Validate updated vlan335 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan335
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.101.2"
+      register: merged_update_334_335
+
+    - name: "MERGED UPDATE: Verify vlan334 and vlan335 returned values"
+      vars:
+        vlan334_after: >-
+          {{
+            merged_update_334_335.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan334')
+            | first
+          }}
+        vlan335_after: >-
+          {{
+            merged_update_334_335.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan335')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - vlan334_after.config_data.network_os.policy.description
+            == "Updated vlan334 description"
+          - vlan334_after.config_data.network_os.policy.admin_state == false
+          - vlan334_after.config_data.network_os.policy.ip == "10.99.100.2"
+          - vlan335_after.config_data.network_os.policy.description
+            == "Updated vlan335 description"
+          - vlan335_after.config_data.network_os.policy.admin_state == false
+          - vlan335_after.config_data.network_os.policy.ip == "10.99.101.2"
+
+    - name: "MERGED NO-DEPLOY: Stage vlan337 without deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ svi_337 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: merged_no_deploy_337
+
+    - name: "MERGED NO-DEPLOY: Verify vlan337 was staged"
+      ansible.builtin.assert:
+        that:
+          - merged_no_deploy_337.first_run_result.changed | bool
+          - merged_no_deploy_337.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan337')
+            | list | length == 1
+
+    - name: "MERGED NO-DEPLOY: Remove staged vlan337"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan337
+        state: deleted
+
+    - name: "MERGED MULTI: Create vlan337 and vlan338 with unique L3 settings"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_337 }}"
+          - "{{ svi_338 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate vlan337 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan337
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.103.1"
+          - name: Validate vlan338 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan338
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.104.1"
+      register: merged_create_337_338
+
+    - name: "MERGED MULTI: Verify unique vlan337 and vlan338 configuration"
+      vars:
+        vlan337_after: >-
+          {{
+            merged_create_337_338.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan337')
+            | first
+          }}
+        vlan338_after: >-
+          {{
+            merged_create_337_338.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan338')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - vlan337_after.config_data.network_os.policy.description
+            == "Multi-SVI test vlan337"
+          - vlan337_after.config_data.network_os.policy.ip == "10.99.103.1"
+          - vlan338_after.config_data.network_os.policy.description
+            == "Multi-SVI test vlan338"
+          - vlan338_after.config_data.network_os.policy.ip == "10.99.104.1"
+          - not merged_create_337_338.second_run_result.changed | bool
+
+  always:
+    - name: "MERGED CLEANUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
