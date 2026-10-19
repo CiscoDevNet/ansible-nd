@@ -1,0 +1,33 @@
+---
+- name: "NEGATIVE: Reject a flagless standard community-list entry"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_community_list
+    state: merged
+    check_mode: true
+    check_mode_only: true
+    idempotency: false
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: ANSIBLE_CL_INVALID_FLAGLESS
+        type: standard
+        entries:
+          - sequence_number: 10
+            action: permit
+    expected:
+      check_mode:
+        failed: true
+  register: negative_flagless_standard
+
+- name: "NEGATIVE: Verify the intended validation failure"
+  ansible.builtin.assert:
+    that:
+      - negative_flagless_standard.check_mode_result.failed | bool
+      - >-
+        negative_flagless_standard.check_mode_result.msg
+        is search('must set at least one community number or enable at least one
+        well-known community flag')
+      - negative_flagless_standard.first_run_result is none
+      - negative_flagless_standard.idempotency_attempts == 0
+      - negative_flagless_standard.nd_query_results | length == 0

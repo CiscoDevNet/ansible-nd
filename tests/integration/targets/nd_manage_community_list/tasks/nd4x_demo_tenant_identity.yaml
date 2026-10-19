@@ -1,0 +1,141 @@
+---
+- name: Run nd_manage_community_list tenant identity harness scenarios
+  block:
+    - name: "TENANT IDENTITY SETUP: Remove tenant-scoped test lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "TENANT IDENTITY: Create same-name community lists in two tenants"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ community_list_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_a }}"
+            type: standard
+            entries:
+              - sequence_number: 10
+                action: permit
+                community_numbers:
+                  - "65000:101"
+          - name: "{{ community_list_tenant_identity_name }}"
+            tenant_name: "{{ nd_test_tenant_name_b }}"
+            type: standard
+            entries:
+              - sequence_number: 10
+                action: permit
+                community_numbers:
+                  - "65000:102"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate tenant A community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ nd_test_tenant_name_a
+              }}~{{ community_list_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.tenantName"
+                equals: "{{ nd_test_tenant_name_a }}"
+              - jsonpath: "$.current.entries[0].communityNumbers[0]"
+                equals: "65000:101"
+          - name: Validate tenant B community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ nd_test_tenant_name_b
+              }}~{{ community_list_tenant_identity_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.tenantName"
+                equals: "{{ nd_test_tenant_name_b }}"
+              - jsonpath: "$.current.entries[0].communityNumbers[0]"
+                equals: "65000:102"
+      register: tenant_identity
+
+    - name: "TENANT IDENTITY: Verify distinct tenant objects and idempotency"
+      ansible.builtin.assert:
+        that:
+          - tenant_identity.check_mode_result.changed | bool
+          - tenant_identity.first_run_result.changed | bool
+          - >-
+            tenant_identity.first_run_result.before
+            | selectattr('name', 'equalto', community_list_tenant_identity_name)
+            | selectattr('tenant_name', 'in', [nd_test_tenant_name_a, nd_test_tenant_name_b])
+            | list | length == 0
+          - tenant_identity.first_run_result.after | selectattr('name', 'equalto', community_list_tenant_identity_name) | selectattr('tenant_name', 'in', [nd_test_tenant_name_a, nd_test_tenant_name_b]) | list | length == 2
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | first
+            ).type == 'standard'
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
+              | first
+            ).entries[0].community_numbers[0] == '65000:101'
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | first
+            ).type == 'standard'
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              tenant_identity.first_run_result.after
+              | selectattr('name', 'equalto', community_list_tenant_identity_name)
+              | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
+              | first
+            ).entries[0].community_numbers[0] == '65000:102'
+          - tenant_identity.second_run_result.changed == false
+          - tenant_identity.nd_query_results | length == 2
+
+  always:
+    - name: "TENANT IDENTITY CLEANUP: Remove tenant-scoped test lists"
+      ansible.builtin.include_tasks: setup.yaml
