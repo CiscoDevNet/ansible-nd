@@ -423,6 +423,7 @@ class NetworkConfigModel(NDBaseModel):
             normalized,
             defer_omitted_layer=bool(context.get("defer_omitted_layer")),
             existing_layer=context.get("existing_layer"),
+            default_network_type=context.get("default_network_type"),
         )
 
         has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS)
@@ -432,7 +433,12 @@ class NetworkConfigModel(NDBaseModel):
         return normalized
 
     @staticmethod
-    def _normalize_effective_layer(data: dict[str, Any], defer_omitted_layer: bool = False, existing_layer: str | None = None) -> str | None:
+    def _normalize_effective_layer(
+        data: dict[str, Any],
+        defer_omitted_layer: bool = False,
+        existing_layer: str | None = None,
+        default_network_type: str | None = None,
+    ) -> str | None:
         """Return the explicit or derived network layer used by runtime payload construction."""
         layer = data.get("layer")
         if layer:
@@ -450,6 +456,8 @@ class NetworkConfigModel(NDBaseModel):
             return NetworkLayer.LAYER2.value
         if defer_omitted_layer:
             return None
+        if default_network_type == NetworkType.EXTERNAL_CONNECTIVITY.value:
+            return NetworkLayer.LAYER2.value
         if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and not has_l3_definition_intent_for_layer(data):
             return NetworkLayer.LAYER2.value
         return NetworkLayer.LAYER3.value

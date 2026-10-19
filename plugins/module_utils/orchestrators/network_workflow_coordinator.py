@@ -28,6 +28,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
     NetworkAttachmentManager,
@@ -259,7 +260,7 @@ class NetworkWorkflowCoordinator:
         for idx, entry in enumerate(config):
             try:
                 operational_only = isinstance(entry, dict) and not NDNetworkOrchestrator.has_network_definition_intent(entry)
-                context = {"state": state}
+                context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(self.strategy.fabric_data)}
                 if NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
                     context["defer_omitted_layer"] = True
                 model = model_cls.from_config(entry, context=context)
@@ -614,13 +615,15 @@ class NetworkWorkflowCoordinator:
             if not NDNetworkOrchestrator.should_defer_omitted_layer(entry, "merged"):
                 continue
             current = sm.existing.get(entry["network_name"])
-            context = {"state": "merged"}
+            context = {"state": "merged", "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
             if current is not None:
                 context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
             validated = strategy.config_model_cls.from_config(entry, context=context)
             proposed = sm.proposed.get(entry["network_name"])
             if validated.layer is not None:
                 proposed.layer = validated.layer
+                if current is None and validated.layer == NetworkLayer.LAYER2.value and proposed.vrf_name is None:
+                    proposed.vrf_name = "NA"
 
     def _restore_state_machine_params(self, original_config: Any, original_state: Any) -> None:
         """Restore module params saved by ``_new_state_machine``."""

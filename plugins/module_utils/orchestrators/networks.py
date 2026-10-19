@@ -98,7 +98,11 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         return default
 
     def _default_network_type(self) -> str:
-        fabric_data = self.strategy.fabric_data if self.strategy else {}
+        return self.default_network_type(self.strategy.fabric_data if self.strategy else {})
+
+    @staticmethod
+    def default_network_type(fabric_data: dict[str, Any]) -> str:
+        """Resolve the Network type advertised by the fabric."""
         for key in ("network_type", "networkType", "managementType"):
             if isinstance(fabric_data, dict) and fabric_data.get(key):
                 return fabric_data[key]

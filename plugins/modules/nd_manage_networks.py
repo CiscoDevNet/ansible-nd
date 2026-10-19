@@ -82,6 +82,7 @@ options:
           - Network layer.
           - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
           - New Networks and authoritative states require enough context to derive the layer. Layer 3 Networks require C(vrf_name).
+          - On External fabrics, a new Network defaults to Layer 2 when C(layer) is omitted.
           - Layer 2 Networks do not accept L3-only properties such as gateways, MTU, and ARP suppression.
         type: str
         choices: [ layer2, layer2WithVrf, layer3 ]

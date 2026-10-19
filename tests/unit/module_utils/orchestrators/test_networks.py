@@ -1971,8 +1971,8 @@ class _LayerValidationNetworkOrchestrator(NDNetworkOrchestrator):
         return {}
 
 
-def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=StandaloneNetworkStrategy):
-    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=StandaloneNetworkStrategy, network_type="vxlanIbgp"):
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": network_type})
     module = _Module({"state": "merged", "config": config, "output_level": "normal"})
     module.check_mode = check_mode
     coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
@@ -1980,6 +1980,75 @@ def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=
     orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": "merged"}), strategy=strategy, inventory=inventory)
     sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
     return coordinator, sm, parsed, orchestrator
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_network_three_field_definition_defaults_to_layer2(state, check_mode):
+    entry = {"network_name": "EXTERNAL_NET", "vlan_id": 2984, "vlan_name": "EXTERNAL_VLAN"}
+    strategy = StandaloneNetworkStrategy(fabric_name="external", fabric_data={"managementType": "externalConnectivity"})
+    module = _Module({"state": state, "config": [entry], "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    parsed = coordinator._parse_config(_validated_network_config([entry]), strategy.config_model_cls, state)
+    orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy, inventory=[])
+    sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
+    if state == "merged":
+        coordinator._resolve_merged_layers(sm, parsed, strategy)
+    sm.manage_state()
+
+    payload = orchestrator._create_or_update_payload(sm.sent.get("EXTERNAL_NET"))
+    assert payload["networkType"] == "externalConnectivity"
+    assert payload["networkMode"] == "layer2"
+    assert payload["vrfName"] == "NA"
+    assert payload["vlanId"] == 2984
+    assert payload["l2Data"]["vlanName"] == "EXTERNAL_VLAN"
+    assert "networkId" not in payload
+    assert sm.output.format()["changed"] is True
+    assert len(orchestrator.written_payloads) == (0 if check_mode else 1)
+
+
+def test_external_sparse_merged_update_preserves_existing_layer3():
+    entry = {"network_name": "EXTERNAL_NET", "vlan_name": "UPDATED"}
+    existing = {
+        "fabricName": "fab1",
+        "networkName": "EXTERNAL_NET",
+        "networkType": "externalConnectivity",
+        "networkMode": "layer3",
+        "vrfName": "TENANT",
+        "l2Data": {"vlanName": "OLD"},
+    }
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [existing], False, network_type="externalConnectivity")
+    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    assert sm.proposed.get("EXTERNAL_NET").layer == "layer3"
+    sm.manage_state()
+    payload = orchestrator.written_payloads[0]
+    assert payload["networkMode"] == "layer3"
+    assert payload["vrfName"] == "TENANT"
+    assert payload["l2Data"]["vlanName"] == "UPDATED"
+
+
+def test_external_network_three_field_repeat_is_idempotent():
+    entry = {"network_name": "EXTERNAL_NET", "vlan_id": 2984, "vlan_name": "EXTERNAL_VLAN"}
+    inventory = [
+        {
+            "fabricName": "fab1",
+            "networkName": "EXTERNAL_NET",
+            "networkType": "externalConnectivity",
+            "networkMode": "layer2",
+            "networkId": 30001,
+            "vlanId": 2984,
+            "vrfName": "NA",
+            "l2Data": {"vlanName": "EXTERNAL_VLAN"},
+        }
+    ]
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], inventory, False, network_type="externalConnectivity")
+    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    sm.manage_state()
+
+    assert sm.output.format()["changed"] is False
+    assert orchestrator.written_payloads == []
+    assert orchestrator.query_count == 1
 
 
 @pytest.mark.parametrize("check_mode", [False, True])
@@ -5856,7 +5925,7 @@ def test_network_merged_layer_resolution_leaves_unresolved_proposal_unchanged():
     proposed = SimpleNamespace(layer=None)
     snapshot = SimpleNamespace(existing={}, proposed={"N": proposed})
     model_cls = SimpleNamespace(from_config=lambda *_args, **_kwargs: SimpleNamespace(layer=None))
-    strategy = SimpleNamespace(config_model_cls=model_cls)
+    strategy = SimpleNamespace(config_model_cls=model_cls, fabric_data={"managementType": "vxlanIbgp"})
     coordinator._resolve_merged_layers(snapshot, [{"network_name": "N", "vlan_id": 100}], strategy)
     assert proposed.layer is None
 
