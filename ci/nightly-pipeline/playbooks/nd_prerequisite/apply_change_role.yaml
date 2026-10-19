@@ -1,0 +1,39 @@
+---
+# change_role: update a member already present in the managed fabric. This uses
+# the ND REST operation directly because local cisco.nd builds may not expose
+# nd_manage_switches.
+- name: "change_role {{ _ndp_operation.switch_ref }} {{ _ndp_operation.current_role | default('unknown') }} -> {{ _ndp_operation.desired_role }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/switchActions/changeRoles"
+    method: post
+    content:
+      switchRoles:
+        - switchId: "{{ _ndp_operation.serial }}"
+          role: "{{ 'edgeRouter' if _ndp_operation.desired_role == 'edge_router' else _ndp_operation.desired_role }}"
+  register: _ndp_role_change
+  run_once: true
+  no_log: true
+
+- name: "change_role verify {{ _ndp_operation.switch_ref }} response"
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_role_change.failed | default(false))
+      - _ndp_role_change.status | default(200) | int != 207
+    fail_msg: "ND rejected or partially applied the role change for {{ _ndp_operation.switch_ref }}."
+  run_once: true
+
+- name: "change_role save {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/actions/configSave"
+    method: post
+    content: {}
+  run_once: true
+  no_log: true
+
+- name: "change_role deploy {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/actions/deploy?forceShowRun=true"
+    method: post
+    content: {}
+  run_once: true
+  no_log: true
