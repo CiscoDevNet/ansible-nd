@@ -1,0 +1,8 @@
+---
+- name: Release ND4X nd_manage_links scope lock
+  ansible.builtin.file:
+    path: "{{ nd4x_scope_lock_path }}"
+    state: absent
+  delegate_to: localhost
+  when: nd4x_scope_lock_acquired | default(false) | bool
+  failed_when: false

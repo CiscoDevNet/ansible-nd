@@ -1,0 +1,46 @@
+---
+# Validate the physical/discovered interface inventory before a lifecycle
+# starts.  This is deliberately separate from the links query: a clean links
+# collection does not prove that an endpoint exists on the selected switch.
+
+- name: "{{ nd4x_interface_inventory_label }}: Read interface inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.switch_id }}/interfaces"
+    method: get
+  loop: "{{ nd4x_interface_inventory_targets }}"
+  loop_control:
+    label: "{{ item.fabric }}/{{ item.switch_name }}"
+  register: nd4x_interface_inventory_queries
+
+- name: "{{ nd4x_interface_inventory_label }}: Assert reserved interfaces exist"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - not item.failed | default(false) | bool
+      - >-
+        item.item.interfaces
+        | difference(
+            item.jsondata.interfaces | default([])
+            | map(attribute='interfaceName')
+            | list
+          )
+        | length == 0
+    fail_msg: >-
+      {{ nd4x_interface_inventory_label }} cannot prove that all reserved
+      interfaces exist on {{ item.item.switch_name }} in {{ item.item.fabric }}.
+      Missing: {{ item.item.interfaces | difference(item.jsondata.interfaces | default([]) | map(attribute='interfaceName') | list) }}.
+  loop: "{{ nd4x_interface_inventory_queries.results }}"
+
+- name: "{{ nd4x_interface_inventory_label }}: Report discovered interface scope"
+  ansible.builtin.debug:
+    msg:
+      fabric: "{{ item.item.fabric }}"
+      switch: "{{ item.item.switch_name }}"
+      interfaces: "{{ item.item.interfaces }}"
+      scope_owner: "{{ nd4x_links_scope_owner }}"
+      note: >-
+        The interface inventory proves endpoint existence. Exclusive physical
+        ownership is enforced by the dedicated-scope declaration and the
+        harness lock; ND does not expose a universal ownership flag for every
+        interface policy family.
+  loop: "{{ nd4x_interface_inventory_queries.results }}"

@@ -1,0 +1,746 @@
+---
+- name: Build complete expected state for each lifecycle operation
+  ansible.builtin.set_fact:
+    nd4x_rest_create_links: "{{ nd4x_create_config }}"
+    nd4x_rest_update_links: >-
+      {%- set links = [] -%}
+      {%- for link in nd4x_create_config -%}
+        {%- if link.src_interface_name == nd4x_primary_interface and nd4x_update_config | length > 0 -%}
+          {%- set _ = links.append(link | combine(nd4x_update_config[0], recursive=true)) -%}
+        {%- else -%}
+          {%- set _ = links.append(link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ links }}
+    nd4x_rest_replace_links: >-
+      {%- set links = [] -%}
+      {%- for link in nd4x_create_config -%}
+        {%- if link.src_interface_name == nd4x_primary_interface and nd4x_replace_config | length > 0 -%}
+          {%- set _ = links.append(nd4x_replace_config[0]) -%}
+        {%- else -%}
+          {%- set _ = links.append(link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ links }}
+    nd4x_rest_replace_absent_links: >-
+      {%- set absent = [] -%}
+      {%- for old_link in nd4x_create_config -%}
+        {%- set identity = namespace(found=false) -%}
+        {%- for new_link in nd4x_rest_replace_links -%}
+          {%- if old_link.src_fabric_name == new_link.src_fabric_name and
+                old_link.dst_fabric_name == new_link.dst_fabric_name and
+                old_link.src_switch_name == new_link.src_switch_name and
+                old_link.dst_switch_name == new_link.dst_switch_name and
+                old_link.src_interface_name == new_link.src_interface_name and
+                old_link.dst_interface_name == new_link.dst_interface_name and
+                (old_link.src_cluster_name | default('')) == (new_link.src_cluster_name | default('')) and
+                (old_link.dst_cluster_name | default('')) == (new_link.dst_cluster_name | default('')) -%}
+            {%- set identity.found = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if not identity.found -%}
+          {%- set _ = absent.append(old_link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ absent }}
+    nd4x_rest_override_links: "{{ nd4x_override_config }}"
+    nd4x_rest_recreate_links: >-
+      {{ (nd4x_override_config + nd4x_recreate_config)
+         if (nd4x_run_overridden | default(false) | bool)
+         else nd4x_create_config }}
+    nd4x_rest_delete_one_links: >-
+      {%- if nd4x_run_overridden | default(false) | bool -%}
+        {{ nd4x_recreate_config }}
+      {%- else -%}
+        {%- set links = [] -%}
+        {%- for link in nd4x_create_config -%}
+          {%- if link.src_interface_name != nd4x_primary_interface -%}
+            {%- set _ = links.append(link) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ links }}
+      {%- endif -%}
+    nd4x_rest_delete_bulk_links: []
+    nd4x_rest_override_absent_links: >-
+      {%- set links = [] -%}
+      {%- for link in nd4x_create_config -%}
+        {%- if link.src_interface_name in (nd4x_removed_interfaces | default([])) -%}
+          {%- set _ = links.append(link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ links }}
+    nd4x_rest_delete_one_absent_links: "{{ nd4x_delete_one_config }}"
+    nd4x_rest_delete_bulk_absent_links: "{{ nd4x_delete_bulk_config }}"
+
+- name: Build complete REST assertions for every lifecycle operation
+  ansible.builtin.include_tasks: nd4x_demo_build_rest_expectations.yml
+  vars:
+    nd4x_rest_expected_links: "{{ item.expected }}"
+    nd4x_rest_absent_links: "{{ item.absent }}"
+    nd4x_rest_expectation_label: "{{ item.label }}"
+    nd4x_rest_expectation_fact: "{{ item.fact }}"
+  loop:
+    - {label: create, fact: nd4x_generated_create_rest_expectations, expected: "{{ nd4x_rest_create_links }}", absent: []}
+    - {label: gathered, fact: nd4x_generated_gathered_rest_expectations, expected: "{{ nd4x_rest_create_links }}", absent: []}
+    - {label: update, fact: nd4x_generated_update_rest_expectations, expected: "{{ nd4x_rest_update_links }}", absent: []}
+    - {label: replace, fact: nd4x_generated_replace_rest_expectations, expected: "{{ nd4x_rest_replace_links }}", absent: "{{ nd4x_rest_replace_absent_links }}"}
+    - {label: override, fact: nd4x_generated_override_rest_expectations, expected: "{{ nd4x_rest_override_links }}", absent: "{{ nd4x_rest_override_absent_links }}"}
+    - {label: recreate, fact: nd4x_generated_recreate_rest_expectations, expected: "{{ nd4x_rest_recreate_links }}", absent: []}
+    - {label: delete-one, fact: nd4x_generated_delete_one_rest_expectations, expected: "{{ nd4x_rest_delete_one_links }}", absent: "{{ nd4x_rest_delete_one_absent_links }}"}
+    - {label: delete-bulk, fact: nd4x_generated_delete_bulk_rest_expectations, expected: "{{ nd4x_rest_delete_bulk_links }}", absent: "{{ nd4x_rest_delete_bulk_absent_links }}"}
+
+- name: Define pagination-completeness REST assertion
+  ansible.builtin.set_fact:
+    nd4x_nd_pagination_expectations:
+      - jsonpath: "$.current.meta.counts.remaining"
+        equals: 0
+
+- name: Build operation-specific post-apply REST assertions
+  ansible.builtin.set_fact:
+    nd4x_create_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_create_rest_expectations + nd4x_create_expectations}) | list }}"
+    nd4x_gathered_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_gathered_rest_expectations + nd4x_create_expectations}) | list }}"
+    nd4x_update_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_update_rest_expectations + nd4x_update_expectations}) | list }}"
+    nd4x_replace_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_replace_rest_expectations + nd4x_replace_expectations}) | list }}"
+    nd4x_override_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_override_rest_expectations + nd4x_override_expectations}) | list }}"
+    nd4x_recreate_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_recreate_rest_expectations + nd4x_recreate_expectations}) | list }}"
+    nd4x_delete_one_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_delete_one_rest_expectations + nd4x_delete_one_expectations}) | list }}"
+    nd4x_delete_bulk_nd_queries: "{{ nd4x_nd_queries | map('combine', {'expect': nd4x_nd_pagination_expectations + nd4x_generated_delete_bulk_rest_expectations + nd4x_delete_bulk_expectations}) | list }}"
+
+- name: Acquire lock for nd_manage_links {{ nd4x_policy_name }} lifecycle
+  ansible.builtin.include_tasks: nd4x_demo_acquire_scope_lock.yml
+
+- name: "Run nd_manage_links {{ nd4x_policy_name }} harness lifecycle"
+  block:
+    - name: "{{ nd4x_policy_name }} SETUP: Remove reserved links"
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ nd4x_fabric_name }}"
+        link_scope: "{{ nd4x_link_scope | default('manage') }}"
+        cluster_name: "{{ nd4x_cluster_name | default(test_cluster_name, true) | default(omit, true) }}"
+        ticket_id: "{{ nd4x_ticket_id | default(test_ticket_id, true) | default(omit, true) }}"
+        config: "{{ nd4x_cleanup_config }}"
+        state: deleted
+      register: nd4x_setup_cleanup
+      failed_when: false
+
+    - name: "{{ nd4x_policy_name }} SETUP: Verify reserved scope is clean"
+      ansible.builtin.include_tasks: nd4x_demo_assert_scope_clean.yml
+      vars:
+        nd4x_scope_assert_label: "{{ nd4x_policy_name }} SETUP"
+        nd4x_scope_queries: "{{ nd4x_check_mode_queries }}"
+        nd4x_reserved_interfaces: "{{ nd4x_cleanup_config | map(attribute='src_interface_name') | list }}"
+
+    - name: "{{ nd4x_policy_name }} SETUP: Fail on cleanup errors"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_setup_cleanup.failed | default(false) | bool
+        fail_msg: >-
+          Failed to establish a clean {{ nd4x_policy_name }} harness scope:
+          {{ nd4x_setup_cleanup.msg | default('unknown cleanup error') }}
+
+    - name: "{{ nd4x_policy_name }} MERGED: Create links"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        config: "{{ nd4x_create_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_create_nd_queries }}"
+      register: nd4x_create
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify every proposed link value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} MERGED proposed"
+        nd4x_assert_collection: "{{ nd4x_create.check_mode_result.proposed }}"
+        nd4x_expected_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify every applied link value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} MERGED applied"
+        nd4x_assert_collection: "{{ nd4x_create.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_create_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} MERGED"
+        nd4x_rest_query_results: "{{ nd4x_create.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_create_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify every reserved link identity"
+      ansible.builtin.include_tasks: nd4x_demo_assert_identities.yml
+      vars:
+        nd4x_identity_assert_label: "{{ nd4x_policy_name }} MERGED"
+        nd4x_identity_collection: "{{ nd4x_create.first_run_result.after }}"
+        nd4x_reserved_interfaces: "{{ nd4x_create_config | map(attribute='src_interface_name') | list }}"
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_create.check_mode_result.changed | bool
+          - nd4x_create.first_run_result.changed | bool
+          - not nd4x_create.second_run_result.changed | bool
+          - nd4x_create.check_mode_result.proposed | length == nd4x_create_count
+          - >-
+            nd4x_create.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', nd4x_primary_interface)
+            | selectattr('config_data.policy_type', 'equalto', nd4x_policy_name)
+            | list
+            | length == 1
+
+    - name: "{{ nd4x_policy_name }} SELECTORS: Exercise optional selector coverage"
+      block:
+        - name: "{{ nd4x_policy_name }} SELECTORS: Verify selector IPs differ"
+          ansible.builtin.assert:
+            that:
+              - test_switch_a_ip != test_switch_b_ip
+            fail_msg: >-
+              nd_test_switch_a_ip and nd_test_switch_b_ip must identify
+              different switches for the mixed-selector negative test.
+
+        - name: "{{ nd4x_policy_name }} SELECTORS: Matching name and IP selectors"
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_links
+            state: merged
+            config: "{{ nd4x_matching_selector_config }}"
+            common_args: "{{ nd4x_common_args }}"
+            module_args: "{{ nd4x_module_args | default({}) }}"
+            expected:
+              check_mode:
+                changed: false
+                failed: false
+              apply:
+                changed: false
+                failed: false
+              idempotency:
+                changed: false
+                failed: false
+            check_mode_queries: "{{ nd4x_check_mode_queries }}"
+            nd_queries: "{{ nd4x_create_nd_queries }}"
+          register: nd4x_matching_selectors
+
+        - name: "{{ nd4x_policy_name }} SELECTORS: Verify matching selectors"
+          ansible.builtin.assert:
+            that:
+              - not nd4x_matching_selectors.check_mode_result.changed | bool
+              - not nd4x_matching_selectors.first_run_result.changed | bool
+              - not nd4x_matching_selectors.second_run_result.changed | bool
+
+        - name: "{{ nd4x_policy_name }} SELECTORS: Reject conflicting selectors"
+          cisco.nd.nd_manage_links:
+            output_level: "{{ nd_output_level | default('debug') }}"
+            fabric_name: "{{ nd4x_fabric_name }}"
+            link_scope: manage
+            cluster_name: "{{ test_cluster_name | default(omit, true) }}"
+            ticket_id: "{{ test_ticket_id | default(omit, true) }}"
+            config: "{{ nd4x_conflicting_selector_config }}"
+            state: merged
+          check_mode: true
+          register: nd4x_conflicting_selectors
+          ignore_errors: true
+
+        - name: "{{ nd4x_policy_name }} SELECTORS: Verify conflict is rejected"
+          ansible.builtin.assert:
+            that:
+              - nd4x_conflicting_selectors is failed
+              - nd4x_conflicting_selectors.msg is search('do not resolve to the same switch')
+      when:
+        - nd4x_run_selector_tests | default(false) | bool
+        - test_switch_a_ip | default('') | length > 0
+        - test_switch_b_ip | default('') | length > 0
+
+    - name: "{{ nd4x_policy_name }} GATHERED: Verify read-only state"
+      ansible.builtin.include_tasks: nd4x_demo_gathered.yml
+      vars:
+        nd4x_gathered_src_fabric: "{{ nd4x_gathered_src_fabric_name }}"
+        nd4x_gathered_dst_fabric: "{{ nd4x_gathered_dst_fabric_name }}"
+        nd4x_gathered_interface: "{{ nd4x_primary_interface }}"
+
+    - name: "{{ nd4x_policy_name }} REVERSED: Verify endpoint symmetry"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        config: "{{ nd4x_reversed_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_create_nd_queries }}"
+      register: nd4x_reversed
+      when: nd4x_run_reversed | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} REVERSED: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_reversed.check_mode_result.changed | bool
+          - not nd4x_reversed.first_run_result.changed | bool
+      when: nd4x_run_reversed | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} MERGED: Update primary link"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        config: "{{ nd4x_update_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_update_nd_queries }}"
+      register: nd4x_update
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify every proposed update value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} UPDATE proposed"
+        nd4x_assert_collection: "{{ nd4x_update.check_mode_result.proposed }}"
+        nd4x_expected_links: "{{ nd4x_update_config }}"
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify every applied update value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} UPDATE applied"
+        nd4x_assert_collection: "{{ nd4x_update.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_update_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} UPDATE: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} UPDATE"
+        nd4x_rest_query_results: "{{ nd4x_update.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_update_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} UPDATE: Verify every reserved link identity"
+      ansible.builtin.include_tasks: nd4x_demo_assert_identities.yml
+      vars:
+        nd4x_identity_assert_label: "{{ nd4x_policy_name }} UPDATE"
+        nd4x_identity_collection: "{{ nd4x_update.first_run_result.after }}"
+        nd4x_reserved_interfaces: "{{ nd4x_create_config | map(attribute='src_interface_name') | list }}"
+
+    - name: "{{ nd4x_policy_name }} MERGED: Verify update"
+      ansible.builtin.assert:
+        that:
+          - nd4x_update.check_mode_result.changed | bool
+          - nd4x_update.first_run_result.changed | bool
+          - not nd4x_update.second_run_result.changed | bool
+
+    - name: "{{ nd4x_policy_name }} SECRET: Verify secret intent"
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ nd4x_fabric_name }}"
+        link_scope: manage
+        config: "{{ nd4x_secret_config }}"
+        state: merged
+      check_mode: true
+      register: nd4x_secret
+      when: nd4x_run_secret | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} SECRET: Verify secret is masked"
+      ansible.builtin.assert:
+        that:
+          - nd4x_secret.proposed.0.config_data.template_inputs.default_vrf_ebgp_neighbor_password == 'VALUE_SPECIFIED_IN_NO_LOG_PARAMETER'
+          - nd4x_secret.proposed.0.config_data.template_inputs.link_mtu == 1500
+      when: nd4x_run_secret | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} REPLACED: Replace primary link"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: replaced
+        config: "{{ nd4x_replace_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_replace_nd_queries }}"
+      register: nd4x_replace
+
+    - name: "{{ nd4x_policy_name }} REPLACED: Verify every proposed replacement value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} REPLACED proposed"
+        nd4x_assert_collection: "{{ nd4x_replace.check_mode_result.proposed }}"
+        nd4x_expected_links: "{{ nd4x_replace_config }}"
+
+    - name: "{{ nd4x_policy_name }} REPLACED: Verify every applied replacement value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} REPLACED applied"
+        nd4x_assert_collection: "{{ nd4x_replace.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_replace_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} REPLACED: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} REPLACED"
+        nd4x_rest_query_results: "{{ nd4x_replace.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_replace_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} REPLACED: Verify every retained link identity"
+      ansible.builtin.include_tasks: nd4x_demo_assert_identities.yml
+      vars:
+        nd4x_identity_assert_label: "{{ nd4x_policy_name }} REPLACED"
+        nd4x_identity_collection: "{{ nd4x_replace.first_run_result.after }}"
+        nd4x_reserved_interfaces: "{{ nd4x_create_config | map(attribute='src_interface_name') | list }}"
+
+    - name: "{{ nd4x_policy_name }} REPLACED: Verify replacement"
+      ansible.builtin.assert:
+        that:
+          - nd4x_replace.check_mode_result.changed | bool
+          - nd4x_replace.first_run_result.changed | bool
+          - not nd4x_replace.second_run_result.changed | bool
+          - >-
+            nd4x_replace.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', nd4x_primary_interface)
+            | list
+            | length == 1
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Inspect destructive scope"
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ nd4x_fabric_name }}"
+        link_scope: "{{ nd4x_link_scope | default('manage') }}"
+        cluster_name: "{{ nd4x_cluster_name | default(test_cluster_name, true) | default(omit, true) }}"
+        ticket_id: "{{ nd4x_ticket_id | default(test_ticket_id, true) | default(omit, true) }}"
+        config: "{{ nd4x_override_config }}"
+        state: overridden
+      check_mode: true
+      changed_when: false
+      register: nd4x_override_scope_probe
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Identify unsafe existing links"
+      ansible.builtin.set_fact:
+        nd4x_override_unsafe_links: >-
+          {%- set unsafe = [] -%}
+          {%- for link in nd4x_override_scope_probe.before | default([]) -%}
+            {%- if link.src_interface_name not in (nd4x_cleanup_config | map(attribute='src_interface_name') | list)
+                  or link.dst_interface_name not in (nd4x_cleanup_config | map(attribute='dst_interface_name') | list)
+                  or link.src_fabric_name != nd4x_fabric_name
+                  or link.dst_fabric_name != nd4x_fabric_name -%}
+              {%- set _ = unsafe.append(link) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ unsafe }}
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Reject unsafe destructive scope"
+      ansible.builtin.assert:
+        that:
+          - nd4x_override_unsafe_links | length == 0
+        fail_msg: >-
+          Refusing overridden nd_manage_links test because existing managed
+          links fall outside the reserved harness scope:
+          {{ nd4x_override_unsafe_links }}
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Reduce scope"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: overridden
+        config: "{{ nd4x_override_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_override_nd_queries }}"
+      register: nd4x_override
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Verify every proposed retained value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} OVERRIDDEN proposed"
+        nd4x_assert_collection: "{{ nd4x_override.check_mode_result.proposed }}"
+        nd4x_expected_links: "{{ nd4x_override_config }}"
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Verify every applied retained value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} OVERRIDDEN applied"
+        nd4x_assert_collection: "{{ nd4x_override.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_override_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} OVERRIDDEN"
+        nd4x_rest_query_results: "{{ nd4x_override.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_override_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} OVERRIDDEN: Verify reduced scope"
+      ansible.builtin.assert:
+        that:
+          - nd4x_override.first_run_result.changed | bool
+          - >-
+            nd4x_override.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', nd4x_primary_interface)
+            | list
+            | length == 1
+          - >-
+            nd4x_override.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', item)
+            | list
+            | length == 0
+      loop: "{{ nd4x_removed_interfaces }}"
+      when: nd4x_run_overridden | default(false) | bool
+
+    - name: "{{ nd4x_policy_name }} SETUP: Recreate remaining links for delete coverage"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        config: "{{ nd4x_recreate_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_recreate_nd_queries }}"
+      register: nd4x_recreate
+      when:
+        - nd4x_run_overridden | default(false) | bool
+        - nd4x_recreate_config | length > 0
+
+    - name: "{{ nd4x_policy_name }} RECREATE: Verify every recreated link value"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} RECREATE applied"
+        nd4x_assert_collection: "{{ nd4x_recreate.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_recreate_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} RECREATE: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} RECREATE"
+        nd4x_rest_query_results: "{{ nd4x_recreate.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_recreate_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+      when:
+        - nd4x_run_overridden | default(false) | bool
+        - nd4x_recreate_config | length > 0
+
+    - name: "{{ nd4x_policy_name }} RECREATE: Verify every reserved link identity"
+      ansible.builtin.include_tasks: nd4x_demo_assert_identities.yml
+      vars:
+        nd4x_identity_assert_label: "{{ nd4x_policy_name }} RECREATE"
+        nd4x_identity_collection: "{{ nd4x_recreate.first_run_result.after }}"
+        nd4x_reserved_interfaces: "{{ nd4x_create_config | map(attribute='src_interface_name') | list }}"
+      when:
+        - nd4x_run_overridden | default(false) | bool
+        - nd4x_recreate_config | length > 0
+
+    - name: "{{ nd4x_policy_name }} DELETED: Delete primary link"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: deleted
+        config: "{{ nd4x_delete_one_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_delete_one_nd_queries }}"
+      register: nd4x_delete_one
+
+    - name: "{{ nd4x_policy_name }} DELETED: Verify primary deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_delete_one.first_run_result.changed | bool
+          - not nd4x_delete_one.second_run_result.changed | bool
+          - >-
+            nd4x_delete_one.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', nd4x_primary_interface)
+            | list
+            | length == 0
+
+    - name: "{{ nd4x_policy_name }} DELETE primary: Verify exact scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} DELETE primary"
+        nd4x_assert_collection: "{{ nd4x_delete_one.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_delete_one_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} DELETE primary: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} DELETE primary"
+        nd4x_rest_query_results: "{{ nd4x_delete_one.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_delete_one_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+
+    - name: "{{ nd4x_policy_name }} DELETED: Verify every remaining link identity"
+      ansible.builtin.include_tasks: nd4x_demo_assert_identities.yml
+      vars:
+        nd4x_identity_assert_label: "{{ nd4x_policy_name }} DELETE primary"
+        nd4x_identity_collection: "{{ nd4x_delete_one.first_run_result.after }}"
+        nd4x_reserved_interfaces: "{{ nd4x_removed_interfaces }}"
+
+    - name: "{{ nd4x_policy_name }} DELETED: Delete remaining links"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: deleted
+        config: "{{ nd4x_delete_bulk_config }}"
+        common_args: "{{ nd4x_common_args }}"
+        module_args: "{{ nd4x_module_args | default({}) }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_check_mode_queries }}"
+        nd_queries: "{{ nd4x_delete_bulk_nd_queries }}"
+      register: nd4x_delete_bulk
+      when: nd4x_delete_bulk_config | length > 0
+
+    - name: "{{ nd4x_policy_name }} DELETED: Verify bulk deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_delete_bulk.first_run_result.changed | bool
+          - not nd4x_delete_bulk.second_run_result.changed | bool
+          - >-
+            nd4x_delete_bulk.first_run_result.after
+            | selectattr('src_interface_name', 'in', nd4x_removed_interfaces)
+            | list
+            | length == 0
+      when: nd4x_delete_bulk_config | length > 0
+
+    - name: "{{ nd4x_policy_name }} DELETE bulk: Verify exact scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_links.yml
+      vars:
+        nd4x_assert_label: "{{ nd4x_policy_name }} DELETE bulk"
+        nd4x_assert_collection: "{{ nd4x_delete_bulk.first_run_result.after }}"
+        nd4x_expected_links: "{{ nd4x_rest_delete_bulk_links }}"
+        nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+      when: nd4x_delete_bulk_config | length > 0
+
+    - name: "{{ nd4x_policy_name }} DELETE bulk: Verify exact REST scoped state"
+      ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
+      vars:
+        nd4x_rest_assert_label: "{{ nd4x_policy_name }} DELETE bulk"
+        nd4x_rest_query_results: "{{ nd4x_delete_bulk.nd_query_results }}"
+        nd4x_rest_expected_links: "{{ nd4x_rest_delete_bulk_links }}"
+        nd4x_rest_scope_links: "{{ nd4x_create_config }}"
+      when: nd4x_delete_bulk_config | length > 0
+
+  always:
+    - name: "{{ nd4x_policy_name }} CLEANUP: Remove all reserved links"
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ nd4x_fabric_name }}"
+        link_scope: "{{ nd4x_link_scope | default('manage') }}"
+        cluster_name: "{{ nd4x_cluster_name | default(test_cluster_name, true) | default(omit, true) }}"
+        ticket_id: "{{ nd4x_ticket_id | default(test_ticket_id, true) | default(omit, true) }}"
+        config: "{{ nd4x_cleanup_config }}"
+        state: deleted
+      register: nd4x_final_cleanup
+      failed_when: false
+      tags:
+        - always
+
+    - name: "{{ nd4x_policy_name }} CLEANUP: Verify cleanup while scope lock is held"
+      block:
+        - name: "{{ nd4x_policy_name }} CLEANUP: Verify reserved scope is empty"
+          ansible.builtin.include_tasks: nd4x_demo_assert_scope_clean.yml
+          vars:
+            nd4x_scope_assert_label: "{{ nd4x_policy_name }} CLEANUP"
+            nd4x_scope_queries: "{{ nd4x_check_mode_queries }}"
+            nd4x_reserved_interfaces: "{{ nd4x_cleanup_config | map(attribute='src_interface_name') | list }}"
+          tags:
+            - always
+
+        - name: "{{ nd4x_policy_name }} CLEANUP: Fail if cleanup reported an error"
+          ansible.builtin.assert:
+            that:
+              - not nd4x_final_cleanup.failed | default(false) | bool
+            fail_msg: >-
+              Failed to clean up {{ nd4x_policy_name }} harness resources:
+              {{ nd4x_final_cleanup.msg | default('unknown cleanup error') }}
+          tags:
+            - always
+      always:
+        - name: "{{ nd4x_policy_name }} CLEANUP: Release scope lock after verification"
+          ansible.builtin.include_tasks: nd4x_demo_release_scope_lock.yml
+          tags:
+            - always
+      tags:
+        - always

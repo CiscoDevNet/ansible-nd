@@ -1,0 +1,276 @@
+---
+- name: Define extended nd_manage_links harness policy matrix
+  ansible.builtin.set_fact:
+    nd4x_extended_manage_cases:
+      - name: ipv6LinkLocal
+        enabled: "{{ run_ipv6_link_local | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_ipv6_link_local }}"
+        src_fabric: "{{ test_fabric_ipv6_link_local }}"
+        dst_fabric: "{{ test_fabric_ipv6_link_local }}"
+        src_switch: "{{ test_switch_a }}"
+        dst_switch: "{{ test_switch_b }}"
+        primary_interface: Ethernet1/50
+        removed_interfaces: [Ethernet1/51]
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_ipv6_link_local }}", dst_fabric_name: "{{ test_fabric_ipv6_link_local }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/50, dst_interface_name: Ethernet1/50, config_data: {policy_type: ipv6LinkLocal, template_inputs: {interface_admin_state: true, mtu: 9216, speed: auto, fec: auto, src_interface_description: "ansible ipv6ll 50 source", dst_interface_description: "ansible ipv6ll 50 destination"}}}
+          - {src_fabric_name: "{{ test_fabric_ipv6_link_local }}", dst_fabric_name: "{{ test_fabric_ipv6_link_local }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/51, dst_interface_name: Ethernet1/51, config_data: {policy_type: ipv6LinkLocal, template_inputs: {interface_admin_state: true, mtu: 9216, speed: auto, fec: auto}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_ipv6_link_local }}", dst_fabric_name: "{{ test_fabric_ipv6_link_local }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/50, dst_interface_name: Ethernet1/50, config_data: {policy_type: ipv6LinkLocal, template_inputs: {interface_admin_state: false, mtu: 1500, speed: auto, src_interface_description: "updated ipv6ll source"}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_ipv6_link_local }}", dst_fabric_name: "{{ test_fabric_ipv6_link_local }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/50, dst_interface_name: Ethernet1/50, config_data: {policy_type: ipv6LinkLocal, template_inputs: {interface_admin_state: true, mtu: 9216}}}
+        recreate_config:
+          - {src_fabric_name: "{{ test_fabric_ipv6_link_local }}", dst_fabric_name: "{{ test_fabric_ipv6_link_local }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/51, dst_interface_name: Ethernet1/51, config_data: {policy_type: ipv6LinkLocal, template_inputs: {interface_admin_state: true, mtu: 9216}}}
+        query_paths:
+          - {name: Validate ipv6LinkLocal links, path: "/api/v1/manage/links?fabricName={{ test_fabric_ipv6_link_local }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'ipv6LinkLocal')].configData.templateInputs.mtu", equals: 9216}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'ipv6LinkLocal')].configData.templateInputs.mtu", equals: 1500}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'ipv6LinkLocal')].configData.templateInputs.mtu", equals: 9216}
+        recreate_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/51' & @.configData.policyType == 'ipv6LinkLocal')]", exists: true}
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'ipv6LinkLocal')]", exists: false}
+        delete_bulk_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/51' & @.configData.policyType == 'ipv6LinkLocal')]", exists: false}
+
+      - name: layer3DciVrfLite
+        enabled: "{{ run_layer3_dci_vrf_lite | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_l3dci_src }}"
+        src_fabric: "{{ test_fabric_l3dci_src }}"
+        dst_fabric: "{{ test_fabric_l3dci_dst }}"
+        src_switch: "{{ test_switch_a }}"
+        dst_switch: "{{ test_switch_b }}"
+        primary_interface: Ethernet1/50
+        removed_interfaces: [Ethernet1/51]
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_l3dci_src }}", dst_fabric_name: "{{ test_fabric_l3dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/50, dst_interface_name: Ethernet1/50, config_data: {policy_type: layer3DciVrfLite, template_inputs: {src_ip_address_mask: "10.99.50.1/30", dst_ip_address_mask: "10.99.50.2/30", src_vrf_name: tenant-a, dst_vrf_name: tenant-a, link_mtu: 9216, speed: auto, ip_redirects: false, ipv4_pim: false, ipv6_pim: false}}}
+          - {src_fabric_name: "{{ test_fabric_l3dci_src }}", dst_fabric_name: "{{ test_fabric_l3dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/51, dst_interface_name: Ethernet1/51, config_data: {policy_type: layer3DciVrfLite, template_inputs: {src_ip_address_mask: "10.99.51.1/30", dst_ip_address_mask: "10.99.51.2/30", src_vrf_name: tenant-a, dst_vrf_name: tenant-a, link_mtu: 9216, speed: auto}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_l3dci_src }}", dst_fabric_name: "{{ test_fabric_l3dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/50, dst_interface_name: Ethernet1/50, config_data: {policy_type: layer3DciVrfLite, template_inputs: {src_ip_address_mask: "10.99.50.1/30", dst_ip_address_mask: "10.99.50.2/30", src_vrf_name: tenant-a, dst_vrf_name: tenant-a, link_mtu: 1500, speed: auto}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_l3dci_src }}", dst_fabric_name: "{{ test_fabric_l3dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/50, dst_interface_name: Ethernet1/50, config_data: {policy_type: layer3DciVrfLite, template_inputs: {src_ip_address_mask: "10.99.50.1/30", dst_ip_address_mask: "10.99.50.2/30", src_vrf_name: tenant-a, dst_vrf_name: tenant-a, link_mtu: 9216}}}
+        recreate_config:
+          - {src_fabric_name: "{{ test_fabric_l3dci_src }}", dst_fabric_name: "{{ test_fabric_l3dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/51, dst_interface_name: Ethernet1/51, config_data: {policy_type: layer3DciVrfLite, template_inputs: {src_ip_address_mask: "10.99.51.1/30", dst_ip_address_mask: "10.99.51.2/30", src_vrf_name: tenant-a, dst_vrf_name: tenant-a, link_mtu: 9216}}}
+        query_paths:
+          - {name: Validate source Layer 3 DCI links, path: "/api/v1/manage/links?fabricName={{ test_fabric_l3dci_src }}&max={{ nd4x_links_page_size }}&offset=0"}
+          - {name: Validate destination Layer 3 DCI links, path: "/api/v1/manage/links?fabricName={{ test_fabric_l3dci_dst }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'layer3DciVrfLite')].configData.templateInputs.linkMtu", equals: 9216}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'layer3DciVrfLite')].configData.templateInputs.linkMtu", equals: 1500}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'layer3DciVrfLite')].configData.templateInputs.linkMtu", equals: 9216}
+        recreate_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/51' & @.configData.policyType == 'layer3DciVrfLite')]", exists: true}
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/50' & @.configData.policyType == 'layer3DciVrfLite')]", exists: false}
+        delete_bulk_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/51' & @.configData.policyType == 'layer3DciVrfLite')]", exists: false}
+
+      - name: mplsUnderlay
+        enabled: "{{ run_mpls_underlay | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_mpls_src }}"
+        src_fabric: "{{ test_fabric_mpls_src }}"
+        dst_fabric: "{{ test_fabric_mpls_dst }}"
+        src_switch: "{{ test_switch_a }}"
+        dst_switch: "{{ test_switch_b }}"
+        primary_interface: Ethernet1/52
+        removed_interfaces: [Ethernet1/53]
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/52, dst_interface_name: Ethernet1/52, config_data: {policy_type: mplsUnderlay, template_inputs: {mpls_fabric_type: mplsSr, dci_routing_protocol: is-is, sr_global_block_range: "16000-23999", src_sr_index: 100, dst_sr_index: 101, src_ip_address_mask: "10.99.60.1/30", dst_ip_address: "10.99.60.2", link_mtu: 9216, inherit_ttag_fabric_setting: false}}}
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/53, dst_interface_name: Ethernet1/53, config_data: {policy_type: mplsUnderlay, template_inputs: {mpls_fabric_type: mplsSr, dci_routing_protocol: is-is, sr_global_block_range: "16000-23999", src_sr_index: 102, dst_sr_index: 103, src_ip_address_mask: "10.99.61.1/30", dst_ip_address: "10.99.61.2", link_mtu: 9216}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/52, dst_interface_name: Ethernet1/52, config_data: {policy_type: mplsUnderlay, template_inputs: {mpls_fabric_type: mplsSr, dci_routing_protocol: is-is, sr_global_block_range: "16000-23999", src_sr_index: 100, dst_sr_index: 101, src_ip_address_mask: "10.99.60.1/30", dst_ip_address: "10.99.60.2", link_mtu: 1500}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/52, dst_interface_name: Ethernet1/52, config_data: {policy_type: mplsUnderlay, template_inputs: {mpls_fabric_type: mplsSr, dci_routing_protocol: is-is, sr_global_block_range: "16000-23999", src_sr_index: 100, dst_sr_index: 101, src_ip_address_mask: "10.99.60.1/30", dst_ip_address: "10.99.60.2", link_mtu: 9216}}}
+        recreate_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/53, dst_interface_name: Ethernet1/53, config_data: {policy_type: mplsUnderlay, template_inputs: {mpls_fabric_type: mplsSr, dci_routing_protocol: is-is, sr_global_block_range: "16000-23999", src_sr_index: 102, dst_sr_index: 103, src_ip_address_mask: "10.99.61.1/30", dst_ip_address: "10.99.61.2", link_mtu: 9216}}}
+        query_paths:
+          - {name: Validate source MPLS underlay links, path: "/api/v1/manage/links?fabricName={{ test_fabric_mpls_src }}&max={{ nd4x_links_page_size }}&offset=0"}
+          - {name: Validate destination MPLS underlay links, path: "/api/v1/manage/links?fabricName={{ test_fabric_mpls_dst }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/52' & @.configData.policyType == 'mplsUnderlay')].configData.templateInputs.linkMtu", equals: 9216}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/52' & @.configData.policyType == 'mplsUnderlay')].configData.templateInputs.linkMtu", equals: 1500}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/52' & @.configData.policyType == 'mplsUnderlay')].configData.templateInputs.linkMtu", equals: 9216}
+        recreate_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/53' & @.configData.policyType == 'mplsUnderlay')]", exists: true}
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/52' & @.configData.policyType == 'mplsUnderlay')]", exists: false}
+        delete_bulk_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/53' & @.configData.policyType == 'mplsUnderlay')]", exists: false}
+
+      - name: mplsOverlay
+        enabled: "{{ run_mpls_overlay | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_mpls_src }}"
+        src_fabric: "{{ test_fabric_mpls_src }}"
+        dst_fabric: "{{ test_fabric_mpls_dst }}"
+        src_switch: "{{ test_switch_a }}"
+        dst_switch: "{{ test_switch_b }}"
+        primary_interface: loopback100
+        removed_interfaces: [loopback101]
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: loopback100, dst_interface_name: loopback100, config_data: {policy_type: mplsOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", dst_ip_address: "10.99.61.2"}}}
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: loopback101, dst_interface_name: loopback101, config_data: {policy_type: mplsOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", dst_ip_address: "10.99.62.2"}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: loopback100, dst_interface_name: loopback100, config_data: {policy_type: mplsOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", dst_ip_address: "10.99.61.3"}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: loopback100, dst_interface_name: loopback100, config_data: {policy_type: mplsOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", dst_ip_address: "10.99.61.2"}}}
+        recreate_config:
+          - {src_fabric_name: "{{ test_fabric_mpls_src }}", dst_fabric_name: "{{ test_fabric_mpls_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: loopback101, dst_interface_name: loopback101, config_data: {policy_type: mplsOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", dst_ip_address: "10.99.62.2"}}}
+        query_paths:
+          - {name: Validate source MPLS overlay links, path: "/api/v1/manage/links?fabricName={{ test_fabric_mpls_src }}&max={{ nd4x_links_page_size }}&offset=0"}
+          - {name: Validate destination MPLS overlay links, path: "/api/v1/manage/links?fabricName={{ test_fabric_mpls_dst }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'loopback100' & @.configData.policyType == 'mplsOverlay')].configData.templateInputs.dstIpAddress", equals: "10.99.61.2"}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'loopback100' & @.configData.policyType == 'mplsOverlay')].configData.templateInputs.dstIpAddress", equals: "10.99.61.3"}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'loopback100' & @.configData.policyType == 'mplsOverlay')].configData.templateInputs.dstIpAddress", equals: "10.99.61.2"}
+        recreate_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'loopback101' & @.configData.policyType == 'mplsOverlay')]", exists: true}
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'loopback100' & @.configData.policyType == 'mplsOverlay')]", exists: false}
+        delete_bulk_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'loopback101' & @.configData.policyType == 'mplsOverlay')]", exists: false}
+
+      - name: userDefined
+        enabled: "{{ run_user_defined | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_user_defined }}"
+        src_fabric: "{{ test_fabric_user_defined }}"
+        dst_fabric: "{{ test_fabric_user_defined }}"
+        src_switch: "{{ test_switch_a }}"
+        dst_switch: "{{ test_switch_b }}"
+        primary_interface: Ethernet1/54
+        removed_interfaces: [Ethernet1/55]
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_user_defined }}", dst_fabric_name: "{{ test_fabric_user_defined }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/54, dst_interface_name: Ethernet1/54, config_data: {policy_type: userDefined, template_name: "{{ nd_test_user_defined_template | default('my_custom_link_template') }}", template_inputs: {allowed_vlans: "10,20,30", mtu: 9216}}}
+          - {src_fabric_name: "{{ test_fabric_user_defined }}", dst_fabric_name: "{{ test_fabric_user_defined }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/55, dst_interface_name: Ethernet1/55, config_data: {policy_type: userDefined, template_name: "{{ nd_test_user_defined_template | default('my_custom_link_template') }}", template_inputs: {allowed_vlans: "40,50", mtu: 9216}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_user_defined }}", dst_fabric_name: "{{ test_fabric_user_defined }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/54, dst_interface_name: Ethernet1/54, config_data: {policy_type: userDefined, template_name: "{{ nd_test_user_defined_template | default('my_custom_link_template') }}", template_inputs: {allowed_vlans: "10,20,30", mtu: 1500}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_user_defined }}", dst_fabric_name: "{{ test_fabric_user_defined }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/54, dst_interface_name: Ethernet1/54, config_data: {policy_type: userDefined, template_name: "{{ nd_test_user_defined_template | default('my_custom_link_template') }}", template_inputs: {allowed_vlans: "100,200", mtu: 9216}}}
+        recreate_config:
+          - {src_fabric_name: "{{ test_fabric_user_defined }}", dst_fabric_name: "{{ test_fabric_user_defined }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/55, dst_interface_name: Ethernet1/55, config_data: {policy_type: userDefined, template_name: "{{ nd_test_user_defined_template | default('my_custom_link_template') }}", template_inputs: {allowed_vlans: "40,50", mtu: 9216}}}
+        query_paths:
+          - {name: Validate user-defined links, path: "/api/v1/manage/links?fabricName={{ test_fabric_user_defined }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.allowedVlans", equals: "10,20,30"}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.mtu", equals: 1500}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.allowedVlans", equals: "100,200"}
+        recreate_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/55' & @.configData.policyType == 'userDefined')]", exists: true}
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')]", exists: false}
+        delete_bulk_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/55' & @.configData.policyType == 'userDefined')]", exists: false}
+
+      - name: iosXeNumbered
+        enabled: "{{ run_iosxe_numbered | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_iosxe }}"
+        src_fabric: "{{ test_fabric_iosxe }}"
+        dst_fabric: "{{ test_fabric_iosxe }}"
+        src_switch: "{{ test_iosxe_switch_a }}"
+        dst_switch: "{{ test_iosxe_switch_b }}"
+        primary_interface: Ethernet1/56
+        removed_interfaces: [Ethernet1/57]
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_iosxe }}", dst_fabric_name: "{{ test_fabric_iosxe }}", src_switch_name: "{{ test_iosxe_switch_a }}", dst_switch_name: "{{ test_iosxe_switch_b }}", src_interface_name: Ethernet1/56, dst_interface_name: Ethernet1/56, config_data: {policy_type: iosXeNumbered, template_inputs: {src_ip: "10.99.70.1", dst_ip: "10.99.70.2", mtu: 9198, speed: auto, interface_admin_state: true, src_interface_description: "ansible iosxe source", dst_interface_description: "ansible iosxe destination"}}}
+          - {src_fabric_name: "{{ test_fabric_iosxe }}", dst_fabric_name: "{{ test_fabric_iosxe }}", src_switch_name: "{{ test_iosxe_switch_a }}", dst_switch_name: "{{ test_iosxe_switch_b }}", src_interface_name: Ethernet1/57, dst_interface_name: Ethernet1/57, config_data: {policy_type: iosXeNumbered, template_inputs: {src_ip: "10.99.71.1", dst_ip: "10.99.71.2", mtu: 9198, speed: auto, interface_admin_state: true}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_iosxe }}", dst_fabric_name: "{{ test_fabric_iosxe }}", src_switch_name: "{{ test_iosxe_switch_a }}", dst_switch_name: "{{ test_iosxe_switch_b }}", src_interface_name: Ethernet1/56, dst_interface_name: Ethernet1/56, config_data: {policy_type: iosXeNumbered, template_inputs: {src_ip: "10.99.70.1", dst_ip: "10.99.70.2", mtu: 1500, speed: auto, interface_admin_state: false}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_iosxe }}", dst_fabric_name: "{{ test_fabric_iosxe }}", src_switch_name: "{{ test_iosxe_switch_a }}", dst_switch_name: "{{ test_iosxe_switch_b }}", src_interface_name: Ethernet1/56, dst_interface_name: Ethernet1/56, config_data: {policy_type: iosXeNumbered, template_inputs: {src_ip: "10.99.70.1", dst_ip: "10.99.70.2", mtu: 9198}}}
+        recreate_config:
+          - {src_fabric_name: "{{ test_fabric_iosxe }}", dst_fabric_name: "{{ test_fabric_iosxe }}", src_switch_name: "{{ test_iosxe_switch_a }}", dst_switch_name: "{{ test_iosxe_switch_b }}", src_interface_name: Ethernet1/57, dst_interface_name: Ethernet1/57, config_data: {policy_type: iosXeNumbered, template_inputs: {src_ip: "10.99.71.1", dst_ip: "10.99.71.2", mtu: 9198}}}
+        query_paths:
+          - {name: Validate IOS-XE numbered links, path: "/api/v1/manage/links?fabricName={{ test_fabric_iosxe }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/56' & @.configData.policyType == 'iosXeNumbered')].configData.templateInputs.mtu", equals: 9198}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/56' & @.configData.policyType == 'iosXeNumbered')].configData.templateInputs.mtu", equals: 1500}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/56' & @.configData.policyType == 'iosXeNumbered')].configData.templateInputs.mtu", equals: 9198}
+        recreate_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/57' & @.configData.policyType == 'iosXeNumbered')]", exists: true}
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/56' & @.configData.policyType == 'iosXeNumbered')]", exists: false}
+        delete_bulk_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/57' & @.configData.policyType == 'iosXeNumbered')]", exists: false}
+
+      - name: vpcPeerKeepalive
+        enabled: "{{ run_vpc_peer_keepalive | bool }}"
+        scope: manage
+        fabric: "{{ test_fabric_vpc }}"
+        src_fabric: "{{ test_fabric_vpc }}"
+        dst_fabric: "{{ test_fabric_vpc }}"
+        src_switch: "{{ test_vpc_switch_a }}"
+        dst_switch: "{{ test_vpc_switch_b }}"
+        primary_interface: mgmt0
+        removed_interfaces: []
+        create_config:
+          - {src_fabric_name: "{{ test_fabric_vpc }}", dst_fabric_name: "{{ test_fabric_vpc }}", src_switch_name: "{{ test_vpc_switch_a }}", dst_switch_name: "{{ test_vpc_switch_b }}", src_interface_name: mgmt0, dst_interface_name: mgmt0, config_data: {policy_type: vpcPeerKeepalive, template_inputs: {src_ip: "10.1.1.1", dst_ip: "10.1.1.2", interface_vrf: management, interface_admin_state: true, mtu: 1500}}}
+        update_config:
+          - {src_fabric_name: "{{ test_fabric_vpc }}", dst_fabric_name: "{{ test_fabric_vpc }}", src_switch_name: "{{ test_vpc_switch_a }}", dst_switch_name: "{{ test_vpc_switch_b }}", src_interface_name: mgmt0, dst_interface_name: mgmt0, config_data: {policy_type: vpcPeerKeepalive, template_inputs: {src_ip: "10.1.1.1", dst_ip: "10.1.1.2", interface_vrf: management, interface_admin_state: false, mtu: 1500}}}
+        replace_config:
+          - {src_fabric_name: "{{ test_fabric_vpc }}", dst_fabric_name: "{{ test_fabric_vpc }}", src_switch_name: "{{ test_vpc_switch_a }}", dst_switch_name: "{{ test_vpc_switch_b }}", src_interface_name: mgmt0, dst_interface_name: mgmt0, config_data: {policy_type: vpcPeerKeepalive, template_inputs: {src_ip: "10.1.1.1", dst_ip: "10.1.1.2", interface_vrf: management, interface_admin_state: true, mtu: 1500}}}
+        recreate_config: []
+        query_paths:
+          - {name: Validate vPC peer keepalive links, path: "/api/v1/manage/links?fabricName={{ test_fabric_vpc }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'mgmt0' & @.configData.policyType == 'vpcPeerKeepalive')].configData.templateInputs.interfaceVrf", equals: management}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'mgmt0' & @.configData.policyType == 'vpcPeerKeepalive')].configData.templateInputs.interfaceAdminState", equals: false}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'mgmt0' & @.configData.policyType == 'vpcPeerKeepalive')].configData.templateInputs.interfaceAdminState", equals: true}
+        recreate_expectations: []
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'mgmt0' & @.configData.policyType == 'vpcPeerKeepalive')]", exists: false}
+        delete_bulk_expectations: []
+
+    nd4x_one_manage_cases:
+      - name: oneManageMultisiteOverlay
+        enabled: "{{ run_one_manage | bool }}"
+        scope: one_manage
+        fabric: "{{ test_fabric_one_manage }}"
+        src_fabric: "{{ test_one_manage_src_fabric }}"
+        dst_fabric: "{{ test_one_manage_dst_fabric }}"
+        src_cluster: "{{ test_one_manage_src_cluster }}"
+        dst_cluster: "{{ test_one_manage_dst_cluster }}"
+        control_cluster: "{{ test_one_manage_cluster_name }}"
+        ticket_id: "{{ test_one_manage_ticket_id }}"
+        src_switch: "{{ test_switch_a }}"
+        dst_switch: "{{ test_switch_b }}"
+        primary_interface: Ethernet1/40
+        removed_interfaces: []
+        create_config:
+          - {src_cluster_name: "{{ test_one_manage_src_cluster }}", dst_cluster_name: "{{ test_one_manage_dst_cluster }}", src_fabric_name: "{{ test_one_manage_src_fabric }}", dst_fabric_name: "{{ test_one_manage_dst_fabric }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/40, dst_interface_name: Ethernet1/40, config_data: {policy_type: multisiteOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address: "10.99.140.1", dst_ip_address: "10.99.140.2", ebgp_multihop: 5}}}
+        update_config:
+          - {src_cluster_name: "{{ test_one_manage_src_cluster }}", dst_cluster_name: "{{ test_one_manage_dst_cluster }}", src_fabric_name: "{{ test_one_manage_src_fabric }}", dst_fabric_name: "{{ test_one_manage_dst_fabric }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/40, dst_interface_name: Ethernet1/40, config_data: {policy_type: multisiteOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address: "10.99.140.1", dst_ip_address: "10.99.140.2", ebgp_multihop: 10}}}
+        replace_config:
+          - {src_cluster_name: "{{ test_one_manage_src_cluster }}", dst_cluster_name: "{{ test_one_manage_dst_cluster }}", src_fabric_name: "{{ test_one_manage_src_fabric }}", dst_fabric_name: "{{ test_one_manage_dst_fabric }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/40, dst_interface_name: Ethernet1/40, config_data: {policy_type: multisiteOverlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address: "10.99.140.1", dst_ip_address: "10.99.140.2", ebgp_multihop: 5}}}
+        recreate_config: []
+        query_paths:
+          - {name: Validate One Manage multisite overlay links, path: "/api/v1/manage/links?fabricName={{ test_fabric_one_manage }}&srcClusterName={{ test_one_manage_src_cluster }}&dstClusterName={{ test_one_manage_dst_cluster }}&max={{ nd4x_links_page_size }}&offset=0"}
+          - {name: Validate One Manage destination-fabric projection, path: "/api/v1/manage/links?fabricName={{ test_one_manage_dst_fabric }}&srcClusterName={{ test_one_manage_src_cluster }}&dstClusterName={{ test_one_manage_dst_cluster }}&max={{ nd4x_links_page_size }}&offset=0"}
+        create_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/40' & @.configData.policyType == 'multisiteOverlay')].configData.templateInputs.ebgpMultihop", equals: 5}
+        update_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/40' & @.configData.policyType == 'multisiteOverlay')].configData.templateInputs.ebgpMultihop", equals: 10}
+        replace_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/40' & @.configData.policyType == 'multisiteOverlay')].configData.templateInputs.ebgpMultihop", equals: 5}
+        recreate_expectations: []
+        delete_one_expectations:
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/40' & @.configData.policyType == 'multisiteOverlay')]", exists: false}
+        delete_bulk_expectations: []

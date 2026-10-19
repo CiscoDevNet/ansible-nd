@@ -1,0 +1,330 @@
+---
+- name: Build enabled extended nd_manage_links policy cases
+  ansible.builtin.set_fact:
+    nd4x_extended_cases: >-
+      {{ (nd4x_extended_manage_cases + nd4x_one_manage_cases)
+         | selectattr('enabled', 'equalto', true)
+         | list }}
+
+- name: "ND4X EXTENDED PREFLIGHT: Require explicit dedicated-scope ownership"
+  ansible.builtin.assert:
+    that:
+      - nd4x_links_scope_owner | length >= 3
+      - nd4x_links_scope_owner is match('^[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}$')
+      - nd4x_links_scope_isolated | bool
+    fail_msg: >-
+      Extended nd_manage_links harness coverage requires an explicit
+      ownership marker and isolated fabrics, switches, and interfaces. Set
+      nd_test_nd4x_links_scope_owner=<unique-run-or-team-id> and
+      nd_test_nd4x_links_scope_isolated=true.
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Verify every policy fabric exists"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item }}"
+    method: get
+  loop: >-
+    {{ nd4x_extended_cases
+       | map(attribute='src_fabric') | list
+       + nd4x_extended_cases | map(attribute='dst_fabric') | list }}
+  register: nd4x_extended_fabric_queries
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Assert every policy fabric is reachable"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - not item.failed | default(false) | bool
+    fail_msg: "Extended nd_manage_links fabric {{ item.item }} is unavailable."
+  loop: "{{ nd4x_extended_fabric_queries.results | default([]) }}"
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Verify source switches exist"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.src_fabric }}/switches"
+    method: get
+  loop: "{{ nd4x_extended_cases }}"
+  register: nd4x_extended_src_switch_queries
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Verify destination switches exist"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ item.dst_fabric }}/switches"
+    method: get
+  loop: "{{ nd4x_extended_cases }}"
+  register: nd4x_extended_dst_switch_queries
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Assert source switches are present"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - >-
+        item.jsondata.switches | default([])
+        | selectattr('hostname', 'equalto', item.item.src_switch)
+        | list | length == 1
+    fail_msg: >-
+      Source switch {{ item.item.src_switch }} is not uniquely present in
+      fabric {{ item.item.src_fabric }}.
+  loop: "{{ nd4x_extended_src_switch_queries.results | default([]) }}"
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Assert destination switches are present"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - >-
+        item.jsondata.switches | default([])
+        | selectattr('hostname', 'equalto', item.item.dst_switch)
+        | list | length == 1
+    fail_msg: >-
+      Destination switch {{ item.item.dst_switch }} is not uniquely present in
+      fabric {{ item.item.dst_fabric }}.
+  loop: "{{ nd4x_extended_dst_switch_queries.results | default([]) }}"
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Build physical interface inventory targets"
+  ansible.builtin.set_fact:
+    nd4x_extended_interface_inventory_targets: >-
+      {%- set targets = [] -%}
+      {%- for case in nd4x_extended_cases -%}
+        {%- for result in nd4x_extended_src_switch_queries.results
+              if result.item.name == case.name -%}
+          {%- set matches = result.jsondata.switches | default([])
+               | selectattr('hostname', 'equalto', case.src_switch)
+               | list -%}
+          {%- if matches | length == 1 -%}
+            {%- set switch = matches[0] -%}
+            {%- set _ = targets.append({
+                  'scope': case.name,
+                  'fabric': case.src_fabric,
+                  'switch_name': case.src_switch,
+                  'switch_id': switch.switchId | default(switch.serialNumber, true) | default(''),
+                  'interfaces': case.reserved_interfaces | default([case.primary_interface] + case.removed_interfaces)
+                }) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- for result in nd4x_extended_dst_switch_queries.results
+              if result.item.name == case.name -%}
+          {%- set matches = result.jsondata.switches | default([])
+               | selectattr('hostname', 'equalto', case.dst_switch)
+               | list -%}
+          {%- if matches | length == 1 -%}
+            {%- set switch = matches[0] -%}
+            {%- set _ = targets.append({
+                  'scope': case.name,
+                  'fabric': case.dst_fabric,
+                  'switch_name': case.dst_switch,
+                  'switch_id': switch.switchId | default(switch.serialNumber, true) | default(''),
+                  'interfaces': case.reserved_interfaces | default([case.primary_interface] + case.removed_interfaces)
+                }) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ targets }}
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Verify required switch identifiers are available"
+  ansible.builtin.assert:
+    that:
+      - item.switch_id | length > 0
+      - item.interfaces | length > 0
+    fail_msg: >-
+      Could not resolve the switch identifier or reserved interfaces for
+      extended policy {{ item.scope }} on {{ item.fabric }}/{{ item.switch_name }}.
+  loop: "{{ nd4x_extended_interface_inventory_targets }}"
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Validate physical interface inventory"
+  ansible.builtin.include_tasks: nd4x_demo_validate_interface_inventory.yml
+  vars:
+    nd4x_interface_inventory_label: ND4X EXTENDED PREFLIGHT
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_interface_inventory_targets | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Read every reserved policy scope"
+  cisco.nd.nd_rest:
+    path: "{{ item.1.path }}"
+    method: get
+  loop: "{{ nd4x_extended_cases | subelements('query_paths') }}"
+  loop_control:
+    label: "{{ item.0.name }} - {{ item.1.name }}"
+  register: nd4x_extended_scope_queries
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Assert every reserved policy scope query succeeded"
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - not item.failed | default(false) | bool
+      - item.jsondata is mapping
+      - item.jsondata.links is defined
+      - item.jsondata.links is sequence
+      - item.jsondata.meta is mapping
+      - item.jsondata.meta.counts is mapping
+      - item.jsondata.meta.counts.remaining is defined
+      - (item.jsondata.meta.counts.remaining | string) == '0'
+    fail_msg: >-
+      Could not safely inspect the reserved scope for extended policy
+      {{ item.item.0.name }}. Expected HTTP 200 with a links collection, got
+      status {{ item.status | default('unknown') }},
+      failed={{ item.failed | default(false) }},
+      response={{ item.jsondata | default('missing') }}.
+  loop: "{{ nd4x_extended_scope_queries.results | default([]) }}"
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Build exact reserved endpoint identities"
+  ansible.builtin.set_fact:
+    nd4x_extended_reserved_endpoint_keys: >-
+      {%- set keys = [] -%}
+      {%- set pairs = [] -%}
+      {%- for case in nd4x_extended_cases -%}
+        {%- for link in case.create_config -%}
+          {%- set source_key = [
+            link.src_cluster_name | default('', true),
+            link.src_fabric_name,
+            link.src_switch_name,
+            link.src_interface_name
+          ] | to_json -%}
+          {%- set destination_key = [
+            link.dst_cluster_name | default('', true),
+            link.dst_fabric_name,
+            link.dst_switch_name,
+            link.dst_interface_name
+          ] | to_json -%}
+          {%- if source_key not in keys -%}
+            {%- set _ = keys.append(source_key) -%}
+          {%- endif -%}
+          {%- if destination_key not in keys -%}
+            {%- set _ = keys.append(destination_key) -%}
+          {%- endif -%}
+          {%- set pair_key = [
+            link.src_cluster_name | default('', true),
+            link.dst_cluster_name | default('', true),
+            link.src_fabric_name,
+            link.dst_fabric_name,
+            link.src_switch_name,
+            link.dst_switch_name,
+            link.src_interface_name,
+            link.dst_interface_name
+          ] | to_json -%}
+          {%- set reverse_pair_key = [
+            link.dst_cluster_name | default('', true),
+            link.src_cluster_name | default('', true),
+            link.dst_fabric_name,
+            link.src_fabric_name,
+            link.dst_switch_name,
+            link.src_switch_name,
+            link.dst_interface_name,
+            link.src_interface_name
+          ] | to_json -%}
+          {%- if pair_key not in pairs -%}
+            {%- set _ = pairs.append(pair_key) -%}
+          {%- endif -%}
+          {%- if reverse_pair_key not in pairs -%}
+            {%- set _ = pairs.append(reverse_pair_key) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ {'endpoints': keys, 'pairs': pairs} }}
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Identify links touching any reserved endpoint"
+  ansible.builtin.set_fact:
+    nd4x_extended_reserved_existing: >-
+      {%- set conflicts = [] -%}
+      {%- set conflict_keys = [] -%}
+      {%- for result in nd4x_extended_scope_queries.results | default([]) -%}
+        {%- set case = result.item.0 -%}
+        {%- for link in result.jsondata.links -%}
+          {%- set source_key = [
+            link.srcClusterName | default('', true),
+            link.srcFabricName,
+            link.srcSwitchName,
+            link.srcInterfaceName
+          ] | to_json -%}
+          {%- set destination_key = [
+            link.dstClusterName | default('', true),
+            link.dstFabricName,
+            link.dstSwitchName,
+            link.dstInterfaceName
+          ] | to_json -%}
+          {%- if source_key in nd4x_extended_reserved_endpoint_keys.endpoints
+                or destination_key in nd4x_extended_reserved_endpoint_keys.endpoints -%}
+            {%- set identity_key = [
+              link.srcClusterName | default('', true),
+              link.dstClusterName | default('', true),
+              link.srcFabricName,
+              link.dstFabricName,
+              link.srcSwitchName,
+              link.dstSwitchName,
+              link.srcInterfaceName,
+              link.dstInterfaceName
+            ] | to_json -%}
+            {%- set reverse_identity_key = [
+              link.dstClusterName | default('', true),
+              link.srcClusterName | default('', true),
+              link.dstFabricName,
+              link.srcFabricName,
+              link.dstSwitchName,
+              link.srcSwitchName,
+              link.dstInterfaceName,
+              link.srcInterfaceName
+            ] | to_json -%}
+            {%- if identity_key not in conflict_keys
+                  and reverse_identity_key not in conflict_keys -%}
+              {%- set _ = conflict_keys.append(identity_key) -%}
+              {%- set _ = conflicts.append({
+                    'policy': case.name,
+                    'query': result.item.1.name,
+                    'identity': identity_key,
+                    'exact_reserved_pair': identity_key in nd4x_extended_reserved_endpoint_keys.pairs,
+                    'link': link
+                  }) -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ conflicts }}
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
+
+- name: "ND4X EXTENDED PREFLIGHT: Reject links on reserved source or destination endpoints"
+  ansible.builtin.assert:
+    that:
+      - nd4x_extended_reserved_existing | length == 0
+    fail_msg: >-
+      Extended nd_manage_links coverage requires an empty reserved endpoint
+      scope. Existing links were found on a source or destination endpoint,
+      including unexpected endpoint pairs: {{ nd4x_extended_reserved_existing }}.
+      Expected reserved endpoint identities:
+      {{ nd4x_extended_reserved_endpoint_keys.endpoints }}.
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_cases | length > 0
