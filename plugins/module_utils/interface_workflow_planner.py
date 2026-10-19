@@ -623,12 +623,13 @@ class InterfaceWorkflowPlanner:
     def _vpc_record_fingerprint(current: Mapping[str, Any], local_switch_id: str | None = None, peer_switch_id: str | None = None) -> Any:
         """Return configured vPC state, optionally binding peer fields to physical switch IDs.
 
-        TODO(4.3.1) vpc-peer-field-echo-orientation: Recheck both echo forms
-        against the controller before simplifying this comparison.
-        Some ND echoes preserve the original peer1/peer2 orientation; ND 4.3.1 can instead
-        echo peer1 as the reporting switch and peer2 as its peer. Both forms are compared
-        explicitly by ``_vpc_records_match``. Member-port spelling and ordering are only
-        presentation differences.
+        TODO(4.3.1) vpc-interface-orientation-tracks-url-switch: Recheck the
+        defensive identical-orientation case before removing this allowance.
+        Observed per-interface GETs orient peer1 to the switch in the URL and
+        peer2 to its peer; ``_vpc_records_match`` accepts those reciprocal echoes.
+        Identically oriented copies are accepted defensively, but have not been
+        confirmed by a retained wire capture. Member-port spelling and ordering
+        are only presentation differences.
         """
 
         def scrub(value: Any) -> Any:
@@ -654,7 +655,7 @@ class InterfaceWorkflowPlanner:
 
     @classmethod
     def _vpc_records_match(cls, primary_id: str, primary: Mapping[str, Any], peer_id: str, peer: Mapping[str, Any]) -> bool:
-        """Accept identical echoes or a verified reciprocal local/remote peer-field echo."""
+        """Accept identical records defensively or a verified switch-local reciprocal peer-field echo."""
         if cls._vpc_record_fingerprint(primary) == cls._vpc_record_fingerprint(peer):
             return True
         return cls._vpc_record_fingerprint(primary, primary_id, peer_id) == cls._vpc_record_fingerprint(peer, peer_id, primary_id)

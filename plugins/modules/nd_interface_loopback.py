@@ -293,7 +293,7 @@ EXAMPLES = r"""
               policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
-              route_map_tag: "12345"
+              route_map_tag: 12345
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:

@@ -136,7 +136,7 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
     # the model's DUMPED form. Both ND 4.2.1 and 4.3.1 declare an integer;
-    # normalize a numeric-string read echo before comparing or writing.
+    # keep the default consistent with integer controller readback and writes.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         **LoopbackPolicyStrictBase.reverse_diff_defaults,
         "routeMapTag": 12345,
@@ -149,10 +149,10 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: int | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
 
-    # TODO(4.2.1) loopback-route-map-tag-string-echo: Revalidate the historical
-    # numeric-string GET echo before removing read-side compatibility.
-    # Accept older playbooks and any GET echo that spells this numeric tag as a
-    # string, while always serializing the integer required by both schemas.
+    # TODO(4.2.1) loopback-routemaptag-string-write-version-drift: Recheck when
+    # legacy numeric-string input compatibility can be removed. Both schemas
+    # require an integer on the wire; observed 4.2.1 GET echoes were integers.
+    # Accept a string-valued GET echo defensively, not as a claimed observation.
     # Do not impose a range absent from intLoopbackTemplate: ND 4.3.1 accepted
     # and echoed values outside 0..4294967295 in a staged live probe.
     @field_validator("route_map_tag", mode="before")

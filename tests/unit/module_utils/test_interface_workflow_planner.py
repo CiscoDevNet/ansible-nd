@@ -931,7 +931,7 @@ def test_implicit_transition_requires_and_accepts_a_consistent_vpc_pair(resource
 
 
 def test_vpc_pair_fingerprint_accepts_identical_asymmetric_peer_fields() -> None:
-    """ND's two echoes preserve peer1/peer2 meaning while peerSwitchId swaps."""
+    """Defensively accept identical peer-field orientation; no wire observation is claimed."""
     primary = _wire_interface(
         "vpc10",
         "vpc",
