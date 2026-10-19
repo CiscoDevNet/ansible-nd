@@ -1,0 +1,275 @@
+---
+- name: Run nd_manage_prefix_list merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "MERGED SETUP VERIFY: Require reserved prefix lists to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+    - name: "MERGED CREATE: Create IPv4 prefix list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created IPv4 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-IPV4-BORDERS
+              - jsonpath: "$.current.description"
+                equals: Ansible integration test - border router IPv4 prefixes
+              - jsonpath: >-
+                  $.current.entries[?(@.sequenceNumber == 20)].minLength
+                equals: 24
+              - jsonpath: >-
+                  $.current.entries[?(@.sequenceNumber == 20)].maxLength
+                equals: 32
+      register: merged_create_ipv4
+
+    - name: "MERGED CREATE: Verify IPv4 returned configuration"
+      ansible.builtin.assert:
+        that:
+          - merged_create_ipv4.first_run_result.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 1
+          - >-
+            (
+              merged_create_ipv4.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+              | first
+            ).entries | length == 3
+          - merged_create_ipv4.second_run_result.changed == false
+
+    - name: "MERGED CREATE: Create IPv6 prefix list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv6_datacenter }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-IPV6-DATACENTER
+              - jsonpath: "$.current.entries[?(@.sequenceNumber == 10)].exactLength"
+                equals: 48
+      register: merged_create_ipv6
+
+    - name: "MERGED CREATE MULTI: Re-apply both families in one harness task"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+          - "{{ prefix_list_ipv6_datacenter }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+        idempotency: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained IPv4 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-IPV4-BORDERS
+          - name: Validate retained IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-IPV6-DATACENTER
+      register: merged_create_multi
+
+    - name: "MERGED CREATE MULTI: Verify mixed-family reapply is unchanged"
+      ansible.builtin.assert:
+        that:
+          - merged_create_multi.check_mode_result.changed == false
+          - merged_create_multi.first_run_result.changed == false
+          - merged_create_multi.first_run_result.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 1
+          - merged_create_multi.first_run_result.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 1
+
+    - name: "MERGED IDEMPOTENT: Re-apply only the IPv4 create through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate IPv4-only idempotent reapply
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: PL-IPV4-BORDERS
+      register: merged_create_ipv4_reapply
+
+    - name: "MERGED IDEMPOTENT: Verify IPv4-only reapply is unchanged"
+      ansible.builtin.assert:
+        that:
+          - merged_create_ipv4_reapply.check_mode_result.changed == false
+          - merged_create_ipv4_reapply.first_run_result.changed == false
+
+    - name: "MERGED UPDATE: Update IPv4 prefix list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv4_borders_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated IPv4 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-IPV4-BORDERS
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.description"
+                equals: Ansible integration test - updated border router IPv4 prefixes
+              - jsonpath: "$.current.entries[?(@.sequenceNumber == 40)].prefix"
+                equals: 192.168.0.0/16
+      register: merged_update_ipv4
+
+    - name: "MERGED UPDATE: Verify updated IPv4 returned values"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              merged_update_ipv4.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+              | first
+            ).description == "Ansible integration test - updated border router IPv4 prefixes"
+          - >-
+            (
+              merged_update_ipv4.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV4-BORDERS')
+              | first
+            ).entries | length == 4
+
+    - name: "MERGED UPDATE: Update IPv6 prefix list through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ prefix_list_ipv6_datacenter_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated IPv6 prefix list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv6PrefixLists/PL-IPV6-DATACENTER
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[?(@.sequenceNumber == 30)].prefix"
+                equals: fc00::/7
+      register: merged_update_ipv6
+
+    - name: "MERGED UPDATE: Verify updated IPv6 returned values"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              merged_update_ipv6.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER')
+              | first
+            ).entries | length == 3
+  always:
+    - name: "MERGED CLEANUP: Remove reserved prefix lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "MERGED CLEANUP: Verify reserved prefix lists are absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
