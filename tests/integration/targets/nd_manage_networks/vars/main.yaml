@@ -1,0 +1,698 @@
+---
+# Variables for the opt-in nd_manage_networks ND 4.x harness scenarios.
+#
+# The legacy suite uses defaults/main.yaml and tests/{standalone,msd,mcfg}.
+# These names are deliberately nd4x-specific so adding the harness does not
+# alter the variables consumed by that suite.
+
+nd4x_network_topology: "{{ nd_network_harness_topology | default('standalone') }}"
+
+nd4x_network_standalone_fabric: >-
+  {{
+    nd_network_harness_standalone_fabric
+    | default(ansible_it_fabric | default(nd_test_fabric_name | default('')))
+  }}
+nd4x_network_msd_parent_fabric: >-
+  {{
+    nd_network_harness_msd_parent_fabric
+    | default(ansible_msd_parent_fabric | default(''))
+  }}
+nd4x_network_msd_child_fabric: >-
+  {{
+    nd_network_harness_msd_child_fabric
+    | default(ansible_msd_child_fabric | default(''))
+  }}
+nd4x_network_mcfg_parent_fabric: >-
+  {{
+    nd_network_harness_mcfg_parent_fabric
+    | default(ansible_mcfg_parent_fabric | default(''))
+  }}
+nd4x_network_mcfg_child_fabric: >-
+  {{
+    nd_network_harness_mcfg_child_fabric
+    | default(ansible_mcfg_child_fabric | default(''))
+  }}
+nd4x_network_mcfg_cluster_name: >-
+  {{
+    nd_network_harness_mcfg_cluster_name
+    | default(ansible_mcfg_cluster_name | default(''))
+  }}
+nd4x_network_switch_ip: >-
+  {{
+    nd_network_harness_switch_ip
+    | default(ansible_switch1 | default(nd_test_switch_ip | default('')))
+  }}
+nd4x_network_interface: >-
+  {{
+    nd_network_harness_interface
+    | default(ansible_network_interface1 | default(''))
+  }}
+nd4x_network_switch_ip2: >-
+  {{
+    nd_network_harness_switch_ip2
+    | default(ansible_switch2 | default(''))
+  }}
+nd4x_network_interface2: >-
+  {{
+    nd_network_harness_interface2
+    | default(ansible_network_interface2 | default(''))
+  }}
+nd4x_network_l3_vrf_name: >-
+  {{
+    nd_network_harness_l3_vrf_name
+    | default(ansible_nd_network_vrf_name | default(''))
+  }}
+
+nd4x_network_fabric_name: >-
+  {{
+    nd4x_network_msd_parent_fabric
+    if nd4x_network_topology == 'msd'
+    else nd4x_network_mcfg_parent_fabric
+    if nd4x_network_topology == 'mcfg'
+    else nd4x_network_standalone_fabric
+  }}
+nd4x_network_child_fabric_name: >-
+  {{
+    nd4x_network_msd_child_fabric
+    if nd4x_network_topology == 'msd'
+    else nd4x_network_mcfg_child_fabric
+    if nd4x_network_topology == 'mcfg'
+    else ''
+  }}
+nd4x_network_expected_fabric_type: >-
+  {{
+    'multisite_parent'
+    if nd4x_network_topology == 'msd'
+    else 'multicluster_parent'
+    if nd4x_network_topology == 'mcfg'
+    else 'standalone'
+  }}
+
+nd4x_network_destructive_tests_enabled: >-
+  {{ nd_network_harness_destructive_tests_enabled | default(false) | bool }}
+nd4x_network_destructive_scope_confirmed: >-
+  {{ nd_network_harness_destructive_scope_confirmed | default(false) | bool }}
+
+nd4x_network_parent_network_path: >-
+  {{
+    '/api/v1/oneManage/manage/fabrics/' ~ nd4x_network_fabric_name ~ '/networks'
+    if nd4x_network_topology == 'mcfg'
+    else '/api/v1/manage/fabrics/' ~ nd4x_network_fabric_name ~ '/networks'
+  }}
+nd4x_network_child_network_path: >-
+  {{
+    '/api/v1/manage/fabrics/' ~ nd4x_network_child_fabric_name ~ '/networks'
+    ~ ('?clusterName=' ~ nd4x_network_mcfg_cluster_name
+       if nd4x_network_topology == 'mcfg' else '')
+  }}
+
+nd4x_network_staged_attach_config: >-
+  {{
+    [
+      {
+        'ip_address': nd4x_network_switch_ip,
+        'vlan_id': nd4x_network_base_vlan + 1,
+        'interfaces': [
+          {
+            'mode': 'access',
+            'interface_range': nd4x_network_interface
+          }
+        ],
+        'deploy': false
+      }
+    ]
+    if nd4x_network_switch_ip | length > 0
+       and nd4x_network_interface | length > 0
+    else []
+  }}
+nd4x_network_deploy_attach_config: >-
+  {{
+    [
+      {
+        'ip_address': nd4x_network_switch_ip,
+        'vlan_id': nd4x_network_base_vlan + 1,
+        'interfaces': [
+          {
+            'mode': 'access',
+            'interface_range': nd4x_network_interface
+          }
+        ],
+        'deploy': true
+      }
+    ]
+    if nd4x_network_switch_ip | length > 0
+       and nd4x_network_interface | length > 0
+    else []
+  }}
+nd4x_network_deploy_type: >-
+  {{ 'switch' if nd4x_network_deploy_attach_config | length > 0 else 'network' }}
+
+nd4x_network_base_id: 9110000
+nd4x_network_base_vlan: 3900
+
+nd4x_network_merged_expected_id: >-
+  {{ nd4x_network_base_id + (101 if nd4x_network_topology in ['msd', 'mcfg'] else 1) }}
+nd4x_network_merged_expected_vlan: >-
+  {{ nd4x_network_base_vlan + (101 if nd4x_network_topology in ['msd', 'mcfg'] else 1) }}
+nd4x_network_replaced_expected_id: >-
+  {{ nd4x_network_base_id + (102 if nd4x_network_topology in ['msd', 'mcfg'] else 2) }}
+nd4x_network_replaced_expected_vlan: >-
+  {{ nd4x_network_base_vlan + (102 if nd4x_network_topology in ['msd', 'mcfg'] else 2) }}
+nd4x_network_gathered_expected_id: >-
+  {{ nd4x_network_base_id + (103 if nd4x_network_topology in ['msd', 'mcfg'] else 3) }}
+nd4x_network_gathered_expected_vlan: >-
+  {{ nd4x_network_base_vlan + (103 if nd4x_network_topology in ['msd', 'mcfg'] else 3) }}
+nd4x_network_overridden_expected_id: >-
+  {{ nd4x_network_base_id + (104 if nd4x_network_topology in ['msd', 'mcfg'] else 4) }}
+
+nd4x_network_staged_create_name: harness-nd-network-staged-create
+nd4x_network_staged_add_name: harness-nd-network-staged-add
+nd4x_network_staged_remove_name: harness-nd-network-staged-remove
+nd4x_network_staged_detach_name: harness-nd-network-staged-detach
+nd4x_network_staged_omit_name: harness-nd-network-staged-omit
+
+nd4x_network_staged_secondary_attach_config: >-
+  {{
+    [
+      {
+        'ip_address': nd4x_network_switch_ip2,
+        'interfaces': [
+          {
+            'mode': 'trunk',
+            'interface_range': nd4x_network_interface2
+          }
+        ],
+        'deploy': true
+      }
+    ]
+    if nd4x_network_switch_ip2 | length > 0 and nd4x_network_interface2 | length > 0
+    else []
+  }}
+
+nd4x_network_staged_primary_attach_config: >-
+  {{
+    [
+      {
+        'ip_address': nd4x_network_switch_ip,
+        'interfaces': [
+          {
+            'mode': 'trunk',
+            'interface_range': nd4x_network_interface
+          }
+        ],
+        'deploy': true
+      }
+    ]
+    if nd4x_network_switch_ip | length > 0 and nd4x_network_interface | length > 0
+    else []
+  }}
+
+nd4x_network_staged_parent_fields: >-
+  {{
+    {'child_fabric_config': [{'fabric_name': nd4x_network_child_fabric_name, 'enable_ir': false}]}
+    if nd4x_network_topology in ['msd', 'mcfg'] else {}
+  }}
+
+nd4x_network_staged_network_names:
+  - "{{ nd4x_network_staged_create_name }}"
+  - "{{ nd4x_network_staged_add_name }}"
+  - "{{ nd4x_network_staged_remove_name }}"
+  - "{{ nd4x_network_staged_detach_name }}"
+  - "{{ nd4x_network_staged_omit_name }}"
+
+nd4x_network_staged_cleanup_config:
+  - network_name: "{{ nd4x_network_staged_create_name }}"
+  - network_name: "{{ nd4x_network_staged_add_name }}"
+  - network_name: "{{ nd4x_network_staged_remove_name }}"
+  - network_name: "{{ nd4x_network_staged_detach_name }}"
+  - network_name: "{{ nd4x_network_staged_omit_name }}"
+
+nd4x_network_staged_seed_config: >-
+  {{
+    [
+      {
+        'network_name': nd4x_network_staged_add_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 9,
+        'vlan_id': nd4x_network_base_vlan + 9,
+        'vlan_name': 'harness_nd_network_staged_add_vlan',
+        'attach': nd4x_network_staged_primary_attach_config,
+        'deploy': false
+      } | combine(nd4x_network_staged_parent_fields),
+      {
+        'network_name': nd4x_network_staged_remove_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 10,
+        'vlan_id': nd4x_network_base_vlan + 10,
+        'vlan_name': 'harness_nd_network_staged_remove_vlan',
+        'attach': nd4x_network_staged_primary_attach_config + nd4x_network_staged_secondary_attach_config,
+        'deploy': false
+      } | combine(nd4x_network_staged_parent_fields),
+      {
+        'network_name': nd4x_network_staged_detach_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 11,
+        'vlan_id': nd4x_network_base_vlan + 11,
+        'vlan_name': 'harness_nd_network_staged_detach_vlan',
+        'attach': nd4x_network_staged_primary_attach_config,
+        'deploy': false
+      } | combine(nd4x_network_staged_parent_fields),
+      {
+        'network_name': nd4x_network_staged_omit_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 12,
+        'vlan_id': nd4x_network_base_vlan + 12,
+        'vlan_name': 'harness_nd_network_staged_omit_vlan',
+        'attach': nd4x_network_staged_primary_attach_config,
+        'deploy': false
+      } | combine(nd4x_network_staged_parent_fields)
+    ]
+  }}
+
+nd4x_network_staged_config: >-
+  {{
+    [
+      {
+        'network_name': nd4x_network_staged_create_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 8,
+        'vlan_id': nd4x_network_base_vlan + 8,
+        'vlan_name': 'harness_nd_network_staged_create_vlan',
+        'attach': nd4x_network_staged_primary_attach_config,
+        'deploy': true
+      } | combine(nd4x_network_staged_parent_fields),
+      {
+        'network_name': nd4x_network_staged_add_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 9,
+        'vlan_id': nd4x_network_base_vlan + 9,
+        'vlan_name': 'harness_nd_network_staged_add_vlan',
+        'attach': nd4x_network_staged_primary_attach_config + nd4x_network_staged_secondary_attach_config,
+        'deploy': true
+      } | combine(nd4x_network_staged_parent_fields),
+      {
+        'network_name': nd4x_network_staged_remove_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 10,
+        'vlan_id': nd4x_network_base_vlan + 10,
+        'vlan_name': 'harness_nd_network_staged_remove_vlan',
+        'attach': nd4x_network_staged_primary_attach_config,
+        'deploy': true
+      } | combine(nd4x_network_staged_parent_fields),
+      {
+        'network_name': nd4x_network_staged_detach_name,
+        'is_l2only': true,
+        'network_id': nd4x_network_base_id + 11,
+        'vlan_id': nd4x_network_base_vlan + 11,
+        'vlan_name': 'harness_nd_network_staged_detach_vlan',
+        'attach': [],
+        'deploy': true
+      } | combine(nd4x_network_staged_parent_fields)
+    ]
+  }}
+nd4x_network_staged_attachment_query_path: >-
+  {{
+    '/api/v1/oneManage/manage/fabrics/' ~ nd4x_network_fabric_name ~ '/networkAttachments/query?includeAll=true&max=10000&offset=0'
+    if nd4x_network_topology == 'mcfg'
+    else '/api/v1/manage/fabrics/' ~ nd4x_network_fabric_name ~ '/networkAttachments/query?includeAll=true&max=10000&offset=0'
+  }}
+
+nd4x_network_merged_standalone_config:
+  - network_name: harness-nd-network-merged
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 1 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 1 }}"
+    vlan_name: harness_nd_network_merged_vlan
+    rt_auto: true
+    enable_ir: false
+    attach: "{{ nd4x_network_staged_attach_config }}"
+    deploy: false
+
+nd4x_network_merged_l3_standalone_config:
+  network_name: harness-nd-network-merged-l3
+  is_l2only: false
+  network_id: "{{ nd4x_network_base_id + 2 }}"
+  vlan_id: "{{ nd4x_network_base_vlan + 2 }}"
+  vlan_name: harness_nd_network_merged_l3_vlan
+  vrf_name: "{{ nd4x_network_l3_vrf_name }}"
+  gateway_ipv4_address: 10.91.2.1/24
+  arp_suppression: true
+  routing_tag: 12345
+  netflow_enable: false
+  deploy: false
+
+nd4x_network_merged_parent_config:
+  - network_name: harness-nd-network-merged
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 101 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 101 }}"
+    vlan_name: harness_nd_network_parent_merged_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: false
+    deploy_type: switch
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+  - network_name: harness-nd-network-merged-resource
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 102 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 102 }}"
+    vlan_name: harness_nd_network_parent_merged_resource_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: false
+    deploy_type: network
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+
+nd4x_network_merged_config: >-
+  {{
+    nd4x_network_merged_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_merged_standalone_config
+    + ([nd4x_network_merged_l3_standalone_config]
+       if nd4x_network_l3_vrf_name | length > 0 else [])
+  }}
+
+nd4x_network_merged_deploy_standalone_config:
+  - network_name: harness-nd-network-merged
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 1 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 1 }}"
+    vlan_name: harness_nd_network_merged_vlan
+    rt_auto: true
+    enable_ir: false
+    attach: "{{ nd4x_network_deploy_attach_config }}"
+    deploy: true
+    deploy_type: "{{ nd4x_network_deploy_type }}"
+
+nd4x_network_merged_deploy_l3_standalone_config:
+  network_name: harness-nd-network-merged-l3
+  is_l2only: false
+  network_id: "{{ nd4x_network_base_id + 2 }}"
+  vlan_id: "{{ nd4x_network_base_vlan + 2 }}"
+  vlan_name: harness_nd_network_merged_l3_vlan
+  vrf_name: "{{ nd4x_network_l3_vrf_name }}"
+  gateway_ipv4_address: 10.91.2.1/24
+  arp_suppression: true
+  routing_tag: 12345
+  netflow_enable: false
+  deploy: true
+  deploy_type: network
+
+nd4x_network_merged_deploy_parent_config:
+  - network_name: harness-nd-network-merged
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 101 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 101 }}"
+    vlan_name: harness_nd_network_parent_merged_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: true
+    deploy_type: switch
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+  - network_name: harness-nd-network-merged-resource
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 102 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 102 }}"
+    vlan_name: harness_nd_network_parent_merged_resource_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: true
+    deploy_type: network
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+
+nd4x_network_merged_deploy_config: >-
+  {{
+    nd4x_network_merged_deploy_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_merged_deploy_standalone_config
+    + ([nd4x_network_merged_deploy_l3_standalone_config]
+       if nd4x_network_l3_vrf_name | length > 0 else [])
+  }}
+
+nd4x_network_merged_cleanup_config: >-
+  {{
+    [
+      {
+        'network_name': 'harness-nd-network-merged',
+        'is_l2only': true
+      }
+    ]
+    + (
+      [
+        {
+          'network_name': 'harness-nd-network-merged-resource',
+          'is_l2only': true
+        }
+      ]
+      if nd4x_network_topology in ['msd', 'mcfg']
+      else []
+    )
+    + (
+      [
+        {
+          'network_name': 'harness-nd-network-merged-l3',
+          'is_l2only': false,
+          'vrf_name': nd4x_network_l3_vrf_name
+        }
+      ]
+      if nd4x_network_topology == 'standalone'
+         and nd4x_network_l3_vrf_name | length > 0
+      else []
+    )
+  }}
+
+nd4x_network_replaced_seed_standalone_config:
+  - network_name: harness-nd-network-replaced
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 2 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 2 }}"
+    vlan_name: harness_nd_network_replaced_seed_vlan
+    enable_ir: false
+    deploy: false
+
+nd4x_network_replaced_standalone_config:
+  - network_name: harness-nd-network-replaced
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 2 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 2 }}"
+    vlan_name: harness_nd_network_replaced_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: false
+
+nd4x_network_replaced_seed_parent_config:
+  - network_name: harness-nd-network-replaced
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 102 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 102 }}"
+    vlan_name: harness_nd_network_parent_replaced_seed_vlan
+    rt_auto: false
+    enable_ir: false
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+
+nd4x_network_replaced_parent_config:
+  - network_name: harness-nd-network-replaced
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 102 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 102 }}"
+    vlan_name: harness_nd_network_parent_replaced_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+
+nd4x_network_replaced_seed_config: >-
+  {{
+    nd4x_network_replaced_seed_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_replaced_seed_standalone_config
+  }}
+nd4x_network_replaced_config: >-
+  {{
+    nd4x_network_replaced_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_replaced_standalone_config
+  }}
+
+nd4x_network_gathered_standalone_config:
+  - network_name: harness-nd-network-gathered
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 3 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 3 }}"
+    vlan_name: harness_nd_network_gathered_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: false
+
+nd4x_network_gathered_parent_config:
+  - network_name: harness-nd-network-gathered
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 103 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 103 }}"
+    vlan_name: harness_nd_network_parent_gathered_vlan
+    rt_auto: true
+    enable_ir: false
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+        enable_ir: false
+
+nd4x_network_gathered_config: >-
+  {{
+    nd4x_network_gathered_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_gathered_standalone_config
+  }}
+
+nd4x_network_overridden_seed_standalone_config:
+  - network_name: harness-nd-network-over-keep
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 4 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 4 }}"
+    vlan_name: harness_nd_network_over_keep_seed_vlan
+    deploy: false
+  - network_name: harness-nd-network-over-remove
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 5 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 5 }}"
+    vlan_name: harness_nd_network_over_remove_seed_vlan
+    deploy: false
+
+nd4x_network_overridden_seed_parent_config:
+  - network_name: harness-nd-network-over-keep
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 104 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 104 }}"
+    vlan_name: harness_nd_network_parent_over_keep_seed_vlan
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+  - network_name: harness-nd-network-over-remove
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 105 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 105 }}"
+    vlan_name: harness_nd_network_parent_over_remove_seed_vlan
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+
+nd4x_network_overridden_standalone_config:
+  - network_name: harness-nd-network-over-keep
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 4 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 4 }}"
+    vlan_name: harness_nd_network_over_keep_vlan
+    rt_auto: true
+    deploy: false
+
+nd4x_network_overridden_parent_config:
+  - network_name: harness-nd-network-over-keep
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 104 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 104 }}"
+    vlan_name: harness_nd_network_parent_over_keep_vlan
+    rt_auto: true
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+
+nd4x_network_overridden_seed_config: >-
+  {{
+    nd4x_network_overridden_seed_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_overridden_seed_standalone_config
+  }}
+nd4x_network_overridden_config: >-
+  {{
+    nd4x_network_overridden_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_overridden_standalone_config
+  }}
+
+nd4x_network_deleted_standalone_seed_config:
+  - network_name: harness-nd-network-deleted
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 6 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 6 }}"
+    vlan_name: harness_nd_network_deleted_vlan
+    enable_ir: false
+    deploy: false
+  - network_name: harness-nd-network-deleted-extra
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 7 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 7 }}"
+    vlan_name: harness_nd_network_deleted_extra_vlan
+    enable_ir: false
+    deploy: false
+
+nd4x_network_deleted_standalone_config:
+  - network_name: harness-nd-network-deleted
+    is_l2only: true
+  - network_name: harness-nd-network-deleted-extra
+    is_l2only: true
+
+nd4x_network_deleted_parent_config:
+  - network_name: harness-nd-network-deleted
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 106 }}"
+    vlan_id: "{{ nd4x_network_base_vlan + 106 }}"
+    vlan_name: harness_nd_network_parent_deleted_vlan
+    deploy: false
+    child_fabric_config:
+      - fabric_name: "{{ nd4x_network_child_fabric_name }}"
+
+nd4x_network_deleted_harness_config: >-
+  {{
+    nd4x_network_deleted_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_deleted_standalone_config
+  }}
+
+nd4x_network_deleted_seed_harness_config: >-
+  {{
+    nd4x_network_deleted_parent_config
+    if nd4x_network_topology in ['msd', 'mcfg']
+    else nd4x_network_deleted_standalone_seed_config
+  }}
+
+nd4x_network_deleted_cleanup_config: >-
+  {{
+    [
+      {'network_name': 'harness-nd-network-deleted'}
+    ]
+    + (
+      [{'network_name': 'harness-nd-network-deleted-extra'}]
+      if nd4x_network_topology == 'standalone'
+      else []
+    )
+  }}
+
+nd4x_network_negative_config:
+  - network_name: harness-nd-network-negative
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 7 }}"
+    child_fabric_config:
+      - fabric_name: >-
+          {{
+            nd4x_network_child_fabric_name
+            if nd4x_network_child_fabric_name | length > 0
+            else 'invalid-child'
+          }}
+
+nd4x_network_negative_child_write_config:
+  - network_name: harness-nd-network-negative
+    is_l2only: true
+    network_id: "{{ nd4x_network_base_id + 7 }}"
