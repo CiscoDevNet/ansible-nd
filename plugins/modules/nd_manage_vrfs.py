@@ -65,6 +65,9 @@ options:
         C(attach), C(deploy), and C(deploy_type) options are applied only on
         the parent fabric and are not sent to child fabrics.
       - For child fabrics targeted directly, only C(state=gathered) is supported.
+      - External Connectivity and VXLAN External fabrics support VRF definitions
+        with C(vrf_name) and optional C(vrf_description) only. Attachments and
+        VXLAN-specific properties are not supported.
     type: list
     elements: dict
     required: true
@@ -145,7 +148,7 @@ options:
         type: bool
         default: false
       vrf_description:
-        description: Description of the VRF (max 255 characters).
+        description: Description of the VRF (max 255 characters), including External VRF definitions.
         type: str
       loopback_route_tag:
         description: Routing tag for loopback routes (0-4294967295).

@@ -479,6 +479,11 @@ class VrfDataModel(NDBaseModel):
         max_length=94,
         description=("Name of the VRF. For multi-tenant environments, use the " "format tenantName~vrfName."),
     )
+    description: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Top-level description for External VRFs",
+    )
     # vrfCommon optional fields
     vrf_status: ConfigurationStatus | None = Field(
         default=None,
@@ -588,6 +593,9 @@ class VrfDataModel(NDBaseModel):
     def to_gathered_config(self, **kwargs) -> dict[str, Any]:
         """Return a replay-safe public config shape for gathered output."""
         data = self.to_config(**kwargs)
+        description = data.pop("description", None)
+        if self.vrf_type in (VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value) and description is not None:
+            data["vrf_description"] = description
         core_data = data.pop("core_data", None)
         fabric_data = data.pop("fabric_data", None)
         for key in ("fabric_name", "vrf_status", "tenant_name", "service_data", "vrf_type"):

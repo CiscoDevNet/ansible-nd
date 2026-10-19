@@ -42,6 +42,8 @@ import time
 from typing import Any, Callable, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import VrfConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import (
     TrmData,
     VrfDataModel,
@@ -65,6 +67,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 
 NDVrfModel = VrfDataModel
+_EXTERNAL_VRF_TYPES = frozenset({VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value})
 
 
 class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
@@ -163,6 +166,31 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             return management["type"]
         return VrfType.VXLAN_IBGP.value
 
+    @staticmethod
+    def _validate_external_vrf_config(config: dict[str, Any], explicit_fields: set[str] | None = None) -> None:
+        """
+        # Summary
+
+        Reject non-default VRF options absent from the External VRF schema.
+
+        ## Raises
+
+        ### ValueError
+
+        - If the configuration requests a VXLAN-only definition or an attachment.
+        """
+        allowed = {"vrf_name", "vrf_description", "vrf_type", "fabric_name", "deploy", "deploy_type"}
+        if explicit_fields is not None:
+            unsupported = sorted(explicit_fields - allowed)
+        else:
+            unsupported = sorted(
+                key
+                for key, value in config.items()
+                if key not in allowed and value is not None and value != getattr(VrfConfigModel.model_fields.get(key), "default", None)
+            )
+        if unsupported:
+            raise ValueError(f"External VRFs support only vrf_name and vrf_description; unsupported options: {', '.join(unsupported)}")
+
     def _transform_child_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
         """Transform child overrides into a fabricData-only VRF payload."""
         transformed: dict[str, Any] = {
@@ -222,9 +250,24 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             "vrf_extension_template_name": ("vrf_extension_template_name",),
             "vrf_template_config": ("vrf_template_config",),
         }
+        fabric_vrf_type = self._default_vrf_type()
+        if fabric_vrf_type in _EXTERNAL_VRF_TYPES:
+            self._validate_external_vrf_config(config)
+            requested_type = self._value(config, "vrf_type")
+            if requested_type not in (None, fabric_vrf_type):
+                raise ValueError(f"External fabric requires vrf_type={fabric_vrf_type}, got {requested_type}")
+            transformed = {
+                "fabric_name": self._value(config, "fabric_name", default=fabric_name),
+                "vrf_name": self._value(config, "vrf_name"),
+                "vrf_type": fabric_vrf_type,
+            }
+            description = self._value(config, "vrf_description")
+            if description is not None:
+                transformed["description"] = description
+            return transformed
         explicit_vrf_type = self._value(config, "vrf_type")
         has_custom_template_fields = any(self._value(config, *names) is not None for names in custom_template_fields.values())
-        vrf_type = explicit_vrf_type or (VrfType.USER_DEFINED.value if has_custom_template_fields else self._default_vrf_type())
+        vrf_type = explicit_vrf_type or (VrfType.USER_DEFINED.value if has_custom_template_fields else fabric_vrf_type)
         transformed: dict[str, Any] = {
             "fabric_name": self._value(config, "fabric_name", default=fabric_name),
             "vrf_name": self._value(config, "vrf_name"),
@@ -346,12 +389,17 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if not isinstance(raw_config, list):
             return raw_config
         fabric_name = self.strategy.fabric_name
+        external = not self.strategy.is_child and self._default_vrf_type() in _EXTERNAL_VRF_TYPES
+        supplied = get_raw_module_args().get("config") if external else None
+        explicit_entries = supplied if isinstance(supplied, list) and len(supplied) == len(raw_config) else None
         result = []
-        for entry in raw_config:
+        for index, entry in enumerate(raw_config):
             if isinstance(entry, dict):
                 if self.strategy.is_child:
                     result.append(self._transform_child_config_to_payload_model_data(entry, fabric_name))
                 else:
+                    if external and explicit_entries is not None and isinstance(explicit_entries[index], dict):
+                        self._validate_external_vrf_config(entry, set(explicit_entries[index]))
                     result.append(self._transform_config_to_payload_model_data(entry, fabric_name))
             else:
                 result.append(entry)
@@ -645,6 +693,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     def _normalize_query_vrf_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
             return item
+        vrf_type = item.get("vrfType") or self._default_vrf_type()
+        if vrf_type in _EXTERNAL_VRF_TYPES:
+            normalized = dict(item)
+            normalized.setdefault("fabricName", self.strategy.fabric_name)
+            normalized.setdefault("vrfType", vrf_type)
+            return normalized
         if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
             return item
 
@@ -954,6 +1008,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         return payload
 
     def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
+        if model_instance.vrf_type in _EXTERNAL_VRF_TYPES:
+            payload = model_instance.to_payload()
+            # TODO(4.3.1) external-vrf-create-requires-fabric-name: ND rejects the schema-minimal body as "Invalid fabric".
+            return {key: payload[key] for key in ("fabricName", "vrfName", "vrfType", "description") if key in payload}
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
             return self._mcfg_parent_vrf_payload(model_instance)
         return model_instance.to_payload()

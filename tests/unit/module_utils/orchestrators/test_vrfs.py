@@ -159,6 +159,84 @@ def _orchestrator_for_request_tests(params, is_child=False, is_multicluster=Fals
     return instance
 
 
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+def test_external_vrf_definition_payload_and_readback_are_schema_shaped(vrf_type):
+    fabric_data = {"manageFabricDetails": {"management": {"type": vrf_type}}}
+    parsed = VrfConfigModel.from_config({"vrf_name": "EXT_BLUE", "vrf_description": "External routing"}).to_config()
+    transformed = _transform(parsed, fabric_name="EXT", fabric_data=fabric_data)
+    model = VrfDataModel.from_config(transformed)
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", _EndpointStrategy())
+    raw = {"fabricName": "EXT", "vrfName": "EXT_BLUE", "vrfType": vrf_type, "description": "External routing"}
+
+    assert orchestrator._create_or_update_payload(model) == raw
+    observed = VrfDataModel.from_response({"fabricName": "EXT", **raw})
+    assert observed.to_gathered_config() == {"vrf_name": "EXT_BLUE", "vrf_description": "External routing"}
+    assert observed.get_diff(model, exclude_unset=True)
+    assert observed.get_diff(model, exclude_unset=False)
+    minimal = VrfDataModel.from_config(
+        _transform(VrfConfigModel.from_config({"vrf_name": "EXT_GREEN"}).to_config(), fabric_name="EXT", fabric_data=fabric_data)
+    )
+    assert orchestrator._create_or_update_payload(minimal) == {"fabricName": "EXT", "vrfName": "EXT_GREEN", "vrfType": vrf_type}
+
+
+@pytest.mark.parametrize("option,value", [("vrf_id", 50000), ("vlan_id", 2000), ("trm_enable", True), ("attach", [{"ip_address": "192.0.2.10"}])])
+def test_external_vrf_rejects_unsupported_options(option, value):
+    fabric_data = {"management": {"type": "externalConnectivity"}}
+    config = VrfConfigModel.from_config({"vrf_name": "EXT_BLUE", option: value}).to_config()
+    with pytest.raises(ValueError, match=f"unsupported options: {option}"):
+        _transform(config, fabric_data=fabric_data)
+
+
+def test_external_vrf_rejects_custom_template_type_and_fills_readback_identity():
+    fabric_data = {"management": {"type": "externalConnectivity"}}
+    with pytest.raises(ValueError, match="unsupported options: vrf_template_name"):
+        _transform({"vrf_name": "EXT_BLUE", "vrf_template_name": "CUSTOM"}, fabric_data=fabric_data)
+
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    strategy = _EndpointStrategy()
+    strategy.fabric_data = fabric_data
+    strategy.fabric_name = "EXT"
+    object.__setattr__(orchestrator, "strategy", strategy)
+    assert orchestrator._normalize_query_vrf_item({"vrfName": "EXT_BLUE", "description": "External routing"}) == {
+        "vrfName": "EXT_BLUE",
+        "vrfType": "externalConnectivity",
+        "fabricName": "EXT",
+        "description": "External routing",
+    }
+
+
+def test_external_vrf_rejects_explicit_default_valued_vxlan_option(monkeypatch):
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    orchestrator.strategy.fabric_data = {"management": {"type": "externalConnectivity"}}
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs.get_raw_module_args",
+        lambda: {"config": [{"vrf_name": "EXT_BLUE", "trm_enable": False}]},
+    )
+    parsed = VrfConfigModel.from_config({"vrf_name": "EXT_BLUE", "trm_enable": False}).to_config()
+
+    with pytest.raises(ValueError, match="unsupported options: trm_enable"):
+        orchestrator.prepare_config_data([parsed])
+
+
+def test_external_vrf_create_and_update_include_fabric_identity():
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    model = VrfDataModel.from_config({"fabric_name": "AK_EXT", "vrf_name": "EXT_BLUE", "vrf_type": "externalConnectivity", "description": "External routing"})
+    calls = []
+
+    def record_request(**kwargs):
+        calls.append(kwargs)
+        return {"status": "success"}
+
+    object.__setattr__(orchestrator, "_request", record_request)
+    orchestrator.create_bulk([model])
+    orchestrator.update(model)
+
+    expected = {"fabricName": "AK_EXT", "vrfName": "EXT_BLUE", "vrfType": "externalConnectivity", "description": "External routing"}
+    assert calls[0]["data"] == {"vrfs": [expected]}
+    assert calls[1]["data"] == expected
+
+
 def test_vrfs_00010_transform_standalone_config_to_schema_payload():
     """
     # Summary
