@@ -50,6 +50,7 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
 
     model_class: ClassVar[type[NDBaseModel]] = SubinterfaceUnmanagedInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
