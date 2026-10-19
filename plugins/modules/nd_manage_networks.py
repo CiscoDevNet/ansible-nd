@@ -214,25 +214,25 @@ options:
             type: dict
             suboptions:
               dpu_secure:
-                description: Enable DPU secure mode for this attachment.
+                description: Enable DPU secure mode for this attachment; smart switches only.
                 type: bool
               dpu_affinity:
-                description: DPU affinity for this attachment.
+                description: DPU affinity for this attachment; smart switches only.
                 type: str
                 choices: [ dynamic, dpu1, dpu2, dpu3, dpu4 ]
               svi_enabled:
-                description: Enable SVI for this attachment.
+                description: Set the SVI administrative state when an SVI exists.
                 type: bool
               switch_route_target_import:
-                description: Switch-level route-target import values.
+                description: Switch-level route-target import values for VXLAN Networks.
                 type: list
                 elements: str
               switch_route_target_export:
-                description: Switch-level route-target export values.
+                description: Switch-level route-target export values for VXLAN Networks.
                 type: list
                 elements: str
               is_active:
-                description: Mark this attachment as active.
+                description: Active switch selection for classic and routed fabrics only.
                 type: bool
           freeform_config:
             description: Additional free-form CLI configuration for this attachment.
@@ -251,7 +251,7 @@ options:
             and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
-          - Private VLAN Networks require a Data Center VXLAN fabric with private VLAN enabled in its fabric settings.
+          - Private VLAN Networks require Data Center VXLAN with EVPN overlay and private VLAN enabled.
           - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
           - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous) attachment interface modes.
           - C(community) and C(isolated) Networks allow C(pvlan_host) and C(trunk_secondary) attachment interface modes.
@@ -261,7 +261,7 @@ options:
         description: Primary Network ID used by C(community) and C(isolated) Networks.
         type: int
       vlan_name:
-        description: VLAN name.
+        description: VLAN name; names over 32 characters require switch support for long VLAN names.
         type: str
       gateway_ipv4_address:
         description: IPv4 gateway address and prefix.
@@ -288,10 +288,11 @@ options:
       arp_suppression:
         description:
           - Enable ARP suppression.
+          - Requires an SVI and NX-OS.
           - Defaults to C(false) for definition creation and replacement. Omission in V(merged) preserves the current value.
         type: bool
       routing_tag:
-        description: Routing tag.
+        description: Routing tag; NX-OS only.
         type: int
       dhcp_servers:
         description: DHCP server definitions.
@@ -312,6 +313,7 @@ options:
         description:
           - IGMP version.
           - Requires O(config[].trm_enable=true).
+          - NX-OS supports versions 2-3; IOS-XE supports 1-3.
         type: int
         choices: [ 1, 2, 3 ]
       trm_enable:
@@ -329,22 +331,24 @@ options:
       netflow_enable:
         description:
           - Enable netflow.
-          - Requires NetFlow to be enabled in the owning fabric settings.
+          - Requires fabric NetFlow and NX-OS.
           - Defaults to C(false) for definition creation and replacement. Omission in V(merged) preserves the current value.
         type: bool
       vlan_netflow_monitor:
         description:
           - VLAN netflow monitor name.
           - Requires O(config[].netflow_enable=true).
+          - Use a fabric-defined Layer 3 monitor; Campus requires N9000.
         type: str
       interface_netflow_monitor:
         description:
           - Interface netflow monitor name.
           - Requires O(config[].netflow_enable=true).
           - Not valid for Layer 2 Only Networks.
+          - Use a fabric-defined Layer 3 monitor on N9000; the fabric Layer 2 Record must be disabled.
         type: str
       gateway_on_border:
-        description: Enable gateway on border.
+        description: Enable gateway on border; effective only on border and border gateway switches.
         type: bool
       child_fabric_config:
         description:
@@ -383,6 +387,7 @@ options:
             description:
               - IGMP version.
               - Requires O(config[].child_fabric_config[].trm_enable=true).
+              - NX-OS supports versions 2-3; IOS-XE supports 1-3.
             type: int
             choices: [ 1, 2, 3 ]
           trm_enable:
@@ -398,21 +403,23 @@ options:
             description: Downstream VNI.
             type: int
           netflow_enable:
-            description: Enable netflow. Requires NetFlow to be enabled in the child fabric settings.
+            description: Enable NetFlow; requires child fabric NetFlow and NX-OS.
             type: bool
           vlan_netflow_monitor:
             description:
               - VLAN netflow monitor name.
               - Requires O(config[].child_fabric_config[].netflow_enable=true).
+              - Use a fabric-defined Layer 3 monitor; Campus requires N9000.
             type: str
           interface_netflow_monitor:
             description:
               - Interface netflow monitor name.
               - Requires O(config[].child_fabric_config[].netflow_enable=true).
               - Not valid for Layer 2 Only Networks.
+              - Use a fabric-defined Layer 3 monitor on N9000; the fabric Layer 2 Record must be disabled.
             type: str
           gateway_on_border:
-            description: Enable gateway on border.
+            description: Enable gateway on border; effective only on border and border gateway switches.
             type: bool
 extends_documentation_fragment:
   - cisco.nd.modules

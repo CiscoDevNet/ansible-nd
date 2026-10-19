@@ -103,7 +103,7 @@ options:
       default_security_action:
         description:
           - Default security group enforcement action.
-          - Requires security group support to be enabled in fabric settings.
+          - Enforced actions require fabric security groups; use C(unenforcedOrNone) otherwise.
           - Supported on standalone and parent VRF definitions.
         type: str
         choices:
@@ -113,7 +113,7 @@ options:
       default_security_group_tag:
         description:
           - Default security group tag ID (16-65535).
-          - Requires security group support to be enabled in fabric settings.
+          - Requires fabric security groups to be enabled and enforced.
           - Supported on standalone and parent VRF definitions.
         type: int
       vlan_id:
@@ -143,6 +143,7 @@ options:
       l3vni_wo_vlan:
         description:
           - Configure L3VNI without VLAN/SVI.
+          - Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
           - Supported on standalone and parent VRF definitions.
           - May also be overridden per child fabric under C(child_fabric_config).
         type: bool
@@ -151,7 +152,7 @@ options:
         description: Description of the VRF (max 255 characters), including External VRF definitions.
         type: str
       loopback_route_tag:
-        description: Routing tag for loopback routes (0-4294967295).
+        description: Routing tag for loopback routes (0-4294967295); NX-OS only.
         type: int
         default: 12345
       redist_direct_rmap:
@@ -163,15 +164,15 @@ options:
         type: str
         default: FABRIC-RMAP-REDIST-SUBNET
       max_bgp_paths:
-        description: Maximum eBGP multipaths (1-64).
+        description: Maximum eBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
         type: int
         default: 1
       max_ibgp_paths:
-        description: Maximum iBGP multipaths (1-64).
+        description: Maximum iBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
         type: int
         default: 2
       ipv6_linklocal_enable:
-        description: Enable IPv6 link-local on VRF SVI.
+        description: Enable IPv6 link-local on a VRF SVI; NX-OS only, not with C(l3vni_wo_vlan=true).
         type: bool
         default: true
       disable_rt_auto:
@@ -235,11 +236,11 @@ options:
         type: bool
         default: false
       import_mvpn_rt:
-        description: MVPN import route targets. Requires C(trm_enable=true).
+        description: MVPN import route targets; requires C(trm_enable=true) and NX-OS.
         type: list
         elements: str
       export_mvpn_rt:
-        description: MVPN export route targets. Requires C(trm_enable=true).
+        description: MVPN export route targets; requires C(trm_enable=true) and NX-OS.
         type: list
         elements: str
       adv_host_routes:
@@ -265,7 +266,7 @@ options:
         default: true
       bgp_password:
         description:
-          - BGP neighbour password (4-32 characters).
+          - VRF-Lite BGP neighbour password (4-32 characters).
           - Supported on standalone and parent VRF definitions.
           - May also be overridden per child fabric under C(child_fabric_config).
         type: str
@@ -278,16 +279,14 @@ options:
         choices: [ 3, 7 ]
       netflow_enable:
         description:
-          - Enable netflow for the VRF fabric data.
-          - Requires netflow support to be enabled in fabric settings.
+          - Enable VRF-Lite NetFlow; requires fabric and extension NetFlow enablement.
           - Supported on standalone and parent VRF definitions.
           - May also be overridden per child fabric under C(child_fabric_config).
         type: bool
         default: false
       nf_monitor:
         description:
-          - Netflow monitor name.
-          - Required when C(netflow_enable=true).
+          - NX-OS NetFlow monitor; required when C(netflow_enable=true).
           - May also be overridden per child fabric under C(child_fabric_config).
         type: str
       deploy:
@@ -343,11 +342,11 @@ options:
             suboptions:
               dpu_secure:
                 description:
-                  - Enable DPU secure mode for this attachment.
+                  - Enable DPU secure mode for this attachment; smart switches only.
                 type: bool
               dpu_affinity:
                 description:
-                  - DPU affinity for this attachment.
+                  - DPU affinity for this attachment; smart switches only.
                 type: str
                 choices:
                   - dynamic
@@ -399,7 +398,7 @@ options:
             type: str
             required: true
           l3vni_wo_vlan:
-            description: Enable L3VNI without VLAN on this child fabric.
+            description: Enable L3VNI without VLAN; Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
             type: bool
           trm_enable:
             description: Enable IPv4 Tenant Routed Multicast on this child fabric. Requires the feature in child fabric settings.
@@ -426,11 +425,11 @@ options:
             description: Enable TRM on border gateway multisite. Requires C(trm_enable=true).
             type: bool
           import_mvpn_rt:
-            description: MVPN import route targets. Requires C(trm_enable=true).
+            description: MVPN import route targets; requires C(trm_enable=true) and NX-OS.
             type: list
             elements: str
           export_mvpn_rt:
-            description: MVPN export route targets. Requires C(trm_enable=true).
+            description: MVPN export route targets; requires C(trm_enable=true) and NX-OS.
             type: list
             elements: str
           adv_host_routes:
@@ -443,17 +442,17 @@ options:
             description: Configure static default route.
             type: bool
           bgp_password:
-            description: BGP neighbour password (4-32 characters).
+            description: VRF-Lite BGP neighbour password (4-32 characters).
             type: str
           bgp_passwd_encrypt:
             description: BGP password encryption type.
             type: int
             choices: [ 3, 7 ]
           netflow_enable:
-            description: Enable netflow on this child fabric. Requires NetFlow in child fabric settings.
+            description: Enable VRF-Lite NetFlow; requires child fabric and extension NetFlow enablement.
             type: bool
           nf_monitor:
-            description: Netflow monitor name.
+            description: NX-OS NetFlow monitor; required when C(netflow_enable=true).
             type: str
 extends_documentation_fragment:
   - cisco.nd.modules
