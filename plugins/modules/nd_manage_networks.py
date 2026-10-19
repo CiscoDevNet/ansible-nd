@@ -251,6 +251,7 @@ options:
             and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
+          - Private VLAN Networks require a Data Center VXLAN fabric with private VLAN enabled in its fabric settings.
           - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
           - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous) attachment interface modes.
           - C(community) and C(isolated) Networks allow C(pvlan_host) and C(trunk_secondary) attachment interface modes.
@@ -314,7 +315,7 @@ options:
         type: int
         choices: [ 1, 2, 3 ]
       trm_enable:
-        description: Enable Tenant Routed Multicast.
+        description: Enable IPv4 Tenant Routed Multicast. Requires the feature to be enabled in the owning fabric settings.
         type: bool
       ipv6_trm:
         description: Enable IPv6 Tenant Routed Multicast.
@@ -328,6 +329,7 @@ options:
       netflow_enable:
         description:
           - Enable netflow.
+          - Requires NetFlow to be enabled in the owning fabric settings.
           - Defaults to C(false) for definition creation and replacement. Omission in V(merged) preserves the current value.
         type: bool
       vlan_netflow_monitor:
@@ -384,7 +386,7 @@ options:
             type: int
             choices: [ 1, 2, 3 ]
           trm_enable:
-            description: Enable Tenant Routed Multicast.
+            description: Enable IPv4 Tenant Routed Multicast. Requires the feature to be enabled in the child fabric settings.
             type: bool
           ipv6_trm:
             description: Enable IPv6 Tenant Routed Multicast.
@@ -396,7 +398,7 @@ options:
             description: Downstream VNI.
             type: int
           netflow_enable:
-            description: Enable netflow.
+            description: Enable netflow. Requires NetFlow to be enabled in the child fabric settings.
             type: bool
           vlan_netflow_monitor:
             description:

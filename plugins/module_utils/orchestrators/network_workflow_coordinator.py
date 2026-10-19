@@ -51,6 +51,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_fab
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_state_machine import (
     NetworkStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_feature_preflight import (
+    preflight_child_feature_tasks,
+    preflight_workflow_features,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -58,6 +62,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sen
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
 class NetworkWorkflowCoordinator:
@@ -173,11 +178,53 @@ class NetworkWorkflowCoordinator:
             rest_send=rest_send,
             fabric_name=module_args["fabric_name"],
         )
+        self._fabric_resolver = resolver
         strategy = resolver.resolve()
         resolver_trace = getattr(resolver, "workflow_trace", None)
         if resolver_trace:
             self._workflow_trace.extend(dict(entry) for entry in resolver_trace)
         return strategy
+
+    def _preflight_fabric_features(
+        self,
+        sm: NDStateMachine,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        *,
+        current_attachments: dict | None = None,
+        desired_attachments: dict | None = None,
+    ) -> None:
+        """
+        # Summary
+
+        Validate actionable Network features against the owning fabric before writes.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a requested feature is unavailable on the effective fabric.
+        """
+        try:
+            preflight_workflow_features(
+                self, sm, module_args, strategy, "Network", current_attachments=current_attachments, desired_attachments=desired_attachments
+            )
+        except ValueError as exc:
+            raise NDStateMachineError(str(exc)) from exc
+
+    def _preflight_child_feature_tasks(self, child_tasks: dict[str, dict], state: str) -> None:
+        """
+        # Summary
+
+        Reject invalid child feature writes before the parent workflow mutates anything.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a child feature requires a disabled fabric setting.
+        """
+        preflight_child_feature_tasks(child_tasks, state, self._new_state_machine, self._preflight_fabric_features, self._restore_state_machine_params)
 
     def _trace_enabled(self) -> bool:
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
@@ -388,6 +435,8 @@ class NetworkWorkflowCoordinator:
             parent_config.append(parent_network)
         self._trace("parent_child_tasks_built", parent_config_count=len(parent_config), child_task_count=len(child_tasks_dict))
 
+        self._preflight_child_feature_tasks(child_tasks_dict, state)
+
         # Step 4 — run parent state machine
         parent_module_args = dict(module_args)
         parent_module_args["config"] = parent_config
@@ -397,6 +446,10 @@ class NetworkWorkflowCoordinator:
             defer_deploy=True,
         )
         self._trace("parent_state_machine_end", changed=parent_result.get("changed"), failed=parent_result.get("failed"))
+
+        if parent_result.get("changed") and not self.module.check_mode:
+            for child_task in child_tasks_dict.values():
+                child_task.pop("preflight_state_machine", None)
 
         # Step 5 — execute child tasks (only if parent succeeded)
         child_results: list[dict] = []
@@ -1172,7 +1225,12 @@ class NetworkWorkflowCoordinator:
         child_strategy = child_task["strategy"]
         trace_start = len(self._workflow_trace)
         try:
-            result = self._run_state_machine(module_args, strategy=child_strategy)
+            prepared = child_task.get("preflight_state_machine")
+            result = (
+                self._network_state_machine().run_basic(module_args, strategy=child_strategy, prebuilt_sm=prepared)
+                if prepared is not None
+                else self._run_state_machine(module_args, strategy=child_strategy)
+            )
         except Exception as exc:
             self._trace(
                 "child_task_error",

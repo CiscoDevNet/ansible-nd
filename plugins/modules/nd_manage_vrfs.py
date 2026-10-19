@@ -402,7 +402,7 @@ options:
             description: Enable L3VNI without VLAN on this child fabric.
             type: bool
           trm_enable:
-            description: Enable Tenant Routed Multicast on this child fabric.
+            description: Enable IPv4 Tenant Routed Multicast on this child fabric. Requires the feature in child fabric settings.
             type: bool
           no_rp:
             description: No RP, SSM only. Requires C(trm_enable=true).
@@ -450,7 +450,7 @@ options:
             type: int
             choices: [ 3, 7 ]
           netflow_enable:
-            description: Enable netflow on this child fabric.
+            description: Enable netflow on this child fabric. Requires NetFlow in child fabric settings.
             type: bool
           nf_monitor:
             description: Netflow monitor name.

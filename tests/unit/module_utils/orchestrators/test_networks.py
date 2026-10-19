@@ -129,6 +129,45 @@ class _FakeStateMachine:
         self.calls.append(("manage_state", self.state))
 
 
+class _MergedNetworkCoordinatorStub:
+    """Adapt focused merged-flow doubles to the single pre-CRUD inventory query."""
+
+    def _new_state_machine(self, module_args, strategy):
+        coordinator = self
+
+        class StateMachine:
+            before = {"BLUE_NET": object()}
+
+            def manage_state(self):
+                self.result = coordinator._run_state_machine(module_args, strategy)
+
+        return StateMachine(), None, None
+
+    @staticmethod
+    def _configured_network_names(config):
+        return [item["network_name"] for item in config]
+
+    @staticmethod
+    def _current_attachment_details_ignore_missing(*_args):
+        return []
+
+    @staticmethod
+    def _attachment_map_from_details(*_args):
+        return {}
+
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
+
+    @staticmethod
+    def _format_state_machine_output(sm):
+        return sm.result
+
+    @staticmethod
+    def _restore_state_machine_params(*_args):
+        pass
+
+
 class _ExistingNetwork:
     def __init__(self, network_name):
         self.network_name = network_name
@@ -170,6 +209,10 @@ class _ReplacedNetworkCoordinator:
         self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine",))
         return self.state_machine, "original-config", "original-state"
+
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
 
     def _current_attachment_details_ignore_missing(self, *_args, **_kwargs):
         raise AssertionError("first-create replaced must not query missing Network attachments")
@@ -265,6 +308,10 @@ class _StagedNetworkCoordinator:
         self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine", module_args["state"], list(module_args.get("config") or [])))
         return self.state_machine, "original-config", "original-state"
+
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
 
     def _current_attachment_details_ignore_missing(self, _module_args, _strategy, network_names):
         self.calls.append(("attachment_query", network_names))
@@ -509,6 +556,25 @@ def test_network_replaced_first_create_with_attachment_skips_missing_pre_query()
     assert ("manage_state", "replaced") in coordinator.calls
     assert ("post_query", ["BLUE_NET"]) in coordinator.calls
     assert ("post", ["BLUE_NET"], {}, coordinator.post_attachment_details) in coordinator.calls
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_feature_preflight_rejects_before_replaced_attachment_or_crud(check_mode):
+    coordinator = _ReplacedNetworkCoordinator()
+    coordinator.module.check_mode = check_mode
+
+    def reject_feature(*_args, **_kwargs):
+        raise ValueError("fabric feature disabled")
+
+    coordinator._preflight_fabric_features = reject_feature
+
+    with pytest.raises(ValueError, match="fabric feature disabled"):
+        NetworkStateMachine(coordinator).run(
+            {"state": "replaced", "config": [{"network_name": "BLUE_NET", "attach": [{"switch_id": "SW1"}]}]},
+            StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}),
+        )
+
+    assert not any(call[0] in ("pre", "post", "manage_state") for call in coordinator.calls)
 
 
 def test_network_attachment_manager_expands_desired_vpc_peer_with_empty_interfaces():
@@ -1085,6 +1151,7 @@ def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks(u
         module=_Module(dict(module_args)),
         strategy=_ParentStrategy(),
     )
+    object.__setattr__(coordinator, "_preflight_child_feature_tasks", lambda *_args: call_order.append("preflight"))
     call_order = []
 
     def run_parent(args, defer_deploy=False):
@@ -1142,9 +1209,33 @@ def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks(u
 
     result = coordinator._handle_parent_workflow(dict(module_args), "multisite_parent")
 
-    assert call_order == ["parent", "child", "deploy"]
+    assert call_order == ["preflight", "parent", "child", "deploy"]
     assert result["changed"] is True
     assert result["fabric_type"] == "multisite_parent"
+
+
+def test_network_child_reuses_preflight_inventory_when_parent_is_unchanged():
+    coordinator = NetworkWorkflowCoordinator(module=_Module({"output_level": "normal"}), strategy=_ParentStrategy())
+    prepared = object()
+    calls = []
+
+    class StateMachineWrapper:
+        @staticmethod
+        def run_basic(module_args, strategy, prebuilt_sm):
+            calls.append((module_args, strategy, prebuilt_sm))
+            return {"changed": False, "failed": False}
+
+    def unexpected_query(*_args, **_kwargs):
+        raise AssertionError("second GET")
+
+    object.__setattr__(coordinator, "_network_state_machine", StateMachineWrapper)
+    object.__setattr__(coordinator, "_run_state_machine", unexpected_query)
+    strategy = ChildNetworkStrategy(fabric_name="CHILD", fabric_data={})
+    module_args = {"state": "merged", "config": []}
+    result = coordinator._run_child_task({"fabric": "CHILD", "strategy": strategy, "module_args": module_args, "preflight_state_machine": prepared})
+
+    assert result["failed"] is False
+    assert calls == [(module_args, strategy, prepared)]
 
 
 def test_child_network_update_payload_is_limited_to_fabric_instance_data():
@@ -4097,7 +4188,7 @@ def test_network_merged_runs_post_attach_and_deploy_for_desired_attachment():
         is_child = False
         is_parent = False
 
-    class Coordinator:
+    class Coordinator(_MergedNetworkCoordinatorStub):
         module = Module()
         strategy = Strategy()
 
@@ -4241,7 +4332,7 @@ def test_network_state_machine_idempotent_run_deploys_pending_attach():
         is_child = False
         is_parent = False
 
-    class Coordinator:
+    class Coordinator(_MergedNetworkCoordinatorStub):
         module = Module()
         strategy = Strategy()
 

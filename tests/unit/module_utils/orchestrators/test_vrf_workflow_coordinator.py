@@ -327,6 +327,10 @@ class _ReplacedVrfCoordinator:
         self.calls.append(("new_state_machine",))
         return self.state_machine, "original-config", "original-state"
 
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
+
     def _current_attachment_details_ignore_missing(self, _module_args, _strategy, vrf_names):
         self.calls.append(("initial_query", vrf_names))
         return list(self.initial_attachment_details)
@@ -418,6 +422,10 @@ class _StagedVrfCoordinator:
         self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine", module_args["state"], list(module_args.get("config") or [])))
         return self.state_machine, "original-config", "original-state"
+
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
 
     def _current_attachment_details_ignore_missing(self, _module_args, _strategy, vrf_names):
         self.calls.append(("attachment_query", vrf_names))
@@ -593,6 +601,25 @@ def test_vrf_replaced_first_create_with_attachment_skips_missing_pre_query():
         {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": True},
         {"vrfName": "BLUE", "switchId": "SERIAL2", "attach": True},
     ]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_vrf_feature_preflight_rejects_before_replaced_attachment_or_crud(check_mode):
+    coordinator = _ReplacedVrfCoordinator()
+    coordinator.module.check_mode = check_mode
+
+    def reject_feature(*_args, **_kwargs):
+        raise ValueError("fabric feature disabled")
+
+    coordinator._preflight_fabric_features = reject_feature
+
+    with pytest.raises(ValueError, match="fabric feature disabled"):
+        VrfStateMachine(coordinator).run(
+            {"state": "replaced", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
+            _StandaloneStrategy(),
+        )
+
+    assert not any(call[0] in ("pre", "post", "manage_state") for call in coordinator.calls)
 
 
 def test_vrf_replaced_existing_unattached_vpc_expands_peer_from_raw_rows():
@@ -1765,6 +1792,7 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
         module=_Module(dict(module_args)),
         strategy=_ParentStrategy(),
     )
+    object.__setattr__(coordinator, "_preflight_child_feature_tasks", lambda *_args: call_order.append("preflight"))
     call_order = []
 
     def run_parent(args, defer_deploy=False):
@@ -1816,11 +1844,35 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
 
     result = coordinator._handle_parent_workflow(dict(module_args), "multisite_parent")
 
-    assert call_order == ["parent", "child", "deploy"]
+    assert call_order == ["preflight", "parent", "child", "deploy"]
     assert result["changed"] is True
     assert result["fabric_type"] == "multisite_parent"
     assert result["parent_fabric"]["fabric_type"] == "multisite_parent"
     assert result["child_fabrics"][0]["fabric_type"] == "multisite_child"
+
+
+def test_vrf_child_reuses_preflight_inventory_when_parent_is_unchanged():
+    coordinator = VrfWorkflowCoordinator(module=_Module({"output_level": "normal"}), strategy=_ParentStrategy())
+    prepared = object()
+    calls = []
+
+    class StateMachineWrapper:
+        @staticmethod
+        def run_basic(module_args, strategy, prebuilt_sm):
+            calls.append((module_args, strategy, prebuilt_sm))
+            return {"changed": False, "failed": False}
+
+    def unexpected_query(*_args, **_kwargs):
+        raise AssertionError("second GET")
+
+    object.__setattr__(coordinator, "_vrf_state_machine", StateMachineWrapper)
+    object.__setattr__(coordinator, "_run_state_machine", unexpected_query)
+    strategy = _ChildStrategy()
+    module_args = {"state": "merged", "config": []}
+    result = coordinator._run_child_task({"fabric": "CHILD", "strategy": strategy, "module_args": module_args, "preflight_state_machine": prepared})
+
+    assert result["failed"] is False
+    assert calls == [(module_args, strategy, prepared)]
 
 
 def test_vrf_workflow_coordinator_00030_build_pending_vrf_deploy_payload():
@@ -2503,6 +2555,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
     object.__setattr__(coordinator, "_apply_attachment_phase", attachment_phase)
     object.__setattr__(coordinator, "_desired_attachment_map", lambda *_args: {})
+    object.__setattr__(coordinator, "_preflight_fabric_features", lambda *_args, **_kwargs: None)
     object.__setattr__(coordinator, "_format_state_machine_output", format_output)
     object.__setattr__(coordinator, "_restore_state_machine_params", lambda *_args: None)
     object.__setattr__(coordinator, "_build_pending_vrf_deploy_payloads", lambda *_args: [])
@@ -3038,6 +3091,7 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_queries_attachments_a
     object.__setattr__(coordinator, "_current_attachment_details_ignore_missing", attachment_details)
     object.__setattr__(coordinator, "_current_attachment_details", new_attachment_details)
     object.__setattr__(coordinator, "_apply_deleted_attachment_phase", detach)
+    object.__setattr__(coordinator, "_preflight_fabric_features", lambda *_args, **_kwargs: None)
     object.__setattr__(coordinator, "_current_attachment_map", fail_current_attachment_query)
     object.__setattr__(
         coordinator,
