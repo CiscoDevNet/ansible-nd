@@ -520,6 +520,12 @@ class InterfaceGroupConfigModel(NDBaseModel):
             else:
                 setattr(self, field_name, value)
 
+        if {"template_name", "template_config"} & other.model_fields_set:
+            # Preflight validates the effective template when these fields are
+            # supplied. Carry its schema into readback reconciliation, including
+            # an empty map so a different template cannot retain stale types.
+            self._template_parameter_types = dict(other._template_parameter_types)
+
         return self
 
 

@@ -343,6 +343,10 @@
       tags:
         - interface_groups_sparse_merge
 
+    - name: Validate quoted Boolean custom-template reconciliation
+      ansible.builtin.include_tasks: custom_template_types.yaml
+      when: test_ethernet_custom_flow_enabled | bool
+
     - name: Validate input, reference, move, and atomic preflight failures
       ansible.builtin.include_tasks: failures.yaml
 

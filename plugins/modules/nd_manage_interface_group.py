@@ -101,10 +101,10 @@ options:
           switch_id:
             description:
             - Switch serial number or management IP address.
-            - For a vPC Interface Group, use the primary switch serial number or
+            - For vPC members, use the primary switch serial number or
               management IP address of the vPC pair.
-            - ND can return a logical vPC member under either peer. Confirmed vPC peers are
-              treated as equivalent when existing membership is compared.
+            - A vPC interface is one logical member across the pair and only needs
+              to be listed once.
             type: str
             required: true
           interface_names:
@@ -289,9 +289,6 @@ extends_documentation_fragment:
 notes:
 - Supported Interface Group types are C(any), C(ethernetCustom), C(ethernetWithPolicy),
   C(ethernetWithoutPolicy), C(portChannel), and C(vpc).
-- For long-running operations, set C(ansible_command_timeout) as a host or play variable,
-  or set C(ANSIBLE_PERSISTENT_COMMAND_TIMEOUT) in the environment. The connection timeout
-  is controlled by Ansible, not a module option.
 - A switch interface can belong to only one Interface Group. Under O(state=merged), attempting
   to add a member owned by another group fails because merged is additive. O(state=replaced) and
   O(state=overridden) can move it when the source group's desired membership removes it.

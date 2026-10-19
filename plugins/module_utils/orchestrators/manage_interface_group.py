@@ -155,6 +155,7 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
     _custom_template_cache: dict[str, dict[str, Any] | None] = PrivateAttr(default_factory=dict)
     _fabric_network_names_cache: set[str] | None = PrivateAttr(default=None)
     _vpc_peer_cache: dict[str, str | None] = PrivateAttr(default_factory=dict)
+    _vpc_pair_cache: dict[str, tuple[str, str]] = PrivateAttr(default_factory=dict)
     _warnings: list[str] = PrivateAttr(default_factory=list)
     _deploy_attempted: bool = PrivateAttr(default=False)
     _accepted_mutations: int = PrivateAttr(default=0)
@@ -233,8 +234,53 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             for switch_entry in filter_item.switch_interfaces or []:
                 switch_entry.switch_id = self._resolve_switch_id(switch_entry.switch_id)
 
+    def _get_vpc_pair(self, switch_id: str) -> tuple[str, str]:
+        """Resolve one requested switch to a validated, task-local pair identity.
+
+        Both switch IDs must be explicit in the switch-scoped response. Never
+        discover a requested member by querying unrelated same-named members.
+        """
+        cached_pair = self._vpc_pair_cache.get(switch_id)
+        if cached_pair is not None:
+            return cached_pair
+
+        endpoint = self._configure_endpoint(EpVpcPairGet())
+        endpoint.switch_id = switch_id
+        try:
+            response = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Cannot establish vPC pair for switch '{switch_id}': {exc}") from exc
+
+        first = response.get("switchId") if isinstance(response, dict) else None
+        second = response.get("peerSwitchId") if isinstance(response, dict) else None
+        if not isinstance(first, str) or not first.strip() or not isinstance(second, str) or not second.strip():
+            raise RuntimeError(f"Cannot establish vPC pair for switch '{switch_id}': response must contain non-empty switchId and peerSwitchId.")
+        first, second = first.strip(), second.strip()
+        if first == second or switch_id not in (first, second):
+            raise RuntimeError(f"Cannot establish vPC pair for switch '{switch_id}': response must identify the requested switch and one distinct peer.")
+
+        pair = tuple(sorted((first, second)))
+        for member, peer in ((first, second), (second, first)):
+            cached_pair = self._vpc_pair_cache.get(member)
+            cached_peer = self._vpc_peer_cache.get(member)
+            if (cached_pair is not None and cached_pair != pair) or (cached_peer is not None and cached_peer != peer):
+                raise RuntimeError(f"Cannot establish vPC pair for switch '{switch_id}': conflicting peer identity for switch '{member}'.")
+
+        # Publish both directions only after the whole response is validated.
+        self._vpc_pair_cache[first] = self._vpc_pair_cache[second] = pair
+        self._vpc_peer_cache[first], self._vpc_peer_cache[second] = second, first
+        return pair
+
     def _get_vpc_peer_id(self, switch_id: str) -> str | None:
         """Return and cache the peer serial for one switch in a vPC pair."""
+        pair = self._vpc_pair_cache.get(switch_id)
+        if pair is not None:
+            return pair[1] if pair[0] == switch_id else pair[0]
         if switch_id in self._vpc_peer_cache:
             return self._vpc_peer_cache[switch_id]
 
@@ -265,6 +311,9 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         """Return whether two serials identify peers in the same vPC pair."""
         if first_switch_id == second_switch_id:
             return True
+        pair = self._vpc_pair_cache.get(first_switch_id) or self._vpc_pair_cache.get(second_switch_id)
+        if pair is not None:
+            return first_switch_id in pair and second_switch_id in pair
         if self._get_vpc_peer_id(first_switch_id) == second_switch_id:
             return True
         return self._get_vpc_peer_id(second_switch_id) == first_switch_id
@@ -274,9 +323,8 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
 
         Raw Pydantic validation cannot know that an IP and serial identify the
         same switch or that a logical vPC member can be returned under either
-        peer. Exact switch/member collisions are checked first. Only repeated
-        vPC names on different switches require peer lookups, keeping the common
-        path free of additional controller requests.
+        peer. Exact switch/member collisions are checked first. Logical vPC
+        ownership is then indexed by the requested pair and interface name.
         """
         exact_owners: dict[tuple[str, str], str] = {}
         vpc_candidates: dict[str, list[tuple[str, str]]] = {}
@@ -300,48 +348,15 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         for interface_name, candidates in vpc_candidates.items():
             if len(candidates) < 2 or len({candidate[1] for candidate in candidates}) < 2:
                 continue
-            # A vPC name may be reused on unrelated pairs. Index the direct
-            # switch and peer identities instead of comparing every pair of
-            # candidates with that name. Resolve earlier peers lazily so a
-            # normal two-peer conflict still needs only the new peer lookup.
-            prior_by_switch: dict[str, list[int]] = {}
-            prior_by_peer: dict[str, list[int]] = {}
-            unresolved_prior: list[int] = []
-            seen_groups: set[str] = set()
-            for index, (switch_id, group_name) in enumerate(candidates):
-                if seen_groups and (len(seen_groups) > 1 or group_name not in seen_groups):
-                    peer_switch_id = self._get_vpc_peer_id(switch_id)
-                    matches = list(prior_by_switch.get(switch_id, []))
-                    if peer_switch_id:
-                        matches.extend(prior_by_switch.get(peer_switch_id, []))
-                    matches.extend(prior_by_peer.get(switch_id, []))
-                    conflicts = [prior_index for prior_index in matches if candidates[prior_index][1] != group_name]
-                    first_conflict = min(conflicts, default=index)
-                    resolved_count = 0
-                    # A direct match may have an earlier reverse-only match.
-                    # Resolve only the unindexed candidates that could change
-                    # the first conflicting group selected by the old scan.
-                    for prior_index in unresolved_prior:
-                        if prior_index >= first_conflict:
-                            break
-                        prior_switch_id, prior_group_name = candidates[prior_index]
-                        prior_peer_id = self._get_vpc_peer_id(prior_switch_id)
-                        if prior_peer_id:
-                            prior_by_peer.setdefault(prior_peer_id, []).append(prior_index)
-                            if prior_peer_id == switch_id and prior_group_name != group_name:
-                                first_conflict = prior_index
-                        resolved_count += 1
-                    if resolved_count:
-                        del unresolved_prior[:resolved_count]
-                    if first_conflict < index:
-                        other_switch_id, other_group_name = candidates[first_conflict]
-                        pair = "/".join(sorted((switch_id, other_switch_id)))
-                        raise RuntimeError(
-                            f"Interface '{interface_name}' on vPC pair '{pair}' is " f"present in both '{other_group_name}' and '{group_name}'."
-                        )
-                prior_by_switch.setdefault(switch_id, []).append(index)
-                unresolved_prior.append(index)
-                seen_groups.add(group_name)
+            owners_by_pair: dict[tuple[str, str], str] = {}
+            for switch_id, group_name in candidates:
+                pair = self._get_vpc_pair(switch_id)
+                previous_group = owners_by_pair.get(pair)
+                if previous_group is not None and previous_group != group_name:
+                    raise RuntimeError(
+                        f"Interface '{interface_name}' on vPC pair '{'/'.join(pair)}' is " f"present in both '{previous_group}' and '{group_name}'."
+                    )
+                owners_by_pair[pair] = group_name
 
     def _existing_vpc_member_switches(self) -> dict[str, set[str]]:
         """Return existing vPC member names mapped to their echoed switch IDs."""
@@ -363,9 +378,6 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
         tied to their exact switch IDs.
         """
         existing_switches = self._existing_vpc_member_switches()
-        if not existing_switches:
-            return
-        peer_index_by_name: dict[str, dict[str, str]] = {}
 
         for model_instance in model_instances:
             if not model_instance.switch_interfaces:
@@ -373,35 +385,16 @@ class ManageInterfaceGroupOrchestrator(NDBaseOrchestrator[InterfaceGroupConfigMo
             aligned_members: set[tuple[str, str]] = set()
             changed = False
             for switch_entry in model_instance.switch_interfaces:
+                pair = None
                 for interface_name in switch_entry.interface_names:
                     aligned_switch_id = switch_entry.switch_id
                     if InterfaceGroupValidators.interface_kind(interface_name) == "vpc":
+                        if pair is None:
+                            pair = self._get_vpc_pair(switch_entry.switch_id)
                         matching_switches = existing_switches.get(interface_name, set())
-                        if len(matching_switches) == 1:
-                            # Keep the common single-owner path and its lazy
-                            # peer lookup unchanged.
-                            existing_switch_id = next(iter(matching_switches))
-                            if self._vpc_switch_ids_are_equivalent(switch_entry.switch_id, existing_switch_id):
-                                aligned_switch_id = existing_switch_id
-                        elif len(matching_switches) > 1:
-                            proposed_peer_id = self._get_vpc_peer_id(switch_entry.switch_id)
-                            peer_index = peer_index_by_name.get(interface_name)
-                            if peer_index is None:
-                                peer_index = {}
-                                for existing_switch_id in sorted(matching_switches):
-                                    existing_peer_id = self._get_vpc_peer_id(existing_switch_id)
-                                    if existing_peer_id:
-                                        peer_index.setdefault(existing_peer_id, existing_switch_id)
-                                peer_index_by_name[interface_name] = peer_index
-                            candidates = [
-                                switch_id
-                                for switch_id in (switch_entry.switch_id, proposed_peer_id, peer_index.get(switch_entry.switch_id))
-                                if switch_id in matching_switches
-                            ]
-                            if candidates:
-                                # The old sorted scan selected the first
-                                # matching echo; keep that stable choice.
-                                aligned_switch_id = min(candidates)
+                        # Check only the two explicit identities in this pair.
+                        # Pair order retains the old first-matching echo choice.
+                        aligned_switch_id = next((member for member in pair if member in matching_switches), switch_entry.switch_id)
                     changed = changed or aligned_switch_id != switch_entry.switch_id
                     aligned_members.add((aligned_switch_id, interface_name))
 

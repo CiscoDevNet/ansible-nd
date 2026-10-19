@@ -14,6 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_g
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_interface_groups.validators import (
     InterfaceGroupValidators,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 
 
 def _comparison_models(state: str, current: dict, requested: dict) -> tuple[InterfaceGroupConfigModel, InterfaceGroupConfigModel]:
@@ -95,4 +96,59 @@ def test_template_parameter_types_are_comparison_only() -> None:
     assert existing.get_diff(proposed, exclude_unset=False) is False
     payload = InterfaceGroupValidators.to_wire_group(proposed.to_payload())
     assert payload["policyDetails"]["templateConfig"] == {"DESC": "001"}
+    assert "template_parameter_types" not in str(payload)
+
+
+@pytest.mark.parametrize("supplied_field", ["template_name", "template_config"])
+@pytest.mark.parametrize("parameter_type", ["String", None])
+def test_merge_replaces_template_schema_including_empty_metadata(supplied_field: str, parameter_type: str | None) -> None:
+    """A freshly validated template must not inherit a previous parameter type."""
+    existing = _comparison_models("merged", {"DESC": "true"}, {})[0]
+    existing.set_template_parameter_types([{"name": "DESC", "parameterType": "Boolean"}, {"name": "OLD", "parameterType": "Integer"}])
+    proposed = InterfaceGroupConfigModel.from_config(
+        {
+            "interface_group_name": existing.interface_group_name,
+            supplied_field: "new-template" if supplied_field == "template_name" else {"DESC": "true"},
+        }
+    )
+    proposed.set_template_parameter_types([{"name": "DESC", "parameterType": parameter_type}] if parameter_type else [])
+
+    merged = NDConfigCollection(InterfaceGroupConfigModel, [existing]).merge(proposed)
+
+    assert merged._template_parameter_types == ({"DESC": "string"} if parameter_type else {})
+    assert InterfaceGroupValidators.template_config_is_subset({"DESC": "true"}, {"DESC": "TRUE"}, merged._template_parameter_types) is False
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"networks": ["NETWORK-A"]},
+        {"switch_interfaces": [{"switch_id": "SN1", "interface_names": ["Ethernet1/10"]}]},
+    ],
+)
+def test_membership_only_merge_preserves_known_template_types(update: dict) -> None:
+    """A proposal with no template fields must not erase existing schema knowledge."""
+    existing = _comparison_models("merged", {"ENABLED": "true"}, {})[0]
+    existing.set_template_parameter_types([{"name": "ENABLED", "parameterType": "Boolean"}])
+    proposed = InterfaceGroupConfigModel.from_config({"interface_group_name": existing.interface_group_name, **update})
+
+    merged = NDConfigCollection(InterfaceGroupConfigModel, [existing]).merge(proposed)
+
+    assert merged._template_parameter_types == {"ENABLED": "boolean"}
+    assert merged.template_config == {"ENABLED": "true"}
+    assert InterfaceGroupValidators.template_config_is_subset({"ENABLED": "true"}, {"ENABLED": "TRUE"}, merged._template_parameter_types) is True
+
+
+def test_merged_schema_has_independent_ownership_and_stays_out_of_payload() -> None:
+    """Retain input values on the wire while keeping copied schema metadata private."""
+    existing, proposed = _comparison_models("merged", {"ENABLED": "TRUE"}, {"ENABLED": "true"})
+    proposed.set_template_parameter_types([{"name": "ENABLED", "parameterType": "Boolean"}])
+
+    merged = NDConfigCollection(InterfaceGroupConfigModel, [existing]).merge(proposed)
+    proposed._template_parameter_types["ENABLED"] = "string"
+
+    assert merged._template_parameter_types == {"ENABLED": "boolean"}
+    assert merged.template_config == {"ENABLED": "true"}
+    payload = InterfaceGroupValidators.to_wire_group(merged.to_payload())
+    assert payload["policyDetails"]["templateConfig"] == {"ENABLED": "true"}
     assert "template_parameter_types" not in str(payload)

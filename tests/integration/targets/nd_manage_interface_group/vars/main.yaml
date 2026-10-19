@@ -253,6 +253,11 @@ test_custom_extra_config_key: >-
     nd_test_interface_group_custom_extra_config_key
     | default('CONF')
   }}
+test_custom_boolean_key: >-
+  {{
+    nd_test_interface_group_custom_boolean_key
+    | default('CDP_ENABLE')
+  }}
 
 interface_group_test_prefix: "ANSIBLE-IG-"
 

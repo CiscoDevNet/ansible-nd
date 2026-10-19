@@ -103,6 +103,26 @@ def _group(
     return InterfaceGroupConfigModel.from_config(data)
 
 
+@pytest.mark.parametrize("return_code", [200, 404, 503])
+def test_requested_pair_uses_real_response_handler(return_code) -> None:
+    """The direct pair response/error contract survives the real REST stack."""
+    response = {
+        "RETURN_CODE": return_code,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fab1/switches/SN1/vpcPair",
+        "MESSAGE": "OK" if return_code == 200 else "Pair lookup failed",
+        "DATA": {"switchId": "SN1", "peerSwitchId": "SN2"} if return_code == 200 else {"message": "Pair lookup failed"},
+    }
+    orchestrator = ManageInterfaceGroupOrchestrator(rest_send=_rest_send_with_responses([response]))
+    if return_code == 200:
+        assert orchestrator._get_vpc_pair("SN1") == ("SN1", "SN2")
+    else:
+        with pytest.raises(RuntimeError, match="Cannot establish vPC pair for switch 'SN1'"):
+            orchestrator._get_vpc_pair("SN1")
+        assert orchestrator._vpc_pair_cache == {}
+        assert orchestrator._vpc_peer_cache == {}
+
+
 def test_manage_interface_group_00005() -> None:
     """Expose the state-machine capabilities, endpoints, and config-action defaults."""
     orchestrator = _orchestrator()
@@ -337,7 +357,7 @@ def test_manage_interface_group_00024(monkeypatch) -> None:
     def fake_request(self, path, verb, **kwargs):
         del self, verb, kwargs
         calls.append(path)
-        return {"peerSwitchId": "SN2"}
+        return {"switchId": "SN1", "peerSwitchId": "SN2"}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     existing = _group(
@@ -373,7 +393,7 @@ def test_manage_interface_group_00025(monkeypatch) -> None:
     def fake_request(self, path, verb, **kwargs):
         del self, verb, kwargs
         calls.append(path)
-        return {"peerSwitchId": "SN2"}
+        return {"switchId": "SN1", "peerSwitchId": "SN2"}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     existing = _group(
@@ -426,8 +446,8 @@ def test_manage_interface_group_00026(monkeypatch) -> None:
     def fake_request(self, path, verb, **kwargs):
         del self, verb, kwargs
         if "/switches/SN1/" in path:
-            return {"peerSwitchId": "SN3"}
-        return {"peerSwitchId": "SN4"}
+            return {"switchId": "SN1", "peerSwitchId": "SN3"}
+        return {"switchId": "SN2", "peerSwitchId": "SN4"}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     existing = _group(
@@ -458,7 +478,7 @@ def test_manage_interface_group_00027(monkeypatch) -> None:
 
     def fake_request(self, path, verb, **kwargs):
         del self, path, verb, kwargs
-        return {"peerSwitchId": "SN2"}
+        return {"switchId": "SN1", "peerSwitchId": "SN2"}
 
     monkeypatch.setattr(ManageInterfaceGroupOrchestrator, "_request", fake_request)
     source = _group(
@@ -498,7 +518,7 @@ def test_manage_interface_group_00028(monkeypatch) -> None:
     def fake_request(self, path, verb, data=None, **kwargs):
         del self, verb, kwargs
         if path.endswith("/switches/SN1/vpcPair"):
-            return {"peerSwitchId": "SN2"}
+            return {"switchId": "SN1", "peerSwitchId": "SN2"}
         put_payloads.append(data)
         return {}
 
@@ -1126,6 +1146,8 @@ def test_manage_interface_group_00132(monkeypatch) -> None:
 
     def fake_request(self, path, verb, data=None, **kwargs):
         del self, verb, kwargs
+        if path.endswith("/vpcPair"):
+            return {"switchId": "SN1", "peerSwitchId": "SN2"}
         calls.append({"path": path, "data": data})
         if path.endswith("/interfaceGroups"):
             return {"interfaceGroups": [{"type": "any", "status": "success", "message": "created"}]}
@@ -2039,7 +2061,7 @@ def test_manage_interface_group_00270(monkeypatch) -> None:
     ):
         orchestrator.preflight([first, second])
 
-    assert calls == ["/api/v1/manage/fabrics/fab1/switches/SN2/vpcPair"]
+    assert calls == ["/api/v1/manage/fabrics/fab1/switches/SN1/vpcPair"]
 
 
 def test_manage_interface_group_00280(monkeypatch) -> None:
@@ -2083,7 +2105,7 @@ def test_manage_interface_group_00290(monkeypatch) -> None:
     def fake_request(self, path, verb, **kwargs):
         del self, kwargs
         calls.append((str(verb), path))
-        if path.endswith("/switches/SN2/vpcPair"):
+        if path.endswith("/switches/SN1/vpcPair"):
             return {"switchId": "SN1", "peerSwitchId": "SN2"}
         raise AssertionError(f"Unexpected mutation request: {verb} {path}")
 
@@ -2123,13 +2145,13 @@ def test_manage_interface_group_00290(monkeypatch) -> None:
     assert calls == [
         (
             "HttpVerbEnum.GET",
-            "/api/v1/manage/fabrics/fab1/switches/SN2/vpcPair",
+            "/api/v1/manage/fabrics/fab1/switches/SN1/vpcPair",
         )
     ]
 
 
 def test_manage_interface_group_00300(monkeypatch) -> None:
-    """Avoid peer lookups when no logical vPC ownership collision is possible."""
+    """Non-vPC members need no pair discovery."""
 
     def unexpected_request(*args, **kwargs):
         del args, kwargs
@@ -2141,11 +2163,6 @@ def test_manage_interface_group_00300(monkeypatch) -> None:
         unexpected_request,
     )
     orchestrator = _orchestrator(config_actions={"deploy": False, "type": "switch"})
-    unique_vpc = _group(
-        "vpc-group",
-        group_type="vpc",
-        members=[("SN1", ["vPC200"])],
-    )
     first_port_channel = _group(
         "pc-group-a",
         members=[("SN1", ["Port-channel10"])],
@@ -2155,7 +2172,7 @@ def test_manage_interface_group_00300(monkeypatch) -> None:
         members=[("SN2", ["Port-channel10"])],
     )
 
-    orchestrator.preflight([unique_vpc, first_port_channel, second_port_channel])
+    orchestrator.preflight([first_port_channel, second_port_channel])
 
 
 def test_vpc_ownership_checks_scale_with_same_named_unrelated_pairs(monkeypatch) -> None:
@@ -2163,12 +2180,12 @@ def test_vpc_ownership_checks_scale_with_same_named_unrelated_pairs(monkeypatch)
     pair_count = 96
     peer_lookups: list[str] = []
 
-    def get_peer(switch_id: str) -> str:
+    def get_peer(switch_id: str) -> tuple[str, str]:
         peer_lookups.append(switch_id)
-        return switch_id.replace("SN", "PN", 1)
+        return tuple(sorted((switch_id, switch_id.replace("SN", "PN", 1))))
 
     orchestrator = _orchestrator()
-    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", get_peer)
+    monkeypatch.setattr(orchestrator, "_get_vpc_pair", get_peer)
     groups = [_group(f"group-{index}", group_type="vpc", members=[(f"SN{index:03}", ["vPC200"])]) for index in range(pair_count)]
 
     orchestrator._validate_runtime_member_ownership(groups)
@@ -2182,8 +2199,8 @@ def test_vpc_ownership_still_rejects_late_peer_collision(monkeypatch) -> None:
     orchestrator = _orchestrator()
     monkeypatch.setattr(
         orchestrator,
-        "_get_vpc_peer_id",
-        lambda switch_id: switch_id.replace("SN", "PN", 1) if switch_id.startswith("SN") else switch_id.replace("PN", "SN", 1),
+        "_get_vpc_pair",
+        lambda switch_id: tuple(sorted((switch_id, switch_id.replace("SN", "PN", 1) if switch_id.startswith("SN") else switch_id.replace("PN", "SN", 1)))),
     )
     groups = [_group(f"group-{index}", group_type="vpc", members=[(f"SN{index:03}", ["vPC200"])]) for index in range(pair_count)]
     groups.append(_group("late-conflict", group_type="vpc", members=[("PN000", ["vPC200"])]))
@@ -2192,18 +2209,24 @@ def test_vpc_ownership_still_rejects_late_peer_collision(monkeypatch) -> None:
         orchestrator._validate_runtime_member_ownership(groups)
 
 
-def test_vpc_ownership_retains_first_reverse_only_conflict(monkeypatch) -> None:
-    """Keep the first conflicting group even with one-way peer inventory."""
+def test_vpc_ownership_rejects_missing_pair_identity(monkeypatch) -> None:
+    """Incomplete pair data must fail before assigning logical ownership."""
     peer_ids = {"SN1": "SN3", "SN2": None, "SN3": "SN2"}
     orchestrator = _orchestrator()
-    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", peer_ids.get)
+    monkeypatch.setattr(
+        orchestrator,
+        "_request",
+        lambda path, **kwargs: {
+            "switchId": path.split("/switches/")[1].split("/")[0],
+            "peerSwitchId": peer_ids[path.split("/switches/")[1].split("/")[0]],
+        },
+    )
     groups = [
         _group("first", group_type="vpc", members=[("SN1", ["vPC200"])]),
         _group("second", group_type="vpc", members=[("SN2", ["vPC200"])]),
         _group("third", group_type="vpc", members=[("SN3", ["vPC200"])]),
     ]
-
-    with pytest.raises(RuntimeError, match="present in both 'first' and 'third'"):
+    with pytest.raises(RuntimeError, match="Cannot establish vPC pair for switch 'SN2'"):
         orchestrator._validate_runtime_member_ownership(groups)
 
 
@@ -2212,14 +2235,14 @@ def test_vpc_echo_alignment_scales_with_same_named_unrelated_pairs(monkeypatch) 
     pair_count = 96
     peer_lookups: list[str] = []
 
-    def get_peer(switch_id: str) -> str:
+    def get_peer(switch_id: str) -> tuple[str, str]:
         peer_lookups.append(switch_id)
         if switch_id.startswith("SN"):
-            return switch_id.replace("SN", "PN", 1)
-        return switch_id.replace("PN", "SN", 1)
+            return tuple(sorted((switch_id, switch_id.replace("SN", "PN", 1))))
+        return tuple(sorted((switch_id, switch_id.replace("PN", "SN", 1))))
 
     orchestrator = _orchestrator()
-    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", get_peer)
+    monkeypatch.setattr(orchestrator, "_get_vpc_pair", get_peer)
     orchestrator._existing_groups = {
         f"group-{index}": _group(f"group-{index}", group_type="vpc", members=[(f"SN{index:03}", ["vPC200"])]) for index in range(pair_count)
     }
@@ -2231,17 +2254,21 @@ def test_vpc_echo_alignment_scales_with_same_named_unrelated_pairs(monkeypatch) 
     assert [group.switch_interfaces[0].switch_id for group in proposed] == [f"SN{index:03}" for index in range(pair_count)]
 
 
-def test_vpc_echo_alignment_accepts_reverse_only_peer(monkeypatch) -> None:
-    """One-way peer inventory still aligns an existing opposite-peer echo."""
-    peer_ids = {"SN1": "SN2", "SN2": None}
+def test_vpc_echo_alignment_rejects_missing_requested_peer(monkeypatch) -> None:
+    """Do not probe existing switches to recover an incomplete requested pair."""
     orchestrator = _orchestrator()
-    monkeypatch.setattr(orchestrator, "_get_vpc_peer_id", peer_ids.get)
+    calls = []
+
+    def request(path, **kwargs):
+        calls.append(path)
+        return {"switchId": "SN2", "peerSwitchId": None}
+
+    monkeypatch.setattr(orchestrator, "_request", request)
     orchestrator._existing_groups = {"group": _group("group", group_type="vpc", members=[("SN1", ["vPC200"])])}
     proposed = _group("group", group_type="vpc", members=[("SN2", ["vPC200"])])
-
-    orchestrator._align_vpc_member_switch_ids([proposed])
-
-    assert proposed.switch_interfaces[0].switch_id == "SN1"
+    with pytest.raises(RuntimeError, match="Cannot establish vPC pair for switch 'SN2'"):
+        orchestrator._align_vpc_member_switch_ids([proposed])
+    assert calls == ["/api/v1/manage/fabrics/fab1/switches/SN2/vpcPair"]
 
 
 @pytest.mark.parametrize(

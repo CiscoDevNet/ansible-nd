@@ -96,6 +96,8 @@ nd_test_interface_group_undeployed_network: ANSIBLE-IG-NETWORK-PENDING
 # input dictionary matches a duplicate of int_shared_trunk_host.
 nd_test_interface_group_custom_template: <CUSTOM_TEMPLATE_NAME>
 nd_test_interface_group_custom_extra_config_key: CONF
+# Boolean template input toggled and restored by sparse merged coverage.
+nd_test_interface_group_custom_boolean_key: CDP_ENABLE
 nd_test_interface_group_custom_template_config:
   DESC: ""
   BPDUGUARD_ENABLED: "no"
