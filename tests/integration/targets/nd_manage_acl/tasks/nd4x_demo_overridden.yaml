@@ -1,0 +1,122 @@
+---
+- name: Run nd_manage_acl overridden harness scenarios
+  block:
+    - name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+      ansible.builtin.assert:
+        that:
+          - nd4x_acl_destructive_tests_enabled | bool
+        fail_msg: >-
+          The nd_manage_acl overridden harness scenario can remove every ACL
+          in the fabric. Run it only on a dedicated test fabric with
+          nd_acl_destructive_tests_enabled=true.
+
+    - name: "OVERRIDDEN SAFETY: Probe the destructive scope in check mode"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: overridden
+        config: []
+      check_mode: true
+      changed_when: false
+      register: nd4x_acl_scope_probe
+
+    - name: "OVERRIDDEN SAFETY: Reject ACLs outside the reserved scope"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              nd4x_acl_scope_probe.before
+              | default([])
+              | rejectattr('name', 'in', nd4x_acl_reserved_names)
+              | list
+              | length
+            ) == 0
+        fail_msg: >-
+          The overridden test found ACLs outside the reserved nd_manage_acl
+          harness scope. Refusing a fabric-wide destructive operation.
+
+    - name: "OVERRIDDEN SETUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
+
+    - name: "OVERRIDDEN SETUP: Create reserved IPv4 and IPv6 ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: merged
+        config:
+          - "{{ acl_ipv4_initial }}"
+          - "{{ acl_ipv6 }}"
+
+    - name: "OVERRIDDEN: Remove all ACLs through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_acl
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ acl_fabric }}"
+        config: []
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_acl_check_mode_queries }}"
+        nd_queries:
+          - name: Verify IPv4 ACL was removed by overridden empty config
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv4_name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify IPv6 ACL was removed by overridden empty config
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric
+              }}/accessControlLists/{{ acl_ipv6_name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify the overridden operation emptied the ACL collection
+            path: >-
+              /api/v1/manage/fabrics/{{ acl_fabric }}/accessControlLists
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.accessControlLists"
+                exists: true
+              - jsonpath: "$.current.accessControlLists[0]"
+                exists: false
+      register: overridden_all
+
+    - name: "OVERRIDDEN: Verify bulk removal and idempotency"
+      ansible.builtin.assert:
+        that:
+          - overridden_all.check_mode_result.changed | bool
+          - overridden_all.first_run_result.changed | bool
+          - overridden_all.first_run_result.after | length == 0
+          - overridden_all.second_run_result.changed == false
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved ACLs"
+      cisco.nd.nd_manage_acl:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ acl_fabric }}"
+        state: deleted
+        config:
+          - name: "{{ acl_ipv4_name }}"
+          - name: "{{ acl_ipv6_name }}"
+      tags:
+        - always
