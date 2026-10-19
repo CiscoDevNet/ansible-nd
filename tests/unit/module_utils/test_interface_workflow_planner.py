@@ -376,7 +376,7 @@ def test_ethernet_overridden_rejects_ambiguous_grouped_input(group, expected_err
 
 @pytest.mark.parametrize(
     "resource_type",
-    ["port_channel_access", "port_channel_routed", "port_channel_trunk_host", "subinterface_managed", "svi"],
+    ["loopback", "port_channel_access", "port_channel_routed", "port_channel_trunk_host", "subinterface_managed", "svi"],
 )
 def test_ios_xe_overridden_discovery_guard_runs_in_read_only_planning(resource_type, monkeypatch) -> None:
     """A check-mode plan must not approve an override rejected by normal preflight."""

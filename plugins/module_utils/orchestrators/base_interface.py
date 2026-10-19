@@ -1184,10 +1184,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Via `_request` if a deployment-history query fails.
         """
         # TODO(4.2.1) xe-interface-removal-requires-discovery
-        # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface) only once it has
+        # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface, loopback) only once it has
         # discovered the deployed interface, seconds to minutes after the create deploy. A remove inside that window drops the
-        # intent record, the deploy pushes nothing, and the interface stays on the switch (lab-verified 2026-09-21 on 4.2.1.10 and
-        # 4.3.1.175). NX-OS is unaffected. The record reads `unknown` / `Not discovered` whether the intent was deployed or not, the
+        # intent record, the deploy pushes nothing, and the interface stays on the switch (port-channel/SVI/subinterface verified
+        # 2026-09-21; C8000V loopback verified 2026-10-18 on 4.2.1.10 and 4.3.1.175). NX-OS is unaffected. The record reads
+        # `unknown` / `Not discovered` whether the intent was deployed or not, the
         # per-interface diff reads all-`insert` for both staged intent and a deployed-undiscovered interface with a staged edit, and
         # the pending configuration lists both; only the per-switch deployment history separates them (lab-verified 2026-09-22).
         blocked: list[str] = []

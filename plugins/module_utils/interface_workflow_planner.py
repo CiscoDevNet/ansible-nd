@@ -940,9 +940,9 @@ class InterfaceWorkflowPlanner:
     ) -> bool:
         """Recognize only an exact, preview-proven child deletion tombstone.
 
-        TODO(4.3.1) staged-subinterface-delete-echo: Recheck this tombstone
+        TODO(4.2.1) staged-subinterface-delete-echo: Recheck this tombstone
         shape before changing the preview-proven exception.
-        ND 4.3.1 can retype a deleted managed subinterface as structural
+        ND 4.2.1 and 4.3.1 can retype a deleted managed subinterface as structural
         ``ethernet`` while retaining a ``userDefined/interface_delete`` row.
         The row alone is not ownership proof: require the one-child preview to
         show the matching running header and no other pending command before

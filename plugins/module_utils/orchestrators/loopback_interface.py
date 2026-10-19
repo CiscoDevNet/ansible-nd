@@ -88,11 +88,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
-    # TODO(4.3.1) ios-xe-loopback-remove-case: Recheck whether ND removal
+    # TODO(4.2.1) ios-xe-loopback-remove-case: Recheck whether ND removal
     # accepts lowercase names and still generates device-side deletion.
     # IOS-XE needs the switch-canonical Loopback<N> spelling on the removal wire.
     # Lowercase removal drops intent without generating `no interface Loopback<N>`.
-    xe_removal_requires_discovery: ClassVar[bool] = False
+    xe_removal_requires_discovery: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -103,28 +103,30 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
 
     def preflight_delete(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
-        """Reject IOS-XE operational-only or malformed targets before any removal.
-
-        Unlike other IOS-XE logical interfaces, a canonical Loopback<N> remove
-        generates a device-side delete even while discovery says ``unknown``.
-        This was verified on ND 4.3.1 / C9Kv, including CLI readback.
-        """
+        """Check IOS-XE delete spelling, ownership, and discovery before removal."""
+        pairs = []
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             self._switch_interfaces(switch_id)
             self._delete_side_name(model_instance.interface_name, switch_id)
+            pairs.append((model_instance.interface_name, switch_id))
+        self._check_xe_removal_discovered(pairs)
 
     def _check_overridden_removals_discovered(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
-        """Apply the same ownership check to managed loopbacks removed by override."""
+        """Apply the same IOS-XE delete checks to managed loopbacks removed by override."""
         if self.rest_send.params.get("state") != "overridden":
             return
         proposed = {(model.switch_ip, model.interface_name.strip().lower()) for model in model_instances}
         switch_map = self.fabric_context.switch_map
+        pairs = []
         for iface in self.query_all() or []:
             switch_ip = iface.get("switchIp")
             name = str(iface.get("interfaceName") or "")
             if switch_ip in switch_map and (switch_ip, name.strip().lower()) not in proposed:
-                self._delete_side_name(name, switch_map[switch_ip])
+                switch_id = switch_map[switch_ip]
+                self._delete_side_name(name, switch_id)
+                pairs.append((name, switch_id))
+        self._check_xe_removal_discovered(pairs)
 
     def _delete_side_name(self, name: str, switch_id: str) -> str:
         """Use canonical IOS-XE spelling so ND queues an actual switch-side remove."""
