@@ -287,7 +287,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             raise ValueError("vlan_network_type primary, community, and isolated are not supported on Multicluster parent fabrics")
         if vlan_network_type in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             return self._private_secondary_payload_model_data(config, fabric_name, vlan_network_type, transformed)
-        transformed["vlan_network_type"] = vlan_network_type
+        if "vlan_network_type" in transformed:
+            transformed["vlan_network_type"] = vlan_network_type
 
         layer = self._network_layer(config)
         if layer is not None:

@@ -20,6 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.co
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     ConfigurationStatus,
+    VlanNetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
     network_parent_argument_spec,
@@ -1949,6 +1950,17 @@ def test_primary_network_sparse_l3_update_inherits_existing_layer_and_vrf():
     assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.9/24"
     assert payload["l3Data"]["mtu"] == 9000
     assert orchestrator.model_class.from_response(payload).get_diff(proposed, exclude_unset=True)
+
+
+def test_sparse_merged_network_keeps_existing_pvlan_type_when_omitted():
+    orchestrator = _orchestrator()
+    proposed = orchestrator.model_class.from_config(orchestrator.prepare_config_data([{"network_name": "PVLAN_PRIMARY", "display_name": "UPDATED"}])[0])
+    existing = orchestrator.model_class.from_response(
+        {"networkName": "PVLAN_PRIMARY", "networkType": "vxlanIbgp", "vlanNetworkType": "privatePrimary", "networkMode": "layer2", "vrfName": "NA"}
+    )
+
+    assert "vlan_network_type" not in proposed.model_fields_set
+    assert existing.model_copy(deep=True).merge(proposed).vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY
 
 
 class _LayerValidationNetworkOrchestrator(NDNetworkOrchestrator):
