@@ -1,0 +1,20 @@
+---
+- name: "TENANT IDENTITY CLEANUP: Remove tenant A route map"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_route_map_tenant_identity_name }}"
+        tenant_name: "{{ nd_test_tenant_name_a }}"
+    state: deleted
+  when: nd_test_tenant_name_a is defined
+
+- name: "TENANT IDENTITY CLEANUP: Remove tenant B route map"
+  cisco.nd.nd_manage_route_map:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ test_route_map_tenant_identity_name }}"
+        tenant_name: "{{ nd_test_tenant_name_b }}"
+    state: deleted
+  when: nd_test_tenant_name_b is defined

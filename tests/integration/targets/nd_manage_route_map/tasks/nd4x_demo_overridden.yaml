@@ -1,0 +1,122 @@
+---
+- name: Run nd_manage_route_map overridden harness scenarios
+  block:
+    - name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+      ansible.builtin.assert:
+        that:
+          - nd4x_route_map_destructive_tests_enabled | bool
+        fail_msg: >-
+          The nd_manage_route_map overridden harness scenario can delete every
+          route map in the fabric. Run it only on a dedicated test fabric with
+          nd_route_map_destructive_tests_enabled=true.
+
+    - name: "OVERRIDDEN SAFETY: Initialize complete route-map inventory"
+      ansible.builtin.set_fact:
+        nd4x_route_map_inventory: []
+        nd4x_route_map_inventory_offset: 0
+        nd4x_route_map_inventory_pages: 0
+        nd4x_route_map_inventory_page_size: 100
+        nd4x_route_map_inventory_max_pages: 10000
+        nd4x_route_map_inventory_total: null
+
+    - name: "OVERRIDDEN SAFETY: Read every route-map inventory page"
+      ansible.builtin.include_tasks: nd4x_demo_route_map_inventory_page.yaml
+
+    - name: "OVERRIDDEN SAFETY: Reject route maps outside reserved scope"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              nd4x_route_map_inventory
+              | map(attribute='name')
+              | list
+              | difference(nd4x_route_map_reserved_names)
+              | length
+            ) == 0
+        fail_msg: >-
+          The overridden test found a route map outside the reserved
+          nd_manage_route_map test scope, or the inventory could not be
+          shown complete. Refusing to run a fabric-wide destructive test.
+
+    - name: "OVERRIDDEN SETUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "OVERRIDDEN SETUP: Create secondary and tertiary route maps"
+      cisco.nd.nd_manage_route_map:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_secondary }}"
+          - "{{ route_map_tertiary }}"
+        state: merged
+
+    - name: "OVERRIDDEN: Keep only primary route map through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary_replaced }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained primary route map
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.routeMaps[?(
+                  @.name == '{{ test_route_map_primary_name }}'
+                  )].name
+                equals: "{{ test_route_map_primary_name }}"
+              - jsonpath: >-
+                  $.current.routeMaps[?(
+                  @.name == '{{ test_route_map_secondary_name }}'
+                  )]
+                exists: false
+              - jsonpath: >-
+                  $.current.routeMaps[?(
+                  @.name == '{{ test_route_map_tertiary_name }}'
+                  )]
+                exists: false
+          - name: Validate retained primary route-map entry
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/routeMaps/{{ test_route_map_primary_name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 20
+              - jsonpath: "$.current.entries[0].action"
+                equals: deny
+              - jsonpath: "$.current.entries[0].ruleEntries[0].ruleType"
+                equals: matchTag
+      register: overridden_primary
+
+    - name: "OVERRIDDEN: Verify secondary and tertiary route maps were removed"
+      ansible.builtin.assert:
+        that:
+          - overridden_primary.check_mode_result.changed | bool
+          - overridden_primary.first_run_result.changed | bool
+          - overridden_primary.first_run_result.after | length == 1
+          - overridden_primary.first_run_result.after[0].name == test_route_map_primary_name
+          - overridden_primary.first_run_result.after[0].entries[0].rule_entries[0].tags == [65000]
+          - overridden_primary.second_run_result.changed == false
+          - overridden_primary.nd_query_results | length == 2
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml
