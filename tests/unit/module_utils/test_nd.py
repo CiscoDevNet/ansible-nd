@@ -8,40 +8,43 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 
 
-def test_request_returns_http_207_response_body():
-    """HTTP 207 Multi-Status is a successful response with a usable body."""
+@pytest.mark.parametrize("status", [200, 207])
+@pytest.mark.parametrize("accept_multistatus", [None, False, True])
+def test_request_returns_http_207_body_only_when_explicitly_accepted(monkeypatch, status, accept_multistatus):
+    """Opting into 207 returns its complete body; ordinary 200 stays compatible."""
     response_body = {
         "configurationDiffs": [
             {
                 "interfaceName": "Ethernet1/1",
                 "status": "success",
                 "switchId": "SN1",
-            }
+            },
+            {
+                "interfaceName": "Ethernet1/2",
+                "status": "failed",
+                "switchId": "SN2",
+            },
         ]
     }
     connection = MagicMock()
     connection.send_request.return_value = {
         "body": response_body,
-        "msg": "Multi-Status",
-        "status": 207,
+        "msg": "Multi-Status" if status == 207 else "OK",
+        "status": status,
         "url": "https://nd.example/api/v1/manage/fabrics/fab/interfaceActions/preview",
     }
     connection.pop_messages.return_value = []
-
-    instance = NDModule.__new__(NDModule)
-    instance.connection = connection
-    instance.has_modified = False
-    instance.httpapi_logs = []
-    instance.method = None
-    instance.module = SimpleNamespace(_socket_path="/tmp/ansible-connection")
-    instance.path = None
-    instance.result = {}
-    instance.response = None
-    instance.status = None
-    instance.url = None
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.nd.Connection", lambda socket_path: connection)
+    module = SimpleNamespace(_socket_path="/tmp/ansible-connection", _debug=False, params={})
+    if accept_multistatus is None:
+        instance = NDModule(module)
+    else:
+        instance = NDModule(module, accept_multistatus=accept_multistatus)
 
     result = instance.request(
         "/api/v1/manage/fabrics/fab/interfaceActions/preview",
@@ -49,5 +52,10 @@ def test_request_returns_http_207_response_body():
         data={"interfaces": []},
     )
 
-    assert result == response_body
-    assert instance.status == 207
+    if status == 200 or accept_multistatus is True:
+        # The transport helper returns every item without interpreting status.
+        assert result == response_body
+    else:
+        # Preserve the legacy fallthrough for a status that is not accepted.
+        assert result is None
+    assert instance.status == status
