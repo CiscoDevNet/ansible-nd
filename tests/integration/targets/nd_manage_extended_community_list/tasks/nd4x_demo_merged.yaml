@@ -1,0 +1,117 @@
+---
+- name: Run nd_manage_extended_community_list merged harness tests
+  block:
+    - name: "MERGED SETUP: Remove reserved extended community lists"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "MERGED CREATE: Create standard extended community list"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_extended_community_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_standard }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_extended_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate standard extended community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_standard.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ extended_community_list_standard.name }}"
+              - jsonpath: "$.current.type"
+                equals: standard
+              - jsonpath: "$.current.entries[0].sequenceNumber"
+                equals: 10
+              - jsonpath: "$.current.entries[0].routeTargetCollection[0]"
+                equals: "65000:100"
+              - jsonpath: "$.current.entries[1].sequenceNumber"
+                equals: 20
+              - jsonpath: "$.current.entries[1].siteOfOriginCollection[0]"
+                equals: "64512:300"
+      register: merged_standard
+
+    - name: "MERGED CREATE: Verify standard returned state"
+      ansible.builtin.assert:
+        that:
+          - merged_standard.first_run_result.after | selectattr('name', 'equalto', extended_community_list_standard.name) | list | length == 1
+          - merged_standard.nd_query_results | length == 1
+
+    - name: "MERGED CREATE: Create expanded extended community list"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_extended_community_list
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_expanded }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_extended_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate expanded extended community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_expanded.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ extended_community_list_expanded.name }}"
+              - jsonpath: "$.current.type"
+                equals: expanded
+              - jsonpath: "$.current.entries[0].communityNumberRegex"
+                equals: "65000:.*"
+              - jsonpath: "$.current.entries[1].communityNumberRegex"
+                equals: "64512:.*"
+      register: merged_expanded
+
+    - name: "MERGED CREATE: Verify expanded returned state"
+      ansible.builtin.assert:
+        that:
+          - merged_expanded.first_run_result.after | selectattr('name', 'equalto', extended_community_list_expanded.name) | list | length == 1
+          - merged_expanded.nd_query_results | length == 1
+
+    - name: "MERGED IDEMPOTENCY: Reapply standard list in check mode"
+      cisco.nd.nd_manage_extended_community_list:
+        state: merged
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_standard }}"
+      check_mode: true
+      register: merged_post_apply_check_mode
+
+    - name: "MERGED IDEMPOTENCY: Verify post-apply check mode is unchanged"
+      ansible.builtin.assert:
+        that:
+          - not merged_post_apply_check_mode.changed
+          - not (merged_post_apply_check_mode.failed | default(false) | bool)
+
+  always:
+    - name: "MERGED CLEANUP: Remove reserved extended community lists"
+      ansible.builtin.include_tasks: setup.yaml

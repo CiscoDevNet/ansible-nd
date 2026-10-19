@@ -1,0 +1,36 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record module support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.2.1', '>=')
+      }}
+
+- name: "ND4X PREFLIGHT: Define extended community list snapshot"
+  ansible.builtin.set_fact:
+    nd4x_extended_community_list_check_mode_queries:
+      - name: Snapshot all extended community lists in the test fabric
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/extendedCommunityLists
+        expected_status: 200
+        pagination:
+          page_size: 100
+          collection_key: extendedCommunityLists
+          max_pages: 10000
+        unordered_paths: [/extendedCommunityLists]
+        ignore_keys:
+          - lastUpdateTimestamp
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x extended community list harness scenarios because
+      controller version {{ nd4x_version.current.platformVersion }} is older
+      than 4.2.1.
+  when: not nd4x_supported | bool
