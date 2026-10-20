@@ -497,6 +497,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         finally:
             # Whatever the outcome, the cached inventory predates the remove; drop it so no later reader is served a pre-rollback list.
             self._switch_interfaces_cache.pop(switch_id, None)
+            self._switch_interfaces_cache_revisions.pop(switch_id, None)
+            if self.interface_state_snapshot is not None:
+                self.interface_state_snapshot.invalidate(switch_id)
         return [], None
 
     def _roll_back_mpls_placeholders(self, error: Exception, switch_id: str, converted: list[str], unconverted: list[str]) -> str:
