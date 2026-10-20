@@ -2109,6 +2109,7 @@ def test_loopback_interface_01080() -> None:
     - Two `mplsLoopback` models; placeholder POST returns a flat 500
     - The inventory re-read shows loopback30 now exists and loopback31 does not
     - One remove is sent for loopback30 only
+    - The switch inventory cache and the state snapshot are both dropped by the rollback
 
     ## Classes and Methods
 
@@ -2128,6 +2129,7 @@ def test_loopback_interface_01080() -> None:
     assert rest_send.committed_payload == _remove_body(SWITCH_A, "loopback30")
     assert instance._pending_deploys == []
     assert SWITCH_A not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch(SWITCH_A)
 
 
 def test_loopback_interface_01085() -> None:
