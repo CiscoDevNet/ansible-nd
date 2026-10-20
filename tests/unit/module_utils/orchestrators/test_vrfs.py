@@ -320,11 +320,27 @@ def test_vrfs_00020_transform_applies_schema_defaults_for_minimal_config():
     assert payload["coreData"]["maxIbgpPaths"] == 2
     assert payload["coreData"]["ipv6LinkLocal"] is True
     assert payload["coreData"]["disableRtAuto"] is False
-    assert payload["fabricData"]["l3VniWithoutVlan"] is False
+    assert "l3VniWithoutVlan" not in payload["fabricData"]
     assert payload["fabricData"]["advertiseDefaultRoute"] is True
     assert payload["fabricData"]["configureStaticDefaultRoute"] is True
     assert payload["fabricData"]["bgpPasswordKeyType"] == 3
     assert payload["fabricData"]["trmData"]["v4RpAbsent"] is False
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_vrf_l3vni_without_vlan_explicit_values_reach_payload(selected):
+    """Preserve both explicit overrides instead of applying the fabric default."""
+    config = VrfConfigModel.from_config({"vrf_name": "BLUE", "l3vni_wo_vlan": selected}).to_config()
+    payload = VrfDataModel.from_config(_transform(config)).to_payload()
+    assert payload["fabricData"]["l3VniWithoutVlan"] is selected
+
+
+def test_vrf_sparse_merged_l3vni_omission_does_not_reset_existing_override():
+    """A fabric default must not replace an existing VRF's value in merged."""
+    existing = VrfDataModel.from_response(VrfDataModel.from_config(_transform({"vrf_name": "BLUE", "l3vni_wo_vlan": False})).to_payload())
+    sparse = VrfConfigModel.from_config({"vrf_name": "BLUE"}).to_config()
+    proposed = VrfDataModel.from_config(_transform(sparse))
+    assert existing.get_diff(proposed, exclude_unset=True) is True
 
 
 def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_payload():

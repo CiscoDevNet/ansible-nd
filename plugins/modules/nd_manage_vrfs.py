@@ -143,11 +143,12 @@ options:
       l3vni_wo_vlan:
         description:
           - Configure L3VNI without VLAN/SVI.
+          - When omitted on creation, uses the fabric's L3VNI without VLAN setting; an explicit value overrides it.
+          - On existing VRFs, omission in C(merged) retains the current value; C(replaced), C(overridden), and C(staged) use the fabric default when available.
           - Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
           - Supported on standalone and parent VRF definitions.
           - May also be overridden per child fabric under C(child_fabric_config).
         type: bool
-        default: false
       vrf_description:
         description: Description of the VRF (max 255 characters), including External VRF definitions.
         type: str

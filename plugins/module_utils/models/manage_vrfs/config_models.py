@@ -496,8 +496,8 @@ class VrfConfigModel(NDBaseModel):
 
     # --- L3VNI without VLAN ---
 
-    l3vni_wo_vlan: bool = Field(
-        default=False,
+    l3vni_wo_vlan: bool | None = Field(
+        default=None,
         alias="l3vniWoVlan",
         description=("Configure L3VNI without VLAN/SVI. When True, vlan_id, " "vrf_vlan_name, and vrf_intf_desc must not be set"),
     )
@@ -961,8 +961,8 @@ class VrfParentConfigModel(NDBaseModel):
 
     # --- L3VNI without VLAN ---
 
-    l3vni_wo_vlan: bool = Field(
-        default=False,
+    l3vni_wo_vlan: bool | None = Field(
+        default=None,
         alias="l3vniWoVlan",
         description=("Configure L3VNI without VLAN/SVI across all member fabrics"),
     )

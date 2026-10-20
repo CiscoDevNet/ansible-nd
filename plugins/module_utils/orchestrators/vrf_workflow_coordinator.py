@@ -286,6 +286,49 @@ class VrfWorkflowCoordinator:
 
     # ── Config parsing ─────────────────────────────────────────
 
+    @staticmethod
+    def _fabric_l3vni_default(strategy: BaseVrfStrategy) -> bool | None:
+        """
+        # Summary
+
+        Return the resolved fabric's L3VNI-without-VLAN creation default.
+
+        ## Raises
+
+        None
+        """
+        fabric_data = getattr(strategy, "fabric_data", None) or {}
+        details = fabric_data.get("manageFabricDetails") or fabric_data
+        management = details.get("management") if isinstance(details, dict) else None
+        value = management.get("l3VniNoVlanDefaultOption") if isinstance(management, dict) else None
+        return value if isinstance(value, bool) else None
+
+    def _inherit_l3vni_default_for_new_vrfs(self, module_args: dict, sm: NDStateMachine, strategy: BaseVrfStrategy) -> None:
+        """
+        # Summary
+
+        Carry the fabric default into new VRF payloads and attachment planning.
+
+        ## Raises
+
+        None
+        """
+        fabric_default = self._fabric_l3vni_default(strategy)
+        if module_args.get("state") != "merged" or fabric_default is None:
+            return
+        for entry in module_args.get("config") or []:
+            if entry.get("l3vni_wo_vlan") is not None or sm.existing.get(entry.get("vrf_name")) is not None:
+                continue
+            candidate = {**entry, "l3vni_wo_vlan": fabric_default}
+            try:
+                strategy.config_model_cls.from_config(candidate, context={"state": "merged"})
+            except ValidationError as exc:
+                self.module.fail_json(msg=f"VRF '{entry['vrf_name']}' conflicts with the fabric L3VNI-without-VLAN default: {exc}")
+            proposed = sm.proposed.get(entry["vrf_name"])
+            if proposed is not None and isinstance(proposed.fabric_data, dict):
+                proposed.fabric_data["l3VniWithoutVlan"] = fabric_default
+            entry["l3vni_wo_vlan"] = fabric_default
+
     def _parse_config(
         self,
         config: list[dict],
@@ -296,15 +339,20 @@ class VrfWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        ``state`` is passed for context in error messages only; all states
-        are validated the same way since the models enforce required fields.
+        For authoritative states, an omitted L3VNI-without-VLAN setting uses
+        the resolved fabric default. Merged leaves it unset for sparse updates;
+        new VRFs receive the fabric default after existing-state lookup.
 
         Validation errors are reported immediately via ``module.fail_json``.
         """
         parsed = []
+        fabric_default = self._fabric_l3vni_default(self.strategy)
         for idx, entry in enumerate(config):
             try:
-                model = model_cls.from_config(entry)
+                candidate = entry
+                if state in ("replaced", "overridden", "staged") and fabric_default is not None and entry.get("l3vni_wo_vlan") is None:
+                    candidate = {**entry, "l3vni_wo_vlan": fabric_default}
+                model = model_cls.from_config(candidate, context={"state": state})
                 parsed.append(model.to_config())
             except ValidationError as exc:
                 self.module.fail_json(msg=(f"config[{idx}] validation failed " f"({model_cls.__name__}, state={state!r}): {exc}"))
@@ -403,6 +451,8 @@ class VrfWorkflowCoordinator:
                                 f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
+                    if getattr(self.strategy, "is_multicluster", False) and vrf.get("l3vni_wo_vlan") is not None and child_cfg.get("l3vni_wo_vlan") is None:
+                        child_cfg = {**child_cfg, "l3vni_wo_vlan": vrf["l3vni_wo_vlan"]}
                     if not self._has_child_vrf_options(child_cfg):
                         self._trace("child_task_skipped_without_child_options", child_fabric=child_fabric_name, state=state)
                         continue
@@ -496,7 +546,6 @@ class VrfWorkflowCoordinator:
         repeated parent updates.  Non-default values are left intact.
         """
         defaulted_fabric_values = {
-            "l3vni_wo_vlan": False,
             "adv_host_routes": False,
             "adv_default_routes": True,
             "static_default_route": True,

@@ -99,7 +99,7 @@ def vrf_base_argument_spec():
         vrf_vlan_name=dict(type="str"),
         vrf_intf_desc=dict(type="str"),
         vrf_int_mtu=dict(type="int", default=9216),
-        l3vni_wo_vlan=dict(type="bool", default=False),
+        l3vni_wo_vlan=dict(type="bool"),
         # Description
         vrf_description=dict(type="str"),
         # Routing

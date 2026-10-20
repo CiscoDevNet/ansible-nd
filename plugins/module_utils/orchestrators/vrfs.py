@@ -213,7 +213,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         trm_kwargs = {k: v for k, v in trm_kwargs.items() if v is not None}
 
         fabric_kwargs = {
-            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan", default=False),
+            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan"),
             "advertise_host_route": self._value(config, "adv_host_routes", default=False),
             "advertise_default_route": self._value(config, "adv_default_routes", default=True),
             "configure_static_default_route": self._value(
@@ -360,7 +360,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         )
 
         fabric_data = VxlanFabricInstance(
-            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan", default=False),
+            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan"),
             advertise_host_route=self._value(config, "adv_host_routes", default=False),
             advertise_default_route=self._value(config, "adv_default_routes", default=True),
             configure_static_default_route=self._value(
