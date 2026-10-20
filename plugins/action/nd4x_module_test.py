@@ -1229,14 +1229,7 @@ class ActionModule(ActionBase):
         # sufficient to describe a planned check-mode mutation, but it is not
         # proof that a real apply succeeded.  The apply phase must therefore
         # rely on the module's changed flag or a before/after difference.
-        return (
-            allow_proposed
-            and
-            getattr(self, "_harness_state", None) == "merged"
-            and not before
-            and not after
-            and bool(module_result.get("proposed"))
-        )
+        return allow_proposed and getattr(self, "_harness_state", None) == "merged" and not before and not after and bool(module_result.get("proposed"))
 
     def _phase_changed(self, phase_name, module_result):
         """Return the harness-visible changed value for a phase."""
