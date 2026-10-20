@@ -421,11 +421,12 @@ The plugin adds or replaces the `max` and `offset` query parameters on `path`
 for each GET request. Contributors should not add those parameters themselves.
 Only the rows under `current.<collection_key>` are combined and compared;
 other top-level response keys are not included in the snapshot comparison.
-For a paginated collection endpoint that reports an empty collection as HTTP
-`404`, include `404` in `expected_status`. An explicitly allowed `404` is
-treated as an empty terminal page even when `current.<collection_key>` is
-absent. A `404` remains an error for non-paginated queries or when it is not
-listed in `expected_status`. For all other responses, the query fails if
+If a query receives HTTP `404`, include `404` in `expected_status` for it to be
+accepted. An accepted `404` produces an empty snapshot: `{}` for a
+non-paginated query, or `{<collection_key>: []}` for a paginated query. For
+pagination, the plugin treats it as the empty terminal page even if
+`current.<collection_key>` is absent. A `404` not listed in `expected_status`
+fails. For other paginated responses, the query fails if
 `current.<collection_key>` is missing or is not a list.
 `max_pages` defaults to `10000`. If that limit is reached without a page
 shorter than `page_size`, the query fails instead of returning a truncated
@@ -853,7 +854,8 @@ Do not force unrelated workflows into one large state file. Use one file per sta
 
 ## Registering scenarios in `tasks/main.yaml`
 
-Harness scenarios are opt-in during migration and must use `never`.
+Register each harness scenario with the aggregate `nd4x_demo` tag and a
+scenario-specific tag.
 
 Example:
 
@@ -863,11 +865,9 @@ Example:
     file: nd4x_demo_merged.yaml
     apply:
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_merged
   tags:
-    - never
     - nd4x_demo
     - nd4x_demo_merged
   when: nd4x_supported | bool
@@ -1495,13 +1495,14 @@ A matching `failed: true` expectation does not verify why the module failed. The
 
 ### Default execution
 
-Harness scenarios use `never` so they do not replace the original suite until migration parity has been approved.
-
-Running the target without harness tags executes the original suite:
+Harness scenarios run as part of the target's normal suite when the ND-version
+condition passes. To run only the original suite during migration, skip the
+aggregate harness tag:
 
 ```bash
 ansible-test network-integration <target> \
   --inventory /absolute/path/to/inventory.networking \
+  --skip-tags nd4x_demo \
   -vv
 ```
 
