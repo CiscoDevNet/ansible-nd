@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import re
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -34,6 +36,7 @@ class ActionModule(ActionBase):
         "module_args",
         "expected",
         "check_mode",
+        "check_mode_only",
         "check_mode_queries",
         "idempotency",
         "idempotency_retries",
@@ -62,7 +65,9 @@ class ActionModule(ActionBase):
     }
 
     ALLOWED_CHECK_MODE_QUERY_ARGUMENTS = {
+        "content",
         "ignore_keys",
+        "method",
         "name",
         "path",
         "pagination",
@@ -144,8 +149,8 @@ class ActionModule(ActionBase):
         if not isinstance(module_name, str) or not module_name.strip():
             raise AnsibleActionFail("Argument module must be a non-empty string")
 
-        if not isinstance(state, str) or not state.strip():
-            raise AnsibleActionFail("Argument state must be a non-empty string")
+        if "state" in args and (not isinstance(state, str) or not state.strip()):
+            raise AnsibleActionFail("Argument state must be a non-empty string when provided")
 
         for name in ("common_args", "module_args", "expected"):
             value = args.get(name, {})
@@ -213,6 +218,14 @@ class ActionModule(ActionBase):
 
             if not isinstance(path, str) or not path.strip():
                 raise AnsibleActionFail("check_mode_queries[%s].path must be a non-empty string" % query_index)
+
+            method = query.get("method", "get")
+            if not isinstance(method, str) or method.lower() not in {"get", "post"}:
+                raise AnsibleActionFail("check_mode_queries[%s].method must be get or post" % query_index)
+
+            content = query.get("content")
+            if content is not None and not isinstance(content, dict):
+                raise AnsibleActionFail("check_mode_queries[%s].content must be a dictionary" % query_index)
 
             if "expected_status" in query:
                 self._parse_expected_status(
@@ -282,6 +295,8 @@ class ActionModule(ActionBase):
         for query_index, query in enumerate(check_mode_queries):
             prepared_queries.append(
                 {
+                    "content": query.get("content"),
+                    "method": query.get("method", "get").lower(),
                     "name": query.get("name"),
                     "path": self._templar.template(query["path"]),
                     "expected_status": self._parse_expected_status(
@@ -372,6 +387,7 @@ class ActionModule(ActionBase):
 
         module_name = args.get("module")
         state = args.get("state")
+        self._harness_state = state
         config = args.get("config")
         common_args = args.get("common_args", {})
         module_args = args.get("module_args", {})
@@ -381,6 +397,11 @@ class ActionModule(ActionBase):
         run_check_mode = self._parse_bool(
             args.get("check_mode", True),
             "check_mode",
+        )
+
+        check_mode_only = self._parse_bool(
+            args.get("check_mode_only", False),
+            "check_mode_only",
         )
 
         run_idempotency = self._parse_bool(
@@ -412,6 +433,9 @@ class ActionModule(ActionBase):
         if idempotency_delay < 0:
             raise AnsibleActionFail("Argument idempotency_delay must be at least 0, got %r" % idempotency_delay)
 
+        if check_mode_only and not run_check_mode:
+            raise AnsibleActionFail("Argument check_mode_only requires check_mode=true")
+
         # Automatically require the second run to be unchanged.
         if run_idempotency:
             idempotency_expected = expected.setdefault(
@@ -438,7 +462,11 @@ class ActionModule(ActionBase):
         final_module_args = {}
         final_module_args.update(common_args)
         final_module_args.update(module_args)
-        final_module_args["state"] = state
+        # Preserve the target module's own default when the harness caller
+        # intentionally omits state.  A supplied state is still passed
+        # explicitly after validation above.
+        if state is not None:
+            final_module_args["state"] = state
 
         if config is not None:
             final_module_args["config"] = config
@@ -517,6 +545,21 @@ class ActionModule(ActionBase):
                         idempotency_attempts=0,
                     )
 
+                if check_mode_only:
+                    result.update(
+                        {
+                            "changed": bool(check_mode_result and check_mode_result.get("changed", False)),
+                            "check_mode_result": check_mode_result,
+                            "check_mode_query_results": check_mode_query_results,
+                            "first_run_result": None,
+                            "second_run_result": None,
+                            "idempotency_results": [],
+                            "idempotency_attempts": 0,
+                            "nd_query_results": [],
+                        }
+                    )
+                    return result
+
                 # First and only initial real application.
                 self._task.check_mode = False
 
@@ -573,18 +616,39 @@ class ActionModule(ActionBase):
 
                 # REST validation is performed only after a real apply.
                 if nd_queries and not bool(first_run_result.get("failed", False)):
-                    nd_query_results = self._run_nd_queries(
-                        nd_queries=nd_queries,
-                        task_vars=task_vars,
-                    )
+                    try:
+                        nd_query_results = self._run_nd_queries(
+                            nd_queries=nd_queries,
+                            task_vars=task_vars,
+                        )
+                    except AnsibleActionFail as query_error:
+                        raise AnsibleActionFail(
+                            "%s\nApply result: %s"
+                            % (
+                                query_error,
+                                json.dumps(
+                                    self._summarize_module_result(first_run_result),
+                                    sort_keys=True,
+                                    default=str,
+                                ),
+                            )
+                        )
 
         finally:
             self._task.check_mode = original_check_mode
 
         reported_result = check_mode_result if global_check_mode else first_run_result
+        reported_changed = bool(reported_result and reported_result.get("changed", False))
+        if global_check_mode:
+            reported_changed = self._phase_changed("check_mode", reported_result)
+        else:
+            reported_changed = self._phase_changed("apply", reported_result)
+            if first_run_result is not None:
+                first_run_result = dict(first_run_result)
+                first_run_result["changed"] = reported_changed
         result.update(
             {
-                "changed": bool(reported_result and reported_result.get("changed", False)),
+                "changed": reported_changed,
                 "check_mode_result": check_mode_result,
                 "check_mode_query_results": check_mode_query_results,
                 "first_run_result": first_run_result,
@@ -751,15 +815,19 @@ class ActionModule(ActionBase):
                 try:
                     # nd_rest skips its HTTP request when it receives
                     # check mode. Temporarily disable check mode so this
-                    # read-only GET actually queries the controller.
+                    # Read-only snapshot queries must actually query the controller.
                     self._task.check_mode = False
+
+                    module_args = {
+                        "path": page_path,
+                        "method": query.get("method", "get"),
+                    }
+                    if query.get("content") is not None:
+                        module_args["content"] = query["content"]
 
                     query_result = self._execute_module(
                         module_name="cisco.nd.nd_rest",
-                        module_args={
-                            "path": page_path,
-                            "method": "get",
-                        },
+                        module_args=module_args,
                         task_vars=task_vars,
                     )
                 finally:
@@ -1073,11 +1141,36 @@ class ActionModule(ActionBase):
     def _jsonpath_values(self, data, expression):
         if not HAS_JSONPATH_NG_PARSE:
             raise AnsibleActionFail("Cannot use JSONPath validation because the jsonpath-ng " + "Python library is not available")
+
+        # ND may return interfaceName with different capitalization than the
+        # canonical name accepted by the module. Normalize both the data and
+        # literal interfaceName selectors so existence checks cannot miss a
+        # real resource solely because of case.
+        interface_name_selector = re.compile(r"(@\.interfaceName\s*==\s*)(['\"])(.*?)\2")
+        if interface_name_selector.search(expression):
+            expression = interface_name_selector.sub(
+                lambda match: match.group(1) + match.group(2) + match.group(3).lower() + match.group(2),
+                expression,
+            )
+            data = copy.deepcopy(data)
+            self._lower_interface_names(data)
+
         try:
             jsonpath_expression = parse(expression)
         except Exception as exc:
             raise AnsibleActionFail("Invalid JSONPath expression %s: %s" % (expression, exc))
         return [match.value for match in jsonpath_expression.find(data)]
+
+    def _lower_interface_names(self, value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "interfaceName" and isinstance(child, str):
+                    value[key] = child.lower()
+                else:
+                    self._lower_interface_names(child)
+        elif isinstance(value, list):
+            for child in value:
+                self._lower_interface_names(child)
 
     def _has_unexpected_failure(self, module_result, expected):
         if module_result is None:
@@ -1096,6 +1189,64 @@ class ActionModule(ActionBase):
                     return False
 
         return True
+
+    def _predictive_changed(self, module_result, allow_proposed=False):
+        """Infer a planned mutation from a module's predictive state output.
+
+        Some existing collection modules intentionally report ``changed`` as
+        false from their shared result aggregator even when a mutation was
+        predicted or performed. The harness still needs to validate whether
+        the module represented a mutation. A different module-reported
+        ``before``/``after`` state is the authoritative signal for that
+        purpose; controller snapshots separately verify check-mode safety.
+
+        Args:
+            module_result: Result dictionary returned by the target module.
+
+        Returns:
+            ``True`` when the module reports a change or its predictive
+            before/after state differs; otherwise ``False``.
+        """
+        if not isinstance(module_result, dict):
+            return False
+
+        if bool(module_result.get("changed", False)):
+            return True
+
+        if bool(module_result.get("failed", False)):
+            return False
+
+        if "before" not in module_result or "after" not in module_result:
+            return False
+
+        before = self._normalize_snapshot(module_result.get("before"))
+        after = self._normalize_snapshot(module_result.get("after"))
+        if before != after:
+            return True
+
+        # A merged check-mode create can omit its after projection when the
+        # desired description is intentionally empty.  A proposed entry is
+        # sufficient to describe a planned check-mode mutation, but it is not
+        # proof that a real apply succeeded.  The apply phase must therefore
+        # rely on the module's changed flag or a before/after difference.
+        return (
+            allow_proposed
+            and
+            getattr(self, "_harness_state", None) == "merged"
+            and not before
+            and not after
+            and bool(module_result.get("proposed"))
+        )
+
+    def _phase_changed(self, phase_name, module_result):
+        """Return the harness-visible changed value for a phase."""
+        actual_changed = bool(module_result and module_result.get("changed", False))
+        if phase_name in ("check_mode", "apply") and not actual_changed:
+            return self._predictive_changed(
+                module_result,
+                allow_proposed=phase_name == "check_mode",
+            )
+        return actual_changed
 
     def _assert_phase(
         self,
@@ -1136,7 +1287,7 @@ class ActionModule(ActionBase):
 
         if "changed" in phase_expectation:
             expected_changed = phase_expectation["changed"]
-            actual_changed = bool(module_result.get("changed", False))
+            actual_changed = self._phase_changed(phase_name, module_result)
 
             if actual_changed != expected_changed:
                 raise AnsibleActionFail(
@@ -1196,7 +1347,7 @@ class ActionModule(ActionBase):
         elif diff:
             summary["diff_present"] = True
 
-        for key in ("before", "after", "proposed"):
+        for key in ("before", "after", "proposed", "gathered"):
             value = module_result.get(key)
             if isinstance(value, list):
                 summary["%s_count" % key] = len(value)
@@ -1204,11 +1355,135 @@ class ActionModule(ActionBase):
             elif value is not None:
                 summary[key] = value
 
+        before = module_result.get("before")
+        proposed = module_result.get("proposed")
+        if isinstance(before, list) and isinstance(proposed, list):
+            summary["before_proposed_diff_paths"] = self._config_diff_paths(before, proposed)[:50]
+
+        api_summary = self._summarize_api_details(module_result)
+        if api_summary:
+            summary["api"] = api_summary
+
         return summary
+
+    def _summarize_api_details(self, module_result):
+        """Keep API diagnostics useful without dumping full controller snapshots."""
+        details = {}
+
+        paths = module_result.get("api_paths")
+        verbs = module_result.get("api_verbs")
+        if isinstance(paths, list):
+            details["paths"] = paths[:20]
+        if isinstance(verbs, list):
+            details["verbs"] = verbs[:20]
+
+        responses = module_result.get("api_response")
+        if isinstance(responses, list):
+            details["responses"] = [self._summarize_api_record(response) for response in responses[:20]]
+
+        results = module_result.get("api_result")
+        if isinstance(results, list):
+            details["results"] = [self._summarize_api_record(api_result) for api_result in results[:20]]
+
+        return details
+
+    def _summarize_api_record(self, value):
+        """Summarize one API record, retaining status, IDs, and errors."""
+        if not isinstance(value, dict):
+            return value
+
+        summary = {}
+        for key in (
+            "RETURN_CODE",
+            "MESSAGE",
+            "METHOD",
+            "REQUEST_PATH",
+            "status",
+            "message",
+            "policyId",
+            "policy_id",
+            "success",
+            "found",
+            "changed",
+            "error",
+            "nd_error",
+            "failed_policies",
+            "warning_policies",
+            "policy_ids",
+        ):
+            if key in value:
+                summary[key] = value[key]
+
+        data = value.get("DATA")
+        if isinstance(data, dict):
+            data_summary = {}
+            for key in ("status", "message", "error", "policyId", "policy_id", "policyIds", "policy_ids"):
+                if key in data:
+                    data_summary[key] = data[key]
+
+            policies = data.get("policies")
+            if isinstance(policies, list):
+                data_summary["policy_count"] = len(policies)
+                data_summary["policies"] = [self._summarize_api_record(policy) for policy in policies[:20]]
+
+            if data_summary:
+                summary["DATA"] = data_summary
+
+        return summary
+
+    def _config_diff_paths(self, before, proposed, path=""):
+        """Return paths that differ between config snapshots without exposing values."""
+        if isinstance(before, dict) and isinstance(proposed, dict):
+            paths = []
+            for key in sorted(set(before) | set(proposed), key=str):
+                child_path = "%s/%s" % (path, key)
+                if key not in before or key not in proposed:
+                    paths.append(child_path)
+                else:
+                    paths.extend(self._config_diff_paths(before[key], proposed[key], child_path))
+            return paths
+
+        if isinstance(before, list) and isinstance(proposed, list):
+            if len(before) != len(proposed):
+                return [path or "/"]
+            paths = []
+            for index, (before_item, proposed_item) in enumerate(zip(before, proposed)):
+                paths.extend(self._config_diff_paths(before_item, proposed_item, "%s/%s" % (path, index)))
+            return paths
+
+        return [] if before == proposed else [path or "/"]
 
     def _summarize_config_item(self, item):
         if not isinstance(item, dict):
             return item
+
+        if "network_name" in item or "networkName" in item:
+
+            def value_from(source, snake_case, camel_case):
+                value = source.get(snake_case)
+                return source.get(camel_case) if value is None else value
+
+            l2_data = item.get("l2_data") or item.get("l2Data") or {}
+            fabric_data = l2_data.get("fabric_data") or l2_data.get("fabricData") or {}
+
+            def network_value(snake_case, camel_case, nested=None):
+                value = value_from(item, snake_case, camel_case)
+                if value is not None or nested is None:
+                    return value
+                return value_from(nested, snake_case, camel_case)
+
+            return {
+                "network_name": network_value("network_name", "networkName"),
+                "network_id": network_value("network_id", "networkId"),
+                "vlan_id": network_value("vlan_id", "vlanId"),
+                "vlan_name": network_value("vlan_name", "vlanName", l2_data),
+                "is_l2only": network_value("is_l2only", "isL2Only"),
+                "layer": network_value("layer", "layer"),
+                "enable_ir": network_value("enable_ir", "enableIr", fabric_data),
+                "rt_auto": network_value("rt_auto", "rtAuto", l2_data),
+                "deploy": item.get("deploy"),
+                "deploy_type": network_value("deploy_type", "deployType"),
+            }
 
         config_data = item.get("config_data") or item.get("configData") or {}
         network_os = config_data.get("network_os") or config_data.get("networkOS") or {}

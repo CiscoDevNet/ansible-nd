@@ -103,7 +103,7 @@ During normal execution, the following sequence is used:
 ```text
 module-specific setup
         ↓
-GET configured check_mode_queries state
+read-only configured check_mode_queries state
         ↓
 run target module in predictive check mode
         ↓
@@ -141,12 +141,12 @@ Important behavior:
 
 The harness records the task's original check-mode value before execution and restores it after success or failure.
 
-Snapshot GET operations temporarily disable task check mode because `cisco.nd.nd_rest` does not perform a real HTTP request while operating in check mode.
+Snapshot operations temporarily disable task check mode because `cisco.nd.nd_rest` does not perform a real HTTP request while operating in check mode.
 
 The snapshot operation:
 
 - Temporarily disables task check mode.
-- Performs a read-only GET.
+- Performs the configured read-only GET or POST query.
 - Restores the previous task check-mode value.
 - Never changes the target module's intended predictive execution mode.
 
@@ -397,12 +397,15 @@ Each query supports:
 |---|---:|---|---|
 | `name` | No | Query path | Human-readable query name |
 | `path` | Yes | None | ND REST API path |
+| `method` | No | `get` | Read-only HTTP method: `get` or `post` |
+| `content` | No | None | Request body for a read-only POST query |
 | `expected_status` | No | `200` | Required HTTP response status, or a non-empty list of acceptable statuses |
 | `pagination` | No | None | Optional pagination configuration with required `page_size` and `collection_key`, plus optional `max_pages` (default `10000`) |
 | `unordered_paths` | No | `[]` | JSON pointers relative to `current`; only lists at these paths are treated as unordered. `*` matches one path component, including a list index; `""` names the response itself when it is a list. |
 | `ignore_keys` | No | `[]` | Dictionary keys removed recursively before comparison |
 
-Check-mode snapshot queries always use GET. A method cannot be supplied.
+Check-mode snapshot queries default to GET. Use POST only for an endpoint whose
+POST operation is explicitly read-only, such as a controller collection query.
 
 For a paginated query, configure the list under `current` that should be
 combined:
