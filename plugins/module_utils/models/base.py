@@ -32,6 +32,28 @@ def _strip_none_values(data):
     return data
 
 
+def _strip_response_extras_from_value(value: Any, dumped: Any) -> None:
+    """
+    # Summary
+
+    Recurse `NDBaseModel._strip_response_extras` through one field value and its dump: a nested model, a list or tuple of models (paired
+    by index; skipped when the lengths differ), or a dict whose values are models (paired by key). Scalars and other shapes are left as-is.
+
+    ## Raises
+
+    None
+    """
+    if isinstance(value, NDBaseModel):
+        value._strip_response_extras(dumped)  # pylint: disable=protected-access
+    elif isinstance(value, (list, tuple)) and isinstance(dumped, list) and len(value) == len(dumped):
+        for item, dumped_item in zip(value, dumped):
+            _strip_response_extras_from_value(item, dumped_item)
+    elif isinstance(value, dict) and isinstance(dumped, dict):
+        for key, item in value.items():
+            if key in dumped:
+                _strip_response_extras_from_value(item, dumped[key])
+
+
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.
@@ -619,6 +641,32 @@ class NDBaseModel(BaseModel, ABC):
                     # Same-class recursion; pylint cannot infer `value` is an NDBaseModel from getattr.
                     value._scrub_reverse_diff_dict(nested)  # pylint: disable=protected-access
 
+    def _strip_response_extras(self, data: Any) -> None:
+        """
+        # Summary
+
+        Strip, in place, every key `data` (an aliased dump of `self`) carries only because the model retained it via `extra="allow"`,
+        at every nesting level: this model, nested `NDBaseModel` fields, and models held inside list, tuple, or dict-valued fields
+        (issue #531). ND echoes server-populated keys such as `controllerGeneratedId` on child objects; the forward `issubset` pass
+        matches list elements bidirectionally, so an existing-side extra on a list-contained model would otherwise fail the element
+        match and classify an identical resource as changed on every run. `get_diff` applies this to both sides, since the extras are
+        never user intent on either. Container shape and order are preserved; a container whose dump no longer lines up with the
+        model value (length mismatch) is left untouched.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(data, dict):
+            return
+        # `model_extra` keys are stored under their wire spelling, matching the aliased dump.
+        for extra_key in getattr(self, "model_extra", None) or {}:
+            data.pop(extra_key, None)
+        for field_name, field_info in type(self).model_fields.items():
+            alias = field_info.alias or field_name
+            if alias in data:
+                _strip_response_extras_from_value(getattr(self, field_name, None), data[alias])
+
     def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
         """Diff comparison.
 
@@ -653,6 +701,11 @@ class NDBaseModel(BaseModel, ABC):
 
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
+        # Undeclared server keys retained via `extra="allow"` are not expressible in config and must never count as
+        # differences (issue #531). Both sides are stripped: `other` is not always user config (`NDOutput` diffs two
+        # controller reads for `changed`, and `prepare_for_replacement` copies preserved extras onto the candidate).
+        self._strip_response_extras(self_data)
+        other._strip_response_extras(other_data)  # pylint: disable=protected-access
         is_subset = issubset(other_data, self_data)
         if is_subset and exclude_unset and self.merge_would_change(other):
             return False
