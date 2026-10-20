@@ -146,6 +146,24 @@ def test_unknown_top_level_argument_rejected(action_plugin):
         action_plugin._validate_arguments(arguments)
 
 
+def test_state_is_optional(action_plugin):
+    arguments = base_args()
+    arguments.pop("state")
+
+    action_plugin._validate_arguments(arguments)
+
+
+def test_empty_state_is_rejected_when_provided(action_plugin):
+    arguments = base_args()
+    arguments["state"] = ""
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="state must be a non-empty string",
+    ):
+        action_plugin._validate_arguments(arguments)
+
+
 def test_unknown_expected_phase_rejected(action_plugin):
     expected = {
         "wrong_phase": {
@@ -216,7 +234,7 @@ def test_unknown_check_mode_query_argument_rejected(
     queries = [
         {
             "path": "/api/v1/test",
-            "method": "post",
+            "unsupported": True,
         }
     ]
 
@@ -225,6 +243,18 @@ def test_unknown_check_mode_query_argument_rejected(
         match="Unsupported keys",
     ):
         action_plugin._validate_check_mode_queries(queries)
+
+
+@pytest.mark.parametrize("method", [None, "", "put", 1])
+def test_check_mode_query_method_must_be_read_only_get_or_post(action_plugin, method):
+    with pytest.raises(AnsibleActionFail, match="method must be get or post"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "method": method}])
+
+
+@pytest.mark.parametrize("content", [[], "payload", 1])
+def test_check_mode_query_content_must_be_dictionary(action_plugin, content):
+    with pytest.raises(AnsibleActionFail, match="content must be a dictionary"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "content": content}])
 
 
 @pytest.mark.parametrize("path", [None, "", "   ", [], {}])
@@ -372,12 +402,34 @@ def test_prepare_check_mode_queries_applies_defaults(
         {
             "name": "Snapshot",
             "path": "/api/v1/test",
+            "method": "get",
+            "content": None,
             "expected_status": 200,
             "unordered_paths": [],
             "ignore_keys": [],
             "pagination": None,
         }
     ]
+
+
+def test_post_check_mode_query_passes_method_and_content_to_rest(action_plugin):
+    query = {
+        "name": "Snapshot VRF attachments",
+        "path": "/api/v1/manage/fabrics/FAB/vrfAttachments/query",
+        "method": "post",
+        "content": {"vrfNames": []},
+        "expected_status": 200,
+        "unordered_paths": ["/attachments"],
+        "ignore_keys": [],
+        "pagination": None,
+    }
+    action_plugin._execute_module.return_value = snapshot_response({"attachments": []})
+
+    action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    module_args = action_plugin._execute_module.call_args.kwargs["module_args"]
+    assert module_args["method"] == "post"
+    assert module_args["content"] == {"vrfNames": []}
 
 
 def test_prepare_check_mode_queries_prepares_pagination(action_plugin):
@@ -592,6 +644,49 @@ def test_normal_execution_runs_each_phase_once(action_plugin):
     assert result["idempotency_attempts"] == 1
     assert result["second_run_result"]["changed"] is False
     assert action_plugin._task.check_mode is False
+
+
+def test_check_mode_only_skips_apply_and_idempotency(action_plugin):
+    action_plugin._task.args["check_mode_only"] = True
+    action_plugin._task.args["expected"] = {
+        "check_mode": {
+            "changed": False,
+            "failed": True,
+        }
+    }
+    action_plugin._execute_module.return_value = {
+        "changed": False,
+        "failed": True,
+        "msg": "predictive validation failed",
+    }
+
+    result = run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 1
+    assert action_plugin._execute_module.call_args.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    assert action_plugin._task.check_mode is False
+    assert result["check_mode_result"]["failed"] is True
+    assert result["first_run_result"] is None
+    assert result["second_run_result"] is None
+    assert result["idempotency_attempts"] == 0
+
+
+def test_omitted_state_is_not_injected_into_target_module_args(action_plugin):
+    action_plugin._task.args.pop("state")
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    run_plugin(action_plugin)
+
+    target_calls = [
+        invocation
+        for invocation in action_plugin._execute_module.call_args_list
+        if invocation.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    ]
+    assert target_calls
+    assert all("state" not in invocation.kwargs["module_args"] for invocation in target_calls)
 
 
 def test_idempotency_retries_until_expected_result(action_plugin):
@@ -1132,6 +1227,70 @@ def test_after_snapshot_runs_before_check_expectation_failure(
     assert action_plugin._task.check_mode is False
 
 
+def test_check_mode_change_is_inferred_from_module_state(
+    action_plugin,
+):
+    """Harness detects a predictive mutation when module changed is false."""
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
+    before_state = []
+    after_state = [{"description": "ND4X-test-policy"}]
+
+    action_plugin._execute_module.side_effect = [
+        snapshot_response(before_state),
+        {
+            "changed": False,
+            "failed": False,
+            "before": before_state,
+            "after": after_state,
+        },
+        snapshot_response(before_state),
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    result = run_plugin(action_plugin)
+
+    assert result["check_mode_result"]["changed"] is False
+    assert result["first_run_result"]["changed"] is True
+    assert action_plugin._execute_module.call_count == 5
+
+
+def test_merged_apply_does_not_infer_change_from_proposed_state(
+    action_plugin,
+):
+    """A proposed entry proves intent in check mode, not a successful apply."""
+    action_plugin._task.args["check_mode_queries"] = [check_mode_query()]
+
+    action_plugin._execute_module.side_effect = [
+        snapshot_response([]),
+        {
+            "changed": False,
+            "failed": False,
+            "before": [],
+            "after": [],
+            "proposed": [{"templateName": "switch_freeform"}],
+        },
+        snapshot_response([]),
+        {
+            "changed": False,
+            "failed": False,
+            "before": [],
+            "after": [],
+            "proposed": [{"templateName": "switch_freeform"}],
+        },
+        {"changed": False, "failed": False},
+    ]
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="Expected apply changed=True",
+    ):
+        run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 4
+    assert action_plugin._task.check_mode is False
+
+
 def test_snapshot_runs_after_check_mode_execution_error(
     action_plugin,
 ):
@@ -1220,3 +1379,101 @@ def test_jsonpath_values_support_extended_filters(action_plugin):
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "network_item",
+    [
+        {
+            "network_name": "harness-nd-network-replaced",
+            "network_id": 9110002,
+            "vlan_id": 3902,
+            "layer": "layer2",
+            "l2_data": {
+                "vlan_name": "harness_nd_network_replaced_vlan",
+                "rt_auto": False,
+                "fabric_data": {"enable_ir": False},
+            },
+        },
+        {
+            "networkName": "harness-nd-network-replaced",
+            "networkId": 9110002,
+            "vlanId": 3902,
+            "layer": "layer2",
+            "l2Data": {
+                "vlanName": "harness_nd_network_replaced_vlan",
+                "rtAuto": False,
+                "fabricData": {"enableIr": False},
+            },
+        },
+    ],
+)
+def test_summarize_network_config_item(action_plugin, network_item):
+    assert action_plugin._summarize_config_item(network_item) == {
+        "network_name": "harness-nd-network-replaced",
+        "network_id": 9110002,
+        "vlan_id": 3902,
+        "vlan_name": "harness_nd_network_replaced_vlan",
+        "is_l2only": None,
+        "layer": "layer2",
+        "enable_ir": False,
+        "rt_auto": False,
+        "deploy": None,
+        "deploy_type": None,
+    }
+
+
+def test_summarize_gathered_module_result(action_plugin):
+    module_result = {
+        "changed": False,
+        "before": [],
+        "after": [],
+        "gathered": [
+            {
+                "network_name": "harness-nd-network-gathered",
+                "network_id": 9110003,
+                "vlan_id": 3903,
+            }
+        ],
+    }
+
+    assert action_plugin._summarize_module_result(module_result) == {
+        "changed": False,
+        "failed": False,
+        "before_count": 0,
+        "before_items": [],
+        "after_count": 0,
+        "after_items": [],
+        "gathered_count": 1,
+        "gathered_items": [
+            {
+                "network_name": "harness-nd-network-gathered",
+                "network_id": 9110003,
+                "vlan_id": 3903,
+                "vlan_name": None,
+                "is_l2only": None,
+                "layer": None,
+                "enable_ir": None,
+                "rt_auto": None,
+                "deploy": None,
+                "deploy_type": None,
+            }
+        ],
+    }
+
+
+def test_config_diff_paths_reports_nested_changes_without_values(action_plugin):
+    before = [
+        {
+            "network_name": "harness-nd-network-replaced",
+            "l2_data": {"rt_auto": True, "fabric_data": {"enable_ir": False}},
+        }
+    ]
+    proposed = [
+        {
+            "network_name": "harness-nd-network-replaced",
+            "l2_data": {"rt_auto": False, "fabric_data": {"enable_ir": False}},
+        }
+    ]
+
+    assert action_plugin._config_diff_paths(before, proposed) == ["/0/l2_data/rt_auto"]
