@@ -87,8 +87,9 @@ options:
         plugin sets C(max) and C(offset) on C(path) itself; callers do not add
         those query parameters.
       - Include C(404) in C(expected_status) for a query to accept a not-found
-        response. An accepted 404 produces an empty snapshot: C({}) for a
-        non-paginated query, or C({collection_key: []}) for a paginated query.
+        response. An accepted 404 produces an empty snapshot, C({}), for a
+        non-paginated query. For a paginated query, it records an empty list at
+        C(current.<collection_key>).
         For pagination, the 404 is treated as an empty terminal page, even if
         C(current.<collection_key>) is absent. A 404 not listed in
         C(expected_status) fails.
