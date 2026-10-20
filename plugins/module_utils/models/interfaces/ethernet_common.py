@@ -125,6 +125,35 @@ def default_network_os_type(data: Any, network_os_type: str = "nx-os") -> Any:
     return {**{key: value for key, value in data.items() if key not in ("networkOSType", "network_os_type")}, "networkOSType": network_os_type}
 
 
+def _normalize_prefix_length(value: Any) -> int | None:
+    """
+    # Summary
+
+    Normalize an explicit prefix-length input to `int` using the same lax rules pydantic applies to an `int` field: an `int`, a `float`
+    with no fractional part, or a string holding either (whitespace tolerated). Return `None` for anything else, including `bool`,
+    which pydantic also rejects for an `int` field.
+
+    ## Raises
+
+    None
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            try:
+                value = float(value)
+            except ValueError:
+                return None
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
 def reconcile_cidr_prefix(data: Any, address_key: str, prefix_keys: tuple[str, ...], family: int) -> Any:
     """
     # Summary
@@ -135,11 +164,16 @@ def reconcile_cidr_prefix(data: Any, address_key: str, prefix_keys: tuple[str, .
     arrive under (field name first, then the wire alias); `family` is 4 or 6. Input that is not a dict, an address without a `/`,
     and an address that does not parse (left for the field validator to report) are returned unchanged.
 
+    The explicit prefix is normalized with the same lax integer rules pydantic applies to the field before the comparison, so a quoted
+    decimal such as `"24.0"` cannot hide a conflicting mask (PR #636 review). A prefix that is not an integer under those rules is rejected
+    here, while the mask is still on the address, instead of being left for the field validator after the mask has been stripped.
+
     ## Raises
 
     ### ValueError
 
     - If the CIDR mask and the explicit prefix disagree.
+    - If the explicit prefix is not an integer.
     """
     if not isinstance(data, dict):
         return data
@@ -153,16 +187,14 @@ def reconcile_cidr_prefix(data: Any, address_key: str, prefix_keys: tuple[str, .
     derived = parsed.network.prefixlen
     explicit_key = next((key for key in prefix_keys if data.get(key) is not None), None)
     if explicit_key is not None:
-        try:
-            explicit = int(data[explicit_key])
-        except (TypeError, ValueError):
-            return data
+        explicit = _normalize_prefix_length(data[explicit_key])
+        if explicit is None:
+            raise ValueError(f"{prefix_keys[0]} {data[explicit_key]!r} is not an integer; {address_key} '{address}' carries the mask /{derived}.")
         if explicit != derived:
             raise ValueError(f"{address_key} '{address}' carries the mask /{derived} but {prefix_keys[0]} is {explicit}; remove one or make them agree.")
     reconciled = {key: value for key, value in data.items() if key not in prefix_keys or value is not None}
     reconciled[address_key] = str(parsed.ip)
-    if explicit_key is None:
-        reconciled[prefix_keys[0]] = derived
+    reconciled[explicit_key if explicit_key is not None else prefix_keys[0]] = derived
     return reconciled
 
 
@@ -173,18 +205,24 @@ def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, pr
     Reject half of an address / prefix pair, for a `mode="after"` model validator: an address without its prefix length, or a prefix
     length without its address, is never serialized into a payload the controller would reject or apply ambiguously.
 
-    Pass the validator's `info` so the check is skipped while pydantic validates a single assignment (`info.field_name` is set only then).
-    `NDBaseModel.merge()` assigns one field at a time under `validate_assignment`, so adding a pair to a model that had neither passes
-    through a transient half pair between the two assignments; both inputs to a merge were validated whole, so the merged result still
-    holds the invariant (issue #584).
+    The check runs only while validating config input (`info.context["mode"] == "config"`, set by `NDBaseModel.from_config`), which is the
+    path every module and the interfaces workflow adapter use, and the only one that can introduce a user-authored half pair. It is skipped:
+
+    - on `mode="response"`, so a prefix-only policy ND silently stored (issue #584) is read truthfully instead of failing the query;
+    - on assignment, which carries no context: `NDBaseModel.merge()` assigns one field at a time under `validate_assignment`, so adding a
+      pair to a policy that had neither passes through a transient half pair, and any field declared between the two is assigned while
+      the pair is still half. Both merge inputs were validated whole, so the merged result holds the invariant.
+
+    `info.field_name` cannot be used to detect assignment: pydantic also sets it (to the parent field, `policy`) while validating this
+    model nested inside its interface model, which would silence the check on every real path (PR #636 review).
 
     ## Raises
 
     ### ValueError
 
-    - If exactly one of `address` / `prefix` is set.
+    - If exactly one of `address` / `prefix` is set on config input.
     """
-    if getattr(info, "field_name", None) is not None:
+    if (getattr(info, "context", None) or {}).get("mode") != "config":
         return
     if (address is None) != (prefix is None):
         raise ValueError(f"{address_name} and {prefix_name} are required together; set both or neither.")
