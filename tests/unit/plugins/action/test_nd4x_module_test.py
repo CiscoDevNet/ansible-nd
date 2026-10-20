@@ -673,6 +673,11 @@ def test_check_mode_only_skips_apply_and_idempotency(action_plugin):
 
 def test_omitted_state_is_not_injected_into_target_module_args(action_plugin):
     action_plugin._task.args.pop("state")
+    action_plugin._task.args["idempotency"] = False
+    action_plugin._task.args["expected"] = {
+        "check_mode": {"changed": True, "failed": False},
+        "apply": {"changed": False, "failed": False},
+    }
     action_plugin._execute_module.side_effect = [
         {"changed": True, "failed": False},
         {"changed": False, "failed": False},
