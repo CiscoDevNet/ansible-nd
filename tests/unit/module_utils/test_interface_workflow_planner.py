@@ -356,6 +356,62 @@ def test_ethernet_adapter_rejects_misspelled_property_in_workflow_config() -> No
 
 
 @pytest.mark.parametrize(
+    "resource_type,network_os_type,policy,expected_error",
+    [
+        ("ethernet_routed", "nx-os", {"ip": "198.51.100.5"}, "ip and prefix are required together"),
+        ("ethernet_routed", "nx-os", {"prefix": 24}, "ip and prefix are required together"),
+        ("ethernet_routed", "ios-xe", {"ip": "198.51.100.5"}, "ip and prefix are required together"),
+        ("ethernet_routed", "nx-os", {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        ("ethernet_routed", "ios-xe", {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        ("port_channel_routed", "nx-os", {"ip": "198.51.100.5"}, "ip and prefix are required together"),
+        ("port_channel_routed", "nx-os", {"ipv6": "2001:db8::1"}, "ipv6 and ipv6_prefix are required together"),
+        ("port_channel_routed", "nx-os", {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        ("port_channel_routed", "ios-xe", {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+    ],
+)
+def test_routed_adapters_reject_half_pairs_and_quoted_prefix_conflicts(resource_type: str, network_os_type: str, policy, expected_error: str) -> None:
+    """Workflow config is validated with the config context, so the pair check and mask comparison fire on the nested policy (PR #636)."""
+    adapter = INTERFACE_FAMILY_ADAPTERS[resource_type]
+    interface_name = "Ethernet1/12" if resource_type == "ethernet_routed" else "Port-channel10"
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=expected_error):
+        adapter.validate_config(
+            [
+                {
+                    "switch_ip": "192.0.2.1",
+                    "interface_name": interface_name,
+                    "config_data": {"network_os": {"network_os_type": network_os_type, "policy": policy}},
+                }
+            ],
+            "replaced",
+            0,
+        )
+
+
+@pytest.mark.parametrize("resource_type", ["ethernet_routed", "port_channel_routed"])
+def test_routed_adapters_reconcile_an_agreeing_quoted_prefix(resource_type: str) -> None:
+    """A quoted-decimal prefix that agrees with the CIDR mask is normalized, not silently dropped (PR #636)."""
+    adapter = INTERFACE_FAMILY_ADAPTERS[resource_type]
+    interface_name = "Ethernet1/12" if resource_type == "ethernet_routed" else "Port-channel10"
+
+    proposed = adapter.validate_config(
+        [
+            {
+                "switch_ip": "192.0.2.1",
+                "interface_name": interface_name,
+                "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"ip": "10.1.1.1/30", "prefix": "30.0"}}},
+            }
+        ],
+        "replaced",
+        0,
+    )
+
+    policy = list(proposed)[0].config_data.network_os.policy
+    assert policy.ip == "10.1.1.1"
+    assert policy.prefix == 30
+
+
+@pytest.mark.parametrize(
     "group,expected_error",
     [
         ({"switch_ip": "192.0.2.1"}, "interface_names is required"),
