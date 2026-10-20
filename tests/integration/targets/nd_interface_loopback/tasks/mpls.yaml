@@ -1,0 +1,181 @@
+---
+# mplsLoopback tests for nd_interface_loopback (issue #595)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# mplsLoopback needs MPLS Handoff enabled on the fabric. These tasks read the setting and branch on it; they never
+# change it, because changing it marks every switch in the fabric pending.
+#   - MPLS Handoff enabled:  create, idempotency, replaced, deleted.
+#   - MPLS Handoff disabled: the module refuses the create before any write.
+# Enable MPLS Handoff on the test fabric by hand to exercise the first branch.
+
+- name: "MPLS SETUP: Remove the mplsLoopback test interfaces"
+  cisco.nd.nd_interface_loopback: &mpls_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback207
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback208
+    state: deleted
+
+- name: "MPLS SETUP: Read the fabric settings"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}"
+    method: get
+  register: mpls_fabric_details
+
+- name: "MPLS SETUP: Record whether MPLS Handoff is enabled"
+  ansible.builtin.set_fact:
+    mpls_handoff_known: "{{ mpls_fabric_details.jsondata.management.mplsHandoff is defined }}"
+    mpls_handoff_enabled: "{{ mpls_fabric_details.jsondata.management.mplsHandoff | default(false) | bool }}"
+
+# --- EMPTY TAG (either handoff state) ---
+
+- name: "MPLS EMPTY TAG: Propose an mplsLoopback with an empty dci_routing_tag"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_207_mpls_empty_tag }}"
+    state: merged
+  register: nm_mpls_empty_tag
+  ignore_errors: true
+
+- name: "MPLS EMPTY TAG: Verify the run was refused before any write"
+  ansible.builtin.assert:
+    that:
+      - nm_mpls_empty_tag is failed
+      - nm_mpls_empty_tag.msg is search('dci_routing_tag must not be empty')
+
+# --- MPLS HANDOFF DISABLED ---
+
+- name: "MPLS HANDOFF OFF: Run the refusal tests"
+  when: mpls_handoff_known and not mpls_handoff_enabled
+  block:
+    - name: "MPLS HANDOFF OFF: Create mplsLoopbacks (check mode)"
+      cisco.nd.nd_interface_loopback: &mpls_merge
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_207_mpls }}"
+          - "{{ loopback_208_mpls }}"
+        state: merged
+      check_mode: true
+      register: cm_mpls_off
+      ignore_errors: true
+
+    - name: "MPLS HANDOFF OFF: Create mplsLoopbacks (normal mode)"
+      cisco.nd.nd_interface_loopback: *mpls_merge
+      register: nm_mpls_off
+      ignore_errors: true
+
+    - name: "MPLS HANDOFF OFF: Verify both runs were refused naming the setting and the interfaces"
+      ansible.builtin.assert:
+        that:
+          - cm_mpls_off is failed
+          - nm_mpls_off is failed
+          - cm_mpls_off is not changed
+          - nm_mpls_off is not changed
+          - cm_mpls_off.msg is search('MPLS Handoff is disabled on fabric')
+          - nm_mpls_off.msg is search('MPLS Handoff is disabled on fabric')
+          - "'loopback207' in nm_mpls_off.msg"
+          - "'loopback208' in nm_mpls_off.msg"
+
+    - name: "MPLS HANDOFF OFF: Delete the test interfaces to prove none was created"
+      cisco.nd.nd_interface_loopback: *mpls_delete
+      register: nm_mpls_off_delete
+
+    - name: "MPLS HANDOFF OFF: Verify nothing existed to delete"
+      ansible.builtin.assert:
+        that:
+          - nm_mpls_off_delete is not changed
+
+# --- MPLS HANDOFF ENABLED ---
+
+- name: "MPLS HANDOFF ON: Run the create, idempotency, replaced and deleted tests"
+  when: mpls_handoff_enabled
+  block:
+    - name: "MPLS MERGED CREATE: Create two mplsLoopbacks (check mode)"
+      cisco.nd.nd_interface_loopback: *mpls_merge
+      check_mode: true
+      register: cm_mpls_create
+
+    - name: "MPLS MERGED CREATE: Create two mplsLoopbacks (normal mode)"
+      cisco.nd.nd_interface_loopback: *mpls_merge
+      register: nm_mpls_create
+
+    - name: "MPLS MERGED CREATE: Verify both were created as mplsLoopback"
+      vars:
+        mpls_207: "{{ nm_mpls_create.after | selectattr('interface_name', 'equalto', 'loopback207') | list }}"
+        mpls_208: "{{ nm_mpls_create.after | selectattr('interface_name', 'equalto', 'loopback208') | list }}"
+      ansible.builtin.assert:
+        that:
+          - cm_mpls_create is changed
+          - nm_mpls_create is changed
+          - mpls_207 | length == 1
+          - mpls_208 | length == 1
+          - mpls_207[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+          - mpls_208[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+
+    - name: "MPLS MERGED IDEMPOTENT: Re-apply the create (check mode)"
+      cisco.nd.nd_interface_loopback: *mpls_merge
+      check_mode: true
+      register: cm_mpls_idem
+
+    - name: "MPLS MERGED IDEMPOTENT: Re-apply the create (normal mode)"
+      cisco.nd.nd_interface_loopback: *mpls_merge
+      register: nm_mpls_idem
+
+    - name: "MPLS MERGED IDEMPOTENT: Verify no change, and that the controller holds both as mplsLoopback with the defaults applied"
+      vars:
+        mpls_207: "{{ nm_mpls_idem.before | selectattr('interface_name', 'equalto', 'loopback207') | list }}"
+        mpls_208: "{{ nm_mpls_idem.before | selectattr('interface_name', 'equalto', 'loopback208') | list }}"
+      ansible.builtin.assert:
+        that:
+          - cm_mpls_idem is not changed
+          - nm_mpls_idem is not changed
+          - mpls_207 | length == 1
+          - mpls_208 | length == 1
+          - mpls_207[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+          - mpls_208[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+          - mpls_208[0].config_data.network_os.policy.admin_state == true
+          - mpls_208[0].config_data.network_os.policy.dci_routing_protocol == 'isis'
+          - mpls_208[0].config_data.network_os.policy.dci_routing_tag == 'MPLS_UNDERLAY'
+
+    - name: "MPLS REPLACED: Change the loopback207 description"
+      cisco.nd.nd_interface_loopback: &mpls_replace
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_207_mpls_replaced }}"
+        state: replaced
+      register: nm_mpls_replaced
+
+    - name: "MPLS REPLACED: Re-apply the replace"
+      cisco.nd.nd_interface_loopback: *mpls_replace
+      register: nm_mpls_replaced_idem
+
+    - name: "MPLS REPLACED: Verify the change and its idempotency"
+      vars:
+        mpls_207: "{{ nm_mpls_replaced_idem.before | selectattr('interface_name', 'equalto', 'loopback207') | list }}"
+      ansible.builtin.assert:
+        that:
+          - nm_mpls_replaced is changed
+          - mpls_207 | length == 1
+          - mpls_207[0].config_data.network_os.policy.policy_type == 'mplsLoopback'
+          - mpls_207[0].config_data.network_os.policy.description == 'Ansible integration test mpls loopback207 replaced'
+          - nm_mpls_replaced_idem is not changed
+
+    - name: "MPLS DELETED: Delete both mplsLoopbacks"
+      cisco.nd.nd_interface_loopback: *mpls_delete
+      register: nm_mpls_deleted
+
+    - name: "MPLS DELETED: Verify both were deleted"
+      ansible.builtin.assert:
+        that:
+          - nm_mpls_deleted is changed
+          - nm_mpls_deleted.after | selectattr('interface_name', 'equalto', 'loopback207') | list | length == 0
+          - nm_mpls_deleted.after | selectattr('interface_name', 'equalto', 'loopback208') | list | length == 0
