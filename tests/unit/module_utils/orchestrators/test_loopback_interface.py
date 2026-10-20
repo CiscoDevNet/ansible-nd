@@ -508,9 +508,174 @@ def test_loopback_interface_00310() -> None:
     match = r"No switch found with fabricManagementIp '192\.168\.12\.151'"
     with pytest.raises(RuntimeError, match=match):
         instance.delete(model)
-
     assert instance._pending_removes == []
     assert instance._pending_deploys == []
+
+
+def _seed_loopback_inventory(instance: LoopbackInterfaceOrchestrator, records: list[dict]) -> None:
+    """Seed the complete switch inventory used by the delete preflight."""
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {record["interfaceName"].lower(): record for record in records}
+
+
+def _xe_loopback_record(name: str, status: str, *, network_os_type: str = "ios-xe", mode: str = "managed") -> dict:
+    """Build the NDFC inventory shape for one loopback, including an operational-only orphan."""
+    network_os = {"networkOSType": network_os_type}
+    if mode == "managed":
+        network_os["policy"] = {"policyType": "iosXeLoopback" if network_os_type == "ios-xe" else "loopback"}
+    return {
+        "interfaceName": name,
+        "interfaceType": "loopback",
+        "configData": {"mode": mode, "networkOS": network_os},
+        "operData": {"operationalStatus": status},
+    }
+
+
+@pytest.mark.parametrize("state", ["deleted", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_loopback_interface_00320_xe_deployed_undiscovered_delete_is_blocked(state: str, check_mode: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deployed IOS-XE loopback must be discovered before either delete path can remove it."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "Loopback222"}]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config)
+    rest_send.check_mode = check_mode
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "unknown")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+    history_checks = []
+
+    def deployed(name: str, switch_id: str) -> bool:
+        history_checks.append((name, switch_id))
+        return True
+
+    monkeypatch.setattr(instance, "_xe_interface_deployed", deployed)
+    if state == "overridden":
+        monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    with pytest.raises(RuntimeError, match=r"(?i)Cannot remove IOS-XE interface.*loopback222.*operationalStatus=unknown"):
+        if state == "deleted":
+            instance.preflight_delete([model])
+        else:
+            instance._check_overridden_removals_discovered([])
+
+    assert [(name.casefold(), switch_id) for name, switch_id in history_checks] == [("loopback222", "FDO12345ABC")]
+    assert rest_send.response_count == 1
+    assert instance._pending_removes == []
+    assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("state", ["deleted", "overridden"])
+def test_loopback_interface_00325_xe_staged_undiscovered_delete_is_allowed(state: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undiscovered IOS-XE intent with no device-side deployment can still be removed."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "Loopback222"}]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "unknown")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+    history_checks = []
+
+    def not_deployed(name: str, switch_id: str) -> bool:
+        history_checks.append((name, switch_id))
+        return False
+
+    monkeypatch.setattr(instance, "_xe_interface_deployed", not_deployed)
+    if state == "overridden":
+        monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    if state == "deleted":
+        instance.preflight_delete([model])
+    else:
+        instance._check_overridden_removals_discovered([])
+    instance.delete_bulk([model])
+
+    assert [(name.casefold(), switch_id) for name, switch_id in history_checks] == [("loopback222", "FDO12345ABC")]
+    assert rest_send.response_count == 1
+    assert instance._pending_removes == [("Loopback222", "FDO12345ABC")]
+    assert instance._pending_deploys == [("Loopback222", "FDO12345ABC")]
+
+
+def test_loopback_interface_00330_staged_and_discovered_deletes_remain_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the undiscovered IOS-XE row needs deployment history; NX-OS remains unaffected."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    names = ["Loopback220", "Loopback221", "Loopback223"]
+    config = [{"switch_ip": "192.168.12.151", "interface_name": name} for name in names]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="deleted", config=config)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(
+        instance,
+        [
+            _xe_loopback_record("Loopback220", "unknown"),
+            _xe_loopback_record("Loopback221", "up"),
+            _xe_loopback_record("Loopback223", "unknown", network_os_type="nx-os"),
+        ],
+    )
+    models = [_build_loopback_model(interface_name=name, include_config=False) for name in names]
+    history_checks = []
+
+    def not_deployed(name: str, switch_id: str) -> bool:
+        history_checks.append((name, switch_id))
+        return False
+
+    monkeypatch.setattr(instance, "_xe_interface_deployed", not_deployed)
+
+    instance.preflight_delete(models)
+    instance.delete_bulk(models)
+
+    assert [(name.casefold(), switch_id) for name, switch_id in history_checks] == [("loopback220", "FDO12345ABC")]
+    assert rest_send.response_count == 1
+    expected = [("Loopback220", "FDO12345ABC"), ("Loopback221", "FDO12345ABC"), ("loopback223", "FDO12345ABC")]
+    assert instance._pending_removes == expected
+    assert instance._pending_deploys == expected
+
+
+def test_loopback_interface_00340_operational_only_orphan_cannot_claim_delete_success() -> None:
+    """An explicit delete of a rediscovered IOS-XE orphan fails before any remove or deploy is queued."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="deleted")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "up", mode="unknown")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+
+    with pytest.raises(RuntimeError, match=r"Cannot delete IOS-XE loopback loopback222.*operational-only row"):
+        instance.preflight_delete([model])
+
+    assert rest_send.response_count == 1
+    assert instance._pending_removes == []
+    assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_loopback_interface_00350_pending_preview_does_not_block_canonical_xe_delete(check_mode: bool) -> None:
+    """NDFC may preview an already-deployed lowercase loopback as pending; canonical delete remains valid."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="deleted")
+    rest_send.check_mode = check_mode
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "up")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+
+    instance.preflight_delete([model])
+    instance.delete_bulk([model])
+
+    assert rest_send.response_count == 1
+    assert rest_send.check_mode is check_mode
+    assert instance._pending_removes == [("Loopback222", "FDO12345ABC")]
+    assert instance._pending_deploys == [("Loopback222", "FDO12345ABC")]
 
 
 # =============================================================================

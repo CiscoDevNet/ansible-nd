@@ -87,6 +87,7 @@ class _Controller:
 
 class _FabricContext:
     def __init__(self, switch_map: dict[str, str]) -> None:
+        self.fabric_name = "fabric_1"
         self.switch_map = switch_map
 
     @staticmethod

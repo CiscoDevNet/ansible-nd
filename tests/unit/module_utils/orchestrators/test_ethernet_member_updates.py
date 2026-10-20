@@ -237,6 +237,7 @@ class _FabricContext:
     switch_map = {SWITCH_IP: SWITCH_ID}
 
     def __init__(self, platform_type: str) -> None:
+        self.fabric_name = "fabric_1"
         self.platform_type = PlatformType(platform_type)
 
     @staticmethod
@@ -426,6 +427,60 @@ def _state_machine(
 def _write_calls(controller: _Controller) -> list[dict[str, Any]]:
     """Return all recorded PUT/POST/DELETE requests."""
     return [call for call in controller.calls if call["verb"] != HttpVerbEnum.GET.value]
+
+
+def test_post_parent_refresh_rebuilds_member_put_from_fresh_controller_row() -> None:
+    """A parent mutation cannot make the later safe member PUT replay stale inherited fields."""
+    case = MEMBER_CASES[0]
+    state_machine, controller = _state_machine(
+        case,
+        state="merged",
+        policy={"description": "explicit member description"},
+    )
+    orchestrator = state_machine.model_orchestrator
+    model = orchestrator.model_class(**_config(case, {"description": "explicit member description"}))
+
+    orchestrator.query_all()
+    orchestrator.prepare_member_update_intents([model])
+
+    fresh_parent = _parent_record(case)
+    fresh_parent["configData"]["networkOS"]["policy"]["portChannelMode"] = "passive"
+    fresh_member = _member_record(
+        case,
+        policy_overrides={
+            "portChannelMode": "passive",
+            "description": "controller-derived after parent update",
+        },
+    )
+    controller.interfaces = [fresh_parent, fresh_member]
+
+    orchestrator.refresh_member_update_contexts([model])
+    orchestrator.update(model)
+
+    writes = _write_calls(controller)
+    assert len(writes) == 1
+    policy = writes[0]["data"]["configData"]["networkOS"]["policy"]
+    assert policy["portChannelMode"] == "passive"
+    assert policy["description"] == "explicit member description"
+    inventory_gets = [call for call in controller.calls if call["verb"] == HttpVerbEnum.GET.value and "/interfaces" in call["path"]]
+    assert len(inventory_gets) == 2
+
+
+def test_post_parent_refresh_fails_closed_when_member_was_detached() -> None:
+    """A parent write that removed membership cannot fall through to a host-policy PUT."""
+    case = MEMBER_CASES[0]
+    state_machine, controller = _state_machine(case, state="merged", policy={"description": "new"})
+    orchestrator = state_machine.model_orchestrator
+    model = orchestrator.model_class(**_config(case, {"description": "new"}))
+
+    orchestrator.query_all()
+    orchestrator.prepare_member_update_intents([model])
+    controller.interfaces = [_host_record(case, case.interface_name)]
+
+    with pytest.raises(RuntimeError, match="no longer an authentic supported member"):
+        orchestrator.refresh_member_update_contexts([model])
+
+    assert _write_calls(controller) == []
 
 
 @pytest.mark.parametrize("case", MEMBER_CASES, ids=_case_id)

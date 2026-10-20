@@ -43,6 +43,7 @@ and would be modelled as separate variants.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -55,6 +56,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
     default_network_os_type,
     default_policy_type,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow import (
+    NetflowAtomicMergeMixin,
+    netflow_validation_suspended,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -82,7 +87,10 @@ def _coerce_numeric_string_to_int(value):
     return value
 
 
-class SviPolicyModel(InterfacePolicyStrictBase):
+_ADDRESS_PAIR_VALIDATION_SUSPENDED: ContextVar[bool] = ContextVar("svi_address_pair_validation_suspended", default=False)
+
+
+class SviPolicyModel(NetflowAtomicMergeMixin, InterfacePolicyStrictBase):
     """
     # Summary
 
@@ -235,6 +243,8 @@ class SviPolicyModel(InterfacePolicyStrictBase):
 
         - If `netflow` is true and `netflow_monitor` is missing or empty.
         """
+        if netflow_validation_suspended():
+            return self
         if self.netflow is True and not self.netflow_monitor:
             raise ValueError("netflow_monitor must be provided when netflow is true.")
         return self
@@ -254,11 +264,38 @@ class SviPolicyModel(InterfacePolicyStrictBase):
         - If exactly one of `ip` / `prefix` is set.
         - If exactly one of `ipv6` / `prefixv6` is set.
         """
+        if _ADDRESS_PAIR_VALIDATION_SUSPENDED.get():
+            return self
         if (self.ip is None) != (self.prefix is None):
             raise ValueError("ip and prefix are required together; set both or neither.")
         if (self.ipv6 is None) != (self.prefixv6 is None):
             raise ValueError("ipv6 and prefixv6 are required together; set both or neither.")
         return self
+
+    def merge(self, other: NDBaseModel) -> NDBaseModel:
+        """Merge IPv4 and IPv6 address/prefix pairs without invalid intermediate assignments."""
+        if not isinstance(other, type(self)):
+            return super().merge(other)
+
+        for address_field, prefix_field in (("ip", "prefix"), ("ipv6", "prefixv6")):
+            final_address = (
+                getattr(other, address_field)
+                if address_field in other.model_fields_set and getattr(other, address_field) is not None
+                else getattr(self, address_field)
+            )
+            final_prefix = (
+                getattr(other, prefix_field)
+                if prefix_field in other.model_fields_set and getattr(other, prefix_field) is not None
+                else getattr(self, prefix_field)
+            )
+            if (final_address is None) != (final_prefix is None):
+                raise ValueError(f"{address_field} and {prefix_field} are required together; set both or neither.")
+
+        token = _ADDRESS_PAIR_VALIDATION_SUSPENDED.set(True)
+        try:
+            return super().merge(other)
+        finally:
+            _ADDRESS_PAIR_VALIDATION_SUSPENDED.reset(token)
 
 
 class XeSviDhcpServerModel(NDNestedModel):

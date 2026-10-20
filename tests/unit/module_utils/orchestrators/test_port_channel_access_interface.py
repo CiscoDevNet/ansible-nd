@@ -41,6 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import (
     PortChannelAccessInterfaceOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
     ResponseHandler,
 )
@@ -172,11 +173,221 @@ def test_absent_access_delete_does_not_deploy_staged_trunk_port_channel(monkeypa
             "configData": {"networkOS": {"policy": {"policyType": "trunkPoHost", "description": "staged trunk change"}}},
         }
     }
+    snapshot = orchestrator.state_snapshot
+    snapshot._interfaces_by_switch["FDO11111AAA"] = dict(orchestrator._switch_interfaces_cache["FDO11111AAA"])
+    snapshot._original_interfaces_by_switch["FDO11111AAA"] = dict(orchestrator._switch_interfaces_cache["FDO11111AAA"])
+    snapshot._revisions_by_switch["FDO11111AAA"] = 1
 
     access_delete = _build_pc_model(interface_name="port-channel997", include_config=False)
     assert orchestrator.reconcile_absent_deletes([access_delete]) is False
     assert orchestrator._pending_deploys == []
     assert rest_send.response_count == 0
+
+
+@pytest.mark.parametrize(
+    "interface_type,policy_type,template_name,expected",
+    [
+        ("portChannel", "userDefined", "interface_delete", True),
+        ("portChannel", "userDefined", "other_template", False),
+        ("portChannel", "trunkPoHost", "interface_delete", False),
+        ("ethernet", "userDefined", "interface_delete", False),
+    ],
+)
+def test_absent_access_delete_accepts_only_port_channel_deletion_echo(interface_type, policy_type, template_name, expected) -> None:
+    """A discovered delete marker can replay, but a foreign policy cannot."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    record = {
+        "interfaceName": "Port-channel982",
+        "interfaceType": interface_type,
+        "configData": {"networkOS": {"policy": {"policyType": policy_type, "templateName": template_name}}},
+    }
+
+    assert orchestrator._can_replay_absent_delete(record) is expected
+
+
+def test_absent_port_channel_preview_detects_missing_delete_tombstone() -> None:
+    """Running Po plus empty expected/pending config needs an exact repeat remove."""
+
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface port-channel982\n description test\n", "lines": 2},
+                    {"configType": "pending", "config": "", "lines": 0},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ],
+            }
+        ]
+    }
+
+    assert PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel982") is True
+    preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = "interface port-channel983\n"
+    with pytest.raises(RuntimeError, match="running identity"):
+        PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel982")
+
+
+def test_absent_port_channel_preview_accepts_exact_undiscovered_sentinel() -> None:
+    """ND's one-line not-discovered message is not a running Po config."""
+
+    preview = {
+        "configurationDiffs": [
+            {
+                "combinedConfigs": [
+                    {"configType": "running", "config": "Interface is not discovered. Current configuration is not available", "lines": 1},
+                    {"configType": "pending", "config": "", "lines": 0},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ]
+            }
+        ]
+    }
+
+    assert PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel501") is False
+    preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = "Interface is not discovered. Current configuration is not available!"
+    with pytest.raises(RuntimeError, match="running identity"):
+        PortChannelAccessInterfaceOrchestrator._staged_remove_needs_reissue(preview, "port-channel501")
+
+
+def test_absent_port_channel_empty_preview_is_converged(monkeypatch) -> None:
+    """An already-removed Po has no row and must not cause a repeat remove."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    orchestrator.deploy = True
+    monkeypatch.setattr(orchestrator, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(orchestrator, "_switch_interfaces", lambda switch_id: {})
+    monkeypatch.setattr(orchestrator, "_preview_interfaces", lambda payload: {"configurationDiffs": []})
+    monkeypatch.setattr(
+        orchestrator,
+        "_reissue_absent_remove",
+        lambda name, switch_id: pytest.fail("An empty preview must not trigger a repeat remove"),
+    )
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "reconcile_absent_deletes", lambda self, models: False)
+
+    assert orchestrator.reconcile_absent_deletes([_build_pc_model(interface_name="port-channel982", include_config=False)]) is False
+
+
+@pytest.mark.parametrize(
+    "pending,accepted",
+    [
+        ("no interface port-channel982\nconfigure terminal\n", True),
+        ("interface port-channel982\nshutdown\n", False),
+        ("no interface port-channel982\nshutdown\n", False),
+        ("no interface port-channel982\ninterface ethernet1/99\nno channel-group 982 force mode active\n", False),
+    ],
+)
+def test_absent_port_channel_replay_requires_exact_safe_delete_cli(monkeypatch, pending: str, accepted: bool) -> None:
+    """A successful preview row alone cannot authorize arbitrary pending CLI."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    orchestrator.deploy = True
+    tombstone = {
+        "interfaceName": "port-channel982",
+        "interfaceType": "portChannel",
+        "switchId": "FDO11111AAA",
+        "configData": {"networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "userDefined", "templateName": "interface_delete"}}},
+    }
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface port-channel982\n", "lines": 1},
+                    {"configType": "pending", "config": pending, "lines": len(pending.splitlines())},
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(orchestrator, "_resolve_switch_id", lambda switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(orchestrator, "_switch_interfaces", lambda switch_id: {"port-channel982": tombstone})
+    monkeypatch.setattr(orchestrator, "_preview_interfaces", lambda payload: preview)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "reconcile_absent_deletes", lambda self, models: False)
+    model = _build_pc_model(interface_name="port-channel982", include_config=False)
+
+    if accepted:
+        assert orchestrator.reconcile_absent_deletes([model]) is False
+    else:
+        with pytest.raises(RuntimeError, match="does not prove removal|unproven"):
+            orchestrator.reconcile_absent_deletes([model])
+    assert orchestrator._pending_deploys == []
+
+
+def test_absent_port_channel_replay_proves_its_own_member_detach() -> None:
+    """Member reset CLI is eligible only when the running parent owns it."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "combinedConfigs": [
+                    {"configType": "running", "config": "interface port-channel982\ninterface Ethernet1/46\nchannel-group 982 mode active\n"},
+                    {
+                        "configType": "pending",
+                        "config": (
+                            "no interface port-channel982\ninterface Ethernet1/46\n"
+                            "no channel-group 982 force mode active\nno shutdown\nconfigure terminal\n"
+                        ),
+                    },
+                ],
+            }
+        ]
+    }
+    orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+    preview["configurationDiffs"][0]["combinedConfigs"][1]["config"] += "shutdown\n"
+    with pytest.raises(RuntimeError, match="unproven"):
+        orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
+@pytest.mark.parametrize(
+    ("running_group", "pending_detach", "accepted"),
+    [
+        ("channel-group 982", "no channel-group 982 force", True),
+        ("channel-group 982", "no channel-group 982 force mode on", True),
+        ("channel-group 982", "no channel-group 982 force mode active", False),
+        ("channel-group 982 mode active", "no channel-group 982 force", False),
+        ("channel-group 983", "no channel-group 982 force mode on", False),
+    ],
+)
+def test_absent_port_channel_replay_accepts_only_exact_bare_on_mode_member(running_group: str, pending_detach: str, accepted: bool) -> None:
+    """NX-OS static Po running CLI omits mode on, but the detach must prove it."""
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "combinedConfigs": [
+                    {"configType": "running", "config": f"interface port-channel982\ninterface Ethernet1/46\n{running_group}\n"},
+                    {"configType": "pending", "config": f"no interface port-channel982\ninterface Ethernet1/46\n{pending_detach}\n"},
+                ],
+            }
+        ]
+    }
+
+    if accepted:
+        orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+    else:
+        with pytest.raises(RuntimeError, match="on-mode detach|unproven member"):
+            orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
+@pytest.mark.parametrize("network_os_type,expected", [("nx-os", True), ("ios-xe", False), (None, False)])
+def test_absent_access_delete_accepts_only_nxos_policyless_discovery_echo(network_os_type, expected) -> None:
+    """An NX-OS discovered Po with no owning policy can replay deletion."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    record = {
+        "interfaceName": "Port-channel982",
+        "interfaceType": "portChannel",
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
+    }
+    assert orchestrator._can_replay_absent_delete(record) is expected
 
 
 def test_port_channel_deploy_results_allow_derived_members_only_via_preview() -> None:
@@ -191,6 +402,75 @@ def test_port_channel_deploy_results_allow_derived_members_only_via_preview() ->
         ("ethernet1/2", "FDO11111AAA"),
     }
     assert ("loopback99", "UNRELATED") not in instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")])
+
+
+def test_deferred_port_channel_deploy_retains_exact_member_context() -> None:
+    """A workflow stages the parent before it consolidates the deploy."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance._prepare_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
+
+    assert instance._allowed_derived_deploy_pairs([("port-channel501", "FDO11111AAA")]) == {("ethernet1/1", "FDO11111AAA")}
+
+
+def test_ios_xe_stage_only_member_removal_skips_read_only_preview(monkeypatch) -> None:
+    """A stage-only PUT does not need to discover physical deployment targets."""
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance.workflow_deploy_requested = False
+    model = _build_xe_pc_model(ports=[])
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_removed_xe_members", lambda *_args: ["GigabitEthernet1/0/1"])
+    monkeypatch.setattr(instance, "_prepare_deploy_context", lambda *_args: None)
+    monkeypatch.setattr(instance, "_queue_deploy", lambda *_args: None)
+    monkeypatch.setattr(instance, "_request", lambda **_kwargs: {"status": "accepted"})
+    monkeypatch.setattr(instance, "_preview_and_queue_removed_xe_members", lambda *_args: pytest.fail("staging-only preview"))
+
+    assert instance.update(model) == {"status": "accepted"}
+
+
+def test_ios_xe_workflow_deploy_preview_failure_preserves_accepted_put_and_reads_back(monkeypatch) -> None:
+    """The workflow's overall deploy intent retains preview and failure-only GET."""
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = False
+    instance.workflow_deploy_requested = True
+    model = _build_xe_pc_model(ports=[])
+    reads = []
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_removed_xe_members", lambda *_args: ["GigabitEthernet1/0/1"])
+    monkeypatch.setattr(instance, "_prepare_deploy_context", lambda *_args: None)
+    monkeypatch.setattr(instance, "_queue_deploy", lambda *_args: None)
+
+    def preview_failure(*_args):
+        raise RuntimeError("preview unavailable")
+
+    monkeypatch.setattr(instance, "_preview_and_queue_removed_xe_members", preview_failure)
+
+    def request(**kwargs):
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            reads.append("exact")
+            return {**model.to_payload(), "interfaceName": "Port-channel101", "switchId": "FDO11111AAA"}
+        return {"status": "accepted"}
+
+    monkeypatch.setattr(instance, "_request", request)
+    with pytest.raises(RuntimeError, match="PUT was accepted; current ND intent was read back"):
+        instance.update(model)
+
+    assert reads == ["exact"]
+    assert instance._accepted_post_write_model is not None
+    assert instance._accepted_post_write_model.get_identifier_value() == model.get_identifier_value()
+
+
+def test_unchanged_port_channel_with_current_member_previews_removed_member() -> None:
+    """A prior staged removal can leave a pending former member beside a retained one."""
+
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    instance.deploy = True
+
+    instance._prepare_no_diff_deploy_context(_build_pc_model(ports=["Ethernet1/1"]), "FDO11111AAA")
+
+    assert ("port-channel501", "FDO11111AAA") in instance._pending_preview_derived_discovery
 
 
 def test_port_channel_deploy_context_includes_exact_operational_member_after_staged_removal() -> None:
@@ -447,13 +727,12 @@ def test_port_channel_access_orchestrator_00430() -> None:
     """
     # Summary
 
-    Verify `query_all` returns an empty list when a switch's interfaces endpoint returns no body
-    (the `not_found_ok=True` branch in `PortChannelBaseOrchestrator.query_all`).
+    Verify a switch-scoped interface-list 404 fails closed.
 
     ## Test
 
-    - Switch's interface list returns 404 (treated as no interfaces present)
-    - query_all skips the switch and yields []
+    - Switch's interface list returns 404
+    - query_all raises instead of assuming a complete empty inventory
 
     ## Classes and Methods
 
@@ -467,12 +746,9 @@ def test_port_channel_access_orchestrator_00430() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
-    with does_not_raise():
-        # state=overridden keeps query_all fabric-wide so the 404 switch is still visited and skipped.
-        orchestrator = _build_orchestrator(gen_responses, state="overridden")
-        result = orchestrator.query_all()
-
-    assert result == []
+    orchestrator = _build_orchestrator(gen_responses, state="overridden")
+    with pytest.raises(RuntimeError, match=r"Query all failed.*404"):
+        orchestrator.query_all()
 
 
 def test_port_channel_access_orchestrator_00440() -> None:
@@ -1183,12 +1459,12 @@ def test_port_channel_access_orchestrator_00800() -> None:
 
 
 def _preflight_orchestrator(method_name: str, check_mode: bool = False) -> PortChannelAccessInterfaceOrchestrator:
-    """Build an orchestrator whose responses are the switches list (a) then the member-conflict inventory (b)."""
+    """Build an orchestrator with safety inventory before the capability response."""
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), state="merged", check_mode=check_mode)
     return PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
@@ -1368,8 +1644,8 @@ def test_port_channel_access_orchestrator_00960() -> None:
 
     - `query_all` (state merged, config scoped to 192.168.1.1) consumes summary (a), switches (b), interfaces (c)
     - Only the `capableSwitches` response remains queued
-    - `preflight` for a free member does not raise (an extra inventory GET would exhaust the generator and raise)
-    - `_switch_interfaces_cache` holds the unfiltered inventory for FDO11111AAA
+    - `preflight` consumes that capability response for a free member but issues no extra inventory GET
+    - The shared `InterfaceStateSnapshot` holds the unfiltered inventory for FDO11111AAA
 
     ## Classes and Methods
 
@@ -1395,9 +1671,10 @@ def test_port_channel_access_orchestrator_00960() -> None:
     # query_all still returns only the managed accessPoHost port-channels...
     assert [iface["interfaceName"] for iface in result] == ["port-channel501"]
     # ...while the cache retains the unfiltered inventory the preflight reads.
-    assert set(instance._switch_interfaces_cache) == {"FDO11111AAA"}
-    assert "ethernet1/2" in instance._switch_interfaces_cache["FDO11111AAA"]
-    assert "port-channel500" in instance._switch_interfaces_cache["FDO11111AAA"]
+    cached = instance.state_snapshot.interfaces_by_switch
+    assert set(cached) == {"FDO11111AAA"}
+    assert "ethernet1/2" in cached["FDO11111AAA"]
+    assert "port-channel500" in cached["FDO11111AAA"]
 
 
 def test_port_channel_access_orchestrator_00970() -> None:
@@ -1786,14 +2063,14 @@ def test_port_channel_access_orchestrator_01100(ports, match) -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_pc_model(ports=ports)])
-    assert len(rest_send.responses) == 3
+    assert len(rest_send.responses) == 2
 
 
 def test_port_channel_access_orchestrator_01110() -> None:
@@ -1816,8 +2093,8 @@ def test_port_channel_access_orchestrator_01110() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with does_not_raise():
@@ -1848,8 +2125,8 @@ def test_port_channel_access_orchestrator_01120() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
         yield responses_pc_access(f"{method_name}b")
+        yield responses_pc_access("test_port_channel_access_orchestrator_capable_switches_shared")
 
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel102"):
@@ -2096,7 +2373,7 @@ def test_port_channel_access_orchestrator_01320() -> None:
     ## Test
 
     - Proposed config names only port-channel101, so the fabric-wide override would remove port-channel102 (`unknown`)
-    - Responses: switches list, capableSwitches, fabric summary, inventory, deployment history holding port-channel102's create push
+    - Responses: switches list, inventory, capableSwitches, fabric summary, deployment history holding port-channel102's create push
     - `preflight` raises `RuntimeError` naming port-channel102
 
     ## Classes and Methods
@@ -2105,7 +2382,7 @@ def test_port_channel_access_orchestrator_01320() -> None:
     - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
     """
     config = [{"switch_ip": "192.168.1.1", "interface_name": "port-channel101"}]
-    instance = _guard_orchestrator(inspect.stack()[0][3], "a+bcd", "overridden", config)
+    instance = _guard_orchestrator(inspect.stack()[0][3], "ac+bd", "overridden", config)
 
     with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*port-channel102"):
         instance.preflight([_xe_existing_model("port-channel101", ["GigabitEthernet1/0/2"])])
@@ -2149,7 +2426,7 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
 
     - Two NX-OS port-channels on switch A and two IOS-XE port-channels on the Catalyst; both switches are capable
     - `preflight` does not raise
-    - One switches GET and one `capableSwitches` GET, then one interface-list GET per switch for the member checks: four responses
+    - One switches GET, one interface-list GET per switch for the member checks, then one `capableSwitches` GET: four responses
 
     ## Classes and Methods
 
@@ -2160,9 +2437,9 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
-        yield responses_pc_access(f"{method_name}b")
         yield responses_pc_access(f"{method_name}c")
         yield responses_pc_access(f"{method_name}d")
+        yield responses_pc_access(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
     instance = PortChannelAccessInterfaceOrchestrator(rest_send=rest_send)
@@ -2185,8 +2462,10 @@ def test_port_channel_access_orchestrator_01400(check_mode: bool) -> None:
         instance.preflight(models)
 
     paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
-    assert paths[:2] == [
+    assert paths == [
         "/api/v1/manage/fabrics/fabric_1/switches",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
         "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=access",
     ]
     assert len(rest_send.responses) == 4
@@ -2213,6 +2492,7 @@ def test_port_channel_access_orchestrator_01410() -> None:
 
     def responses():
         yield responses_pc_access(f"{method_name}a")
+        yield responses_pc_access("test_port_channel_access_orchestrator_01400d")
         yield responses_pc_access(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))
