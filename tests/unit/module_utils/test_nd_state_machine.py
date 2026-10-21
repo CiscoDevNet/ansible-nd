@@ -1618,3 +1618,58 @@ def test_nd_state_machine_00395() -> None:
     assert len(instance.existing) == 2
     assert len(instance.removed) == 0
     assert instance.output.format()["changed"] is False
+
+
+class _ExplodingRemovalHookSpy(_TwoExistingSpy):
+    """Spy whose `delete_bulk` records (the interface delete only queues) and whose `unaccepted_removals` hook raises."""
+
+    def unaccepted_removals(self, model_instances):
+        """Raise, simulating a defective orchestrator hook on the delete-side failure path."""
+        raise ValueError("hook exploded")
+
+
+def test_nd_state_machine_00400() -> None:
+    """
+    # Summary
+
+    Verify `reconcile_after_failure` restores every recorded removal when the `unaccepted_removals` hook raises: with the hook's answer
+    unknown, no removal may be reported as done, so `after` matches `before`, nothing is reported removed, `changed` is false, and the
+    hook failure never propagates (issue #597, review finding: an unsent delete must not be reported as completed).
+
+    ## Test
+
+    - `state: deleted`, inventory loopback10/loopback11, both proposed; `delete_bulk` records (nothing is sent); `unaccepted_removals`
+      raises `ValueError`
+    - After `manage_state`, `existing` is empty and `removed` holds both (the pre-reconcile picture)
+    - `reconcile_after_failure` does not raise; `existing` identifiers equal `before` identifiers; `removed` is empty; `changed` is False
+    - A second call changes nothing
+
+    ## Classes and Methods
+
+    - NDStateMachine.reconcile_after_failure()
+    - NDStateMachine._hook_result()
+    """
+    spy = _ExplodingRemovalHookSpy(rest_send=_build_rest_send())
+    module = _build_module(state="deleted", check_mode=False, config=_two_loopback_delete_config())
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+    assert len(instance.existing) == 0
+    assert len(instance.removed) == 2
+
+    with does_not_raise():
+        instance.reconcile_after_failure()
+
+    assert sorted(item.get_identifier_value() for item in instance.existing) == sorted(item.get_identifier_value() for item in instance.before)
+    assert _description(instance, "loopback10") == "stale 10"
+    assert _description(instance, "loopback11") == "stale 11"
+    assert len(instance.removed) == 0
+    output = instance.output.format()
+    assert output["changed"] is False
+    assert sorted(item["interface_name"] for item in output["after"]) == ["loopback10", "loopback11"]
+
+    with does_not_raise():
+        instance.reconcile_after_failure()
+    assert len(instance.existing) == 2
+    assert len(instance.removed) == 0
