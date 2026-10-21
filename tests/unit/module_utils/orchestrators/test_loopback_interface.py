@@ -1717,18 +1717,55 @@ def test_loopback_interface_01660(monkeypatch) -> None:
     """
     # Summary
 
-    `preflight` runs the shared interface preflight and then the csrLoopback release check, so `NDStateMachine.manage_state` (which
-    calls `preflight` in check mode too) reports the refusal on a dry run.
+    The inherited `preflight` reaches the csrLoopback release check through `preflight_safety`, so `NDStateMachine.manage_state`
+    and the workflow executor (which call `preflight`) report the refusal, in check mode too.
 
     ## Test
 
-    - The base `NDBaseInterfaceOrchestrator.preflight` is replaced by a recorder so its own fixtures are not needed
+    - `validate_switches_capable` and `_check_overridden_removals_discovered` are replaced by no-ops so their fixtures are not needed
+    - The switches list (1 IOS-XE switch) resolves the switch and satisfies the platform check
     - `controller_version` is `4.3.1.175`; the switch's interface list is empty (seeded cache)
-    - `preflight` with a proposed `csrLoopback` calls the base preflight once, then raises the csrLoopback RuntimeError
+    - `preflight` with a proposed `csrLoopback` raises the csrLoopback RuntimeError
 
     ## Classes and Methods
 
-    - LoopbackInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.preflight()
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "validate_switches_capable", lambda self, model_instances: None)
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_check_overridden_removals_discovered", lambda self, model_instances: None)
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance.preflight([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01670(monkeypatch) -> None:
+    """
+    # Summary
+
+    `preflight_safety` runs the shared safety checks and then the csrLoopback release check. The aggregate workflow planner calls
+    `preflight_safety` (never `preflight`) in check mode, so the guard has to live on this path for a `nd_interfaces_workflow` dry
+    run to report the refusal (PR #634 review).
+
+    ## Test
+
+    - The base `NDBaseInterfaceOrchestrator.preflight_safety` is replaced by a recorder so its own fixtures are not needed
+    - `controller_version` is `4.3.1.175`; the switch's interface list is empty (seeded cache)
+    - `preflight_safety` with a proposed `csrLoopback` calls the base safety check once, then raises the csrLoopback RuntimeError
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.preflight_safety()
     - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
     """
     method_name = inspect.stack()[0][3]
@@ -1738,15 +1775,15 @@ def test_loopback_interface_01660(monkeypatch) -> None:
 
     calls: list[int] = []
 
-    def fake_base_preflight(self, model_instances):  # pylint: disable=unused-argument
+    def fake_base_preflight_safety(self, model_instances):  # pylint: disable=unused-argument
         calls.append(len(model_instances))
 
-    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight", fake_base_preflight)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", fake_base_preflight_safety)
     rest_send = _build_rest_send(ResponseGenerator(responses()))
     rest_send.controller_version = "4.3.1.175"
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
 
     with pytest.raises(RuntimeError, match="csrLoopback"):
-        instance.preflight([_build_xe_loopback_model("csrLoopback")])
+        instance.preflight_safety([_build_xe_loopback_model("csrLoopback")])
     assert calls == [1]
