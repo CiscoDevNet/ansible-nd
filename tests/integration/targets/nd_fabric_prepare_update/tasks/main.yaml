@@ -39,11 +39,8 @@
   always:
     - name: Post-test cleanup
       ansible.builtin.include_tasks: cleanup.yaml
-  module_defaults:
-    # nd_fabric_prepare_update holds the httpapi connection for the whole staging wait. The ND
-    # httpapi plugin maps `timeout` to persistent_command_timeout, so it must exceed the module's
-    # total run time (>= wait_timeout) or the persistent connection is torn down mid-wait.
-    cisco.nd.nd_fabric_prepare_update:
-      timeout: 3600
-    cisco.nd.nd_fabric_update_group:
-      timeout: 300
+  vars:
+    # nd_fabric_prepare_update holds the httpapi connection for the whole staging wait, so the
+    # persistent command timeout must exceed the module's total run time (>= wait_timeout) or the
+    # persistent connection is torn down mid-wait.
+    ansible_command_timeout: 3600
