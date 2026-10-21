@@ -67,8 +67,11 @@ _MULTISTATUS_SUCCESS_STATUSES = frozenset({"success"})
 #                  `status` key, so the literal-gated scan cannot false-positive on queries.
 _MULTISTATUS_ITEM_KEYS = ("results", "switchIds", "links")
 
-# Item keys, in priority order, used to label a failing item in an error message.
-_MULTISTATUS_ITEM_LABEL_KEYS = ("name", "switchId", "serialNumber", "linkId", "id")
+# Item keys, in priority order, used to label a failing item in an error message. `vrfName` is the
+# per-item key on the VRF bulk endpoints (POST .../vrfs and POST .../vrfActions/remove, 4.2.1 and 4.3.1
+# Manage OpenAPI: `results[].{vrfName, status, message}`); without it a failed VRF item is reported
+# by message alone (issue #640).
+_MULTISTATUS_ITEM_LABEL_KEYS = ("name", "vrfName", "switchId", "serialNumber", "linkId", "id")
 
 # Item keys, in priority order, carrying the per-item failure detail. ND is not consistent
 # across endpoints: `message` (batch interface / switchActions/deploy) and `warningMessage`

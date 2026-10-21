@@ -1,0 +1,34 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_links.py.",
+        "Bodies follow the ND 4.2.1 / 4.3.1 Manage OpenAPI 207 examples for POST /api/v1/manage/links and",
+        "POST /api/v1/manage/linkActions/remove: links[].{linkId, message, status} with status success|failure.",
+        "Issue #640: these guard the shared NdV1Strategy per-item failure handling after the bespoke links detector was retired."
+    ],
+    "test_links_00110a": {
+        "TEST_NOTES": ["Bulk create: one success, one failure item."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/links",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 created successfully", "status": "success"},
+                {"linkId": "LINK-UUID-8541", "message": "Link creation failed: MTU 9216 not supported on Ethernet1/2", "status": "failure"}
+            ]
+        }
+    },
+    "test_links_00111a": {
+        "TEST_NOTES": ["Bulk remove: one success, one failure item (the OpenAPI deletedTwoLinks example)."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/linkActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "links": [
+                {"linkId": "LINK-UUID-8540", "message": "LINK-UUID-8540 deleted successfully", "status": "success"},
+                {"linkId": "LINK-UUID-8541", "message": "Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId.", "status": "failure"}
+            ]
+        }
+    }
+}
