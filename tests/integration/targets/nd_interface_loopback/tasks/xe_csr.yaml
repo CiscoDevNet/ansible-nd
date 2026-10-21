@@ -1,0 +1,68 @@
+---
+# csrLoopback coverage for nd_interface_loopback on ND releases below 4.3.1.
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Included by xe.yaml when xe_csr_loopback_supported is true. Creates loopback206
+# (csrLoopback) and proves the re-apply is idempotent; the XE DELETED section of
+# xe.yaml removes it together with loopback205.
+#
+# loopback206 exercises the CSR drift case: the ND 4.2.1 OpenAPI READ schema lists
+# the policyType as "csrIntLoopback", but a live-lab probe (2026-07-18) proved the
+# wire echoes "csrLoopback" on reads too, so no read-side normalization is needed.
+# The idempotency check below confirms no spurious diff is seen on re-apply.
+
+- name: "XE CSR MERGED CREATE: Plan loopback206 (csrLoopback) through the aggregate workflow (check mode)"
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ test_xe_fabric_name }}"
+    resources:
+      - type: loopback
+        state: merged
+        config:
+          - "{{ xe_loopback_206 }}"
+    config_actions:
+      deploy: false
+  check_mode: true
+  register: cm_xe_csr_workflow_create
+
+- name: "XE CSR MERGED CREATE: Verify the aggregate workflow plans the csrLoopback create below 4.3.1"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_csr_workflow_create is changed
+
+- name: "XE CSR MERGED CREATE: Create loopback206 (csrLoopback) (check mode)"
+  cisco.nd.nd_interface_loopback: &xe_merge_106
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_loopback_206 }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_csr_create
+
+- name: "XE CSR MERGED CREATE: Create loopback206 (csrLoopback) (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_106
+  register: nm_xe_csr_create
+
+- name: "XE CSR MERGED CREATE: Verify loopback206 creation"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_csr_create is changed
+      - nm_xe_csr_create is changed
+      - nm_xe_csr_create.after | selectattr('interface_name', 'equalto', 'loopback206') | list | length == 1
+
+- name: "XE CSR MERGED IDEMPOTENT: Re-apply loopback206 creation (check mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_106
+  check_mode: true
+  register: cm_xe_csr_idem
+
+- name: "XE CSR MERGED IDEMPOTENT: Re-apply loopback206 creation (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_106
+  register: nm_xe_csr_idem
+
+- name: "XE CSR MERGED IDEMPOTENT: Verify no change on second run (csrLoopback wire name is stable)"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_csr_idem is not changed
+      - nm_xe_csr_idem is not changed
