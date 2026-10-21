@@ -1,0 +1,212 @@
+---
+- name: Run nd_manage_l3out deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Initialize cleanup ownership list"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: []
+      tags:
+        - always
+
+    - name: "DELETED SETUP: Create the SVI L3Out to delete"
+      cisco.nd.nd4x_l3out_create_lock:
+        config: "{{ l3out_svi }}"
+      register: deleted_svi_setup_create
+      tags:
+        - always
+
+    - name: "DELETED SETUP: Prove SVI L3Out ownership before cleanup registration"
+      ansible.builtin.assert:
+        that:
+          - not deleted_svi_setup_create.failed | default(false) | bool
+          - deleted_svi_setup_create.changed | bool
+          - deleted_svi_setup_create.name == test_l3out_svi_name
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_svi_name }}' for cleanup because
+          the controller create-only operation did not prove ownership.
+
+    - name: "DELETED SETUP: Register created SVI L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names:
+          - name: "{{ test_l3out_svi_name }}"
+
+    - name: "DELETED: Delete SVI L3Out through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ test_l3out_svi_name }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted SVI L3Out is absent
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_svi_name }}"
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_svi
+
+    - name: "DELETED: Verify SVI L3Out removal and idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_svi.check_mode_result.changed | bool
+          - deleted_svi.first_run_result.changed | bool
+          - >-
+            deleted_svi.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_svi_name)
+            | list
+            | length == 0
+          - deleted_svi.second_run_result.changed == false
+
+    - name: "DELETED IDEMPOTENT: Re-delete SVI L3Out through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ test_l3out_svi_name }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate absent SVI L3Out
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_svi_name }}"
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_svi_idempotent
+
+    - name: "DELETED IDEMPOTENT: Verify predictive and real no-change results"
+      ansible.builtin.assert:
+        that:
+          - not deleted_svi_idempotent.check_mode_result.changed | bool
+          - not deleted_svi_idempotent.first_run_result.changed | bool
+          - not deleted_svi_idempotent.second_run_result.changed | bool
+
+    - name: "DELETED SETUP: Create BGP and static L3Outs for bulk deletion"
+      cisco.nd.nd4x_l3out_create_lock:
+        config: "{{ l3out_bgp }}"
+      register: deleted_bulk_bgp_setup_create
+      tags:
+        - always
+
+    - name: "DELETED SETUP: Prove BGP bulk-delete L3Out ownership"
+      ansible.builtin.assert:
+        that:
+          - not deleted_bulk_bgp_setup_create.failed | default(false) | bool
+          - deleted_bulk_bgp_setup_create.changed | bool
+          - deleted_bulk_bgp_setup_create.name == test_l3out_bgp_name
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_bgp_name }}' for cleanup because
+          the controller create-only operation did not prove ownership.
+
+    - name: "DELETED SETUP: Register created BGP L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: >-
+          {{ nd4x_l3out_owned_names + [{'name': test_l3out_bgp_name}] }}
+
+    - name: "DELETED SETUP: Create static L3Out for bulk deletion"
+      cisco.nd.nd4x_l3out_create_lock:
+        config: "{{ l3out_static }}"
+      register: deleted_bulk_static_setup_create
+      tags:
+        - always
+
+    - name: "DELETED SETUP: Prove static bulk-delete L3Out ownership"
+      ansible.builtin.assert:
+        that:
+          - not deleted_bulk_static_setup_create.failed | default(false) | bool
+          - deleted_bulk_static_setup_create.changed | bool
+          - deleted_bulk_static_setup_create.name == test_l3out_static_name
+        fail_msg: >-
+          Refusing to register '{{ test_l3out_static_name }}' for cleanup
+          because the controller create-only operation did not prove ownership.
+
+    - name: "DELETED SETUP: Register created static L3Out for cleanup"
+      ansible.builtin.set_fact:
+        nd4x_l3out_owned_names: >-
+          {{ nd4x_l3out_owned_names + [{'name': test_l3out_static_name}] }}
+
+    - name: "DELETED BULK: Delete BGP and static L3Outs through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_l3out
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ test_l3out_bgp_name }}"
+          - name: "{{ test_l3out_static_name }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_l3out_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted BGP L3Out is absent
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_bgp_name }}"
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify deleted static L3Out is absent
+            path: "/api/v1/manage/l3Outs/{{ test_l3out_static_name }}"
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_bulk
+
+    - name: "DELETED BULK: Verify bulk removal and idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_bulk.check_mode_result.changed | bool
+          - deleted_bulk.first_run_result.changed | bool
+          - >-
+            deleted_bulk.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_bgp_name)
+            | list
+            | length == 0
+          - >-
+            deleted_bulk.first_run_result.after
+            | selectattr('name', 'equalto', test_l3out_static_name)
+            | list
+            | length == 0
+          - deleted_bulk.nd_query_results | length == 2
+          - deleted_bulk.second_run_result.changed == false
+
+  always:
+    - name: "DELETED CLEANUP: Remove only this run's L3Outs"
+      cisco.nd.nd_manage_l3out:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_l3out_owned_names }}"
+      when: nd4x_l3out_owned_names | default([]) | length > 0
+      tags:
+        - always
