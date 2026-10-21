@@ -13,6 +13,24 @@
 # wire echoes "csrLoopback" on reads too, so no read-side normalization is needed.
 # The idempotency check below confirms no spurious diff is seen on re-apply.
 
+- name: "XE CSR MERGED CREATE: Plan loopback206 (csrLoopback) through the aggregate workflow (check mode)"
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ test_xe_fabric_name }}"
+    resources:
+      - type: loopback
+        state: merged
+        config:
+          - "{{ xe_loopback_206 }}"
+    config_actions:
+      deploy: false
+  check_mode: true
+  register: cm_xe_csr_workflow_create
+
+- name: "XE CSR MERGED CREATE: Verify the aggregate workflow plans the csrLoopback create below 4.3.1"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_csr_workflow_create is changed
+
 - name: "XE CSR MERGED CREATE: Create loopback206 (csrLoopback) (check mode)"
   cisco.nd.nd_interface_loopback: &xe_merge_106
     output_level: "{{ nd_info.output_level }}"
