@@ -387,7 +387,6 @@ class ActionModule(ActionBase):
 
         module_name = args.get("module")
         state = args.get("state")
-        self._harness_state = state
         config = args.get("config")
         common_args = args.get("common_args", {})
         module_args = args.get("module_args", {})
@@ -639,13 +638,6 @@ class ActionModule(ActionBase):
 
         reported_result = check_mode_result if global_check_mode else first_run_result
         reported_changed = bool(reported_result and reported_result.get("changed", False))
-        if global_check_mode:
-            reported_changed = self._phase_changed("check_mode", reported_result)
-        else:
-            reported_changed = self._phase_changed("apply", reported_result)
-            if first_run_result is not None:
-                first_run_result = dict(first_run_result)
-                first_run_result["changed"] = reported_changed
         result.update(
             {
                 "changed": reported_changed,
@@ -1190,57 +1182,6 @@ class ActionModule(ActionBase):
 
         return True
 
-    def _predictive_changed(self, module_result, allow_proposed=False):
-        """Infer a planned mutation from a module's predictive state output.
-
-        Some existing collection modules intentionally report ``changed`` as
-        false from their shared result aggregator even when a mutation was
-        predicted or performed. The harness still needs to validate whether
-        the module represented a mutation. A different module-reported
-        ``before``/``after`` state is the authoritative signal for that
-        purpose; controller snapshots separately verify check-mode safety.
-
-        Args:
-            module_result: Result dictionary returned by the target module.
-
-        Returns:
-            ``True`` when the module reports a change or its predictive
-            before/after state differs; otherwise ``False``.
-        """
-        if not isinstance(module_result, dict):
-            return False
-
-        if bool(module_result.get("changed", False)):
-            return True
-
-        if bool(module_result.get("failed", False)):
-            return False
-
-        if "before" not in module_result or "after" not in module_result:
-            return False
-
-        before = self._normalize_snapshot(module_result.get("before"))
-        after = self._normalize_snapshot(module_result.get("after"))
-        if before != after:
-            return True
-
-        # A merged check-mode create can omit its after projection when the
-        # desired description is intentionally empty.  A proposed entry is
-        # sufficient to describe a planned check-mode mutation, but it is not
-        # proof that a real apply succeeded.  The apply phase must therefore
-        # rely on the module's changed flag or a before/after difference.
-        return allow_proposed and getattr(self, "_harness_state", None) == "merged" and not before and not after and bool(module_result.get("proposed"))
-
-    def _phase_changed(self, phase_name, module_result):
-        """Return the harness-visible changed value for a phase."""
-        actual_changed = bool(module_result and module_result.get("changed", False))
-        if phase_name in ("check_mode", "apply") and not actual_changed:
-            return self._predictive_changed(
-                module_result,
-                allow_proposed=phase_name == "check_mode",
-            )
-        return actual_changed
-
     def _assert_phase(
         self,
         phase_name,
@@ -1280,7 +1221,7 @@ class ActionModule(ActionBase):
 
         if "changed" in phase_expectation:
             expected_changed = phase_expectation["changed"]
-            actual_changed = self._phase_changed(phase_name, module_result)
+            actual_changed = bool(module_result.get("changed", False))
 
             if actual_changed != expected_changed:
                 raise AnsibleActionFail(
