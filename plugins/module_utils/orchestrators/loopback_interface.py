@@ -158,22 +158,24 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             raise RuntimeError(f"Cannot safely canonicalize IOS-XE loopback name {name!r} on {switch_id}")
         return f"Loopback{match.group(1)}"
 
-    def preflight(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+    def preflight_safety(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
         """
         # Summary
 
-        Pre-mutation validation for the proposed loopbacks: the shared interface preflight (switch resolution, platform match,
-        capability, IOS-XE override removals), then the `csrLoopback` release check (`_check_csr_loopback_writable`). Invoked by
-        `NDStateMachine.manage_state` before any create or update, in check mode too.
+        Local safety checks for the proposed loopbacks: the shared switch-resolution and platform checks, then the `csrLoopback`
+        release check (`_check_csr_loopback_writable`). This is the path both execution modes share: `NDStateMachine.manage_state`
+        and the workflow executor reach it through the inherited `preflight`, and the workflow planner calls it directly for a
+        check-mode plan, so a dry run reports the refusal a normal run would hit. The release check adds no request: the controller
+        version is cached on the connection and the interface inventory is the one `query_all` already loaded.
 
         ## Raises
 
         ### RuntimeError
 
-        - Propagated from `NDBaseInterfaceOrchestrator.preflight`.
+        - Propagated from `NDBaseInterfaceOrchestrator.preflight_safety`.
         - Propagated from `_check_csr_loopback_writable`.
         """
-        super().preflight(model_instances)
+        super().preflight_safety(model_instances)
         self._check_csr_loopback_writable(model_instances)
 
     def _check_csr_loopback_writable(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
