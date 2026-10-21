@@ -48,6 +48,5 @@
   always:
     - name: Post-test cleanup
       ansible.builtin.include_tasks: setup.yaml
-  module_defaults:
-    cisco.nd.nd_manage_extended_community_list:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300
