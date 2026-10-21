@@ -1068,7 +1068,7 @@ def test_ethernet_access_orchestrator_00610() -> None:
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
-def test_ethernet_access_orchestrator_00590() -> None:
+def test_ethernet_access_orchestrator_00592() -> None:
     """Verify public Ethernet queue transfer APIs de-duplicate targets and expose immutable views."""
 
     def responses():
