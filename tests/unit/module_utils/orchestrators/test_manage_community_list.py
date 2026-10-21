@@ -177,12 +177,13 @@ def test_manage_community_list_00110() -> None:
     """
     # Summary
 
-    Verify create_bulk raises when a 207 result item reports failure.
+    Verify create_bulk raises when a 207 result item reports failure (shared NdV1Strategy handling; issue #640).
 
     ## Classes and Methods
 
     - ManageCommunityListOrchestrator.create_bulk()
-    - ManageCommunityListOrchestrator._raise_on_207_action_errors()
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
     """
     method_name = inspect.stack()[0][3]
 
@@ -195,20 +196,6 @@ def test_manage_community_list_00110() -> None:
 
     with pytest.raises(RuntimeError, match="duplicate name"):
         instance.create_bulk([_model()])
-
-
-def test_manage_community_list_00115() -> None:
-    """Verify non-failure and missing 207 status tokens are tolerated."""
-    result = {
-        "results": [
-            {"name": "CL1", "status": "accepted", "message": "queued"},
-            {"name": "CL2", "status": "", "message": "no status"},
-            {"name": "CL3", "message": "status omitted"},
-        ]
-    }
-
-    with does_not_raise():
-        ManageCommunityListOrchestrator._raise_on_207_action_errors(result)
 
 
 def test_manage_community_list_00120() -> None:
