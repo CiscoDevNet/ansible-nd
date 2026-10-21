@@ -540,9 +540,9 @@ class NDStateMachine:
         try:
             succeeded = self._execute_operation(self.model_orchestrator.create_bulk, items, error_msg_prefix="Failed to create in bulk")
         except NDStateMachineError:
-            self._apply_accepted(self._hook_result("accepted_mutations", items))
+            self._apply_accepted(self._hook_result("accepted_mutations", items) or [])
             raise
-        accepted = list(items) if succeeded else self._hook_result("accepted_mutations", items)
+        accepted = list(items) if succeeded else (self._hook_result("accepted_mutations", items) or [])
         self._apply_accepted(accepted)
         return accepted
 
@@ -640,13 +640,15 @@ class NDStateMachine:
         self.existing.delete_many([item.get_identifier_value() for item in accepted])
         self.output.assign(after=self.existing)
 
-    def _hook_result(self, name: str, items: Sequence[NDBaseModel]) -> list[NDBaseModel]:
+    def _hook_result(self, name: str, items: Sequence[NDBaseModel]) -> list[NDBaseModel] | None:
         """
         # Summary
 
         Call the orchestrator failure-path hook `name` (`accepted_mutations` or `unaccepted_removals`) with `items` and return its result
-        as a list. A hook that raises is logged and treated as naming nothing, so a defective hook never replaces the original error and
-        never raises from `reconcile_after_failure` (issue #597, final review).
+        as a list, or `None` when the hook itself raised. The hook failure is logged, never replaces the original error, and never raises
+        from `reconcile_after_failure`; each caller decides what `None` means for its side (issue #597, final review): a failed
+        `accepted_mutations` lookup applies nothing, a failed `unaccepted_removals` lookup restores every removal, so an uncertain
+        controller state is always reported as the smaller change rather than claimed as done.
 
         ## Raises
 
@@ -655,8 +657,8 @@ class NDStateMachine:
         try:
             return list(getattr(self.model_orchestrator, name)(list(items)))
         except Exception:  # pylint: disable=broad-exception-caught
-            log.exception("%s.%s hook failed; treating it as naming no items", type(self.model_orchestrator).__name__, name)
-            return []
+            log.exception("%s.%s hook failed; its answer is unknown", type(self.model_orchestrator).__name__, name)
+            return None
 
     def reconcile_after_failure(self) -> None:
         """
@@ -666,7 +668,10 @@ class NDStateMachine:
         failure after `manage_state` (an interface orchestrator's `remove_pending`, whose `delete_bulk` only queues) does not report
         interfaces the controller still holds as gone (issue #597). The orchestrator's `unaccepted_removals` hook names them (interface
         orchestrators read their delete-side queues; the base default is none). Each is re-added from `before` and dropped from
-        `removed`. Idempotent and safe to call when nothing failed or nothing was removed. Called by `fail_from_exception`.
+        `removed`. When the hook raises, which removals the controller accepted is unknown, so every recorded removal is restored:
+        a removal that did happen then reads as still present and a retry simply finds it gone, whereas reporting an unsent removal
+        as done would mislead the caller. Idempotent and safe to call when nothing failed or nothing was removed. Called by
+        `fail_from_exception`.
 
         ## Raises
 
@@ -675,6 +680,8 @@ class NDStateMachine:
         if len(self.removed) == 0:
             return
         unaccepted = self._hook_result("unaccepted_removals", list(self.removed))
+        if unaccepted is None:
+            unaccepted = list(self.removed)
         if not unaccepted:
             return
         unaccepted_keys = {item.get_identifier_value() for item in unaccepted}
