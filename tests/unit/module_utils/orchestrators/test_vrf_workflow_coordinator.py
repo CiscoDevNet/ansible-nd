@@ -213,6 +213,23 @@ class _ParentStrategy:
         }
 
 
+def test_vrf_parent_parse_propagates_trm_for_child_mvpn_targets():
+    """Preserve the resolved child TRM flag through coordinator parsing."""
+    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
+    parsed = coordinator._parse_config(
+        [
+            {
+                "vrf_name": "BLUE",
+                "trm_enable": True,
+                "child_fabric_config": [{"fabric_name": "AK-VXLAN", "import_mvpn_rt": ["65000:1"]}],
+            }
+        ],
+        VrfParentConfigModel,
+        "merged",
+    )
+    assert parsed[0]["child_fabric_config"][0]["trm_enable"] is True
+
+
 class _McfgParentStrategy(_ParentStrategy):
     fabric_data = {"members": [{"fabricName": "nacfab", "clusterName": "ND42-REL"}]}
     fabric_name = "MCFG_C"

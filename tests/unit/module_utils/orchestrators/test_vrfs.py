@@ -558,6 +558,58 @@ def test_vrfs_00027_config_model_accepts_schema_security_fields():
         assert parsed["default_security_group_tag"] == 101
 
 
+@pytest.mark.parametrize(
+    "feature,child_field,value",
+    [
+        ("trm_enable", "import_mvpn_rt", ["65000:1"]),
+        ("trm_enable", "export_mvpn_rt", ["65000:2"]),
+        ("trm_enable", "rp_address", "192.0.2.1"),
+        ("netflow_enable", "nf_monitor", "CHILD_MON"),
+    ],
+)
+def test_vrf_child_dependencies_inherit_enabled_parent(feature, child_field, value):
+    config = {
+        "vrf_name": "BLUE",
+        feature: True,
+        "child_fabric_config": [{"fabric_name": "site1", child_field: value}],
+    }
+    if feature == "netflow_enable":
+        config["nf_monitor"] = "PARENT_MON"
+
+    model = VrfParentConfigModel.from_config(config)
+    child = model.to_config()["child_fabric_config"][0]
+    assert child[feature] is True
+    assert child[child_field] == value
+
+
+@pytest.mark.parametrize(
+    "feature,child_field,value",
+    [
+        ("trm_enable", "import_mvpn_rt", ["65000:1"]),
+        ("trm_enable", "rp_address", "192.0.2.1"),
+        ("netflow_enable", "nf_monitor", "CHILD_MON"),
+    ],
+)
+def test_vrf_child_dependencies_require_enabled_parent_or_child(feature, child_field, value):
+    config = {"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "site1", child_field: value}]}
+    with pytest.raises(ValidationError, match=f"{child_field} requires {feature}=True"):
+        VrfParentConfigModel.from_config(config)
+
+    config["child_fabric_config"][0][feature] = True
+    assert getattr(VrfParentConfigModel.from_config(config).child_fabric_config[0], feature) is True
+
+    config["child_fabric_config"][0][feature] = False
+    with pytest.raises(ValidationError, match=f"{feature}=True"):
+        VrfParentConfigModel.from_config(config)
+
+
+@pytest.mark.parametrize("state", ["gathered", "deleted"])
+def test_vrf_read_only_and_deleted_skip_child_feature_prerequisites(state):
+    config = {"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "site1", "import_mvpn_rt": ["65000:1"]}]}
+    model = VrfParentConfigModel.from_config(config, context={"state": state})
+    assert model.child_fabric_config[0].trm_enable is None
+
+
 def test_vrfs_00030_transform_all_standalone_manageable_fields():
     """
     # Summary

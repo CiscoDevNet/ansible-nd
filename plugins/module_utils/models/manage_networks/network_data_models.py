@@ -424,10 +424,10 @@ class NetworkBaseModel(NetworkCommonModel):
     def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for gathered-output pruning."""
         from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
-            network_parent_argument_spec,
+            network_module_argument_spec,
         )
 
-        return dict(config=dict(type="list", elements="dict", options=network_parent_argument_spec()))
+        return dict(config=dict(type="list", elements="dict", options=network_module_argument_spec()))
 
     def to_config(self, **kwargs) -> dict[str, Any]:
         data = super().to_config(**kwargs)
@@ -459,7 +459,6 @@ class NetworkBaseModel(NetworkCommonModel):
             for key in (
                 "vrf_name",
                 "x_connect",
-                "ds_vni",
                 "network_template_name",
                 "network_extension_template_name",
                 "service_network_template_name",
@@ -482,7 +481,6 @@ class NetworkBaseModel(NetworkCommonModel):
         cls._copy_if_present(data, l2, "x_connect", "x_connect", "xConnect")
         fabric_data = cls._nested_config(l2.get("fabric_data") or l2.get("fabricData"))
         cls._copy_if_present(data, fabric_data, "multicast_group_address", "multicast_group", "multicastGroup")
-        cls._copy_if_present(data, fabric_data, "ds_vni", "ds_vni", "dsVni")
 
     @classmethod
     def _flatten_l3_data(cls, data: dict[str, Any], l3_data: Any) -> None:

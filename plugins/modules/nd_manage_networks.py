@@ -87,7 +87,7 @@ options:
         type: str
         choices: [ layer2, layer2WithVrf, layer3 ]
       x_connect:
-        description: Enable cross-connect for Layer 2 Networks only.
+        description: Enable Layer 2 cross-connect; not applicable on parent fabrics.
         type: bool
       network_template_name:
         description:
@@ -295,7 +295,7 @@ options:
         description: Routing tag; NX-OS only.
         type: int
       dhcp_servers:
-        description: DHCP server definitions.
+        description: DHCP server definitions; not applicable on parent fabrics.
         type: list
         elements: dict
         suboptions:
@@ -307,58 +307,59 @@ options:
             description: DHCP server VRF.
             type: str
       loopback_id:
-        description: Loopback ID.
+        description: Loopback ID; not applicable on parent fabrics.
         type: int
       igmp_version:
         description:
-          - IGMP version.
-          - Requires O(config[].trm_enable=true).
+          - IGMP version; not applicable on parent fabrics.
+          - Requires IPv4 TRM at the same scope.
           - NX-OS supports versions 2-3; IOS-XE supports 1-3.
         type: int
         choices: [ 1, 2, 3 ]
       trm_enable:
-        description: Enable IPv4 Tenant Routed Multicast. Requires the feature to be enabled in the owning fabric settings.
+        description: Enable IPv4 Tenant Routed Multicast; not applicable on parent fabrics.
         type: bool
       ipv6_trm:
-        description: Enable IPv6 Tenant Routed Multicast.
+        description: Enable IPv6 Tenant Routed Multicast; not applicable on parent fabrics.
         type: bool
       multicast_group_address:
-        description: Multicast group address.
+        description: Multicast group address; not applicable on parent fabrics.
         type: str
-      ds_vni:
-        description: Downstream VNI.
-        type: int
       netflow_enable:
         description:
           - Enable netflow.
           - Requires fabric NetFlow and NX-OS.
+          - Not applicable on parent fabrics.
           - Defaults to C(false) for definition creation and replacement. Omission in V(merged) preserves the current value.
         type: bool
       vlan_netflow_monitor:
         description:
           - VLAN netflow monitor name.
           - Requires O(config[].netflow_enable=true).
+          - Not applicable on parent fabrics.
           - Use a fabric-defined Layer 3 monitor; Campus requires N9000.
         type: str
       interface_netflow_monitor:
         description:
           - Interface netflow monitor name.
           - Requires O(config[].netflow_enable=true).
+          - Not applicable on parent fabrics.
           - Not valid for Layer 2 Only Networks.
           - Use a fabric-defined Layer 3 monitor on N9000; the fabric Layer 2 Record must be disabled.
         type: str
       gateway_on_border:
-        description: Enable gateway on border; effective only on border and border gateway switches.
+        description: Enable gateway on border; not applicable on parent fabrics.
         type: bool
       child_fabric_config:
         description:
           - Per-child-fabric override entries for MSD and MCFG parent fabrics.
-          - Each entry targets a child member fabric and may override multicast,
-            DHCP, TRM, netflow, and gateway settings.
-          - Omitted fields inherit the parent Network setting.
-          - C(attach), C(deploy), C(deploy_type), Network identity, VLAN,
-            gateway, custom template fields, and PVLAN fields are not valid
-            inside C(child_fabric_config).
+          - Each entry targets a child member fabric and may override its
+            fabric-instance multicast, DHCP, TRM, and NetFlow settings.
+          - Omitted fields are not explicitly changed on the child.
+          - C(attach), C(deploy), C(deploy_type), Network name, mode, VRF,
+            Network ID, VLAN ID, VLAN name, gateways, interface description,
+            MTU, routing tag, ARP suppression, custom templates,
+            and PVLAN fields remain parent-owned.
           - Ignored when C(state=deleted); child fabric tasks are not executed
             for delete operations.
         type: list
@@ -368,6 +369,9 @@ options:
             description: Child fabric name.
             type: str
             required: true
+          x_connect:
+            description: Child cross-connect; Layer 2 Networks only.
+            type: bool
           dhcp_servers:
             description: DHCP server definitions.
             type: list
@@ -399,9 +403,6 @@ options:
           multicast_group_address:
             description: Multicast group address.
             type: str
-          ds_vni:
-            description: Downstream VNI.
-            type: int
           netflow_enable:
             description: Enable NetFlow; requires child fabric NetFlow and NX-OS.
             type: bool
@@ -524,10 +525,12 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_PARENT
-        layer: layer2
+        layer: layer3
+        vrf_name: TENANT_BLUE
         network_id: 50030
         vlan_id: 2030
         vlan_name: Network_PARENT_VLAN
+        gateway_ipv4_address: 192.0.2.1/24
         child_fabric_config:
           - fabric_name: child_fabric_1
             multicast_group_address: 239.1.1.30
@@ -778,7 +781,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_wor
     NetworkWorkflowCoordinator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
-    network_parent_argument_spec,
+    network_module_argument_spec,
 )
 
 # ---------------------------------------------------------------------------
@@ -800,7 +803,7 @@ def main():
             elements="dict",
             required=False,
             default=[],
-            options=network_parent_argument_spec(),
+            options=network_module_argument_spec(),
         ),
     )
 

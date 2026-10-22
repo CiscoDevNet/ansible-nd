@@ -110,6 +110,10 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         management = details.get("management") if isinstance(details, dict) else {}
         if isinstance(management, dict) and management.get("type"):
             return management["type"]
+        for key in ("fabricType", "type"):
+            candidate = fabric_data.get(key) if isinstance(fabric_data, dict) else None
+            if candidate in NetworkType.choices():
+                return candidate
         return NetworkType.VXLAN_IBGP.value
 
     def _network_layer(self, config: dict[str, Any]) -> str | None:
@@ -1099,11 +1103,44 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "routingTag": 12345,
         }
 
+    @staticmethod
+    def _parent_definition_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        """Omit child-owned Network settings from a parent definition request."""
+        l2_data = payload.get("l2Data")
+        if isinstance(l2_data, dict):
+            l2_data.pop("xConnect", None)
+            if isinstance(l2_data.get("fabricData"), dict):
+                l2_data["fabricData"].pop("multicastGroup", None)
+                if not l2_data["fabricData"]:
+                    l2_data.pop("fabricData")
+            if not l2_data:
+                payload.pop("l2Data")
+        l3_data = payload.get("l3Data")
+        if isinstance(l3_data, dict) and isinstance(l3_data.get("fabricData"), dict):
+            fabric_data = l3_data["fabricData"]
+            for field in (
+                "dhcpServers",
+                "loopbackId",
+                "igmpVersion",
+                "ipv4Trm",
+                "ipv6Trm",
+                "netflow",
+                "l2NetflowMonitor",
+                "l3NetflowMonitor",
+                "gatewayOnBorder",
+            ):
+                fabric_data.pop(field, None)
+            if not fabric_data:
+                l3_data.pop("fabricData")
+            if not l3_data:
+                payload.pop("l3Data")
+        return payload
+
     def _create_or_update_payload(self, model_instance: NDNetworkModel) -> dict[str, Any]:
         if self.strategy.is_child:
             payload = self._child_network_update_payload(model_instance)
         elif self._is_mcfg_parent():
-            return self._mcfg_parent_network_payload(model_instance)
+            payload = self._mcfg_parent_network_payload(model_instance)
         else:
             payload = model_instance.to_payload()
         if model_instance.layer == NetworkLayer.LAYER2.value and isinstance(model_instance.l3_data, DefaultL3DataModel):
@@ -1112,12 +1149,14 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 payload["l3Data"] = applicable
             else:
                 payload.pop("l3Data", None)
-        elif model_instance.layer == NetworkLayer.LAYER2.value and not self.strategy.is_child:
+        elif model_instance.layer == NetworkLayer.LAYER2.value and not self.strategy.is_child and not self._is_mcfg_parent():
             payload.pop("l3Data", None)
         if payload.get("vlanNetworkType") in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             payload.pop("vlanId", None)
             payload.pop("l2Data", None)
             payload.pop("l3Data", None)
+        if self.strategy.is_parent:
+            payload = self._parent_definition_payload(payload)
         return payload
 
     def create(self, model_instance: NDNetworkModel, **kwargs) -> ResponseType:

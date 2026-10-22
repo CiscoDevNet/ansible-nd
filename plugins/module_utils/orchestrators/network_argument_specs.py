@@ -3,6 +3,7 @@
 
 """Argument-spec helpers for nd_manage_networks.py."""
 
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import PARENT_CHILD_ONLY_NETWORK_FIELDS
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     DpuAffinity,
     MappingType,
@@ -62,6 +63,7 @@ def _shared_network_fields():
     return dict(
         network_id=dict(type="int"),
         vlan_id=dict(type="int"),
+        x_connect=dict(type="bool"),
         vlan_network_type=dict(type="str", choices=_VLAN_NETWORK_TYPE_CHOICES),
         primary_network_id=dict(type="int"),
         vlan_name=dict(type="str"),
@@ -79,7 +81,6 @@ def _shared_network_fields():
         trm_enable=dict(type="bool"),
         ipv6_trm=dict(type="bool"),
         multicast_group_address=dict(type="str"),
-        ds_vni=dict(type="int"),
         netflow_enable=dict(type="bool"),
         vlan_netflow_monitor=dict(type="str"),
         interface_netflow_monitor=dict(type="str"),
@@ -88,18 +89,19 @@ def _shared_network_fields():
 
 
 def _child_network_fields():
+    shared = _shared_network_fields()
     return dict(
-        multicast_group_address=dict(type="str"),
-        ds_vni=dict(type="int"),
-        dhcp_servers=dict(type="list", elements="dict", options=_dhcp_server_spec()),
-        loopback_id=dict(type="int"),
-        igmp_version=dict(type="int", choices=[1, 2, 3]),
-        trm_enable=dict(type="bool"),
-        ipv6_trm=dict(type="bool"),
-        netflow_enable=dict(type="bool"),
-        vlan_netflow_monitor=dict(type="str"),
-        interface_netflow_monitor=dict(type="str"),
-        gateway_on_border=dict(type="bool"),
+        x_connect=shared["x_connect"],
+        multicast_group_address=shared["multicast_group_address"],
+        dhcp_servers=shared["dhcp_servers"],
+        loopback_id=shared["loopback_id"],
+        igmp_version=shared["igmp_version"],
+        trm_enable=shared["trm_enable"],
+        ipv6_trm=shared["ipv6_trm"],
+        netflow_enable=shared["netflow_enable"],
+        vlan_netflow_monitor=shared["vlan_netflow_monitor"],
+        interface_netflow_monitor=shared["interface_netflow_monitor"],
+        gateway_on_border=shared["gateway_on_border"],
     )
 
 
@@ -110,7 +112,6 @@ def network_base_argument_spec():
         display_name=dict(type="str"),
         vrf_name=dict(type="str"),
         layer=dict(type="str", choices=NetworkLayer.choices()),
-        x_connect=dict(type="bool"),
         network_template_name=dict(type="str"),
         network_extension_template_name=dict(type="str"),
         service_network_template_name=dict(type="str"),
@@ -132,9 +133,20 @@ def _child_fabric_config_element_spec():
 def network_parent_argument_spec():
     """Argument spec for a network config entry on parent fabrics."""
     spec = network_base_argument_spec()
+    for field in PARENT_CHILD_ONLY_NETWORK_FIELDS:
+        spec.pop(field)
     spec["child_fabric_config"] = dict(
         type="list",
         elements="dict",
         options=_child_fabric_config_element_spec(),
     )
+    return spec
+
+
+def network_module_argument_spec():
+    """Static module spec covering both standalone and parent fabrics."""
+    spec = network_parent_argument_spec()
+    shared = _shared_network_fields()
+    for field in PARENT_CHILD_ONLY_NETWORK_FIELDS:
+        spec[field] = shared[field]
     return spec

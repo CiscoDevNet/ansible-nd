@@ -96,6 +96,13 @@ def test_public_vlan_network_type_preserves_missing_value():
     [
         (NetworkInterfaceConfigModel, {"interface_range": "Ethernet1/1", "mapping_type": "invalid"}, "mapping_type must be one of"),
         (NetworkChildConfigModel, {"fabric_name": "site1", "l2_fabric_data": {}}, "l2_fabric_data is not supported"),
+        (NetworkChildConfigModel, {"fabric_name": "site1", "vlan_name": "CHILD_VLAN"}, "Extra inputs are not permitted"),
+        (NetworkChildConfigModel, {"fabric_name": "site1", "vlanName": "CHILD_VLAN"}, "Extra inputs are not permitted"),
+        (
+            NetworkParentConfigModel,
+            {"network_name": "N", "layer": "layer2", "child_fabric_config": [{"fabric_name": "site1", "vlan_name": "CHILD_VLAN"}]},
+            "Extra inputs are not permitted",
+        ),
         (NetworkConfigModel, {"network_name": "N", "layer": "layer2", "primary_network_id": 10}, "normal networks do not use primary_network_id"),
         (
             NetworkConfigModel,
@@ -125,6 +132,231 @@ def test_network_optional_fields_preserve_explicit_none_and_empty_child_monitor(
     assert model.vlan_network_type is None
     assert child.vlan_netflow_monitor is None
     assert child.interface_netflow_monitor is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("x_connect", False),
+        ("multicast_group_address", "239.1.1.53"),
+    ],
+)
+def test_network_child_accepts_fabric_instance_values(field, value):
+    child = NetworkChildConfigModel.from_config({"fabric_name": "site1", field: value})
+    assert child.to_config(exclude_unset=True)[field] == value
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("gateway_ipv4_address", "192.0.2.1/24"),
+        ("gateway_ipv6_address", "2001:db8::1/64"),
+        ("secondary_gateway_ipv6_collection", ["2001:db8::2/64"]),
+        ("vlan_intf_desc", "Child SVI"),
+        ("mtu", 9000),
+        ("routing_tag", 77),
+    ],
+)
+def test_network_child_rejects_parent_owned_fields(field, value):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        NetworkChildConfigModel.from_config({"fabric_name": "site1", field: value})
+
+
+@pytest.mark.parametrize("field", ["ds_vni", "dsVni"])
+def test_downstream_vni_is_not_a_public_network_config_field(field):
+    config = {"network_name": "BLUE_NET", "layer": "layer2", field: 901031}
+    assert "ds_vni" not in NetworkConfigModel.from_config(config).to_config(exclude_unset=True)
+    assert "ds_vni" not in NetworkParentConfigModel.from_config(config).to_config(exclude_unset=True)
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        NetworkChildConfigModel.from_config({"fabric_name": "site1", field: 901031})
+
+
+@pytest.mark.parametrize("field", ["arp_suppression", "arpSuppression"])
+def test_network_child_rejects_parent_owned_arp_suppression(field):
+    with pytest.raises(ValidationError, match="arp_suppression is parent-owned"):
+        NetworkChildConfigModel.from_config({"fabric_name": "site1", field: True})
+
+
+@pytest.mark.parametrize(
+    "layer,vrf_name,field,value",
+    [
+        ("layer3", "BLUE", "x_connect", True),
+    ],
+)
+def test_network_parent_rejects_child_override_in_incompatible_mode(layer, vrf_name, field, value):
+    with pytest.raises(ValidationError, match="child_fabric_config"):
+        NetworkParentConfigModel.from_config(
+            {
+                "network_name": "N",
+                "layer": layer,
+                "vrf_name": vrf_name,
+                "child_fabric_config": [{"fabric_name": "site1", field: value}],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "parent_feature,child_field,value",
+    [
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
+    ],
+)
+def test_network_child_dependencies_require_child_enablement(parent_feature, child_field, value):
+    config = {
+        "network_name": "N",
+        "layer": "layer3",
+        "vrf_name": "BLUE",
+        parent_feature: True,
+        "child_fabric_config": [{"fabric_name": "site1", child_field: value}],
+    }
+    with pytest.raises(ValidationError, match="requires netflow_enable=true on the child"):
+        NetworkParentConfigModel.from_config(config)
+    config["child_fabric_config"][0][parent_feature] = True
+    model = NetworkParentConfigModel.from_config(config)
+    child = model.to_config(exclude_unset=True)["child_fabric_config"][0]
+    assert child[parent_feature] is True
+    assert child[child_field] == value
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("x_connect", False),
+        ("xConnect", False),
+        ("multicast_group_address", "239.1.1.53"),
+        ("multicastGroup", "239.1.1.53"),
+        ("dhcp_servers", [{"server_address": "192.0.2.10"}]),
+        ("dhcpServers", [{"serverAddress": "192.0.2.10"}]),
+        ("loopback_id", 101),
+        ("loopbackId", 101),
+        ("trm_enable", True),
+        ("trmEnable", False),
+        ("igmp_version", 3),
+        ("igmpVersion", 3),
+        ("ipv6_trm", True),
+        ("ipv6Trm", False),
+        ("netflow_enable", False),
+        ("netflowEnable", False),
+        ("vlan_netflow_monitor", "VLAN_MON"),
+        ("l2NetflowMonitor", "VLAN_MON"),
+        ("interface_netflow_monitor", "INT_MON"),
+        ("l3NetflowMonitor", "INT_MON"),
+        ("gateway_on_border", False),
+        ("gatewayOnBorder", False),
+    ],
+)
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("fabric_type", ["multisite_parent", "multicluster_parent"])
+def test_parent_network_discards_child_only_top_level_options(field, value, state, fabric_type):
+    input_config = {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", field: value}
+    model = NetworkParentConfigModel.from_config(input_config, context={"state": state, "fabric_type": fabric_type})
+
+    assert input_config[field] == value
+    assert model.to_config(exclude_unset=True) == {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}
+
+
+def test_msd_parent_network_keeps_child_options_when_top_level_values_are_discarded():
+    model = NetworkParentConfigModel.from_config(
+        {
+            "network_name": "N",
+            "layer": "layer3",
+            "vrf_name": "BLUE",
+            "x_connect": True,
+            "multicast_group_address": "239.1.1.2",
+            "dhcp_servers": [{"server_address": "192.0.2.2"}],
+            "loopback_id": 100,
+            "trm_enable": False,
+            "igmp_version": 2,
+            "ipv6_trm": False,
+            "netflow_enable": False,
+            "vlan_netflow_monitor": "PARENT_MON",
+            "interface_netflow_monitor": "PARENT_INT",
+            "gateway_on_border": False,
+            "child_fabric_config": [
+                {
+                    "fabric_name": "site1",
+                    "x_connect": False,
+                    "multicast_group_address": "239.1.1.53",
+                    "dhcp_servers": [{"server_address": "192.0.2.10"}],
+                    "loopback_id": 101,
+                    "trm_enable": True,
+                    "igmp_version": 3,
+                    "ipv6_trm": True,
+                    "netflow_enable": True,
+                    "vlan_netflow_monitor": "VLAN_MON",
+                    "interface_netflow_monitor": "INT_MON",
+                    "gateway_on_border": True,
+                }
+            ],
+        },
+        context={"fabric_type": "multisite_parent"},
+    )
+
+    config = model.to_config(exclude_unset=True)
+    assert set(config) == {"network_name", "layer", "vrf_name", "child_fabric_config"}
+    child = config["child_fabric_config"][0]
+    assert child["fabric_name"] == "site1"
+    assert child["multicast_group_address"] == "239.1.1.53"
+    assert child["dhcp_servers"] == [{"server_address": "192.0.2.10"}]
+    assert child["trm_enable"] is True
+    assert child["netflow_enable"] is True
+    assert child["gateway_on_border"] is True
+
+
+def test_mcfg_parent_network_discards_child_only_top_level_options():
+    input_config = {
+        "network_name": "N",
+        "layer": "layer3",
+        "vrf_name": "BLUE",
+        "x_connect": False,
+        "multicast_group_address": "239.1.1.53",
+        "dhcp_servers": [{"server_address": "192.0.2.10"}],
+        "loopback_id": 101,
+        "trm_enable": True,
+        "igmp_version": 3,
+        "ipv6_trm": True,
+        "netflow_enable": True,
+        "vlan_netflow_monitor": "VLAN_MON",
+        "interface_netflow_monitor": "INT_MON",
+        "gateway_on_border": True,
+    }
+    model = NetworkParentConfigModel.from_config(input_config, context={"fabric_type": "multicluster_parent"})
+
+    assert model.to_config(exclude_unset=True) == {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}
+
+
+@pytest.mark.parametrize(
+    "parent_feature,child_field,value",
+    [
+        ("trm_enable", "igmp_version", 3),
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
+    ],
+)
+def test_network_child_dependencies_require_enabled_parent_or_child(parent_feature, child_field, value):
+    config = {
+        "network_name": "N",
+        "layer": "layer3",
+        "vrf_name": "BLUE",
+        "child_fabric_config": [{"fabric_name": "site1", child_field: value}],
+    }
+    with pytest.raises(ValidationError, match=f"{child_field} requires {parent_feature}=true"):
+        NetworkParentConfigModel.from_config(config)
+
+    config["child_fabric_config"][0][parent_feature] = True
+    assert getattr(NetworkParentConfigModel.from_config(config).child_fabric_config[0], parent_feature) is True
+
+    config["child_fabric_config"][0][parent_feature] = False
+    with pytest.raises(ValidationError, match=f"{parent_feature}=true"):
+        NetworkParentConfigModel.from_config(config)
+
+
+@pytest.mark.parametrize("state", ["gathered", "deleted"])
+def test_network_read_only_and_deleted_skip_child_feature_prerequisites(state):
+    config = {"network_name": "N", "child_fabric_config": [{"fabric_name": "site1", "igmp_version": 3}]}
+    model = NetworkParentConfigModel.from_config(config, context={"state": state})
+    assert model.child_fabric_config[0].trm_enable is None
 
 
 @pytest.mark.parametrize(

@@ -27,7 +27,7 @@ from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkChildConfigModel, NetworkConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
@@ -63,6 +63,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ValidationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
 
 class NetworkWorkflowCoordinator:
@@ -225,6 +226,20 @@ class NetworkWorkflowCoordinator:
         - If a child feature requires a disabled fabric setting.
         """
         preflight_child_feature_tasks(child_tasks, state, self._new_state_machine, self._preflight_fabric_features, self._restore_state_machine_params)
+        if state in ("gathered", "deleted"):
+            return
+        for child_task in child_tasks.values():
+            sm = child_task.get("preflight_state_machine")
+            if sm is None:
+                continue
+            for entry in child_task["module_args"]["config"]:
+                existing = sm.existing.get(entry["network_name"])
+                layer = entry.get("layer") or getattr(existing, "layer", None)
+                try:
+                    child_options = {key: value for key, value in entry.items() if key not in ("network_name", "layer")}
+                    NetworkChildConfigModel.from_config({"fabric_name": child_task["fabric"], **child_options}).validate_layer(layer)
+                except ValueError as exc:
+                    raise NDStateMachineError(str(exc)) from exc
 
     def _trace_enabled(self) -> bool:
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
@@ -306,12 +321,12 @@ class NetworkWorkflowCoordinator:
         parsed = []
         for idx, entry in enumerate(config):
             try:
-                operational_only = isinstance(entry, dict) and not NDNetworkOrchestrator.has_network_definition_intent(entry)
                 context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(self.strategy.fabric_data)}
                 if NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
                     context["defer_omitted_layer"] = True
                 model = model_cls.from_config(entry, context=context)
                 parsed_config = model.to_config(exclude_unset=True)
+                operational_only = not NDNetworkOrchestrator.has_network_definition_intent(parsed_config)
                 if operational_only:
                     sparse_config = {"network_name": parsed_config["network_name"]}
                     for key in ("attach", "deploy", "deploy_type"):
@@ -446,6 +461,10 @@ class NetworkWorkflowCoordinator:
             defer_deploy=True,
         )
         self._trace("parent_state_machine_end", changed=parent_result.get("changed"), failed=parent_result.get("failed"))
+
+        if state == "gathered" and isinstance(parent_result.get("gathered"), list):
+            parent_spec = self.strategy.get_argument_spec()
+            parent_result["gathered"] = [prune_to_spec(item, parent_spec) for item in parent_result["gathered"]]
 
         if parent_result.get("changed") and not self.module.check_mode:
             for child_task in child_tasks_dict.values():

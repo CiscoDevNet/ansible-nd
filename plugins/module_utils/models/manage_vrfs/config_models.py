@@ -25,6 +25,7 @@ from typing import ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -45,6 +46,18 @@ _CUSTOM_VRF_TEMPLATE_FIELDS = (
     "vrf_template_name",
     "vrf_extension_template_name",
     "vrf_template_config",
+)
+
+_CHILD_TRM_DEPENDENT_FIELDS = (
+    "no_rp",
+    "rp_external",
+    "rp_address",
+    "rp_loopback_id",
+    "underlay_mcast_ip",
+    "overlay_mcast_group",
+    "trm_bgw_msite",
+    "import_mvpn_rt",
+    "export_mvpn_rt",
 )
 
 
@@ -347,18 +360,7 @@ class VrfChildConfigModel(NDNestedModel):
     def _check_trm_fields(self):
         """Forbid TRM-dependent fields when trm_enable is explicitly False."""
         if self.trm_enable is False:
-            trm_fields = {
-                "no_rp": self.no_rp,
-                "rp_external": self.rp_external,
-                "rp_address": self.rp_address,
-                "rp_loopback_id": self.rp_loopback_id,
-                "underlay_mcast_ip": self.underlay_mcast_ip,
-                "overlay_mcast_group": self.overlay_mcast_group,
-                "trm_bgw_msite": self.trm_bgw_msite,
-                "import_mvpn_rt": self.import_mvpn_rt,
-                "export_mvpn_rt": self.export_mvpn_rt,
-            }
-            set_fields = [k for k, v in trm_fields.items() if v is not None]
+            set_fields = [field for field in _CHILD_TRM_DEPENDENT_FIELDS if getattr(self, field) is not None]
             if set_fields:
                 raise ValueError(f"The following fields require trm_enable=True: " f"{', '.join(set_fields)}")
         return self
@@ -381,6 +383,8 @@ class VrfChildConfigModel(NDNestedModel):
         """Require nf_monitor when netflow_enable=True."""
         if self.netflow_enable is True and not self.nf_monitor:
             raise ValueError("nf_monitor is required when netflow_enable=True")
+        if self.netflow_enable is False and self.nf_monitor is not None:
+            raise ValueError("nf_monitor requires netflow_enable=True")
         return self
 
     @model_validator(mode="after")
@@ -1320,4 +1324,31 @@ class VrfParentConfigModel(NDBaseModel):
                 bad["rp_address"] = self.rp_address
             if bad:
                 raise ValueError(f"The following fields are not applicable when no_rp=True: " f"{', '.join(bad.keys())}")
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_child_feature_dependencies(self, info: ValidationInfo):
+        """
+        # Summary
+
+        Resolve child feature prerequisites from explicit parent settings.
+
+        ## Raises
+
+        ### ValueError
+
+        - A child dependency is set without enabling its feature on either scope.
+        """
+        if (info.context or {}).get("state") in ("gathered", "deleted"):
+            return self
+        for child in self.child_fabric_config or []:
+            trm_fields = [field for field in _CHILD_TRM_DEPENDENT_FIELDS if getattr(child, field) is not None]
+            if trm_fields and child.trm_enable is None:
+                if self.trm_enable is not True:
+                    raise ValueError(f"child_fabric_config[{child.fabric_name}].{trm_fields[0]} requires trm_enable=True on the child or parent")
+                child.trm_enable = True
+            if child.nf_monitor is not None and child.netflow_enable is None:
+                if self.netflow_enable is not True:
+                    raise ValueError(f"child_fabric_config[{child.fabric_name}].nf_monitor requires netflow_enable=True on the child or parent")
+                child.netflow_enable = True
         return self

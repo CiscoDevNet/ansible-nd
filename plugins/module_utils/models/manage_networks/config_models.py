@@ -108,8 +108,6 @@ NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
         "xConnect",
         "multicast_group_address",
         "multicastGroup",
-        "ds_vni",
-        "dsVni",
         "gateway_ipv4_address",
         "gatewayIpv4Address",
         "gateway_ipv6_address",
@@ -283,11 +281,13 @@ class NetworkAttachmentConfigModel(NDNestedModel):
 class NetworkChildConfigModel(NDNestedModel):
     """Per-child-fabric override entry for MSD/MFD parent workflows."""
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     fabric_name: str
+    x_connect: bool | None = Field(default=None, alias="xConnect")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
-    ds_vni: int | None = Field(default=None, alias="dsVni")
     dhcp_servers: list[dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
     loopback_id: int | None = Field(default=None, alias="loopbackId")
     igmp_version: int | None = Field(default=None, alias="igmpVersion")
@@ -305,8 +305,10 @@ class NetworkChildConfigModel(NDNestedModel):
             return data
 
         normalized = dict(data)
+        if "arp_suppression" in normalized or "arpSuppression" in normalized:
+            raise ValueError("arp_suppression is parent-owned and cannot be set in child_fabric_config")
         if "l2_fabric_data" in normalized or "l2FabricData" in normalized:
-            raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address and ds_vni")
+            raise ValueError("l2_fabric_data is not supported; use multicast_group_address in child_fabric_config")
 
         normalized["dhcp_servers"] = NetworkConfigModel._normalize_dhcp_servers(normalized)
         return normalized
@@ -330,15 +332,11 @@ class NetworkChildConfigModel(NDNestedModel):
 
     @model_validator(mode="after")
     def _check_child_cross_field_rules(self):
-        self._validate_igmp_trm_binding(
-            igmp_version=self.igmp_version,
-            trm_enable=self.trm_enable,
-        )
-        self._validate_netflow_monitor_bindings(
-            netflow_enable=self.netflow_enable,
-            vlan_netflow_monitor=self.vlan_netflow_monitor,
-            interface_netflow_monitor=self.interface_netflow_monitor,
-        )
+        if self.igmp_version is not None and self.trm_enable is False:
+            raise ValueError("igmp_version requires trm_enable=true")
+        monitors = [field for field in ("vlan_netflow_monitor", "interface_netflow_monitor") if getattr(self, field) is not None]
+        if monitors and self.netflow_enable is False:
+            raise ValueError("netflow monitor fields require netflow_enable=true: " + ", ".join(monitors))
         return self
 
     @staticmethod
@@ -361,6 +359,19 @@ class NetworkChildConfigModel(NDNestedModel):
         if configured and netflow_enable is not True:
             raise ValueError("netflow monitor fields require netflow_enable=true: " + ", ".join(configured))
 
+    def validate_layer(self, layer: str | None) -> None:
+        """Validate child overrides against the effective child Network mode."""
+        if layer == NetworkLayer.LAYER2.value:
+            if self.interface_netflow_monitor is not None:
+                raise ValueError(f"child_fabric_config[{self.fabric_name}].interface_netflow_monitor is not valid for layer2 networks")
+            invalid = sorted(
+                field for field in (_L3_LAYER_INTENT_FIELDS - {"interface_netflow_monitor"}) & self.model_fields_set if getattr(self, field, None) is not None
+            )
+            if invalid:
+                raise ValueError(f"child_fabric_config[{self.fabric_name}] layer2 networks do not support L3 properties: {', '.join(invalid)}")
+        elif layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value) and self.x_connect:
+            raise ValueError(f"child_fabric_config[{self.fabric_name}].x_connect is only valid for layer2 networks")
+
 
 class NetworkConfigModel(NDBaseModel):
     """Playbook-facing network config for standalone fabrics."""
@@ -380,7 +391,6 @@ class NetworkConfigModel(NDBaseModel):
     vlan_name: str | None = Field(default=None, alias="vlanName")
     x_connect: bool | None = Field(default=None, alias="xConnect")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
-    ds_vni: int | None = Field(default=None, alias="dsVni")
     gateway_ipv4_address: str | None = Field(default=None, alias="gatewayIpv4Address")
     gateway_ipv6_address: str | None = Field(default=None, alias="gatewayIpv6Address")
     secondary_gateway_ipv4_collection: list[str] | None = Field(default=None, alias="secondaryGatewayIpv4Collection")
@@ -415,7 +425,7 @@ class NetworkConfigModel(NDBaseModel):
 
         normalized = dict(data)
         if "l2_fabric_data" in normalized or "l2FabricData" in normalized:
-            raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address and ds_vni")
+            raise ValueError("l2_fabric_data is not supported; use explicit L2 fabric fields such as multicast_group_address")
 
         normalized["dhcp_servers"] = cls._normalize_dhcp_servers(normalized)
         context = info.context or {}
@@ -651,7 +661,6 @@ class NetworkConfigModel(NDBaseModel):
             "interface_netflow_monitor": None,
             "gateway_on_border": None,
             "x_connect": None,
-            "ds_vni": None,
             "network_template_name": None,
             "network_extension_template_name": None,
             "service_network_template_name": None,
@@ -681,16 +690,64 @@ class NetworkConfigModel(NDBaseModel):
                     )
 
 
+PARENT_CHILD_ONLY_NETWORK_FIELDS = (
+    "x_connect",
+    "multicast_group_address",
+    "dhcp_servers",
+    "loopback_id",
+    "igmp_version",
+    "trm_enable",
+    "ipv6_trm",
+    "netflow_enable",
+    "vlan_netflow_monitor",
+    "interface_netflow_monitor",
+    "gateway_on_border",
+)
+
+
 class NetworkParentConfigModel(NetworkConfigModel):
     """Parent-fabric network config with child overrides."""
 
     child_fabric_config: list[NetworkChildConfigModel] | None = Field(default=None, alias="childFabricConfig")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _discard_child_only_top_level_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        filtered = dict(data)
+        for field in PARENT_CHILD_ONLY_NETWORK_FIELDS:
+            filtered.pop(field, None)
+            filtered.pop(cls.model_fields[field].alias, None)
+        return filtered
+
     @model_validator(mode="after")
-    def _check_child_layer_rules(self):
-        if self.layer != NetworkLayer.LAYER2.value:
+    def _check_child_layer_rules(self, info: ValidationInfo):
+        if (info.context or {}).get("state") in ("gathered", "deleted"):
             return self
-        invalid_children = [child.fabric_name for child in self.child_fabric_config or [] if child.interface_netflow_monitor is not None]
-        if invalid_children:
-            raise ValueError("child_fabric_config[].interface_netflow_monitor is not valid for layer2 networks: " + ", ".join(invalid_children))
+        for child in self.child_fabric_config or []:
+            child.validate_layer(self.layer)
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_child_feature_dependencies(self, info: ValidationInfo):
+        """
+        # Summary
+
+        Resolve child feature prerequisites from the child settings.
+
+        ## Raises
+
+        ### ValueError
+
+        - A child dependency is set without enabling its feature on that child.
+        """
+        if (info.context or {}).get("state") in ("gathered", "deleted"):
+            return self
+        for child in self.child_fabric_config or []:
+            if child.igmp_version is not None and child.trm_enable is not True:
+                raise ValueError(f"child_fabric_config[{child.fabric_name}].igmp_version requires trm_enable=true on the child")
+            monitors = [field for field in ("vlan_netflow_monitor", "interface_netflow_monitor") if getattr(child, field) is not None]
+            if monitors and child.netflow_enable is not True:
+                raise ValueError(f"child_fabric_config[{child.fabric_name}].{monitors[0]} requires netflow_enable=true on the child")
         return self

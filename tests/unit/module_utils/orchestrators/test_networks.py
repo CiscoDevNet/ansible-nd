@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from types import SimpleNamespace
 from unittest.mock import patch
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 
@@ -23,6 +24,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.en
     VlanNetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import (
+    network_base_argument_spec,
+    network_module_argument_spec,
     network_parent_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
@@ -55,6 +58,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
     MultisiteParentNetworkStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
 class _Module:
@@ -108,6 +113,9 @@ class _ParentStrategy:
 
     def child_fabric_members(self):
         return ["child1"]
+
+    def get_argument_spec(self):
+        return network_parent_argument_spec()
 
     def build_child_task_args(self, child_fabric_name, network_configs, state):
         return {
@@ -413,7 +421,7 @@ def _orchestrator():
 
 
 def _validated_network_config(config):
-    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_parent_argument_spec()}})
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_module_argument_spec()}})
     result = validator.validate({"config": config})
     assert not result.error_messages
     return result.validated_parameters["config"]
@@ -778,17 +786,72 @@ def test_network_parent_argument_spec_includes_child_config():
     assert spec["deploy_type"]["choices"] == ["switch", "network"]
     assert spec["vlan_network_type"]["choices"] == ["normal", "primary", "community", "isolated"]
     assert "network_id" not in child_spec
+    assert child_spec["x_connect"] == network_module_argument_spec()["x_connect"]
+    for field in (
+        "gateway_ipv4_address",
+        "gateway_ipv6_address",
+        "secondary_gateway_ipv6_collection",
+        "vlan_intf_desc",
+        "mtu",
+        "routing_tag",
+    ):
+        assert field in spec
+        assert field not in child_spec
+    assert "ds_vni" not in spec
+    assert "ds_vni" not in child_spec
+    assert "vrf_name" not in child_spec
+    assert "layer" not in child_spec
+    assert "network_name" not in child_spec
     assert "vlan_id" not in child_spec
     assert "vlan_name" not in child_spec
-    assert "vrf_name" not in child_spec
-    assert "gateway_ipv4_address" not in child_spec
-    assert "routing_tag" not in child_spec
-    assert "mtu" not in child_spec
+    assert "secondary_gateway_ipv4_collection" not in child_spec
+    assert "arp_suppression" not in child_spec
     assert "attach" not in child_spec
     assert "enable_ir" not in child_spec
     assert "l2_fabric_data" not in child_spec
     assert "netflow_enable" in child_spec
     assert "gateway_on_border" in child_spec
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("network_name", "OTHER"),
+        ("layer", "layer2"),
+        ("vrf_name", "OTHER"),
+        ("network_id", 901031),
+        ("vlan_id", 3131),
+        ("vlan_name", "CHILD_VLAN"),
+        ("secondary_gateway_ipv4_collection", ["192.0.2.2/24"]),
+        ("arp_suppression", True),
+        ("gateway_ipv4_address", "192.0.2.1/24"),
+        ("gateway_ipv6_address", "2001:db8::1/64"),
+        ("secondary_gateway_ipv6_collection", ["2001:db8::2/64"]),
+        ("vlan_intf_desc", "Child SVI"),
+        ("mtu", 9000),
+        ("routing_tag", 77),
+    ],
+)
+def test_network_child_argument_spec_rejects_parent_owned_fields(field, value):
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_parent_argument_spec()}})
+    result = validator.validate({"config": [{"network_name": "BLUE_NET", "child_fabric_config": [{"fabric_name": "child1", field: value}]}]})
+    assert result.error_messages
+    assert field in str(result.error_messages)
+
+
+def test_network_downstream_vni_is_not_in_argument_spec():
+    standalone = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_base_argument_spec()}})
+    rejected = standalone.validate({"config": [{"network_name": "BLUE_NET", "ds_vni": 901031}]})
+    assert rejected.error_messages
+    assert "ds_vni" in str(rejected.error_messages)
+
+    parent = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_parent_argument_spec()}})
+    rejected = parent.validate({"config": [{"network_name": "BLUE_NET", "ds_vni": 901031}]})
+    assert rejected.error_messages
+    assert "ds_vni" in str(rejected.error_messages)
+    rejected = parent.validate({"config": [{"network_name": "BLUE_NET", "child_fabric_config": [{"fabric_name": "child1", "ds_vni": 901031}]}]})
+    assert rejected.error_messages
+    assert "ds_vni" in str(rejected.error_messages)
 
 
 def test_network_config_model_accepts_user_facing_pvlan_types_only():
@@ -1070,7 +1133,7 @@ def test_parent_config_accepts_child_fabric_overrides():
                 {
                     "fabric_name": "child1",
                     "multicast_group_address": "239.1.1.53",
-                    "gateway_on_border": True,
+                    "x_connect": True,
                 }
             ],
         }
@@ -1078,7 +1141,7 @@ def test_parent_config_accepts_child_fabric_overrides():
 
     assert model.to_config()["child_fabric_config"][0]["fabric_name"] == "child1"
     assert model.to_config()["child_fabric_config"][0]["multicast_group_address"] == "239.1.1.53"
-    assert model.to_config()["child_fabric_config"][0]["gateway_on_border"] is True
+    assert model.to_config()["child_fabric_config"][0]["x_connect"] is True
 
 
 def test_child_task_inherits_parent_network_name_and_layer_context():
@@ -1107,6 +1170,220 @@ def test_child_task_inherits_parent_network_name_and_layer_context():
     assert "vlan_id" not in child_config
     assert "vlan_name" not in child_config
     assert "vrf_name" not in child_config
+
+
+@pytest.mark.parametrize("network_type", ["vxlanIbgp", "vxlanCampus"])
+def test_child_override_preserves_read_back_parent_owned_identity(network_type):
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
+        strategy=ChildNetworkStrategy(fabric_name="child1", fabric_data={"fabricType": network_type, "fabricState": "member"}),
+    )
+    desired = orchestrator.model_class.from_config(
+        orchestrator.prepare_config_data([{"network_name": "BLUE_NET", "layer": "layer3", "multicast_group_address": "239.1.1.53"}])[0]
+    )
+    current = orchestrator.model_class.from_response(
+        {
+            "fabricName": "child1",
+            "networkName": "BLUE_NET",
+            "networkType": network_type,
+            "networkMode": "layer3",
+            "networkId": 901030,
+            "vrfName": "BLUE_VRF",
+            "vlanId": 3130,
+            "l2Data": {"vlanName": "PARENT_VLAN", "fabricData": {"multicastGroup": "239.1.1.0", "dsVni": 60050}},
+            "l3Data": {"arpSuppression": True, "secondaryGatewayIpv4Collection": ["192.0.2.2/24"]},
+        }
+    )
+    payload = orchestrator._create_or_update_payload(current.merge(desired))
+    assert payload["networkType"] == network_type
+    assert payload["networkId"] == 901030
+    assert payload["vrfName"] == "BLUE_VRF"
+    assert payload["networkMode"] == "layer3"
+    assert payload["vlanId"] == 3130
+    assert payload["l3Data"]["arpSuppression"] is True
+    assert payload["l3Data"]["secondaryGatewayIpv4Collection"] == ["192.0.2.2/24"]
+    assert payload["l2Data"]["vlanName"] == "PARENT_VLAN"
+    assert payload["l2Data"]["fabricData"]["multicastGroup"] == "239.1.1.53"
+    assert payload["l2Data"]["fabricData"]["dsVni"] == 60050
+
+
+@pytest.mark.parametrize(
+    "fabric_data,expected",
+    [
+        ({"fabricType": "MSD"}, "vxlanIbgp"),
+        ({"fabricType": "vxlanCampus"}, "vxlanCampus"),
+        ({"type": "vxlanEbgp"}, "vxlanEbgp"),
+        ({"fabricType": "vxlanCampus", "managementType": "vxlanIbgp"}, "vxlanIbgp"),
+    ],
+)
+def test_network_default_type_uses_valid_member_discriminator(fabric_data, expected):
+    assert NDNetworkOrchestrator.default_network_type(fabric_data) == expected
+
+
+@pytest.mark.parametrize("parent_type", ["msd", "mcfg"])
+def test_parent_child_network_ui_overrides_reach_child_manage_payload(parent_type):
+    parent = {
+        "network_name": "BLUE_NET",
+        "layer": "layer3",
+        "vrf_name": "BLUE_VRF",
+        "network_id": 901030,
+        "vlan_id": 3130,
+        "arp_suppression": True,
+        "gateway_ipv4_address": "192.0.2.1/24",
+        "gateway_ipv6_address": "2001:db8::1/64",
+        "secondary_gateway_ipv6_collection": ["2001:db8::2/64"],
+        "vlan_intf_desc": "Parent SVI",
+        "mtu": 9000,
+        "routing_tag": 77,
+        "child_fabric_config": [
+            {
+                "fabric_name": "child1",
+                "multicast_group_address": "239.1.1.53",
+                "dhcp_servers": [{"server_address": "198.51.100.1", "server_vrf": "management"}],
+                "loopback_id": 101,
+                "igmp_version": 3,
+                "trm_enable": True,
+                "ipv6_trm": True,
+                "netflow_enable": True,
+                "vlan_netflow_monitor": "VLAN_MON",
+                "interface_netflow_monitor": "INTF_MON",
+                "gateway_on_border": True,
+            }
+        ],
+    }
+    validated = _validated_network_config([parent])[0]
+    strategy = _ParentStrategy()
+    if parent_type == "mcfg":
+        strategy = MulticlusterParentNetworkStrategy(
+            fabric_name="MCFG_P",
+            fabric_data={"members": [{"fabricName": "child1", "clusterName": "cluster1"}]},
+        )
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": [validated]}), strategy)
+    parsed = coordinator._parse_config([validated], NetworkParentConfigModel, "merged")[0]
+    parent_strategy = strategy if parent_type == "mcfg" else MultisiteParentNetworkStrategy(fabric_name="msd_p", fabric_data={"managementType": "vxlanIbgp"})
+    parent_orchestrator = NDNetworkOrchestrator(rest_send=RestSend({"state": "replaced"}), strategy=parent_strategy)
+    parent_model = parent_orchestrator.model_class.from_config(parent_orchestrator.prepare_config_data([parsed])[0])
+    parent_requests = []
+    object.__setattr__(parent_orchestrator, "_request", lambda **kwargs: parent_requests.append(kwargs) or {})
+    parent_orchestrator.create_bulk([parent_model])
+    parent_payload = parent_requests[0]["data"]["networks"][0]
+    expected_prefix = "/api/v1/oneManage/manage" if parent_type == "mcfg" else "/api/v1/manage"
+    assert parent_requests[0]["path"].startswith(expected_prefix)
+    assert "xConnect" not in parent_payload.get("l2Data", {})
+    assert "multicastGroup" not in parent_payload.get("l2Data", {}).get("fabricData", {})
+    assert "fabricData" not in parent_payload.get("l3Data", {})
+    for field in ("gateway_ipv4_address", "gateway_ipv6_address", "secondary_gateway_ipv6_collection", "vlan_intf_desc", "mtu", "routing_tag"):
+        assert parsed[field] == parent[field]
+    child = parsed["child_fabric_config"][0]
+    assert not {"gateway_ipv4_address", "gateway_ipv6_address", "secondary_gateway_ipv6_collection", "vlan_intf_desc", "mtu", "routing_tag"} & child.keys()
+    tasks = coordinator._accumulate_child_task(
+        parsed,
+        child,
+        {},
+        {"fabricName": "child1", "fabricState": "member", "clusterName": "cluster1", "fabricType": "vxlanCampus"},
+        "merged",
+    )
+    child_task = tasks["child1"]
+    assert child_task["module_args"]["state"] == "merged"
+    child_config = child_task["module_args"]["config"][0]
+    assert not {"network_id", "vrf_name", "vlan_id", "secondary_gateway_ipv4_collection", "arp_suppression", "attach", "deploy"} & child_config.keys()
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
+        strategy=ChildNetworkStrategy(fabric_name="child1", fabric_data={"fabricType": "vxlanCampus", "fabricState": "member"}),
+    )
+    prepared = orchestrator.prepare_config_data([child_config])[0]
+    child_requests = []
+    object.__setattr__(orchestrator, "_request", lambda **kwargs: child_requests.append(kwargs) or {})
+    orchestrator.update(orchestrator.model_class.from_config(prepared))
+    payload = child_requests[0]["data"]
+    assert child_requests[0]["path"].startswith("/api/v1/manage/")
+    assert payload["networkType"] == "vxlanCampus"
+    assert "vlanName" not in payload.get("l2Data", {})
+    assert payload["l2Data"]["fabricData"] == {"multicastGroup": "239.1.1.53"}
+    assert payload["l3Data"]["fabricData"] == {
+        "dhcpServers": [{"serverAddress": "198.51.100.1", "serverVrf": "management"}],
+        "loopbackId": 101,
+        "igmpVersion": 3,
+        "ipv4Trm": True,
+        "ipv6Trm": True,
+        "netflow": True,
+        "l2NetflowMonitor": "VLAN_MON",
+        "l3NetflowMonitor": "INTF_MON",
+        "gatewayOnBorder": True,
+    }
+
+
+def test_msd_parent_owned_network_fields_remain_in_parent_manage_payload():
+    strategy = MultisiteParentNetworkStrategy(fabric_name="msd_p", fabric_data={"managementType": "vxlanIbgp"})
+    orchestrator = NDNetworkOrchestrator(rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}), strategy=strategy)
+    config = {
+        "network_name": "BLUE_NET",
+        "layer": "layer3",
+        "vrf_name": "BLUE_VRF",
+        "network_id": 901030,
+        "gateway_ipv4_address": "192.0.2.1/24",
+        "gateway_ipv6_address": "2001:db8::1/64",
+        "secondary_gateway_ipv6_collection": ["2001:db8::2/64"],
+        "vlan_intf_desc": "Parent SVI",
+        "mtu": 9000,
+        "routing_tag": 77,
+    }
+    parent = NetworkParentConfigModel.from_config(config).to_config(exclude_unset=True)
+    prepared = orchestrator.prepare_config_data([parent])[0]
+    payload = orchestrator._create_or_update_payload(orchestrator.model_class.from_config(prepared))
+
+    assert "dsVni" not in payload.get("l2Data", {}).get("fabricData", {})
+    assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.1/24"
+    assert payload["l3Data"]["gatewayIpv6Address"] == "2001:db8::1/64"
+    assert payload["l3Data"]["secondaryGatewayIpv6Collection"] == ["2001:db8::2/64"]
+    assert payload["l3Data"]["vlanInterfaceDescription"] == "Parent SVI"
+    assert payload["l3Data"]["mtu"] == 9000
+    assert payload["l3Data"]["routingTag"] == 77
+
+
+def test_parent_child_network_explicit_clears_remain_in_sparse_payload():
+    parent = NetworkParentConfigModel.from_config(
+        {
+            "network_name": "BLUE_NET",
+            "layer": "layer3",
+            "vrf_name": "BLUE_VRF",
+            "arp_suppression": False,
+            "child_fabric_config": [
+                {
+                    "fabric_name": "child1",
+                    "netflow_enable": False,
+                    "dhcp_servers": [],
+                }
+            ],
+        }
+    )
+    child = parent.to_config(exclude_unset=True)["child_fabric_config"][0]
+    orchestrator = NDNetworkOrchestrator(
+        rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
+        strategy=ChildNetworkStrategy(fabric_name="child1", fabric_data={"managementType": "vxlanIbgp"}),
+    )
+    child["network_name"] = "BLUE_NET"
+    child["layer"] = "layer3"
+    child.pop("fabric_name")
+    prepared = orchestrator.prepare_config_data([child])[0]
+    payload = orchestrator._create_or_update_payload(orchestrator.model_class.from_config(prepared))
+    assert payload["l3Data"]["fabricData"]["netflow"] is False
+    assert payload["l3Data"]["fabricData"]["dhcpServers"] == []
+
+
+def test_sparse_parent_child_override_validates_against_cached_child_mode(monkeypatch):
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), _ParentStrategy())
+    child_task = {
+        "fabric": "child1",
+        "module_args": {"config": [{"network_name": "BLUE_NET", "dhcp_servers": [{"server_address": "192.0.2.10"}]}]},
+    }
+
+    def use_cached_snapshot(tasks, *_args):
+        tasks["child1"]["preflight_state_machine"] = SimpleNamespace(existing={"BLUE_NET": SimpleNamespace(layer="layer2")})
+
+    monkeypatch.setattr(coordinator_mod, "preflight_child_feature_tasks", use_cached_snapshot)
+    with pytest.raises(NDStateMachineError, match=r"child_fabric_config\[child1\] layer2 networks do not support L3 properties"):
+        coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
 
 
 def test_child_network_config_without_fabric_options_does_not_require_child_task():
@@ -1407,7 +1684,6 @@ def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_sc
                 "network_name": "BLUE_NET",
                 "layer": "layer3",
                 "multicast_group_address": "239.1.1.53",
-                "ds_vni": 901030,
                 "dhcp_servers": [{"server_address": "192.0.2.10", "server_vrf": "management"}],
                 "loopback_id": 101,
                 "igmp_version": 3,
@@ -1424,10 +1700,7 @@ def test_child_network_update_payload_maps_all_child_fabric_options_to_manage_sc
 
     assert payload["networkMode"] == "layer3"
     assert "layer" not in payload
-    assert payload["l2Data"]["fabricData"] == {
-        "multicastGroup": "239.1.1.53",
-        "dsVni": 901030,
-    }
+    assert payload["l2Data"]["fabricData"] == {"multicastGroup": "239.1.1.53"}
     assert payload["l3Data"]["fabricData"] == {
         "dhcpServers": [{"serverAddress": "192.0.2.10", "serverVrf": "management"}],
         "loopbackId": 101,
@@ -1698,9 +1971,12 @@ def test_sparse_merged_l3_update_inherits_existing_layer_before_payload(layer, s
     if not orchestrator.strategy.is_multicluster:
         assert payload["l2Data"]["vlanName"] == "USERS_OLD"
     assert payload["l3Data"][payload_field] == value
-    assert payload["l3Data"]["fabricData"]["netflow"] is True
-    assert payload["l3Data"]["fabricData"]["ipv4Trm"] is True
-    assert payload["l3Data"]["fabricData"]["gatewayOnBorder"] is True
+    if orchestrator.strategy.is_parent:
+        assert "fabricData" not in payload["l3Data"]
+    else:
+        assert payload["l3Data"]["fabricData"]["netflow"] is True
+        assert payload["l3Data"]["fabricData"]["ipv4Trm"] is True
+        assert payload["l3Data"]["fabricData"]["gatewayOnBorder"] is True
     if field_name != "mtu":
         assert payload["l3Data"]["mtu"] == 9216
     assert payload["l3Data"]["arpSuppression"] is True
@@ -1750,15 +2026,19 @@ def test_sparse_merged_create_without_layer_is_rejected():
         orchestrator.preflight_create([model])
 
 
-@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
 @pytest.mark.parametrize(
-    "field,value,payload_field",
+    "strategy_cls,field,value,payload_field",
     [
-        ("arp_suppression", False, "arpSuppression"),
-        ("mtu", 9216, "mtu"),
-        ("netflow_enable", False, "netflow"),
-        ("secondary_gateway_ipv4_collection", [], "secondaryGatewayIpv4Collection"),
-        ("dhcp_servers", [], "dhcpServers"),
+        (strategy_cls, field, value, payload_field)
+        for strategy_cls in (StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy)
+        for field, value, payload_field in (
+            ("arp_suppression", False, "arpSuppression"),
+            ("mtu", 9216, "mtu"),
+            ("netflow_enable", False, "netflow"),
+            ("secondary_gateway_ipv4_collection", [], "secondaryGatewayIpv4Collection"),
+            ("dhcp_servers", [], "dhcpServers"),
+        )
+        if strategy_cls is StandaloneNetworkStrategy or field not in ("netflow_enable", "dhcp_servers")
     ],
 )
 def test_explicit_definition_defaults_and_empty_lists_reconcile_existing_network(strategy_cls, field, value, payload_field):
@@ -1797,12 +2077,15 @@ def test_explicit_definition_defaults_and_empty_lists_reconcile_existing_network
     target = l3_data["fabricData"] if field in ("netflow_enable", "dhcp_servers") else l3_data
     assert target[payload_field] == value
     assert l3_data["gatewayIpv4Address"] == "192.0.2.1/24"
-    assert l3_data["fabricData"]["ipv4Trm"] is True
+    if orchestrator.strategy.is_parent:
+        assert "fabricData" not in l3_data
+    else:
+        assert l3_data["fabricData"]["ipv4Trm"] is True
     if field != "mtu":
         assert l3_data["mtu"] == 9000
     if field != "arp_suppression":
         assert l3_data["arpSuppression"] is True
-    if field != "netflow_enable":
+    if field != "netflow_enable" and not orchestrator.strategy.is_parent:
         assert l3_data["fabricData"]["netflow"] is True
     assert orchestrator.model_class.from_response(payload).get_diff(proposed, exclude_unset=True)
 
@@ -1950,7 +2233,7 @@ def test_authoritative_states_reject_implicit_layer3_without_vrf_name(check_mode
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 @pytest.mark.parametrize("explicit_layer", [False, True])
-@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy])
 def test_primary_network_l3_fields_survive_validation_and_payload(state, explicit_layer, strategy_cls):
     args = crud_module_args({"state": state})
     strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
@@ -2191,7 +2474,8 @@ def test_sparse_primary_update_keeps_existing_mode_through_real_state_machine(ch
     assert len(orchestrator.written_payloads) == (0 if check_mode else 1)
     assert orchestrator.query_count == 1
     repeat = orchestrator.model_class.from_response(payload)
-    assert repeat.get_diff(sm.proposed.get("PRIMARY"), exclude_unset=True)
+    if strategy_cls is StandaloneNetworkStrategy:
+        assert repeat.get_diff(sm.proposed.get("PRIMARY"), exclude_unset=True)
 
 
 @pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
@@ -2434,7 +2718,7 @@ def test_child_task_exception_returns_structured_network_failure():
 
 
 def test_argument_spec_leaves_definition_defaults_to_models():
-    spec = network_parent_argument_spec()
+    spec = network_module_argument_spec()
 
     for field in ("mtu", "arp_suppression", "netflow_enable"):
         assert "default" not in spec[field]
@@ -2447,6 +2731,96 @@ def test_argument_spec_leaves_definition_defaults_to_models():
     assert "route_target_both" not in spec
     assert "route_target_both" not in spec["child_fabric_config"]["options"]
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("x_connect", False),
+        ("multicast_group_address", "239.1.1.53"),
+        ("dhcp_servers", [{"server_address": "192.0.2.10", "server_vrf": "management"}]),
+        ("loopback_id", 101),
+        ("trm_enable", True),
+        ("igmp_version", 3),
+        ("ipv6_trm", True),
+        ("netflow_enable", False),
+        ("vlan_netflow_monitor", "VLAN_MON"),
+        ("interface_netflow_monitor", "INT_MON"),
+        ("gateway_on_border", False),
+    ],
+)
+def test_network_msd_child_only_options_remain_in_module_union(field, value):
+    parent_spec = network_parent_argument_spec()
+    module_spec = network_module_argument_spec()
+    standalone_spec = network_base_argument_spec()
+    mcfg_spec = MulticlusterParentNetworkStrategy(fabric_name="MCFG_P", fabric_data={}).get_argument_spec()
+
+    assert field not in parent_spec
+    assert field in parent_spec["child_fabric_config"]["options"]
+    assert field in module_spec
+    assert field in standalone_spec
+    assert field not in mcfg_spec
+
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": module_spec}})
+    accepted = validator.validate({"config": [{"network_name": "N", field: value}]})
+    assert not accepted.error_messages
+    assert accepted.validated_parameters["config"][0][field] == value
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("fabric_type", ["multisite_parent", "multicluster_parent"])
+def test_parent_trm_input_is_filtered_before_network_write(state, fabric_type):
+    strategy_cls = MultisiteParentNetworkStrategy if fabric_type == "multisite_parent" else MulticlusterParentNetworkStrategy
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlanIbgp", "members": []})
+    module = _Module(
+        {
+            "fabric_name": "PARENT",
+            "state": state,
+            "config": [{"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", "trm_enable": True, "igmp_version": 3, "ipv6_trm": False}],
+        }
+    )
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    received = []
+
+    def record_parent_config(args, **_kwargs):
+        received.extend(args["config"])
+        return {"changed": False}
+
+    coordinator._run_state_machine_with_attachments = record_parent_config
+
+    result = coordinator._handle_parent_workflow(dict(module.params), fabric_type)
+
+    assert result["changed"] is False
+    assert received == [{"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}]
+
+
+@pytest.mark.parametrize("fabric_type", ["multisite_parent", "multicluster_parent"])
+def test_parent_trm_only_merged_entry_has_no_definition_intent(fabric_type):
+    strategy_cls = MultisiteParentNetworkStrategy if fabric_type == "multisite_parent" else MulticlusterParentNetworkStrategy
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlanIbgp", "members": []})
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), strategy)
+
+    parsed = coordinator._parse_config(
+        [{"network_name": "N", "trm_enable": True, "igmp_version": 3, "ipv6_trm": False}],
+        NetworkParentConfigModel,
+        "merged",
+    )
+
+    assert parsed == [{"network_name": "N"}]
+    assert not NDNetworkOrchestrator.has_network_definition_intent(parsed[0])
+
+
+def test_parent_gathered_output_omits_child_only_trm_options():
+    module = _Module({"fabric_name": "msd_p", "state": "gathered", "config": []})
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=_ParentStrategy())
+    coordinator._run_state_machine_with_attachments = lambda *_args, **_kwargs: {
+        "changed": False,
+        "gathered": [{"network_name": "N", "arp_suppression": True, "trm_enable": False, "ipv6_trm": False, "igmp_version": 3}],
+    }
+
+    result = coordinator._handle_parent_workflow(dict(module.params), "multisite_parent")
+
+    assert result["gathered"] == [{"network_name": "N", "arp_suppression": True}]
 
 
 def test_network_query_all_scopes_targeted_state_reads_with_batch_filter():
@@ -3319,7 +3693,7 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
     assert payload["l2Data"]["vlanName"] == ""
     assert "rtAuto" not in payload["l2Data"]
     assert "disableRtAuto" not in payload["l2Data"]
-    assert payload["l2Data"]["fabricData"] == {}
+    assert "fabricData" not in payload["l2Data"]
     assert payload["l3Data"] == {
         "gatewayIpv4Address": "",
         "gatewayIpv6Address": "",
@@ -3364,7 +3738,7 @@ def test_mcfg_parent_workflow_rejects_pvlan_networks_before_requests():
         )
 
 
-def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():
+def test_mcfg_parent_network_create_omits_child_netflow_monitor_fields():
     orchestrator = _mcfg_parent_orchestrator()
     requests = []
 
@@ -3396,9 +3770,7 @@ def test_mcfg_parent_network_create_keeps_onemanage_netflow_monitor_fields():
     payload = requests[0]["data"]["networks"][0]
     assert requests[0]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networks"
     assert payload["networkMode"] == "layer3"
-    assert payload["l3Data"]["fabricData"]["netflow"] is True
-    assert payload["l3Data"]["fabricData"]["l2NetflowMonitor"] == "L2_MON"
-    assert payload["l3Data"]["fabricData"]["l3NetflowMonitor"] == "L3_MON"
+    assert "fabricData" not in payload["l3Data"]
 
 
 def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
@@ -3433,7 +3805,7 @@ def test_mcfg_parent_network_update_uses_l2_onemanage_manage_schema_payload():
     assert payload["networkMode"] == "layer2"
     assert payload["vrfName"] == "NA"
     assert "vlanId" not in payload
-    assert payload["l2Data"] == {"vlanName": "", "fabricData": {}, "xConnect": False}
+    assert payload["l2Data"] == {"vlanName": ""}
     assert payload["l3Data"] == {
         "gatewayIpv4Address": "",
         "gatewayIpv6Address": "",
@@ -5289,6 +5661,7 @@ def test_network_gathered_output_uses_public_config_shape():
     assert gathered["layer"] == "layer3"
     assert gathered["vlan_name"] == "BLUE_VLAN"
     assert gathered["multicast_group_address"] == "239.1.1.11"
+    assert "ds_vni" not in model.to_gathered_config()
     assert gathered["gateway_ipv4_address"] == "10.10.10.1/24"
     assert gathered["interface_netflow_monitor"] == "INT_MON"
     NetworkConfigModel.from_config(gathered)
@@ -5363,6 +5736,10 @@ def test_layer2_controller_l3_echo_does_not_trigger_state_machine_update(state, 
         "vlan_name": "USERS",
         "multicast_group_address": "239.1.1.11",
     }
+    readback = _layer2_network_readback(vlan_network_type, with_igmp)
+    if strategy_cls is MultisiteParentNetworkStrategy:
+        entry.pop("multicast_group_address")
+        readback["l2Data"]["fabricData"].pop("multicastGroup")
     effective_state = crud_module_args({"state": state})["state"]
     strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
     module = _Module({"state": effective_state, "config": [entry], "output_level": "normal"})
@@ -5372,7 +5749,7 @@ def test_layer2_controller_l3_echo_does_not_trigger_state_machine_update(state, 
     orchestrator = _LayerValidationNetworkOrchestrator(
         rest_send=RestSend({"state": effective_state}),
         strategy=strategy,
-        inventory=[_layer2_network_readback(vlan_network_type, with_igmp)],
+        inventory=[readback],
     )
     sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
     sm.manage_state()
@@ -5414,7 +5791,7 @@ def test_layer2_real_update_remains_actionable_despite_controller_l3_echo(state,
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
-@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy])
 @pytest.mark.parametrize("vlan_network_type", ["normal", "primary"])
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_layer2_vlan_netflow_survives_prepare_payload_gather_and_repeat(state, strategy_cls, vlan_network_type, check_mode):
@@ -5541,7 +5918,7 @@ def test_template_without_mode_evidence_does_not_invent_layer3():
 
 @pytest.mark.parametrize("check_mode", [False, True])
 @pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
-@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy])
 def test_sparse_x_connect_rejects_existing_routed_mode_before_writes(check_mode, layer, strategy_cls):
     """Validate cross-connect after inherited mode resolution without another inventory read."""
     coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
@@ -5557,7 +5934,7 @@ def test_sparse_x_connect_rejects_existing_routed_mode_before_writes(check_mode,
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
-@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy])
 def test_layer2_explicit_netflow_disable_remains_actionable_and_converges(state, strategy_cls):
     """Send an explicit false value and compare the disabled readback without L3-only noise."""
     entry = {"network_name": "USERS", "layer": "layer2", "network_id": 30001, "vlan_id": 101, "netflow_enable": False}
