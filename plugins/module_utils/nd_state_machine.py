@@ -398,6 +398,17 @@ class NDStateMachine:
         # from the baseline so the orchestrator always sees the pre-run controller model, independent of apply order.
         pending_bulk: list[tuple[NDBaseModel, NDBaseModel | None, dict[str, Any], str]] = []
 
+        def apply_accepted_post_write(item: NDBaseModel) -> None:
+            # The orchestrator reports a PUT the controller accepted before a later step (member preview) failed. Honour it whether the
+            # failure propagates or ``ignore_errors`` swallows it (PR #608 review); otherwise the accepted write vanishes from ``after``.
+            post_write = getattr(self.model_orchestrator, "_accepted_post_write_model", None)
+            if (
+                post_write is not None
+                and getattr(post_write, "switch_ip", None) == getattr(item, "switch_ip", None)
+                and str(getattr(post_write, "interface_name", "")).casefold() == str(getattr(item, "interface_name", "")).casefold()
+            ):
+                self._apply_accepted([post_write])
+
         def run_singular_update(item: NDBaseModel, previous: NDBaseModel | None) -> None:
             try:
                 accepted = self._execute_operation(
@@ -407,16 +418,12 @@ class NDStateMachine:
                     error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
                 )
             except Exception:
-                post_write = getattr(self.model_orchestrator, "_accepted_post_write_model", None)
-                if (
-                    post_write is not None
-                    and getattr(post_write, "switch_ip", None) == getattr(item, "switch_ip", None)
-                    and str(getattr(post_write, "interface_name", "")).casefold() == str(getattr(item, "interface_name", "")).casefold()
-                ):
-                    self._apply_accepted([post_write])
+                apply_accepted_post_write(item)
                 raise
             if accepted:
                 self._apply_accepted([item])
+            else:
+                apply_accepted_post_write(item)
 
         def flush_bulk() -> None:
             if not pending_bulk:
