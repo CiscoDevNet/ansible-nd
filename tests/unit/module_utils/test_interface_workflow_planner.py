@@ -3173,6 +3173,58 @@ def test_matching_destination_policy_is_idempotent_without_summary() -> None:
     assert len(recorder.calls) == 1
 
 
+def test_port_channel_trunk_host_integer_customer_vlan_echo_replays_as_a_no_op() -> None:
+    """A GET echo with `customerVlanId: [100]` matches desired `customer_vlan_id: ["100"]`, so merged planning writes nothing (PR #619 review)."""
+    current = _wire_interface(
+        "port-channel10",
+        "portChannel",
+        "trunkPoHost",
+        mode="trunk",
+        ports=["Ethernet1/1"],
+        portChannelMode="active",
+        allowedVlans="10-20",
+        vlanMapping=True,
+        vlanMappingEntries=[{"customerVlanId": [100], "providerVlanId": 1000}],
+    )
+    planner, _recorder = _planner(responses=[{"interfaces": [current]}])
+    desired = _port_channel("192.0.2.1")
+    desired["config_data"]["network_os"]["policy"].update(
+        {"allowed_vlans": "10-20", "vlan_mapping": True, "vlan_mapping_entries": [{"customer_vlan_id": ["100"], "provider_vlan_id": 1000}]}
+    )
+
+    plan = planner.plan([{"type": "port_channel_trunk_host", "state": "merged", "config": [desired]}])
+
+    assert plan.changed is False
+    assert plan.resources[0].transitions == ()
+    assert not plan.resources[0].operations.updates
+
+
+def test_vpc_trunk_host_integer_customer_vlan_echo_replays_as_a_no_op() -> None:
+    """Both peers echo `customerVlanId: [100]`; desired `customer_vlan_id: ["100"]` merges as a no-op (PR #619 review)."""
+    policy = {
+        "mode": "trunk",
+        "allowedVlans": "10-20",
+        "vlanMapping": True,
+        "vlanMappingEntries": [{"customerVlanId": [100], "providerVlanId": 1000}],
+    }
+    primary = _wire_interface("vpc10", "vpc", "trunkVpcHost", **policy)
+    peer = _wire_interface("vpc10", "vpc", "trunkVpcHost", **policy)
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [primary]}, {"interfaces": [peer]}],
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
+    )
+    desired = _vpc("192.0.2.1", trunk=True)
+    desired["config_data"]["network_os"]["policy"].update(
+        {"vlan_mapping": True, "vlan_mapping_entries": [{"customer_vlan_id": ["100"], "provider_vlan_id": 1000}]}
+    )
+
+    plan = planner.plan([{"type": "vpc_trunk_host", "state": "merged", "config": [desired]}])
+
+    assert plan.changed is False
+    assert plan.resources[0].transitions == ()
+    assert not plan.resources[0].operations.updates
+
+
 def test_override_delete_conflicts_with_another_group_desiring_the_identity() -> None:
     """An override cannot remove an identity retained by a sibling group in the same task."""
     current = _wire_interface("Ethernet1/1", "ethernet", "accessHost", accessVlan=10)

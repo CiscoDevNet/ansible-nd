@@ -38,10 +38,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
     PortChannelTrunkHostInterfaceModel,
     PortChannelTrunkHostNetworkOSModel,
     PortChannelTrunkHostPolicyModel,
-    PortChannelTrunkHostVlanMappingEntryModel,
     XePortChannelTrunkHostNetworkOSModel,
     XePortChannelTrunkHostPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import VlanMappingEntryModel
 from pydantic import ValidationError
 
 
@@ -422,7 +422,7 @@ def test_port_channel_trunk_host_interface_00200(value, should_raise):
 
     ## Classes and Methods
 
-    - port_channel_trunk_host_interface._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     if should_raise:
         with pytest.raises(ValidationError, match=r"allowed_vlans"):
@@ -465,7 +465,7 @@ def test_port_channel_trunk_host_interface_00202(value, match):
 
     ## Classes and Methods
 
-    - port_channel_trunk_host_interface._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     with pytest.raises(ValidationError, match=match):
         PortChannelTrunkHostPolicyModel(allowed_vlans=value)
@@ -748,7 +748,7 @@ def test_port_channel_trunk_host_interface_00240(field, enum_cls):
 
 
 # =============================================================================
-# Test: PortChannelTrunkHostVlanMappingEntryModel
+# Test: VlanMappingEntryModel
 # =============================================================================
 
 
@@ -765,10 +765,10 @@ def test_port_channel_trunk_host_interface_00300():
 
     ## Classes and Methods
 
-    - PortChannelTrunkHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
     with does_not_raise():
-        instance = PortChannelTrunkHostVlanMappingEntryModel(
+        instance = VlanMappingEntryModel(
             customer_inner_vlan_id=10,
             customer_vlan_id=["100", "200"],
             dot1q_tunnel=True,
@@ -807,14 +807,14 @@ def test_port_channel_trunk_host_interface_00310(field, value, should_raise):
 
     ## Classes and Methods
 
-    - PortChannelTrunkHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
     if should_raise:
         with pytest.raises(ValidationError):
-            PortChannelTrunkHostVlanMappingEntryModel(**{field: value})
+            VlanMappingEntryModel(**{field: value})
     else:
         with does_not_raise():
-            instance = PortChannelTrunkHostVlanMappingEntryModel(**{field: value})
+            instance = VlanMappingEntryModel(**{field: value})
         assert getattr(instance, field) == value
 
 
@@ -840,7 +840,6 @@ def test_port_channel_trunk_host_interface_00310(field, value, should_raise):
         (["1-"], True),
         (["100,200"], True),  # comma not allowed inside list element
         ([""], True),
-        ([100], True),  # non-string entry rejected
     ],
     ids=[
         "none_passthrough",
@@ -862,7 +861,6 @@ def test_port_channel_trunk_host_interface_00310(field, value, should_raise):
         "trailing_dash_rejected",
         "comma_in_element_rejected",
         "empty_string_rejected",
-        "non_string_entry_rejected",
     ],
 )
 def test_port_channel_trunk_host_interface_00315(value, should_raise):
@@ -881,14 +879,14 @@ def test_port_channel_trunk_host_interface_00315(value, should_raise):
 
     ## Classes and Methods
 
-    - port_channel_trunk_host_interface._validate_customer_vlan_id_list()
+    - types.validate_customer_vlan_id_list()
     """
     if should_raise:
         with pytest.raises(ValidationError, match=r"customer_vlan_id"):
-            PortChannelTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+            VlanMappingEntryModel(customer_vlan_id=value)
     else:
         with does_not_raise():
-            instance = PortChannelTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+            instance = VlanMappingEntryModel(customer_vlan_id=value)
         assert instance.customer_vlan_id == value
 
 
@@ -901,7 +899,7 @@ def test_port_channel_trunk_host_interface_00315(value, should_raise):
         (["200-100"], r"start greater than end"),
         (["abc"], r"VLAN id or range"),
         ([""], r"non-empty strings"),
-        ([42], r"non-empty strings"),
+        ([1.5], r"non-empty strings"),
     ],
     ids=[
         "vlan_zero_message",
@@ -926,10 +924,70 @@ def test_port_channel_trunk_host_interface_00316(value, match):
 
     ## Classes and Methods
 
-    - port_channel_trunk_host_interface._validate_customer_vlan_id_list()
+    - types.validate_customer_vlan_id_list()
     """
     with pytest.raises(ValidationError, match=match):
-        PortChannelTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+        VlanMappingEntryModel(customer_vlan_id=value)
+
+
+def test_port_channel_trunk_host_interface_00317():
+    """
+    # Summary
+
+    Verify a JSON-int `customer_vlan_id` entry (ND GET echo of a single id) is coerced to its string form through the full interface model, so a
+    GET response round-trips against the string the user supplied and idempotency comparisons stay stable. Before issue #347 the port-channel
+    copy of the validator rejected ints while the ethernet copy coerced them; the shared `CustomerVlanIdList` type now coerces for every trunk model.
+
+    ## Test
+
+    - `from_config` with `customer_vlan_id: [100, "200-300"]` -> payload `customerVlanId == ["100", "200-300"]`
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceModel.from_config()
+    - PortChannelTrunkHostInterfaceModel.to_payload()
+    - types.CustomerVlanIdList
+    """
+    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    config["config_data"]["network_os"]["policy"]["vlan_mapping"] = True
+    config["config_data"]["network_os"]["policy"]["vlan_mapping_entries"] = [{"customer_vlan_id": [100, "200-300"], "provider_vlan_id": 1000}]
+    with does_not_raise():
+        instance = PortChannelTrunkHostInterfaceModel.from_config(config)
+    entries = instance.to_payload()["configData"]["networkOS"]["policy"]["vlanMappingEntries"]
+    assert entries[0]["customerVlanId"] == ["100", "200-300"]
+
+
+def test_port_channel_trunk_host_interface_00318():
+    """
+    # Summary
+
+    Verify a GET echo whose `customerVlanId` carries a JSON int is read through `from_response` into the same string form `from_config`
+    produces, so the two compare equal and a merged replay is a no-op (PR #619 review: test 00317 covered the config path only). No claim is
+    made that ND emits an int echo for this family; the ethernet family has been observed doing so and the shared type must behave the same.
+
+    ## Test
+
+    - `from_response` with `vlanMappingEntries: [{customerVlanId: [100], providerVlanId: 1000}]` -> `customer_vlan_id == ["100"]`
+    - `get_diff` (merge-path subset comparison) against `from_config` with `customer_vlan_id: ["100"]` is `True`, i.e. no difference
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceModel.from_response()
+    - PortChannelTrunkHostInterfaceModel.get_diff()
+    - types.CustomerVlanIdList
+    """
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["vlanMapping"] = True
+    response["configData"]["networkOS"]["policy"]["vlanMappingEntries"] = [{"customerVlanId": [100], "providerVlanId": 1000}]
+    with does_not_raise():
+        existing = PortChannelTrunkHostInterfaceModel.from_response(response)
+    assert existing.config_data.network_os.policy.vlan_mapping_entries[0].customer_vlan_id == ["100"]
+
+    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    config["config_data"]["network_os"]["policy"]["vlan_mapping"] = True
+    config["config_data"]["network_os"]["policy"]["vlan_mapping_entries"] = [{"customer_vlan_id": ["100"], "provider_vlan_id": 1000}]
+    proposed = PortChannelTrunkHostInterfaceModel.from_config(config)
+    assert existing.get_diff(proposed, exclude_unset=True) is True
 
 
 def test_port_channel_trunk_host_interface_00320():
@@ -941,7 +999,7 @@ def test_port_channel_trunk_host_interface_00320():
     ## Test
 
     - vlan_mapping_entries accepts a list of dicts
-    - Each dict is coerced to PortChannelTrunkHostVlanMappingEntryModel
+    - Each dict is coerced to VlanMappingEntryModel
 
     ## Classes and Methods
 
@@ -957,7 +1015,7 @@ def test_port_channel_trunk_host_interface_00320():
         )
     assert instance.vlan_mapping is True
     assert len(instance.vlan_mapping_entries) == 2
-    assert isinstance(instance.vlan_mapping_entries[0], PortChannelTrunkHostVlanMappingEntryModel)
+    assert isinstance(instance.vlan_mapping_entries[0], VlanMappingEntryModel)
     assert instance.vlan_mapping_entries[0].provider_vlan_id == 200
     assert instance.vlan_mapping_entries[0].dot1q_tunnel is True
     assert instance.vlan_mapping_entries[1].dot1q_tunnel is None
