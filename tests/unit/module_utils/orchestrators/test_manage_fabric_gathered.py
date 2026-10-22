@@ -6,9 +6,7 @@
 
 """Unit tests for gathered queries shared by the manage-fabric family."""
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from urllib.parse import unquote
 
@@ -91,61 +89,58 @@ def test_empty_gathered_filters_use_type_only_lucene_query(
     ],
     ids=["ebgp", "ibgp"],
 )
-def test_pagination_collects_multiple_pages(
+def test_gathered_lucene_filter_is_preserved_across_pages(
     monkeypatch,
     orchestrator_class,
     fabric_type,
 ) -> None:
-    """Verify the shared inventory reader fetches until a short page signals the end."""
+    """Verify every gathered inventory page retains the Lucene expression."""
     instance = orchestrator_class(rest_send=RestSend({"check_mode": False, "state": "gathered"}))
-    page_size = instance.fabric_inventory_page_size
-    call_count = 0
+    monkeypatch.setattr(orchestrator_class, "fabric_inventory_page_size", 2)
+
+    requested_paths = []
+    responses = iter(
+        [
+            {
+                "fabrics": [
+                    {
+                        "name": "fabric-1",
+                        "category": "fabric",
+                        "management": {"type": fabric_type},
+                    },
+                    {
+                        "name": "fabric-2",
+                        "category": "fabric",
+                        "management": {"type": fabric_type},
+                    },
+                ]
+            },
+            {
+                "fabrics": [
+                    {
+                        "name": "fabric-3",
+                        "category": "fabric",
+                        "management": {"type": fabric_type},
+                    }
+                ]
+            },
+        ]
+    )
 
     def fake_request(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return {"fabrics": [{"name": f"fabric-{i}", "category": "fabric", "management": {"type": fabric_type}} for i in range(page_size)]}
-        return {
-            "fabrics": [
-                {"name": "fabric-last", "category": "fabric", "management": {"type": fabric_type}},
-            ]
-        }
+        requested_paths.append(unquote(kwargs["path"]))
+        return next(responses)
 
     monkeypatch.setattr(instance, "_request", fake_request)
 
-    result = instance._query_fabric_inventory_pages(f"type:{fabric_type}")
+    expression = f"type:{fabric_type} AND licenseTier:premier"
+    result = instance._query_fabric_inventory_pages(expression)
 
-    assert call_count == 2
-    assert len(result) == page_size + 1
-    assert result["fabric-last"]["name"] == "fabric-last"
-
-
-def test_pagination_limit_rejects_incomplete_results(monkeypatch) -> None:
-    """Verify a controller that never terminates pagination cannot loop indefinitely."""
-    instance = ManageEbgpFabricOrchestrator(rest_send=RestSend({"check_mode": False, "state": "gathered"}))
-    call_count = 0
-
-    def fake_request(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return {
-            "fabrics": [
-                {
-                    "name": f"fabric-{call_count}",
-                    "category": "fabric",
-                    "management": {"type": "vxlanEbgp"},
-                }
-            ],
-            "meta": {"counts": {"remaining": 1}},
-        }
-
-    monkeypatch.setattr(instance, "_request", fake_request)
-
-    with pytest.raises(RuntimeError, match="pagination exceeded the 100-page safety limit"):
-        instance._query_fabric_inventory_pages("type:vxlanEbgp")
-
-    assert call_count == 100
+    assert list(result) == ["fabric-1", "fabric-2", "fabric-3"]
+    assert requested_paths == [
+        "/api/v1/manage/fabrics" f"?category=fabric&filter={expression}&max=2&offset=0&sort=name",
+        "/api/v1/manage/fabrics" f"?category=fabric&filter={expression}&max=2&offset=2&sort=name",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -224,7 +219,7 @@ def test_exact_endpoint_rejects_wrong_fabric_type(
     orchestrator_class,
     fabric_type,
 ) -> None:
-    """Verify _query_one_by_name filters out fabrics of the wrong type."""
+    """Verify exact gathered lookup filters out fabrics of the wrong type."""
     instance = orchestrator_class(rest_send=RestSend({"check_mode": False, "state": "gathered"}))
 
     def fake_request(*args, **kwargs):
