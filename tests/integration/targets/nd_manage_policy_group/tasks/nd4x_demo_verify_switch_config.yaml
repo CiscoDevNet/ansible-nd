@@ -1,0 +1,42 @@
+---
+- name: "ND4X SWITCH VERIFY: Read switch-side running configuration"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_switch_config_expectation.switch_id }}/diff
+    method: get
+  register: nd4x_switch_config_read
+  changed_when: false
+
+- name: "ND4X SWITCH VERIFY: Assert switch-side endpoint response"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_config_read.jsondata.diffConfigs is defined
+
+- name: "ND4X SWITCH VERIFY: Assert expected running-config entries"
+  vars:
+    nd4x_switch_running_config: >-
+      {{ nd4x_switch_config_read.jsondata.diffConfigs | default([])
+         | map(attribute='runningConfig') | select('defined') | join('\n') }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_running_config is search(item)
+    fail_msg: >-
+      Expected switch {{ nd4x_switch_config_expectation.switch_id }} running
+      configuration to contain {{ item | to_json }}. Actual running configuration:
+      {{ nd4x_switch_running_config }}
+  loop: "{{ nd4x_switch_config_expectation.present | default([]) }}"
+
+- name: "ND4X SWITCH VERIFY: Assert forbidden running-config entries are absent"
+  vars:
+    nd4x_switch_running_config: >-
+      {{ nd4x_switch_config_read.jsondata.diffConfigs | default([])
+         | map(attribute='runningConfig') | select('defined') | join('\n') }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_running_config is not search(item)
+    fail_msg: >-
+      Forbidden harness running configuration {{ item | to_json }} remains on
+      switch {{ nd4x_switch_config_expectation.switch_id }}. Actual running
+      configuration: {{ nd4x_switch_running_config }}
+  loop: "{{ nd4x_switch_config_expectation.absent | default([]) }}"

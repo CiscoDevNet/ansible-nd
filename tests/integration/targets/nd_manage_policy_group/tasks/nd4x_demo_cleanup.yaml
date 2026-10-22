@@ -1,0 +1,176 @@
+---
+- name: "ND4X CLEANUP: Gather harness-owned policy groups"
+  cisco.nd.nd_manage_policy_group:
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nd4x_cleanup_gathered
+  changed_when: false
+
+- name: "ND4X CLEANUP: Select harness-owned policy groups"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_config: >-
+      {{
+        nd4x_cleanup_gathered.gathered
+        | default([])
+        | selectattr('description', 'defined')
+        | selectattr('description', 'match', nd4x_policy_group_cleanup_prefix)
+        | list
+      }}
+
+- name: "ND4X CLEANUP: Select anonymous force-created policy groups"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_anonymous_config: >-
+      {{
+        nd4x_cleanup_gathered.gathered
+        | default([])
+        | rejectattr('description', 'defined')
+        | selectattr('policy_id', 'defined')
+        | selectattr('template_name', 'equalto', nd4x_policy_group_anonymous_force_created_template)
+        | selectattr('switch_ids', 'equalto', nd4x_policy_group_anonymous_force_created_switch_ids)
+        | selectattr('template_inputs.CONF', 'equalto', nd4x_policy_group_anonymous_force_created_conf)
+        | list
+      }}
+
+- name: "ND4X CLEANUP: Delete harness-owned policy groups"
+  cisco.nd.nd_manage_policy_group:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    deploy: true
+    config: "{{ nd4x_cleanup_config }}"
+  when: nd4x_cleanup_config | length > 0
+
+- name: "ND4X CLEANUP: Delete recovered anonymous force-created policy groups"
+  cisco.nd.nd_manage_policy_group:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    deploy: true
+    config:
+      - name: "{{ item.policy_id }}"
+  loop: "{{ nd4x_cleanup_anonymous_config }}"
+  when: nd4x_cleanup_anonymous_config | length > 0
+
+- name: "ND4X CLEANUP: Verify no harness-owned policy groups remain"
+  cisco.nd.nd_manage_policy_group:
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nd4x_cleanup_verified
+  changed_when: false
+
+- name: "ND4X CLEANUP: Assert harness-owned policy groups are absent"
+  vars:
+    remaining_named: >-
+      {{ nd4x_cleanup_verified.gathered | default([])
+         | selectattr('description', 'defined')
+         | selectattr('description', 'match', nd4x_policy_group_cleanup_prefix) | list }}
+    remaining_anonymous: >-
+      {{ nd4x_cleanup_verified.gathered | default([])
+         | rejectattr('description', 'defined')
+         | selectattr('policy_id', 'defined')
+         | selectattr('template_name', 'equalto', nd4x_policy_group_anonymous_force_created_template)
+         | selectattr('switch_ids', 'equalto', nd4x_policy_group_anonymous_force_created_switch_ids)
+         | selectattr('template_inputs.CONF', 'equalto', nd4x_policy_group_anonymous_force_created_conf)
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - remaining_named | length == 0
+      - remaining_anonymous | length == 0
+    fail_msg: >-
+      Harness cleanup left policy groups behind. Named={{ remaining_named }};
+      anonymous={{ remaining_anonymous }}
+
+- name: "ND4X CLEANUP: Reset switch-side cleanup baseline"
+  ansible.builtin.set_fact:
+    nd4x_policy_group_cleanup_baseline_switch_configs: []
+  when: nd4x_cleanup_capture_baseline | default(false) | bool
+
+- name: "ND4X CLEANUP: Read switch-side cleanup baseline"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_cleanup_switch_id }}/diff
+    method: get
+  loop:
+    - "{{ nd4x_policy_group_switch_id_1 }}"
+    - "{{ nd4x_policy_group_switch_id_2 }}"
+    - "{{ nd4x_policy_group_switch_id_3 }}"
+  register: nd4x_cleanup_switch_diff
+  changed_when: false
+  loop_control:
+    loop_var: nd4x_cleanup_switch_id
+  when: nd4x_cleanup_capture_baseline | default(false) | bool
+
+- name: "ND4X CLEANUP: Save switch-side cleanup baseline"
+  ansible.builtin.set_fact:
+    nd4x_policy_group_cleanup_baseline_switch_configs: >-
+      {{ nd4x_policy_group_cleanup_baseline_switch_configs + [
+         item.jsondata.diffConfigs | default([])
+         | map(attribute='runningConfig')
+         | select('defined')
+         | reject('equalto', 'configure terminal')
+         | reject('match', '^!Command:')
+         | reject('match', '^!Running configuration last done at:')
+         | reject('match', '^!Time:')
+         | list
+         | sort
+      ] }}
+  loop: "{{ nd4x_cleanup_switch_diff.results | default([]) }}"
+  when: nd4x_cleanup_capture_baseline | default(false) | bool
+
+- name: "ND4X CLEANUP: Wait for switch-side configuration to return to baseline"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_cleanup_switch_id }}/diff
+    method: get
+  loop:
+    - "{{ nd4x_policy_group_switch_id_1 }}"
+    - "{{ nd4x_policy_group_switch_id_2 }}"
+    - "{{ nd4x_policy_group_switch_id_3 }}"
+  register: nd4x_cleanup_switch_final
+  changed_when: false
+  loop_control:
+    loop_var: nd4x_cleanup_switch_id
+    index_var: nd4x_cleanup_switch_index
+  until: >-
+    (
+      nd4x_cleanup_switch_final.jsondata.diffConfigs | default([])
+      | map(attribute='runningConfig')
+      | select('defined')
+      | reject('equalto', 'configure terminal')
+      | reject('match', '^!Command:')
+      | reject('match', '^!Running configuration last done at:')
+      | reject('match', '^!Time:')
+      | list
+      | sort
+    ) == nd4x_policy_group_cleanup_baseline_switch_configs[nd4x_cleanup_switch_index]
+  retries: 12
+  delay: 5
+  when:
+    - not (nd4x_cleanup_capture_baseline | default(false) | bool)
+    - nd4x_policy_group_cleanup_baseline_switch_configs is defined
+
+- name: "ND4X CLEANUP: Assert switch-side configuration returned to baseline"
+  vars:
+    nd4x_cleanup_running_config: >-
+      {{ nd4x_cleanup_switch_result.jsondata.diffConfigs | default([])
+         | map(attribute='runningConfig')
+         | select('defined')
+         | reject('equalto', 'configure terminal')
+         | reject('match', '^!Command:')
+         | reject('match', '^!Running configuration last done at:')
+         | reject('match', '^!Time:')
+         | list
+         | sort }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_cleanup_running_config == nd4x_policy_group_cleanup_baseline_switch_configs[nd4x_cleanup_switch_index]
+    fail_msg: >-
+      Harness cleanup did not restore switch {{ nd4x_cleanup_switch_result.nd4x_cleanup_switch_id }} to its baseline
+      running configuration. Current={{ nd4x_cleanup_running_config }};
+      baseline={{ nd4x_policy_group_cleanup_baseline_switch_configs[nd4x_cleanup_switch_index] }}
+  loop: "{{ nd4x_cleanup_switch_final.results | default([]) }}"
+  loop_control:
+    loop_var: nd4x_cleanup_switch_result
+    index_var: nd4x_cleanup_switch_index
+    label: "{{ nd4x_cleanup_switch_result.nd4x_cleanup_switch_id }}"
+  when:
+    - not (nd4x_cleanup_capture_baseline | default(false) | bool)
+    - nd4x_policy_group_cleanup_baseline_switch_configs is defined
