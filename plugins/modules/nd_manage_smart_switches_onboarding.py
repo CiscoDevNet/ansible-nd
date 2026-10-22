@@ -6,7 +6,7 @@ from __future__ import annotations
 DOCUMENTATION = r"""
 ---
 module: nd_manage_smart_switches_onboarding
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Manage Smart Switch onboarding on Cisco Nexus Dashboard
 description:
 - Onboard inventory-present Smart Switches to Cisco Hypershield integrations and deboard existing associations.
@@ -63,8 +63,7 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - Requires Nexus Dashboard 4.2.1 or later and Smart-capable switches already present in fabric inventory.
-- For bulk onboarding, HTTP 202 acceptance alone does not establish success. Per-switch success and failure lists determine confirmed effects.
-- For bulk deboarding, a bodyless HTTP 202 confirms every requested deboarding effect. An unexpected response body is treated as unknown.
+- Only controller-confirmed onboarding and deboarding effects are applied to the reported association state.
 - Partial success fails the task with C(changed=true), preserves successful effects, and reports both successful and failed switches.
 - Unknown results or delivery failures omit C(after) and C(diff); C(changed=false) in that case means no change was proven, not proven unchanged.
 - Check mode performs reads and validation only. Its C(after) and C(diff) are planned predictions, identified by C(after_status=planned).
@@ -111,21 +110,32 @@ changed:
   returned: always
   type: bool
 failed:
-  description: Whether execution failed, including per-switch failures within HTTP 202 responses.
+  description: Whether execution failed, including per-switch failures reported by the controller.
   returned: always
   type: bool
+output_level:
+  description: Selected level of result detail.
+  returned: after state-machine initialization
+  type: str
+  sample: normal
+logs:
+  description: Debug log list. Currently empty; collected log messages are not included.
+  returned: after state-machine initialization when O(output_level) is V(debug)
+  type: list
+  elements: str
+  sample: []
 before:
   description: Initial onboarded associations in the selected fabric.
-  returned: after successful initial-state discovery
+  returned: after state-machine initialization
   type: list
   elements: dict
   sample: [{switch_id: SAL1948TRST, switch_name: leaf1, integration_name: hypershield-production}]
 after:
   description:
-  - Confirmed associations after execution, containing only proven successful effects.
+  - Initial associations with only controller-confirmed changes applied.
   - In check mode this is prospective state, not controller-confirmed state.
   - Omitted when any final-state uncertainty remains.
-  returned: when final state is known, or in check mode
+  returned: after state-machine initialization when final state is known, or in check mode
   type: list
   elements: dict
 after_status:
@@ -136,7 +146,7 @@ diff:
   description:
   - Snapshot dictionary with C(before) and C(after) lists when known state differs.
   - An empty list when known state is unchanged; omitted when final state is unknown.
-  returned: when final state is known, or in check mode
+  returned: after state-machine initialization when final state is known, or in check mode
   type: raw
 diff_status:
   description: Confidence of the diff, matching C(after_status).
@@ -182,7 +192,7 @@ mutation_errors:
   elements: str
 proposed:
   description: Prepared desired association configuration.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: after state-machine initialization when O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
 msg:

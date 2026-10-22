@@ -16,16 +16,17 @@ from ansible_collections.cisco.nd.plugins.modules import nd_manage_smart_switche
 from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_smart_switches_onboarding import orchestrator, page, response, row
 
 
-def run_state(state, rows, config, writes=(), check=False):
+def run_state(state, rows, config, writes=(), check=False, output_level="normal"):
     instance = orchestrator([page(rows, len(rows), 0), *writes], state=state, check=check)
     prepared = instance.prepare_config_data(config)
-    module = SimpleNamespace(params={"state": state, "config": config, "output_level": "normal"}, check_mode=check)
+    module = SimpleNamespace(params={"state": state, "config": config, "output_level": output_level}, check_mode=check)
     return NDStateMachine(module, instance, config=prepared)
 
 
 def test_supported_state_argspec_and_docs_match():
     spec = SmartSwitchOnboardingModel.get_argument_spec()
     docs = yaml.safe_load(smart_module.DOCUMENTATION)
+    assert docs["version_added"] == "2.0.0"
     assert spec["state"]["choices"] == ["replaced", "overridden", "deleted"]
     assert docs["options"]["state"]["choices"] == spec["state"]["choices"]
     assert set(docs["options"]["config"]["suboptions"]) == set(spec["config"]["options"])
@@ -49,9 +50,68 @@ def test_bulk_only_module_does_not_offer_undocumented_ticket_parameter(monkeypat
         smart_module.main()
 
 
-def test_docs_distinguish_onboarding_results_from_bodyless_deboarding_completion():
+def test_docs_describe_confirmed_effects_partial_failure_and_uncertainty():
     notes = " ".join(yaml.safe_load(smart_module.DOCUMENTATION)["notes"])
-    assert "bodyless HTTP 202" in notes
+    assert "controller-confirmed" in notes
+    assert "Partial success" in notes
+    assert "Unknown" in notes
+    assert "HTTP" not in notes
+    assert "HTTP" not in yaml.safe_load(smart_module.RETURN)["failed"]["description"]
+
+
+def test_return_documents_initialized_output_level_and_empty_debug_logs():
+    returns = yaml.safe_load(smart_module.RETURN)
+    assert returns["output_level"]["type"] == "str"
+    assert returns["output_level"]["returned"] == "after state-machine initialization"
+    assert returns["logs"]["type"] == "list"
+    assert returns["logs"]["elements"] == "str"
+    assert returns["logs"]["sample"] == []
+    assert "debug" in returns["logs"]["returned"]
+    assert "initialization" in returns["logs"]["returned"]
+    assert "initialization" in returns["before"]["returned"]
+    assert "initialization" in returns["proposed"]["returned"]
+
+
+@pytest.mark.parametrize("level", ["normal", "info", "debug"])
+@pytest.mark.parametrize("scenario", ["success", "mixed", "all_failed", "check", "noop", "unknown"])
+def test_documented_return_types_and_output_levels(level, scenario):
+    body = {
+        "success": {"successResults": [{"name": "a"}, {"name": "b"}]},
+        "mixed": {"successResults": [{"name": "a"}], "failureResults": [{"name": "b"}]},
+        "all_failed": {"failureResults": [{"name": "a"}, {"name": "b"}]},
+        "unknown": {"successResults": [{"name": "a"}]},
+    }
+    sm = run_state(
+        "replaced",
+        [row(key, "h" if scenario == "noop" else "") for key in ("a", "b")],
+        [{"switch_id": key, "integration_name": "h"} for key in ("a", "b")],
+        [response(body[scenario], 202)] if scenario in body else [],
+        check=scenario == "check",
+        output_level=level,
+    )
+    if scenario in {"mixed", "all_failed", "unknown"}:
+        with pytest.raises(NDStateMachineError):
+            sm.manage_state()
+    else:
+        sm.manage_state()
+    output = sm.output.format()
+    returns = yaml.safe_load(smart_module.RETURN)
+    types = {"str": str, "bool": bool, "list": list, "dict": dict, "raw": (dict, list)}
+    for key, value in output.items():
+        assert key in returns
+        assert isinstance(value, types[returns[key]["type"]])
+        if returns[key].get("elements"):
+            assert all(isinstance(item, types[returns[key]["elements"]]) for item in value)
+    assert output["output_level"] == level
+    assert ("proposed" in output) is (level in {"info", "debug"})
+    assert ("logs" in output) is (level == "debug")
+    if level == "debug":
+        assert output["logs"] == []
+    assert ("after" in output) is (scenario != "unknown")
+    assert ("diff" in output) is (scenario != "unknown")
+    assert output["after_status"] == ("unknown" if scenario == "unknown" else "planned" if scenario == "check" else "confirmed")
+    if scenario in {"check", "noop"}:
+        assert sm.model_orchestrator.rest_send.mutation_attempt_count == 0
 
 
 @pytest.mark.parametrize("state", ["replaced", "overridden"])
