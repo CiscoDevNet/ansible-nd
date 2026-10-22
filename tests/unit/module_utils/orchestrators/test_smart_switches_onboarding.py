@@ -8,17 +8,9 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation import MutationOutcome
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.smart_switches_onboarding import (
-    SmartSwitchOnboardingOrchestrator,
-    SmartSwitchOnboardingResponseAdapter,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
-from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.smart_switches_onboarding import SmartSwitchOnboardingResponseAdapter
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.smart_switches_onboarding_helpers import orchestrator, page, response, row
 
 
 def test_schema_shaped_fixture_read_and_confirmed_wrapper_evidence():
@@ -28,41 +20,6 @@ def test_schema_shaped_fixture_read_and_confirmed_wrapper_evidence():
     models = [SmartSwitchOnboardingModel(switch_id=key, switch_name=f"leaf-{key}", integration_name="hypershield") for key in ("a", "b")]
     outcome = instance.create_bulk(models)
     assert [item.outcome for item in outcome.outcomes] == [MutationOutcome.SUCCEEDED, MutationOutcome.FAILED]
-
-
-def response(data, code=200):
-    return {"RETURN_CODE": code, "MESSAGE": "OK", "DATA": data}
-
-
-def row(key, integration="", name=None, smart=True, alias="additionalData"):
-    return {
-        "switchId": key,
-        "hostname": name or f"leaf-{key}",
-        "fabricName": "fabric_1",
-        alias: {"smartSwitch": smart, "hypershieldIntegrationName": integration},
-    }
-
-
-def page(rows, total=None, remaining=None):
-    data = {"switches": rows}
-    if total is not None:
-        data["meta"] = {"counts": {"total": total, "remaining": remaining}}
-    return response(data)
-
-
-def orchestrator(responses, state="replaced", check=False):
-    sender = Sender()
-    sender.ansible_module = MockAnsibleModule()
-    sender.gen = ResponseGenerator(iter(responses))
-    rest = RestSend({"check_mode": check, "state": state})
-    rest.sender = sender
-    rest.response_handler = ResponseHandler()
-    rest.unit_test = True
-    rest.timeout = 1
-    results = Results()
-    results.state = state
-    results.check_mode = check
-    return SmartSwitchOnboardingOrchestrator(rest_send=rest, results=results, fabric_name="fabric_1")
 
 
 @pytest.mark.parametrize(

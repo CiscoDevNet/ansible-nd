@@ -3,6 +3,7 @@
 """Module wiring and full state/output contracts without live ND requests."""
 
 import logging
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fai
 from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_smart_switches_onboarding as smart_module
-from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_smart_switches_onboarding import orchestrator, page, response, row
+from ansible_collections.cisco.nd.tests.unit.module_utils.smart_switches_onboarding_helpers import orchestrator, page, response, row
 
 
 def run_state(state, rows, config, writes=(), check=False, output_level="normal"):
@@ -330,7 +331,7 @@ def test_partial_fail_json_preserves_both_outcomes():
     assert [item["switch_id"] for item in captured["after"]] == ["a"]
 
 
-def test_main_wires_prepared_config_once_and_uses_shared_failure_handler(monkeypatch):
+def test_main_orchestrator_construction_failure_uses_shared_failure_handler(monkeypatch):
     events = []
     module = SimpleNamespace(params={"state": "replaced", "config": [], "fabric_name": "fabric_1"}, check_mode=False)
 
@@ -345,7 +346,7 @@ def test_main_wires_prepared_config_once_and_uses_shared_failure_handler(monkeyp
 
     def construct_orchestrator(**kwargs):
         events.append("orchestrator")
-        raise ValueError("preparation unavailable")
+        raise ValueError("orchestrator unavailable")
 
     monkeypatch.setattr(smart_module, "AnsibleModule", lambda **kwargs: module)
     monkeypatch.setattr(smart_module, "require_pydantic", lambda actual_module: None)
@@ -354,3 +355,162 @@ def test_main_wires_prepared_config_once_and_uses_shared_failure_handler(monkeyp
     with pytest.raises(StopMain):
         smart_module.main()
     assert events == ["orchestrator", "failure"]
+
+
+class MainExit(BaseException):
+    """Model Ansible's process exit without entering main's exception handler."""
+
+    def __init__(self, kind, output):
+        super().__init__(kind)
+        self.kind = kind
+        self.output = output
+
+
+def install_main_session(monkeypatch, instance, config, *, check=False, output_level="normal"):
+    """Observe the real entrypoint/state machine with a recorded Smart transport."""
+    module = SimpleNamespace(
+        params={"state": "replaced", "config": config, "fabric_name": "fabric_1", "cluster_name": "cluster-a", "output_level": output_level},
+        check_mode=check,
+    )
+    observed = SimpleNamespace(events=[], prepared=[], machines=[], failures=[])
+    prepare = type(instance).prepare_config_data
+    manage = NDStateMachine.manage_state
+
+    def construct_orchestrator(**kwargs):
+        observed.events.append("orchestrator")
+        assert kwargs["fabric_name"] == "fabric_1"
+        assert kwargs["cluster_name"] == "cluster-a"
+        assert kwargs["rest_send"].check_mode is check
+        return instance
+
+    def prepare_once(self, raw):
+        observed.events.append("prepare")
+        assert self is instance and raw is config
+        prepared = prepare(self, raw)
+        observed.prepared.append(prepared)
+        return prepared
+
+    def construct_state_machine(actual_module, actual_orchestrator, *, config):
+        observed.events.append("state_machine")
+        assert actual_module is module and actual_orchestrator is instance
+        assert config is observed.prepared[0]
+        machine = NDStateMachine(actual_module, actual_orchestrator, config=config)
+        observed.machines.append(machine)
+        return machine
+
+    def manage_state(self):
+        observed.events.append("manage")
+        return manage(self)
+
+    def exit_json(**output):
+        observed.events.append("exit")
+        raise MainExit("exit", output)
+
+    def fail_json(**output):
+        observed.events.append("fail_json")
+        # Real Ansible fail_json supplies these defaults for initialization errors.
+        output.setdefault("changed", False)
+        output["failed"] = True
+        raise MainExit("fail", output)
+
+    def fail_handler(actual_module, module_log, machine, error):
+        observed.events.append("failure")
+        observed.failures.append((machine, error))
+        fail_from_exception(actual_module, module_log, machine, error)
+
+    def construct_module(**kwargs):
+        assert kwargs["supports_check_mode"] is True
+        return module
+
+    module.exit_json = exit_json
+    module.fail_json = fail_json
+    monkeypatch.setattr(smart_module, "AnsibleModule", construct_module)
+    monkeypatch.setattr(smart_module, "require_pydantic", lambda actual_module: None)
+    monkeypatch.setattr(smart_module, "setup_logging", lambda actual_module: None)
+    monkeypatch.setattr(smart_module, "SmartSwitchOnboardingOrchestrator", construct_orchestrator)
+    monkeypatch.setattr(type(instance), "prepare_config_data", prepare_once)
+    monkeypatch.setattr(smart_module, "NDStateMachine", construct_state_machine)
+    monkeypatch.setattr(NDStateMachine, "manage_state", manage_state)
+    monkeypatch.setattr(smart_module, "fail_from_exception", fail_handler)
+    return module, observed
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_real_main_prepares_once_passes_exact_copy_and_preserves_check_mode(monkeypatch, check):
+    config = [{"switch_id": "a", "integration_name": "h"}]
+    original = deepcopy(config)
+    writes = [] if check else [response({"successResults": [{"name": "a"}]}, 202)]
+    instance = orchestrator([page([row("a")], 1, 0), *writes], check=check)
+    module, observed = install_main_session(monkeypatch, instance, config, check=check)
+    with pytest.raises(MainExit) as stopped:
+        smart_module.main()
+    assert stopped.value.kind == "exit"
+    assert observed.events == ["orchestrator", "prepare", "state_machine", "manage", "exit"]
+    assert len(observed.prepared) == len(observed.machines) == 1
+    assert observed.prepared[0] is not config
+    assert observed.prepared[0][0]["switch_name"] == "leaf-a"
+    assert module.params["config"] is config and config == original
+    machine = observed.machines[0]
+    assert machine.model_orchestrator is instance
+    assert machine.check_mode is machine.results.check_mode is check
+    assert instance.rest_send.check_mode is check
+    assert instance.rest_send.mutation_attempt_count == (0 if check else 1)
+    assert stopped.value.output["after_status"] == ("planned" if check else "confirmed")
+    assert stopped.value.output["changed"] and not stopped.value.output["failed"]
+    assert observed.failures == []
+
+
+@pytest.mark.parametrize("phase", ["preparation", "initialization"])
+def test_real_main_early_failures_pass_no_state_machine_to_real_handler(monkeypatch, phase):
+    config = [{"switch_id": "missing", "integration_name": "h"}] if phase == "preparation" else [{"switch_id": "a"}]
+    original = deepcopy(config)
+    instance = orchestrator([page([row("a")], 1, 0)])
+    module, observed = install_main_session(monkeypatch, instance, config)
+    with pytest.raises(MainExit) as stopped:
+        smart_module.main()
+    assert stopped.value.kind == "fail"
+    expected = ["orchestrator", "prepare"] + (["state_machine"] if phase == "initialization" else []) + ["failure", "fail_json"]
+    assert observed.events == expected
+    assert observed.machines == []
+    assert observed.failures[0][0] is None
+    assert isinstance(observed.failures[0][1], NDStateMachineError if phase == "initialization" else ValueError)
+    assert module.params["config"] == original
+    assert instance.rest_send.mutation_attempt_count == 0
+    assert stopped.value.output["failed"] and not stopped.value.output["changed"]
+    assert isinstance(stopped.value.output["msg"], str)
+    assert not ({"before", "after", "diff", "output_level", "logs"} & stopped.value.output.keys())
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_real_main_failure_handler_retains_partial_success_and_uncertainty(monkeypatch, unknown):
+    config = [{"switch_id": key, "integration_name": "h"} for key in ("a", "b")]
+    original = deepcopy(config)
+    body = {"successResults": [{"name": "a"}]}
+    if not unknown:
+        body["failureResults"] = [{"name": "b", "message": "refused"}]
+    instance = orchestrator([page([row("a"), row("b")], 2, 0), response(body, 202)])
+    module, observed = install_main_session(monkeypatch, instance, config, output_level="debug")
+    with pytest.raises(MainExit) as stopped:
+        smart_module.main()
+    assert stopped.value.kind == "fail"
+    assert observed.events == ["orchestrator", "prepare", "state_machine", "manage", "failure", "fail_json"]
+    assert len(observed.prepared) == len(observed.machines) == 1
+    assert observed.failures[0][0] is observed.machines[0]
+    assert isinstance(observed.failures[0][1], NDStateMachineError)
+    assert module.params["config"] == original
+    assert instance.rest_send.mutation_attempt_count == 1
+    output = stopped.value.output
+    assert output["changed"] and output["failed"]
+    assert isinstance(output["msg"], str)
+    assert output["output_level"] == "debug" and output["logs"] == []
+    assert [item["outcome"] for item in output["action_results"]] == ["succeeded", "unknown" if unknown else "failed"]
+    assert [item["effect_confirmed"] for item in output["action_results"]] == [True, False]
+    if unknown:
+        assert "after" not in output and "diff" not in output
+        assert output["unknown_identifiers"] == ["b"]
+        assert output["may_have_changed"] and not output["reconciliation_complete"]
+    else:
+        assert [item["switch_id"] for item in output["after"]] == ["a"]
+        assert [item["switch_id"] for item in output["diff"]["after"]] == ["a"]
+        assert output["action_results"][1]["messages"] == ["refused"]
+        assert not output["may_have_changed"] and output["reconciliation_complete"]
