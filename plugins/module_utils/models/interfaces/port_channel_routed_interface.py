@@ -38,6 +38,7 @@ from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -49,6 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     XePortChannelRoutedPolicyTypeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    AddressPrefixPairMixin,
     default_policy_type,
     normalize_member_interface_names,
     reconcile_cidr_prefix,
@@ -60,7 +62,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6Host
 
 
-class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
+class PortChannelRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -74,6 +76,8 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"), ("ipv6", "ipv6_prefix"))
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND `int_l3_port_channel` template defaults (schema-sourced via nd-openapi `intL3PortChannelTemplate`, and as ECHOED for an l3Po
@@ -137,7 +141,7 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         return reconcile_cidr_prefix(data, "ipv6", ("ipv6_prefix", "ipv6Prefix"), 6)
 
     @model_validator(mode="after")
-    def _validate_address_prefix_paired(self) -> PortChannelRoutedPolicyModel:
+    def _validate_address_prefix_paired(self, info: ValidationInfo) -> PortChannelRoutedPolicyModel:
         """
         # Summary
 
@@ -149,8 +153,8 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
         - If exactly one of `ip` / `prefix`, or exactly one of `ipv6` / `ipv6_prefix`, is set.
         """
-        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix")
-        require_address_prefix_pair(self.ipv6, self.ipv6_prefix, "ipv6", "ipv6_prefix")
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix", info)
+        require_address_prefix_pair(self.ipv6, self.ipv6_prefix, "ipv6", "ipv6_prefix", info)
         return self
 
     copy_description: bool | None = Field(default=None, alias="copyDescription", description="Propagate the port-channel description to all member interfaces")
@@ -217,7 +221,7 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         return normalize_member_interface_names(value)
 
 
-class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
+class XePortChannelRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -231,6 +235,8 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"),)
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND `ios_xe_int_l3_port_channel` template defaults as ECHOED (lab 2026-09-18, 4.2.1.10 and 4.3.1.175): ND does not inject an
@@ -276,7 +282,7 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         return reconcile_cidr_prefix(data, "ip", ("prefix",), 4)
 
     @model_validator(mode="after")
-    def _validate_address_prefix_paired(self) -> XePortChannelRoutedPolicyModel:
+    def _validate_address_prefix_paired(self, info: ValidationInfo) -> XePortChannelRoutedPolicyModel:
         """
         # Summary
 
@@ -288,7 +294,7 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
         - If exactly one of `ip` / `prefix` is set.
         """
-        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix")
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix", info)
         return self
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
