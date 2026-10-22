@@ -34,7 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPost,
     EpManageInterfacesPut,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
+from ansible_collections.cisco.nd.plugins.module_utils.module_failure import RECONCILE_FAILURE_LOG, fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
@@ -124,23 +124,37 @@ class _RecordingOrchestrator(NDBaseInterfaceOrchestrator):
         return {"RETURN_CODE": 200, "MESSAGE": "OK", "DATA": {}}
 
 
-def _state_machine(output: dict[str, Any] | None = None, *, format_failure: Exception | None = None, orchestrator: Any = None) -> SimpleNamespace:
+def _state_machine(
+    output: dict[str, Any] | None = None,
+    *,
+    format_failure: Exception | None = None,
+    orchestrator: Any = None,
+    reconcile_failure: Exception | None = None,
+) -> SimpleNamespace:
     """
     # Summary
 
-    Build an `NDStateMachine` stand-in whose `output.format()` returns `output`, or raises `format_failure` when set.
+    Build an `NDStateMachine` stand-in whose `output.format()` returns `output`, or raises `format_failure` when set, and whose
+    `reconcile_after_failure()` records each call on `reconcile_calls` (and raises `reconcile_failure` when set).
 
     ## Raises
 
     None
     """
+    calls: list[str] = []
 
     def _format() -> dict[str, Any]:
+        calls.append("format")
         if format_failure is not None:
             raise format_failure
         return dict(output or {})
 
-    return SimpleNamespace(output=SimpleNamespace(format=_format), model_orchestrator=orchestrator)
+    def _reconcile() -> None:
+        calls.append("reconcile")
+        if reconcile_failure is not None:
+            raise reconcile_failure
+
+    return SimpleNamespace(output=SimpleNamespace(format=_format), model_orchestrator=orchestrator, reconcile_after_failure=_reconcile, reconcile_calls=calls)
 
 
 def _fail(module: _FakeAnsibleModule, nd_state_machine: Any, error: BaseException, module_log: logging.Logger) -> dict[str, Any]:
@@ -373,3 +387,57 @@ def test_module_failure_00070() -> None:
     assert kwargs == {"msg": "Module failed: unexpected"}
     assert orchestrator._deployed == []
     assert orchestrator._pending_deploys == [ACCEPTED_PAIR]
+
+
+def test_module_failure_00080() -> None:
+    """
+    # Summary
+
+    Verify `fail_from_exception` reconciles the state machine's output before formatting it (issue #597 delete side), so `after`
+    reflects unaccepted removals.
+
+    ## Test
+
+    - The stand-in records `reconcile` then `format`
+    - `fail_json` receives the formatted output merged with the message
+
+    ## Classes and Methods
+
+    - fail_from_exception()
+    - NDStateMachine.reconcile_after_failure()
+    """
+    nd_state_machine = _state_machine({"changed": False, "after": []})
+
+    kwargs = _fail(_FakeAnsibleModule(), nd_state_machine, NDStateMachineError("remove failed"), logging.getLogger("nd.test"))
+
+    assert nd_state_machine.reconcile_calls == ["reconcile", "format"]
+    assert kwargs == {"msg": "Module execution failed: remove failed", "changed": False, "after": []}
+
+
+def test_module_failure_00090(caplog: pytest.LogCaptureFixture) -> None:
+    """
+    # Summary
+
+    Verify a reconciliation failure is logged and cannot mask the original error: the output is still formatted and reported.
+
+    ## Test
+
+    - `reconcile_after_failure` raises `RuntimeError("hook exploded")`
+    - The reconcile failure log line is emitted at ERROR with the traceback
+    - `fail_json` still receives the original message and the formatted output
+
+    ## Classes and Methods
+
+    - fail_from_exception()
+    """
+    nd_state_machine = _state_machine({"changed": False}, reconcile_failure=RuntimeError("hook exploded"))
+    module_log = logging.getLogger("nd.test")
+
+    with caplog.at_level(logging.ERROR, logger="nd.test"):
+        kwargs = _fail(_FakeAnsibleModule(), nd_state_machine, NDStateMachineError("remove failed"), module_log)
+
+    assert nd_state_machine.reconcile_calls == ["reconcile", "format"]
+    assert kwargs == {"msg": "Module execution failed: remove failed", "changed": False}
+    records = [record for record in caplog.records if record.getMessage() == RECONCILE_FAILURE_LOG]
+    assert len(records) == 1
+    assert "hook exploded" in caplog.text
