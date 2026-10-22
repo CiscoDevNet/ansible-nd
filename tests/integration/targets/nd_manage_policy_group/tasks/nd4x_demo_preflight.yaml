@@ -113,10 +113,10 @@
       - nd4x_policy_group_nd_queries | length == 4
       - nd4x_policy_group_nd_queries | selectattr('path', 'search', '/policySummary') | list | length == 1
       - nd4x_policy_group_nd_queries | selectattr('path', 'search', '/switches/.*/diff') | list | length == 3
-  fail_msg: >-
-    Policy-group harness scenarios require a fabric-wide policySummary snapshot
-    and one read-only switch-side diff snapshot per configured test switch in
-    both predictive and post-apply queries.
+    fail_msg: >-
+      Policy-group harness scenarios require a fabric-wide policySummary snapshot
+      and one read-only switch-side diff snapshot per configured test switch in
+      both predictive and post-apply queries.
   when: nd4x_supported | bool
   tags:
     - always

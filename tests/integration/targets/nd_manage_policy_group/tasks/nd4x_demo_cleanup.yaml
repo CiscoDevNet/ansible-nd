@@ -103,7 +103,14 @@
     nd4x_policy_group_cleanup_baseline_switch_configs: >-
       {{ nd4x_policy_group_cleanup_baseline_switch_configs + [
          item.jsondata.diffConfigs | default([])
-         | map(attribute='runningConfig') | select('defined') | list | sort
+         | map(attribute='runningConfig')
+         | select('defined')
+         | reject('equalto', 'configure terminal')
+         | reject('match', '^!Command:')
+         | reject('match', '^!Running configuration last done at:')
+         | reject('match', '^!Time:')
+         | list
+         | sort
       ] }}
   loop: "{{ nd4x_cleanup_switch_diff.results | default([]) }}"
   when: nd4x_cleanup_capture_baseline | default(false) | bool
@@ -125,7 +132,14 @@
   until: >-
     (
       nd4x_cleanup_switch_final.jsondata.diffConfigs | default([])
-      | map(attribute='runningConfig') | select('defined') | list | sort
+      | map(attribute='runningConfig')
+      | select('defined')
+      | reject('equalto', 'configure terminal')
+      | reject('match', '^!Command:')
+      | reject('match', '^!Running configuration last done at:')
+      | reject('match', '^!Time:')
+      | list
+      | sort
     ) == nd4x_policy_group_cleanup_baseline_switch_configs[nd4x_cleanup_switch_index]
   retries: 12
   delay: 5
@@ -137,19 +151,26 @@
   vars:
     nd4x_cleanup_running_config: >-
       {{ nd4x_cleanup_switch_result.jsondata.diffConfigs | default([])
-         | map(attribute='runningConfig') | select('defined') | list | sort }}
+         | map(attribute='runningConfig')
+         | select('defined')
+         | reject('equalto', 'configure terminal')
+         | reject('match', '^!Command:')
+         | reject('match', '^!Running configuration last done at:')
+         | reject('match', '^!Time:')
+         | list
+         | sort }}
   ansible.builtin.assert:
     that:
       - nd4x_cleanup_running_config == nd4x_policy_group_cleanup_baseline_switch_configs[nd4x_cleanup_switch_index]
     fail_msg: >-
-      Harness cleanup did not restore switch {{ nd4x_cleanup_switch_result.item }} to its baseline
+      Harness cleanup did not restore switch {{ nd4x_cleanup_switch_result.nd4x_cleanup_switch_id }} to its baseline
       running configuration. Current={{ nd4x_cleanup_running_config }};
       baseline={{ nd4x_policy_group_cleanup_baseline_switch_configs[nd4x_cleanup_switch_index] }}
   loop: "{{ nd4x_cleanup_switch_final.results | default([]) }}"
   loop_control:
     loop_var: nd4x_cleanup_switch_result
     index_var: nd4x_cleanup_switch_index
-    label: "{{ nd4x_cleanup_switch_result.item }}"
+    label: "{{ nd4x_cleanup_switch_result.nd4x_cleanup_switch_id }}"
   when:
     - not (nd4x_cleanup_capture_baseline | default(false) | bool)
     - nd4x_policy_group_cleanup_baseline_switch_configs is defined

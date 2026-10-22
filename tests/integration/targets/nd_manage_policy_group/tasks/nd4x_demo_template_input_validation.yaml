@@ -237,6 +237,7 @@
               ANOTHER_BOGUS_KEY: x
         expected:
           check_mode: {failed: true}
+          apply: {failed: true}
         check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
       register: nd4x_tiv_tc6
 

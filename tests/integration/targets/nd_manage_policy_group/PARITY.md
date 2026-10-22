@@ -145,5 +145,34 @@ Individual groups can be selected with `nd4x_demo_merged`,
 `nd4x_demo_gathered`, `nd4x_demo_round_trip`, `nd4x_demo_deleted`,
 `nd4x_demo_special`, or `nd4x_demo_template_input_validation`.
 
-Live testing is in progress. The test results will be added to this
-`PARITY.md` once testing is complete.
+## Live testing status
+
+Preflight testing completed successfully on 2026-10-22 using the local
+ inventory:
+
+```text
+ok=10 changed=0 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0
+```
+
+The ND 4.x preflight passed, including fabric membership and switch-side
+snapshot validation. Scenario testing is in progress; the remaining results
+will be added to this `PARITY.md` once testing is complete.
+
+### Common live-run blocker
+
+The failed runs below share one module/REST handling issue: ND returns HTTP
+207 with only `No Commands to execute`/`notExecuted` results for an already
+synchronized deployment or cleanup request, and the module reports that
+successful no-op as `failed: true`. This is recorded once here rather than
+repeated for every scenario.
+
+### Live scenario results
+
+| Harness scenario | Result | Play recap |
+|---|---|---|
+| `nd4x_demo_merged` | Reached MERGED TC1; apply succeeded, idempotency replay stopped the suite. | `ok=29 changed=1 failed=1 skipped=9` |
+| `nd4x_demo_gathered` | Setup idempotency stopped the suite; gathered cases were not reached. | `ok=29 changed=1 failed=1 skipped=9` |
+| `nd4x_demo_round_trip` | Setup idempotency stopped the suite; RT TC1–TC11 were not reached. | `ok=29 changed=1 failed=1 skipped=9` |
+| `nd4x_demo_deleted` | Setup idempotency stopped the suite; DELETED TC1–TC5 were not reached. | `ok=29 changed=1 failed=1 skipped=9` |
+| `nd4x_demo_special` | Force-create setup stopped before the special cases; cleanup also failed. | `ok=24 changed=0 failed=2 skipped=6` |
+| `nd4x_demo_template_input_validation` | TIV-TC1–TC7 assertions passed, including TIV-TC6 check-mode and apply validation; final cleanup failed. | `ok=53 changed=4 failed=1 skipped=8` |

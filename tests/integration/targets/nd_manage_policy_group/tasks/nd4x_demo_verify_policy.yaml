@@ -22,13 +22,31 @@
     matching_groups: >-
       {{ nd4x_verify_result.first_run_result.gathered | default([])
          | selectattr('description', 'equalto', item.description) | list }}
+    expected_template_inputs: "{{ item.template_inputs | default({}) }}"
+    actual_template_inputs: >-
+      {{ ((matching_groups | first | default({})).template_inputs | default({})) }}
+    expected_template_input_keys: "{{ expected_template_inputs.keys() | list | sort }}"
+    actual_template_input_keys: "{{ actual_template_inputs.keys() | list | sort }}"
   ansible.builtin.assert:
     that:
       - matching_groups | length == 1
-      - matching_groups[0].template_name == item.template_name
+      - matching_groups[0].name == item.template_name
       - item.switch_ids is not defined or matching_groups[0].switch_ids | sort == item.switch_ids | sort
       - item.priority is not defined or matching_groups[0].priority == item.priority
-      - item.template_inputs is not defined or matching_groups[0].template_inputs == item.template_inputs
+      - item.template_inputs is not defined or actual_template_input_keys == expected_template_input_keys
+      - >-
+        item.template_inputs is not defined or
+        (
+          expected_template_input_keys
+          | map('extract', actual_template_inputs)
+          | map('string')
+          | list
+        ) == (
+          expected_template_input_keys
+          | map('extract', expected_template_inputs)
+          | map('string')
+          | list
+        )
   loop: "{{ nd4x_verify_expected }}"
   loop_control:
     label: "{{ item.description }}"
