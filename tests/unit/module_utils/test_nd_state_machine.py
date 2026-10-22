@@ -892,19 +892,22 @@ def test_standalone_partial_bulk_reconciles_only_accepted_update() -> None:
     assert machine.existing.get(("192.168.12.151", "loopback11")).config_data.network_os.policy.description == "stale description"
 
 
+class _AcceptedThenPreviewFailedSpy(_ExistingConfiguredLoopbackSpy):
+    """Spy whose `update` records the PUT as accepted (`_accepted_post_write_model`) and then raises, as the port-channel member preview can."""
+
+    def model_post_init(self, context) -> None:
+        super().model_post_init(context)
+        self._accepted_post_write_model = None
+
+    def update(self, model_instance, **_kwargs):
+        self._accepted_post_write_model = model_instance
+        raise RuntimeError("member preview failed after accepted PUT")
+
+
 def test_standalone_post_write_failure_retains_accepted_update_in_after() -> None:
     """A later preview failure must not replace an accepted PUT with old state."""
 
-    class AcceptedThenPreviewFailed(_ExistingConfiguredLoopbackSpy):
-        def model_post_init(self, context) -> None:
-            super().model_post_init(context)
-            self._accepted_post_write_model = None
-
-        def update(self, model_instance, **_kwargs):
-            self._accepted_post_write_model = model_instance
-            raise RuntimeError("member preview failed after accepted PUT")
-
-    spy = AcceptedThenPreviewFailed(rest_send=_build_rest_send())
+    spy = _AcceptedThenPreviewFailedSpy(rest_send=_build_rest_send())
     machine = NDStateMachine(module=_build_module("replaced", False, _bulk_replacement_config()[:1]), model_orchestrator=spy)
 
     with pytest.raises(NDStateMachineError, match="member preview failed after accepted PUT"):
@@ -1737,3 +1740,34 @@ def test_nd_state_machine_00400() -> None:
         instance.reconcile_after_failure()
     assert len(instance.existing) == 2
     assert len(instance.removed) == 0
+
+
+def test_nd_state_machine_00410() -> None:
+    """
+    # Summary
+
+    Verify an accepted singular PUT whose later preview failure is swallowed by `ignore_errors` is still applied to `after` and reported
+    as sent (issue #597, PR #608 review): the accepted-write marker must be honoured whether the failure propagates or is swallowed.
+
+    ## Test
+
+    - Same spy as `test_standalone_post_write_failure_retains_accepted_update_in_after`, with `ignore_errors` true
+    - `manage_state` does not raise
+    - `sent` holds loopback10, `existing` carries the updated description, and the result is `changed`
+
+    ## Classes and Methods
+
+    - NDStateMachine._manage_create_update_state()
+    - NDStateMachine._apply_accepted()
+    """
+    spy = _AcceptedThenPreviewFailedSpy(rest_send=_build_rest_send())
+    module = _build_module("replaced", False, _bulk_replacement_config()[:1])
+    module.params["ignore_errors"] = True
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with does_not_raise():
+        instance.manage_state()
+
+    assert {item.interface_name for item in instance.sent} == {"loopback10"}
+    assert instance.existing.get(("192.168.12.151", "loopback10")).config_data.network_os.policy.description == "updated description"
+    assert instance.output.format()["changed"] is True
