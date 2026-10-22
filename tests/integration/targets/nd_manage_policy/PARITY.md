@@ -24,10 +24,90 @@ silently targeting another fabric.
 ## Current live status
 
 The harness implementation and legacy-to-harness scenario mapping are in
-place. Live ND 4.x execution is in progress. Pass/fail results, controller
-version/environment details, and any controller-specific scenario deviations
-will be added to this file after the live runs complete. No live pass claim is
-made by this document yet.
+place. Live ND 4.x execution is in progress.
+
+The first live merged-state run produced the following recap:
+
+```text
+nd : ok=35 changed=2 unreachable=0 failed=1 skipped=9 rescued=0 ignored=0
+```
+
+The failure occurred in `nd4x_demo_merged.yaml` at the task
+`MERGED: Create clock_summertime, switch_freeform, and feature_enable`.
+The captured check-mode result was:
+
+```text
+before_count: 0
+after_count: 3
+proposed_count: 3
+changed: false
+failed: false
+```
+
+The harness therefore stopped on its expected `changed: true` assertion.
+This is the known `nd_manage_policy` check-mode reporting defect tracked in
+[#630](https://github.com/CiscoDevNet/ansible-nd/issues/630), not a missing
+harness scenario.
+
+The live fan-out run produced:
+
+```text
+nd : ok=39 changed=2 unreachable=0 failed=1 skipped=5 rescued=0 ignored=0
+```
+
+It encountered the same check-mode `changed: false` defect tracked in
+[#630](https://github.com/CiscoDevNet/ansible-nd/issues/630). The remaining
+live state results and any controller-specific deviations will be recorded
+here as testing continues.
+
+A run reported as gathered produced the following recap:
+
+```text
+nd : ok=39 changed=2 unreachable=0 failed=1 skipped=5 rescued=0 ignored=0
+```
+
+However, the captured failure is again at
+`nd4x_demo_merged.yaml:61` (`MERGED: Create clock_summertime,
+switch_freeform, and feature_enable`). The run stopped on the same
+check-mode `changed: false` defect before reaching the gathered scenario, so
+this is not yet a gathered-scenario result. It remains tracked in
+[#630](https://github.com/CiscoDevNet/ansible-nd/issues/630).
+
+A run reported as deleted produced:
+
+```text
+nd : ok=35 changed=2 unreachable=0 failed=1 skipped=9 rescued=0 ignored=0
+```
+
+The log shows the same failure at
+`nd4x_demo_merged.yaml:61` before the deleted scenario was reached. The
+deleted-state live result is therefore still pending; this run was blocked by
+the known check-mode defect in
+[#630](https://github.com/CiscoDevNet/ansible-nd/issues/630).
+
+A run reported as edge cases produced:
+
+```text
+nd : ok=35 changed=2 unreachable=0 failed=1 skipped=9 rescued=0 ignored=0
+```
+
+The log shows the same failure at
+`nd4x_demo_merged.yaml:61` before the edge-case scenario was reached. The
+edge-case live result is therefore still pending; this run was blocked by the
+known check-mode defect in
+[#630](https://github.com/CiscoDevNet/ansible-nd/issues/630).
+
+A run reported as negative produced:
+
+```text
+nd : ok=35 changed=2 unreachable=0 failed=1 skipped=9 rescued=0 ignored=0
+```
+
+The log shows the same failure at
+`nd4x_demo_merged.yaml:61` before the negative scenario was reached. The
+negative-state live result is therefore still pending; this run was blocked
+by the known check-mode defect in
+[#630](https://github.com/CiscoDevNet/ansible-nd/issues/630).
 
 ## Harness coverage and safeguards
 
@@ -118,7 +198,7 @@ made by this document yet.
 ```text
 ansible-test network-integration nd_manage_policy \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo,nd4x_demo_preflight -vv
+  --tags nd4x_demo -vv
 ```
 
 Use `nd4x_demo_merged`, `nd4x_demo_gathered`, or another scenario tag in place
