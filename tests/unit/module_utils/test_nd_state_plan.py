@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import EthernetRoutedInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
 )
@@ -161,3 +162,33 @@ def test_merged_plan_applies_vlan_mapping_flag_and_entries_atomically() -> None:
         }
     ]
     assert before.to_ansible_config() == original_before
+
+
+def test_merged_plan_rejects_a_stored_half_address_prefix_pair_the_task_does_not_complete() -> None:
+    """A description-only merge onto a routed policy ND stores with prefix but no ip fails naming the interface (PR #636 review)."""
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.0.2.1",
+            "interfaceName": "Ethernet1/12",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "routedHost", "description": "Old uplink", "prefix": 24}},
+            },
+        }
+    )
+    before = NDConfigCollection(model_class=EthernetRoutedInterfaceModel, items=[existing])
+    proposed = NDConfigCollection.from_ansible_config(
+        data=[
+            {
+                "switch_ip": "192.0.2.1",
+                "interface_name": "Ethernet1/12",
+                "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"description": "New uplink"}}},
+            }
+        ],
+        model_class=EthernetRoutedInterfaceModel,
+        context={"state": "merged"},
+    )
+
+    with pytest.raises(ValueError, match=r"Failed to process .*Ethernet1/12.*prefix without ip"):
+        NDStatePlanner.plan(state="merged", before=before, proposed=proposed)

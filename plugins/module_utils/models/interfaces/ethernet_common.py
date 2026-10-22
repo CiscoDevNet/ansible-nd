@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationInfo
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 
 # Leading alphabetic prefix + the remainder (digits, /, ., -) of an interface name.
 _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
@@ -211,7 +213,8 @@ def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, pr
     - on `mode="response"`, so a prefix-only policy ND silently stored (issue #584) is read truthfully instead of failing the query;
     - on assignment, which carries no context: `NDBaseModel.merge()` assigns one field at a time under `validate_assignment`, so adding a
       pair to a policy that had neither passes through a transient half pair, and any field declared between the two is assigned while
-      the pair is still half. Both merge inputs were validated whole, so the merged result holds the invariant.
+      the pair is still half. The merged result is re-checked by `AddressPrefixPairMixin.merge`, because the existing side of a merge was
+      read tolerantly and may itself carry a half pair the controller stored.
 
     `info.field_name` cannot be used to detect assignment: pydantic also sets it (to the parent field, `policy`) while validating this
     model nested inside its interface model, which would silence the check on every real path (PR #636 review).
@@ -226,3 +229,53 @@ def require_address_prefix_pair(address: Any, prefix: Any, address_name: str, pr
         return
     if (address is None) != (prefix is None):
         raise ValueError(f"{address_name} and {prefix_name} are required together; set both or neither.")
+
+
+class AddressPrefixPairMixin(InterfacePolicyStrictBase):
+    """
+    # Summary
+
+    Policy-model base that re-checks every address / prefix pair in `address_prefix_pairs` on the result of `NDBaseModel.merge()`.
+
+    `require_address_prefix_pair` guards config input only, so a half pair the controller already stores (ND accepts and echoes a `prefix`
+    without `ip`, issue #584) is read tolerantly and would otherwise ride along unchanged into a merged update that touches an unrelated field,
+    such as a description (PR #636 review). The merge is the only path that can produce such a policy for a write: `replaced` and create
+    candidates are validated whole from config. Checking the merged result here covers `NDStateMachine`, `NDStatePlanner` (the interfaces
+    workflow) and `NDConfigCollection.merge` without a second controller read, and still lets the task that supplies both halves repair the
+    stored state.
+
+    Subclasses list their pairs as `(address_field, prefix_field)` tuples in `address_prefix_pairs`.
+
+    ## Raises
+
+    None
+    """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = ()
+
+    def merge(self, other: NDBaseModel) -> NDBaseModel:
+        """
+        # Summary
+
+        Merge `other` into `self` (see `NDBaseModel.merge`), then reject a merged policy that still holds half of any pair in
+        `address_prefix_pairs`.
+
+        ## Raises
+
+        ### ValueError
+
+        - If the merged policy has exactly one of a pair's address / prefix set. The message names the half that is present, the half that is
+          missing, and the remedy (set both in the task, or use `state: replaced`).
+        """
+        merged = super().merge(other)
+        for address_name, prefix_name in self.address_prefix_pairs:
+            address = getattr(merged, address_name, None)
+            prefix = getattr(merged, prefix_name, None)
+            if (address is None) == (prefix is None):
+                continue
+            present, missing = (address_name, prefix_name) if address is not None else (prefix_name, address_name)
+            raise ValueError(
+                f"{address_name} and {prefix_name} are required together, but the merged policy has {present} without {missing} "
+                f"(the controller already stores this half pair). Set {address_name} and {prefix_name} together in the task, or use state: replaced."
+            )
+        return merged
