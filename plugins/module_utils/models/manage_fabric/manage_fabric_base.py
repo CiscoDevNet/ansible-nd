@@ -262,9 +262,12 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
         # - Pydantic uses its own defaults (not Ansible-injected values)
         # - Fields not provided by the user stay out of model_fields_set
         # - Merged state only diffs/merges user-specified fields
-        if field_info.is_required():
+        if field_info.is_required() and not is_optional:
             identifiers = getattr(model_cls, "identifiers", None) or []
-            if not is_optional and field_name not in identifiers:
+            gathered_filter_properties = getattr(model_cls, "gathered_filter_properties", ())
+            supports_gathered_filtering = getattr(model_cls, "supports_gathered_filtering", False)
+            identifier_is_gathered_filter = supports_gathered_filtering and field_name in identifiers and field_name in gathered_filter_properties
+            if not identifier_is_gathered_filter:
                 spec["required"] = True
 
         # Secrets: metadata {"secret": True} is authoritative; SecretStr is a backstop.

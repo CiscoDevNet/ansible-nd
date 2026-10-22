@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026,  Deeksha Pandey (@deekpand)
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Unit tests for shared manage-fabric model behavior."""
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import validate_gathered_filters
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ebgp_vxlan import FabricAiEbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
 
 
 @pytest.mark.parametrize(
@@ -105,3 +105,42 @@ def test_gathered_filter_values_are_normalized(model_class) -> None:
         "alert_suspend": "disabled",
         "telemetry_collection": False,
     }
+
+
+@pytest.mark.parametrize(
+    "model_class",
+    [
+        FabricExternalConnectivityModel,
+        FabricEbgpModel,
+        FabricIbgpModel,
+        FabricAiEbgpVxlanModel,
+        FabricAiIbgpVxlanModel,
+    ],
+    ids=[
+        "external",
+        "ebgp",
+        "ibgp",
+        "ai_ebgp",
+        "ai_ibgp",
+    ],
+)
+def test_gathered_enabled_models_allow_optional_fabric_name(model_class) -> None:
+    """Gathered-enabled fabric families must allow filters without fabric_name."""
+    fabric_name_spec = model_class.get_argument_spec()["config"]["options"]["fabric_name"]
+
+    assert "required" not in fabric_name_spec
+
+
+@pytest.mark.parametrize(
+    "model_class",
+    [
+        FabricCampusIbgpVxlanModel,
+        FabricGroupVxlanModel,
+    ],
+    ids=["campus", "fabric_group"],
+)
+def test_non_filtered_fabric_models_require_fabric_name(model_class) -> None:
+    """Fabric families without gathered filtering must still require fabric_name."""
+    fabric_name_spec = model_class.get_argument_spec()["config"]["options"]["fabric_name"]
+
+    assert fabric_name_spec["required"] is True
