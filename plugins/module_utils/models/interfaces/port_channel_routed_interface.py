@@ -50,6 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     XePortChannelRoutedPolicyTypeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    AddressPrefixPairMixin,
     default_policy_type,
     normalize_member_interface_names,
     reconcile_cidr_prefix,
@@ -61,7 +62,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv6Host
 
 
-class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
+class PortChannelRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -75,6 +76,8 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"), ("ipv6", "ipv6_prefix"))
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND `int_l3_port_channel` template defaults (schema-sourced via nd-openapi `intL3PortChannelTemplate`, and as ECHOED for an l3Po
@@ -218,7 +221,7 @@ class PortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
         return normalize_member_interface_names(value)
 
 
-class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
+class XePortChannelRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -232,6 +235,8 @@ class XePortChannelRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"),)
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND `ios_xe_int_l3_port_channel` template defaults as ECHOED (lab 2026-09-18, 4.2.1.10 and 4.3.1.175): ND does not inject an

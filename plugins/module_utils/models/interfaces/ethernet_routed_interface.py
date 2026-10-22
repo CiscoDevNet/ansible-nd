@@ -49,6 +49,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     XeEthernetSpeedEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    AddressPrefixPairMixin,
     default_policy_type,
     normalize_ethernet_interface_name,
     reconcile_cidr_prefix,
@@ -65,7 +66,7 @@ _NX_SPEED_CHOICES: list[str] = [e.value for e in SpeedEnum]
 _SPEED_ARGSPEC_CHOICES: list[str] = _NX_SPEED_CHOICES + [e.value for e in XeEthernetSpeedEnum if e.value not in _NX_SPEED_CHOICES]
 
 
-class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
+class NexusEthernetRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -79,6 +80,8 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"),)
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_routed_host` template defaults (schema-sourced via nd-openapi `intRoutedHostTemplate`), in the model's
@@ -197,7 +200,7 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         return str(value)
 
 
-class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
+class XeEthernetRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -209,6 +212,8 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"),)
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `ios_xe_int_routed_host` template defaults (schema-sourced via nd-openapi `iosXeIntRoutedHostTemplate`), in

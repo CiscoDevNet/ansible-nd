@@ -769,3 +769,54 @@ def test_port_channel_routed_interface_00430(network_os_type, policy, match) -> 
                 "config_data": {"network_os": {"network_os_type": network_os_type, "policy": policy}},
             }
         )
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type, interface_name, stored_half, match",
+    [
+        ("nx-os", "l3Po", "port-channel501", {"prefix": 30}, r"prefix without ip"),
+        ("nx-os", "l3Po", "port-channel501", {"ipv6Prefix": 64}, r"ipv6_prefix without ipv6"),
+        ("ios-xe", "iosXeL3PortChannel", "Port-channel501", {"prefix": 30}, r"prefix without ip"),
+    ],
+)
+def test_port_channel_routed_interface_00440(network_os_type, policy_type, interface_name, stored_half, match) -> None:
+    """
+    # Summary
+
+    Verify `NDBaseModel.merge()` refuses to carry a half address / prefix pair the controller already stores into a merged update that does
+    not touch the pair. `from_response` reads the half pair tolerantly, and an unrelated merged change (a description) would otherwise send it
+    back in the full policy body (PR #636 review).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy holds one half of a pair (IPv4 on both OS branches, IPv6 on NX-OS)
+    - `proposed` sets only `description`
+    - `merge()` raises, naming the half that is present and the one that is missing
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - AddressPrefixPairMixin.merge()
+    - PortChannelRoutedPolicyModel
+    - XePortChannelRoutedPolicyModel
+    """
+    existing = PortChannelRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": interface_name,
+            "interfaceType": "portChannel",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, **stored_half}},
+            },
+        }
+    )
+    proposed = PortChannelRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": interface_name,
+            "config_data": {"network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, "description": "New uplink"}}},
+        }
+    )
+    with pytest.raises(ValueError, match=match):
+        existing.merge(proposed)

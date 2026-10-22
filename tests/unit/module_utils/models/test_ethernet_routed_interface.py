@@ -1247,3 +1247,111 @@ def test_ethernet_routed_interface_00280(network_os_type, policy_type) -> None:
     policy = instance.config_data.network_os.policy
     assert policy.ip is None
     assert policy.prefix == 24
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type, stored_half, match",
+    [
+        ("nx-os", "routedHost", {"prefix": 24}, r"prefix without ip"),
+        ("nx-os", "routedHost", {"ip": "10.1.1.1"}, r"ip without prefix"),
+        ("ios-xe", "iosXeRoutedHost", {"prefix": 24}, r"prefix without ip"),
+        ("ios-xe", "iosXeRoutedHost", {"ip": "10.1.1.1"}, r"ip without prefix"),
+    ],
+)
+def test_ethernet_routed_interface_00290(network_os_type, policy_type, stored_half, match) -> None:
+    """
+    # Summary
+
+    Verify `NDBaseModel.merge()` refuses to carry a half `ip` / `prefix` pair the controller already stores into a merged update that does not
+    touch the pair. ND accepts and echoes a `prefix` without `ip` (issue #584), `from_response` reads it tolerantly, and an unrelated merged
+    change (a description) would otherwise send the half pair back in the full policy body (PR #636 review).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy holds one half of the pair
+    - `proposed` sets only `description`
+    - `merge()` raises, naming the half that is present and the one that is missing
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - AddressPrefixPairMixin.merge()
+    - NexusEthernetRoutedPolicyModel
+    - XeEthernetRoutedPolicyModel
+    """
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/12",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, **stored_half}},
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/12",
+            "config_data": {"network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, "description": "New uplink"}}},
+        }
+    )
+    with pytest.raises(ValueError, match=match):
+        existing.merge(proposed)
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type",
+    [
+        ("nx-os", "routedHost"),
+        ("ios-xe", "iosXeRoutedHost"),
+    ],
+)
+def test_ethernet_routed_interface_00300(network_os_type, policy_type) -> None:
+    """
+    # Summary
+
+    Verify a merged update that supplies both `ip` and `prefix` completes a half pair the controller already stores. The merge-boundary pair
+    check (test 00290) must only reject a merge whose result is still half, so the task that repairs the stored state is accepted.
+
+    ## Test
+
+    - `existing` built from a wire response whose policy holds `prefix` without `ip`
+    - `proposed` sets `ip`, `prefix` and `description`
+    - `merge()` succeeds and the merged policy holds the complete pair
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - AddressPrefixPairMixin.merge()
+    """
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/12",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, "prefix": 24}},
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/12",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": network_os_type,
+                    "policy": {"policy_type": policy_type, "ip": "10.1.1.1", "prefix": 30, "description": "New uplink"},
+                }
+            },
+        }
+    )
+    with does_not_raise():
+        existing.merge(proposed)
+    merged = existing.config_data.network_os.policy
+    assert merged.ip == "10.1.1.1"
+    assert merged.prefix == 30
+    assert merged.description == "New uplink"
