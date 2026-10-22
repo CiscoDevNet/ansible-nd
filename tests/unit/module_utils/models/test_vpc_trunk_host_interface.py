@@ -568,6 +568,39 @@ def test_vpc_trunk_host_interface_00256_customer_vlan_id_int_coercion():
     assert entry["customerVlanId"] == ["100", "200-300"]
 
 
+def test_vpc_trunk_host_interface_00257_customer_vlan_id_int_echo_from_response():
+    """
+    # Summary
+
+    Verify a GET echo whose `customerVlanId` carries a JSON int is read through `from_response` into the same string form `from_config`
+    produces, so the two compare equal and a merged replay is a no-op (PR #619 review: test 00256 covered the config path only). No claim is
+    made that ND emits an int echo for this family; the ethernet family has been observed doing so and the shared type must behave the same.
+
+    ## Test
+
+    - `from_response` with `vlanMappingEntries: [{customerVlanId: [100], providerVlanId: 1000}]` -> `customer_vlan_id == ["100"]`
+    - `get_diff` (merge-path subset comparison) against `from_config` with `customer_vlan_id: ["100"]` is `True`, i.e. no difference
+
+    ## Classes and Methods
+
+    - TrunkVpcHostInterfaceModel.from_response()
+    - TrunkVpcHostInterfaceModel.get_diff()
+    - types.CustomerVlanIdList
+    """
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["vlanMapping"] = True
+    response["configData"]["networkOS"]["policy"]["vlanMappingEntries"] = [{"customerVlanId": [100], "providerVlanId": 1000}]
+    with does_not_raise():
+        existing = TrunkVpcHostInterfaceModel.from_response(response)
+    assert existing.config_data.network_os.policy.vlan_mapping_entries[0].customer_vlan_id == ["100"]
+
+    cfg = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    cfg["config_data"]["network_os"]["policy"]["vlan_mapping"] = True
+    cfg["config_data"]["network_os"]["policy"]["vlan_mapping_entries"] = [{"customer_vlan_id": ["100"], "provider_vlan_id": 1000}]
+    proposed = TrunkVpcHostInterfaceModel.from_config(cfg)
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
 # =============================================================================
 # Test: TrunkVpcHostInterfaceModel — identifier behavior
 # =============================================================================

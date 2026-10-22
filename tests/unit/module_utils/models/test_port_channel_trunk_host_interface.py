@@ -957,6 +957,39 @@ def test_port_channel_trunk_host_interface_00317():
     assert entries[0]["customerVlanId"] == ["100", "200-300"]
 
 
+def test_port_channel_trunk_host_interface_00318():
+    """
+    # Summary
+
+    Verify a GET echo whose `customerVlanId` carries a JSON int is read through `from_response` into the same string form `from_config`
+    produces, so the two compare equal and a merged replay is a no-op (PR #619 review: test 00317 covered the config path only). No claim is
+    made that ND emits an int echo for this family; the ethernet family has been observed doing so and the shared type must behave the same.
+
+    ## Test
+
+    - `from_response` with `vlanMappingEntries: [{customerVlanId: [100], providerVlanId: 1000}]` -> `customer_vlan_id == ["100"]`
+    - `get_diff` (merge-path subset comparison) against `from_config` with `customer_vlan_id: ["100"]` is `True`, i.e. no difference
+
+    ## Classes and Methods
+
+    - PortChannelTrunkHostInterfaceModel.from_response()
+    - PortChannelTrunkHostInterfaceModel.get_diff()
+    - types.CustomerVlanIdList
+    """
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["vlanMapping"] = True
+    response["configData"]["networkOS"]["policy"]["vlanMappingEntries"] = [{"customerVlanId": [100], "providerVlanId": 1000}]
+    with does_not_raise():
+        existing = PortChannelTrunkHostInterfaceModel.from_response(response)
+    assert existing.config_data.network_os.policy.vlan_mapping_entries[0].customer_vlan_id == ["100"]
+
+    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
+    config["config_data"]["network_os"]["policy"]["vlan_mapping"] = True
+    config["config_data"]["network_os"]["policy"]["vlan_mapping_entries"] = [{"customer_vlan_id": ["100"], "provider_vlan_id": 1000}]
+    proposed = PortChannelTrunkHostInterfaceModel.from_config(config)
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
 def test_port_channel_trunk_host_interface_00320():
     """
     # Summary
