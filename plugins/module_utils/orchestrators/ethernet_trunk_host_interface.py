@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
+    has_retained_reset_auto_negotiation,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
     EthernetBaseOrchestrator,
@@ -141,6 +142,8 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return False
         for field, default in _default_interface_policy().items():
             if field not in policy or policy[field] is None:
+                continue
+            if field == "extraConfig" and has_retained_reset_auto_negotiation(iface.get("configData") or {}):
                 continue
             if not _wire_value_matches_default(policy[field], default):
                 return False

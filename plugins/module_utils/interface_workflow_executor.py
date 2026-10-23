@@ -54,6 +54,7 @@ class InterfaceExecutionItem:
     to_policy_type: str | None = None
     status: str = "not_attempted"
     message: str | None = None
+    execution_sequence: int | None = None
 
     @property
     def target(self) -> Target:
@@ -77,6 +78,8 @@ class InterfaceExecutionItem:
             result["to_policy_type"] = self.to_policy_type
         if self.message:
             result["message"] = self.message
+        if self.execution_sequence is not None:
+            result["execution_sequence"] = self.execution_sequence
         return result
 
 
@@ -94,6 +97,7 @@ class InterfaceWorkflowExecution:
     deployment: dict[str, Any]
     errors: tuple[str, ...] = ()
     actual_after_by_resource: dict[int, NDConfigCollection] = field(default_factory=dict, repr=False)
+    member_preparations: tuple[dict[str, Any], ...] = ()
 
     @property
     def message(self) -> str:
@@ -110,6 +114,7 @@ class InterfaceWorkflowExecution:
             "items": [item.to_dict() for item in self.items],
             "deployment": self.deployment,
             "errors": list(self.errors),
+            "member_preparations": list(self.member_preparations),
         }
 
 
@@ -135,6 +140,11 @@ class InterfaceWorkflowExecutor:
             "targets": [],
         }
         self._attempted_deploy_targets: set[Target] = set()
+        self._preparation_items: dict[tuple[int, str, str, str], InterfaceExecutionItem] = {}
+        self._verified_preparations: set[tuple[int, str, str, str]] = set()
+        self._sequence = 0
+        self._preparation_verification_sequences: dict[tuple[int, str, str, str], int] = {}
+        self._member_refresh_sequences: dict[tuple[int, str, str, str], int] = {}
 
     @staticmethod
     def _all_orchestrators(
@@ -158,6 +168,17 @@ class InterfaceWorkflowExecutor:
         return getattr(model, "interface_name"), switch_id
 
     def _build_items(self, plan: InterfaceWorkflowPlan) -> None:
+        for preparation in plan.member_preparations:
+            self._preparation_items[preparation.key] = InterfaceExecutionItem(
+                resource_index=preparation.resource_index,
+                resource_type=preparation.resource_type,
+                action="create",
+                switch_ip=getattr(preparation.model, "switch_ip"),
+                switch_id=preparation.switch_id,
+                interface_name=preparation.interface_name,
+                from_policy_type=preparation.from_policy_type,
+                to_policy_type=preparation.to_policy_type,
+            )
         for resource in plan.resources:
             for model in resource.operations.deletes:
                 interface_name, switch_id = self._model_target(resource, model)
@@ -390,6 +411,9 @@ class InterfaceWorkflowExecutor:
         *,
         exact_207_classifier: Callable[[], tuple[set[Target], bool]] | None = None,
     ) -> bool:
+        self._sequence += 1
+        for item in items:
+            item.execution_sequence = self._sequence
         markers = self._request_markers(orchestrator.rest_send)
         attempts_before = getattr(orchestrator.rest_send, "mutation_attempt_count", 0)
         create_targets = {item.target for item in items if item.action == "create"}
@@ -454,6 +478,8 @@ class InterfaceWorkflowExecutor:
                 create_candidates = [
                     *resource.operations.creates,
                     *(transition.desired for transition in resource.transitions),
+                    *(preparation.model for preparation in plan.member_preparations
+                      if preparation.resource_index == resource.resource_index),
                 ]
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
@@ -966,6 +992,8 @@ class InterfaceWorkflowExecutor:
                 self._errors.append("Interface execution schedule contains a mixed-action layer.")
                 return False
             action = next(iter(actions))
+            if not self._verify_member_preparations_for_parents(plan, layer):
+                return False
             if action == "delete":
                 if not self._queue_deletes(plan, layer):
                     return False
@@ -975,6 +1003,9 @@ class InterfaceWorkflowExecutor:
                     return False
             elif action == "transition":
                 if not self._execute_transitions(plan, layer):
+                    return False
+            elif action == "prepare_member":
+                if not self._execute_member_preparations(plan, layer):
                     return False
             elif action == "update":
                 refresh_operations = [operation for operation in layer if operation.refresh_before]
@@ -991,6 +1022,9 @@ class InterfaceWorkflowExecutor:
                             return False
                         try:
                             resource.orchestrator.refresh_member_update_contexts(models)
+                            self._sequence += 1
+                            for model in models:
+                                self._member_refresh_sequences[self._scheduled_key(resource, "update", model)] = self._sequence
                         except Exception as exc:  # pylint: disable=broad-except
                             self._errors.append(f"resources[{resource.resource_index}] member state refresh after parent mutation failed: {exc}")
                             return False
@@ -1006,6 +1040,85 @@ class InterfaceWorkflowExecutor:
             if parents and not self._deploy_and_discover_parents(plan, parents):
                 return False
         return True
+
+    def _execute_member_preparations(self, plan: InterfaceWorkflowPlan, operations: Iterable[InterfaceWorkflowOperation]) -> bool:
+        """Stage guarded standalone host policies without normalization or deployment."""
+        selected = {operation.key for operation in operations}
+        by_resource = {resource.resource_index: resource for resource in plan.resources}
+        groups = defaultdict(list)
+        for preparation in plan.member_preparations:
+            if preparation.key in selected:
+                groups[(preparation.resource_index, preparation.switch_id, preparation.to_policy_type)].append(preparation)
+        for preparations in groups.values():
+            resource = by_resource[preparations[0].resource_index]
+            orchestrator = resource.orchestrator
+            items = [self._preparation_items[preparation.key] for preparation in preparations]
+            try:
+                orchestrator.refresh_new_member_preparation_contexts(
+                    [preparation.model for preparation in preparations],
+                    expected_records={(preparation.switch_id, preparation.interface_name.casefold()): preparation.current
+                                      for preparation in preparations},
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                message = f"resources[{resource.resource_index}] standalone member preparation preflight failed: {exc}"
+                for item in items:
+                    item.status, item.message = "failed", message
+                self._errors.append(message)
+                return False
+            if not self._call_items(
+                orchestrator,
+                items,
+                lambda orchestrator=orchestrator, preparations=preparations: orchestrator.create_bulk([preparation.model for preparation in preparations]),
+                f"resources[{resource.resource_index}] standalone member preparation failed",
+            ):
+                return False
+        return True
+
+    def _verify_member_preparations_for_parents(self, plan: InterfaceWorkflowPlan, operations: Iterable[InterfaceWorkflowOperation]) -> bool:
+        """Require fresh controller host intent before any exact parent dependency."""
+        parent_keys = {operation.key for operation in operations}
+        by_resource = {resource.resource_index: resource for resource in plan.resources}
+        groups = defaultdict(list)
+        for preparation in plan.member_preparations:
+            if preparation.parent_key in parent_keys:
+                groups[preparation.resource_index].append(preparation)
+        for resource_index, preparations in groups.items():
+            try:
+                if any(self._preparation_items[preparation.key].status != "succeeded" for preparation in preparations):
+                    raise RuntimeError("The required standalone preparation has no exact accepted write receipt.")
+                by_resource[resource_index].orchestrator.refresh_new_member_preparation_contexts(
+                    [preparation.model for preparation in preparations], require_prepared=True,
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                self._errors.append(f"resources[{resource_index}] prepared host intent verification before parent staging failed: {exc}")
+                return False
+            self._verified_preparations.update(preparation.key for preparation in preparations)
+            self._sequence += 1
+            self._preparation_verification_sequences.update((preparation.key, self._sequence) for preparation in preparations)
+        return True
+
+    def _member_preparation_results(self, plan: InterfaceWorkflowPlan) -> tuple[dict[str, Any], ...]:
+        result = []
+        for preparation in plan.member_preparations:
+            item = self._preparation_items[preparation.key]
+            value = {**preparation.to_dict(), "status": item.status,
+                     "verified_before_membership": preparation.key in self._verified_preparations,
+                     "execution_sequence": item.execution_sequence,
+                     "verification_sequence": self._preparation_verification_sequences.get(preparation.key)}
+            parent = next((candidate for candidate in self._items
+                           if (candidate.resource_index, candidate.action, candidate.switch_id, candidate.interface_name.casefold()) == preparation.parent_key), None)
+            update_key = preparation.resource_index, "update", preparation.switch_id, preparation.interface_name.casefold()
+            update = next((candidate for candidate in self._items
+                           if (candidate.resource_index, candidate.action, candidate.switch_id, candidate.interface_name.casefold()) == update_key), None)
+            value["parent_operation"] = ({"status": parent.status, "execution_sequence": parent.execution_sequence}
+                                         if parent is not None else {"status": "not_attempted", "execution_sequence": None})
+            value["member_refresh_sequence"] = self._member_refresh_sequences.get(update_key)
+            value["member_update"] = ({"status": update.status, "execution_sequence": update.execution_sequence}
+                                      if update is not None else {"status": "not_attempted", "execution_sequence": None})
+            if item.message:
+                value["message"] = item.message
+            result.append(value)
+        return tuple(result)
 
     def _deploy_and_discover_parents(
         self,
@@ -1189,6 +1302,18 @@ class InterfaceWorkflowExecutor:
             if not self._deployment["targets"]:
                 self._deployment["status"] = "not_needed"
             return True
+        blocked = {
+            (name.casefold(), switch_id)
+            for source in self._all_orchestrators(plan)
+            for switch_id, name in getattr(source, "reset_auto_negotiation_deploy_blocks", ())
+        }
+        unsafe = [pair for pair in targets if (pair[0].casefold(), pair[1]) in blocked]
+        if self.deploy and unsafe:
+            error = f"Reset negotiation staging remains unverified for {unsafe}; consolidated deployment is blocked."
+            self._deployment["status"] = "failed"
+            self._deployment["message"] = error
+            self._errors.append(error)
+            return False
         batch = [
             {
                 "interface_name": interface_name,
@@ -1412,7 +1537,8 @@ class InterfaceWorkflowExecutor:
 
         mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
         execution_failed = not phases_ok or bool(self._errors)
-        mutation_attempted = bool(mutation_requests) or any(item.status in {"succeeded", "failed", "uncertain"} for item in self._items)
+        mutation_attempted = bool(mutation_requests) or any(item.status in {"succeeded", "failed", "uncertain"}
+                                                         for item in [*self._items, *self._preparation_items.values()])
         # A deployment-only replay still needs a fresh observation when the
         # caller requested verification, even when its preview POST is no
         # longer (incorrectly) counted as an intent mutation.
@@ -1427,10 +1553,11 @@ class InterfaceWorkflowExecutor:
         )
         failed = not phases_ok or bool(self._errors)
         deployment_changed = any(target["status"] in {"succeeded", "uncertain"} for target in self._deployment["targets"])
-        exact_mutation_success = any(item.status == "succeeded" for item in self._items)
-        changed = mutation_changed or exact_mutation_success or actual_changed or deployment_changed or any(item.status == "uncertain" for item in self._items)
+        all_items = [*self._items, *self._preparation_items.values()]
+        exact_mutation_success = any(item.status == "succeeded" for item in all_items)
+        changed = mutation_changed or exact_mutation_success or actual_changed or deployment_changed or any(item.status == "uncertain" for item in all_items)
         if failed:
-            item_statuses = {item.status for item in self._items}
+            item_statuses = {item.status for item in all_items}
             status = "partial_failure" if changed or item_statuses & {"succeeded", "uncertain"} else "failed"
         elif self.deploy:
             status = "completed"
@@ -1447,4 +1574,5 @@ class InterfaceWorkflowExecutor:
             deployment=self._deployment,
             errors=tuple(self._errors),
             actual_after_by_resource=actual,
+            member_preparations=self._member_preparation_results(plan),
         )

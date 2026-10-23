@@ -24,6 +24,32 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
+RETAIN_AUTO_NEGOTIATION_CONFIG = "negotiate auto"
+
+
+def has_retained_reset_auto_negotiation(config_data: dict) -> bool:
+    """Recognize only the redundant positive negotiation command at NX-OS reset defaults.
+
+    This is deliberately not an arbitrary extraConfig exception. Automatic
+    speed and enabled negotiation must both be explicit controller intent.
+    The callers still validate every other policy field against reset defaults.
+    """
+    network = config_data.get("networkOS") or {}
+    if not isinstance(network, dict):
+        return False
+    policy = network.get("policy") or {}
+    if not isinstance(policy, dict):
+        return False
+    return (
+        config_data.get("mode") == "trunk"
+        and network.get("networkOSType") == "nx-os"
+        and policy.get("policyType") == "trunkHost"
+        and policy.get("speed") == "auto"
+        and policy.get("negotiateAuto") is True
+        and policy.get("extraConfig") == RETAIN_AUTO_NEGOTIATION_CONFIG
+    )
+
+
 class InterfaceDefaultPolicyModel(NDNestedModel):
     """
     # Summary
@@ -155,7 +181,10 @@ class InterfaceDefaultConfig(NDNestedModel):
     UNRESETTABLE_FIELDS: ClassVar[set[str]] = {"bandwidth", "debounceLinkupTimer", "inheritBandwidth"}
 
     @classmethod
-    def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]], omit_description: bool = False) -> dict:
+    def to_normalize_payload(
+        cls, switch_interfaces: list[tuple[str, str]], omit_description: bool = False,
+        retain_auto_negotiation: bool = False,
+    ) -> dict:
         """
         # Summary
 
@@ -172,13 +201,15 @@ class InterfaceDefaultConfig(NDNestedModel):
         """
         instance = cls()
         payload = instance.to_payload()
+        if retain_auto_negotiation:
+            payload["configData"]["networkOS"]["policy"]["extraConfig"] = RETAIN_AUTO_NEGOTIATION_CONFIG
         if omit_description:
             payload["configData"]["networkOS"]["policy"].pop("description", None)
         payload["switchInterfaces"] = [{"interfaceName": name, "switchId": switch_id} for name, switch_id in switch_interfaces]
         return payload
 
     @classmethod
-    def to_reset_payload(cls, interface_name: str, switch_id: str) -> dict:
+    def to_reset_payload(cls, interface_name: str, switch_id: str, retain_auto_negotiation: bool = False) -> dict:
         """
         # Summary
 
@@ -195,7 +226,7 @@ class InterfaceDefaultConfig(NDNestedModel):
 
         None
         """
-        return {
+        payload = {
             "configData": {
                 "mode": "trunk",
                 "networkOS": {
@@ -211,3 +242,9 @@ class InterfaceDefaultConfig(NDNestedModel):
             "interfaceType": "ethernet",
             "switchId": switch_id,
         }
+        if retain_auto_negotiation:
+            payload["configData"]["networkOS"]["policy"].update({
+                "speed": "auto", "negotiateAuto": True,
+                "extraConfig": RETAIN_AUTO_NEGOTIATION_CONFIG,
+            })
+        return payload
