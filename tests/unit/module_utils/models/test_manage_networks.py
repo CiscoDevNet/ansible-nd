@@ -621,6 +621,32 @@ def test_layer2_x_connect_and_read_only_selectors_remain_valid(state):
     assert model.x_connect is True
 
 
+@pytest.mark.parametrize(
+    "field,value,dependencies",
+    [
+        ("vrf_name", "T", {}),
+        ("gateway_ipv6_address", "2001:db8::1/64", {}),
+        ("secondary_gateway_ipv4_collection", [], {}),
+        ("secondary_gateway_ipv6_collection", [], {}),
+        ("vlan_intf_desc", "SVI", {}),
+        ("routing_tag", 77, {}),
+        ("dhcp_servers", [], {}),
+        ("loopback_id", 1, {}),
+        ("igmp_version", 2, {"trm_enable": True}),
+        ("trm_enable", False, {}),
+        ("ipv6_trm", False, {}),
+        ("interface_netflow_monitor", "L3_MON", {"netflow_enable": True}),
+        ("gateway_on_border", False, {}),
+    ],
+)
+def test_layer2_rejects_remaining_l3_only_fields(field, value, dependencies):
+    with pytest.raises(ValidationError, match="layer2 networks") as error:
+        NetworkConfigModel.from_config(
+            {"network_name": "USERS", "layer": "layer2", field: value, **dependencies}, context={"state": "merged"}
+        )
+    assert field in str(error.value)
+
+
 @pytest.mark.parametrize("exclude_unset", [False, True])
 def test_layer2_netflow_comparison_preserves_explicit_enable_and_disable(exclude_unset):
     """Keep genuine NetFlow changes actionable while suppressing unrelated L3 readback."""
