@@ -301,10 +301,11 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         return self.create_bulk([model_instance])
 
     def create_bulk(self, model_instances: list[NDLinkModel], **kwargs: Any) -> ResponseType:
-        """Bulk POST with 207 body failure surfacing. Switch ids are backfilled in prepare_config_data.
+        """Bulk POST /links. Switch ids are backfilled in prepare_config_data.
 
         Items are sent in a single POST through the RestSend pipeline
-        (see ``NDBaseOrchestrator._post_bulk``).
+        (see ``NDBaseOrchestrator._post_bulk``). Per-item failures in the 207
+        ``links[]`` body are raised by the shared ``NdV1Strategy`` handling.
         """
         if not model_instances:
             return {}
@@ -313,7 +314,6 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
             self.strategy.configure_mutation(endpoint)
             items = [inst.to_payload() for inst in model_instances]
             response = self._post_bulk(endpoint, items, operation_type=OperationType.CREATE)
-            self._raise_on_bulk_failures(response, op="create")
             return response
         except Exception as e:
             raise Exception("Bulk create failed: {0}".format(e)) from e
@@ -339,10 +339,11 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         return self.delete_bulk([model_instance])
 
     def delete_bulk(self, model_instances: list[NDLinkModel], **kwargs: Any) -> ResponseType:
-        """Bulk POST /linkActions/remove with 207 body failure surfacing.
+        """Bulk POST /linkActions/remove.
 
         Items are sent in a single POST through the RestSend pipeline
-        (see ``NDBaseOrchestrator._post_bulk``).
+        (see ``NDBaseOrchestrator._post_bulk``). Per-item failures in the 207
+        ``links[]`` body are raised by the shared ``NdV1Strategy`` handling.
         """
         if not model_instances:
             return {}
@@ -351,60 +352,6 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
             endpoint = self.strategy.link_actions_remove_post_cls()
             self.strategy.configure_mutation(endpoint)
             response = self._post_bulk(endpoint, link_ids, operation_type=OperationType.DELETE)
-            self._raise_on_bulk_failures(response, op="delete")
             return response
         except Exception as e:
             raise Exception("Bulk delete failed: {0}".format(e)) from e
-
-    @staticmethod
-    def _raise_on_bulk_failures(response: Any, op: str) -> None:
-        """Raise if ND's 207 multi-status body reports any per-item failures.
-
-        ND treats 207 as success at the HTTP layer, so partial failures only show
-        up in the body. The OpenAPI contract for bulk create (POST /links) and
-        delete (POST /linkActions/remove) is ``{"links": [{"linkId", "message",
-        "status"}]}`` with ``status`` in ``{"success", "failure"}`` -- the
-        ``links`` + ``status`` path below matches that exactly. The remaining
-        containers/signals are a defensive superset kept until the shape is
-        confirmed against a broader set of live responses.
-
-        # TODO(4.2.1) TBD
-        # Workaround for an ND API discrepancy: bulk link create/delete returns
-        # HTTP 207 with per-item failures only in the body, but ResponseHandler
-        # classifies 207 as success. Remove this body scan once the central
-        # NdV1Strategy multi-status detector (PR #398) covers the links envelope;
-        # that detector needs "links" added to _MULTISTATUS_ITEM_KEYS and "linkId"
-        # to _MULTISTATUS_ITEM_LABEL_KEYS ("failure"/"message" already covered).
-        """
-        if not isinstance(response, dict):
-            return
-
-        def _is_failure(item: dict) -> bool:
-            status = str(item.get("status") or item.get("result") or "").lower()
-            if status in ("failure", "failed", "error"):
-                return True
-            if item.get("success") is False:
-                return True
-            return bool(item.get("error") or item.get("errorMessage"))
-
-        def _detail(item: dict) -> str:
-            ident = item.get("linkId") or item.get("id") or item.get("uuid") or "<no linkId>"
-            message = item.get("message") or item.get("errorMessage") or item.get("error") or item.get("msg") or "unknown error"
-            return "{0}: {1}".format(ident, message)
-
-        failures = []
-        # Result containers whose items must be inspected for a failure signal.
-        for key in ("links", "items", "results"):
-            value = response.get(key)
-            if isinstance(value, list):
-                failures.extend(item for item in value if isinstance(item, dict) and _is_failure(item))
-        # Containers whose mere presence means the listed items failed.
-        for key in ("failed", "failures", "errors"):
-            value = response.get(key)
-            if isinstance(value, list):
-                failures.extend(item for item in value if isinstance(item, dict))
-
-        if not failures:
-            return
-        details = "; ".join(_detail(item) for item in failures)
-        raise Exception("ND reported {0} per-item {1} failure(s): {2}".format(len(failures), op, details))

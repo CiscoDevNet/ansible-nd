@@ -283,8 +283,8 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         Wraps ``items`` under ``bulk_payload_key`` and sends one POST so the
         response_handler and result aggregation run as usual.  The response has
         the same shape the bulk endpoint returns
-        (``{bulk_payload_key: [<items in input order>]}``), so the existing
-        per-item failure surfacing (``_raise_on_bulk_failures``) works unchanged.
+        (``{bulk_payload_key: [<items in input order>]}``). Per-item failures in a
+        207 body are raised by ``_request`` via the shared ``NdV1Strategy`` handling.
 
         ``operation_type`` is forwarded to ``_request`` so bulk writes are
         registered with the correct action (CREATE/DELETE) instead of QUERY.

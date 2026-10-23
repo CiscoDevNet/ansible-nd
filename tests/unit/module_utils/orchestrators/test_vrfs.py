@@ -15,7 +15,6 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import json
 
 import pytest
-
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
@@ -30,23 +29,29 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import (
     VrfDataModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import (
-    NDVrfOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import (
-    vrf_name_filter,
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
+    MulticlusterParentVrfStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
     _child_fabric_config_element_spec,
     vrf_base_argument_spec,
     vrf_parent_argument_spec,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
-    MulticlusterParentVrfStrategy,
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import (
+    vrf_name_filter,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import (
+    NDVrfOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import (
     Results,
 )
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
 class _Strategy:
@@ -143,6 +148,40 @@ def _orchestrator_for_request_tests(params, is_child=False, is_multicluster=Fals
     instance = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
     object.__setattr__(instance, "strategy", _EndpointStrategy(is_child=is_child, is_multicluster=is_multicluster))
     object.__setattr__(instance, "rest_send", _RestSend(params))
+    return instance
+
+
+def responses_vrfs(key: str):
+    """Load fixture data for the VRF orchestrator per-item failure tests."""
+    return load_fixture("test_vrfs")[key]
+
+
+def _orchestrator_for_pipeline_tests(gen_responses: ResponseGenerator):
+    """
+    Build an orchestrator whose `_request` runs the real RestSend -> ResponseHandler -> NdV1Strategy pipeline against
+    file-based responses, so per-item 207 handling is exercised end to end instead of being patched out.
+    """
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    response_handler = ResponseHandler()
+    response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+    response_handler.verb = HttpVerbEnum.GET
+    response_handler.commit()
+
+    rest_send = RestSend({"check_mode": False, "state": "merged"})
+    rest_send.sender = sender
+    rest_send.response_handler = response_handler
+    rest_send.unit_test = True
+    rest_send.timeout = 1
+
+    instance = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(instance, "strategy", _EndpointStrategy())
+    object.__setattr__(instance, "rest_send", rest_send)
+    object.__setattr__(instance, "results", None)
+    object.__setattr__(instance, "trace_hook", None)
+    object.__setattr__(instance, "delete_retry_delay", 0)
     return instance
 
 
@@ -1283,6 +1322,82 @@ def test_vrfs_00096_mcfg_parent_bulk_create_uses_onemanage_schema_payload():
             }
         ]
     }
+
+
+def test_vrfs_00110_bulk_create_per_item_failure_names_the_vrf():
+    """
+    # Summary
+
+    Verify a 207 bulk-create body with a failed `results[]` item raises through the shared NdV1Strategy handling and the error
+    names the failed VRF by `vrfName` with its message (issue #640; the bespoke `_raise_on_failed_results` detector was retired).
+
+    ## Test
+
+    - POST .../vrfs answers 207 with one `success` and one `failed` item
+    - create_bulk raises; the message carries `ansible-vrf-b: VRF ID 50001 is already in use` and not the successful VRF
+    - Exactly one request was sent
+
+    ## Classes and Methods
+
+    - NDVrfOrchestrator.create_bulk()
+    - NDVrfOrchestrator._request()
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    """
+
+    def responses():
+        yield responses_vrfs("test_vrfs_00110a")
+
+    orchestrator = _orchestrator_for_pipeline_tests(ResponseGenerator(responses()))
+    models = [
+        VrfDataModel.from_config({"fabric_name": "AK-VXLAN", "vrf_name": "ansible-vrf-a", "vrf_type": "vxlanIbgp"}),
+        VrfDataModel.from_config({"fabric_name": "AK-VXLAN", "vrf_name": "ansible-vrf-b", "vrf_type": "vxlanIbgp"}),
+    ]
+
+    with pytest.raises(Exception, match=r"Bulk create VRFs failed: .*ansible-vrf-b: VRF ID 50001 is already in use") as exc:
+        orchestrator.create_bulk(models)
+
+    assert "ansible-vrf-a" not in str(exc.value).rsplit("ND Error:", maxsplit=1)[-1]
+    assert len(orchestrator.rest_send.responses) == 1
+    assert orchestrator.rest_send.path == "/api/v1/manage/fabrics/AK-VXLAN/vrfs"
+
+
+def test_vrfs_00111_bulk_delete_per_item_failure_names_the_vrf():
+    """
+    # Summary
+
+    Verify a 207 bulk-remove body with a non-retryable failed `results[]` item raises through the shared NdV1Strategy
+    handling, is not retried, and the error names the failed VRF by `vrfName` with its message (issue #640).
+
+    ## Test
+
+    - POST .../vrfActions/remove answers 207 with one `success` and one `failed` item whose message is not a fabric
+      re-sync error and does not say `Invalid VRF`
+    - delete_bulk raises; the message carries `ansible-vrf-b: Specified VRF does not exist`
+    - Exactly one request was sent (no retry, no absent-VRF re-read)
+
+    ## Classes and Methods
+
+    - NDVrfOrchestrator.delete_bulk()
+    - NDVrfOrchestrator._delete_bulk_with_retry()
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    """
+
+    def responses():
+        yield responses_vrfs("test_vrfs_00111a")
+
+    orchestrator = _orchestrator_for_pipeline_tests(ResponseGenerator(responses()))
+    models = [
+        VrfDataModel.from_config({"fabric_name": "AK-VXLAN", "vrf_name": "ansible-vrf-a", "vrf_type": "vxlanIbgp"}),
+        VrfDataModel.from_config({"fabric_name": "AK-VXLAN", "vrf_name": "ansible-vrf-b", "vrf_type": "vxlanIbgp"}),
+    ]
+
+    with pytest.raises(Exception, match=r"Bulk delete VRFs failed: .*ansible-vrf-b: Specified VRF does not exist"):
+        orchestrator.delete_bulk(models)
+
+    assert len(orchestrator.rest_send.responses) == 1
+    assert orchestrator.rest_send.committed_payload == {"vrfNames": ["ansible-vrf-a", "ansible-vrf-b"]}
 
 
 def test_vrfs_00100_child_create_bulk_uses_update_endpoint():
