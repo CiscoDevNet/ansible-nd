@@ -34,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_execut
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfaceWorkflowPlan,
+    VpcStagedDeletionProof,
     InterfaceWorkflowPlanner,
     InterfaceWorkflowValidationError,
 )
@@ -409,6 +410,8 @@ class InterfaceWorkflowCoordinator:
             result["to_policy_type"] = to_policy_type
         if message := execution_item.get("message"):
             result["message"] = message
+        if execution_item.get("execution_sequence") is not None:
+            result["execution_sequence"] = execution_item["execution_sequence"]
         if member_update is not None:
             result.update(member_update)
 
@@ -672,6 +675,77 @@ class InterfaceWorkflowCoordinator:
         return tuple(dict.fromkeys(targets))
 
     @classmethod
+    def _vpc_staged_deletions(cls, plan: InterfaceWorkflowPlan) -> list[dict[str, Any]]:
+        """Expose planner-proven pair delete staging without claiming absence.
+
+        Require the dedicated planner record produced only by the exact
+        pending two-peer deletion preview, plus its generic staged target.
+        Generic logical staging, a zero-operation plan, a raw
+        policyless echo and the separate converged-discovery classification do
+        not establish this proof. Final raw absence and member/default checks
+        remain the caller's responsibility; after_verified is unchanged.
+        """
+        staged = {(name.casefold(), switch_id)
+                  for name, switch_id in getattr(plan, "staged_delete_targets", ())}
+        proved = {
+            (proof.resource_index, proof.resource_type, proof.switch_id,
+             proof.interface_name.casefold(), proof.peer_switch_ids): proof
+            for proof in getattr(plan, "vpc_staged_deletions", ())
+            if isinstance(proof, VpcStagedDeletionProof)
+        }
+        result = []
+        seen = set()
+        for resource in plan.resources:
+            if (resource.state != "deleted"
+                    or resource.adapter.ownership_domain != "vpc"
+                    or resource.resource_type not in {"vpc_access", "vpc_trunk_host"}
+                    or type(resource.resource_index) is not int
+                    or resource.resource_index < 0):
+                continue
+            orchestrator = resource.orchestrator
+            context = getattr(orchestrator, "fabric_context", None)
+            peers = getattr(orchestrator, "_peer_serial_cache", {})
+            if context is None or not isinstance(peers, Mapping):
+                continue
+            operation_keys = cls._operation_keys(resource)
+            for desired in resource.proposed:
+                name = getattr(desired, "interface_name")
+                primary_id = context.get_switch_id(getattr(desired, "switch_ip"))
+                if ((name.casefold(), primary_id) not in staged
+                        or cls._target_key(desired) in operation_keys):
+                    continue
+                peer_id = peers.get(primary_id)
+                if (not isinstance(primary_id, str) or not primary_id
+                        or not isinstance(peer_id, str) or not peer_id
+                        or primary_id == peer_id or peers.get(peer_id) != primary_id):
+                    continue
+                pair = tuple(sorted((primary_id, peer_id)))
+                proof_key = (resource.resource_index, resource.resource_type,
+                             primary_id, name.casefold(), pair)
+                proof = proved.get(proof_key)
+                if (proof is None
+                        or tuple(item.switch_id for item in proof.peer_footprints) != pair):
+                    continue
+                identity = resource.resource_index, primary_id, name.casefold()
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                result.append({
+                    "resource_index": resource.resource_index,
+                    "type": resource.resource_type,
+                    "switch_id": primary_id,
+                    "interface_name": name,
+                    "peer_switch_ids": list(pair),
+                    "peer_footprints": [{
+                        "switch_id": item.switch_id,
+                        "interface_name": item.interface_name,
+                        "running_member_ports": list(item.running_member_ports),
+                        "reset_member_ports": list(item.reset_member_ports),
+                    } for item in proof.peer_footprints],
+                })
+        return result
+
+    @classmethod
     def _pending_deployment_targets(cls, plan: InterfaceWorkflowPlan) -> tuple[Target, ...]:
         """Select explicit no-mutation targets on switches the cached inventory reports out of sync or pending."""
         targets = list(getattr(plan, "staged_delete_targets", ()))
@@ -741,7 +815,9 @@ class InterfaceWorkflowCoordinator:
         return projected
 
     @classmethod
-    def _default_ethernet_target(cls, desired, current: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def _default_ethernet_target(
+        cls, desired, current: Mapping[str, Any] | None = None, *, retain_auto_negotiation: bool = False,
+    ) -> dict[str, Any]:
         """Return the platform-correct prospective state after a physical-port reset."""
         network_os = ((current or {}).get("configData") or {}).get("networkOS") or {}
         if network_os.get("networkOSType") == "ios-xe":
@@ -761,6 +837,8 @@ class InterfaceWorkflowCoordinator:
             }
             return cls._serialize_raw_target(raw, getattr(desired, "switch_ip"))
         raw = InterfaceDefaultConfig().to_payload()
+        if retain_auto_negotiation:
+            raw["configData"]["networkOS"]["policy"]["extraConfig"] = "negotiate auto"
         raw["interfaceName"] = getattr(desired, "interface_name")
         raw["interfaceType"] = "ethernet"
         return cls._serialize_raw_target(raw, getattr(desired, "switch_ip"))
@@ -786,7 +864,11 @@ class InterfaceWorkflowCoordinator:
             if resource.state == "deleted":
                 if resource.adapter.delete_strategy == InterfaceDeleteStrategy.NORMALIZE:
                     _switch_ip, current = self._raw_target(resource, desired, original=True)
-                    projected.append(self._default_ethernet_target(desired, current))
+                    retain = (
+                        isinstance(resource.orchestrator, EthernetBaseOrchestrator)
+                        and resource.orchestrator.retains_reset_auto_negotiation(desired, current)
+                    )
+                    projected.append(self._default_ethernet_target(desired, current, retain_auto_negotiation=retain))
                 continue
             if isinstance(resource.orchestrator, EthernetBaseOrchestrator):
                 switch_id = resource.orchestrator.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
@@ -941,6 +1023,11 @@ class InterfaceWorkflowCoordinator:
                 execution_items=execution_items,
             ),
         }
+        if isinstance(resource.orchestrator, EthernetBaseOrchestrator) and resource.state == "deleted":
+            result["reset_auto_negotiation_repairs"] = [
+                {"switch_id": switch_id, "interface_name": name}
+                for switch_id, name in resource.orchestrator.reset_auto_negotiation_repairs
+            ]
         if include_proposed:
             result["proposed"] = resource.proposed.to_ansible_config()
         if include_family:
@@ -979,6 +1066,11 @@ class InterfaceWorkflowCoordinator:
                     "targets": self._deployment_preview(deployment_targets) if would_deploy else [],
                 },
                 "errors": [],
+                "member_preparations": [
+                    {**preparation.to_dict(), "status": "planned" if self.module.check_mode else "not_attempted",
+                     "verified_before_membership": False}
+                    for preparation in plan.member_preparations
+                ],
             }
 
         raw_execution_items = execution_result.pop("items", [])
@@ -1025,6 +1117,8 @@ class InterfaceWorkflowCoordinator:
             "planned_changed": plan.changed,
             "mutation_count": plan.mutation_count,
             "target_switch_ids": list(plan.target_switch_ids),
+            "vpc_staged_deletions": self._vpc_staged_deletions(plan),
+            "member_preparations": list(execution_result.get("member_preparations", ())),
             "resources": resource_results,
             "request_stats": request_stats,
             "execution": execution_result,

@@ -243,6 +243,111 @@ class EthernetMembershipIndex:
 
         return self._claims_for(switch_id, interface_name)
 
+    def require_staged_routed_detachment(self, switch_id: str, interface_name: str) -> InterfaceRecord:
+        """Preserve the existing routed-only staged-detachment contract."""
+        return self.require_staged_host_detachment(switch_id, interface_name, host_policy_type="routedHost")
+
+    def require_staged_host_detachment(
+        self, switch_id: str, interface_name: str, *, host_policy_type: str
+    ) -> InterfaceRecord:
+        """Prove a host's positive operational ID refers to staged removal.
+
+        This deliberately supports only NX-OS standalone routed/trunk port-channels.
+        Operational membership is expected to lag configured intent before a
+        deployment, but absence of a parent claim alone is not removal evidence.
+        Require the exact operational parent either to carry ND's deletion
+        tombstone or to retain matching typed parent intent that excludes this member.
+        vPC claims are checked conservatively across both complete peer caches;
+        this method never infers a local slot from an already retired member.
+        The caller separately restricts writes to bounded merged default corrections.
+        """
+        host_types = {"routedHost": ("routed", "l3Po"), "trunkHost": ("trunk", "trunkPoHost")}
+        if host_policy_type not in host_types:
+            raise MembershipValidationError("Staged detachment supports only routedHost or trunkHost")
+        expected_mode, expected_parent_policy = host_types[host_policy_type]
+        inventory = self._inventories.get(switch_id)
+        if inventory is None:
+            raise MembershipValidationError(f"No complete inventory for switch {switch_id!r}")
+        member_name = interface_name.casefold()
+        member = inventory.get(member_name)
+        if member is None or member.get("interfaceType") != "ethernet":
+            raise MembershipValidationError("Staged detachment requires an existing physical Ethernet interface")
+        config = self._mapping(member.get("configData"))
+        network_os = self._mapping(config.get("networkOS"))
+        policy = self._required_policy(member)
+        operational_id = normalize_port_channel_id(self._mapping(member.get("operData")).get("portChannelId"))
+        if (
+            config.get("mode") != expected_mode
+            or network_os.get("networkOSType") != "nx-os"
+            or policy.get("policyType") != host_policy_type
+            or operational_id is None
+            or config.get("primaryInterface") not in (None, "")
+            or any(policy.get(field) not in (None, "") for field in ("portChannelId", "primaryInterface"))
+        ):
+            raise MembershipValidationError("Staged detachment requires matching NX-OS host intent without configured membership")
+
+        peer_id = self._peer_switch_ids.get(switch_id)
+        if peer_id is not None and peer_id not in self._inventories:
+            raise MissingPeerInventoryError(peer_id)
+        for owner_id in (switch_id, *((peer_id,) if peer_id is not None else ())):
+            for record in self._inventories[owner_id].values():
+                record_policy = self._policy(record)
+                if record_policy is None:
+                    continue
+                # On a peer, only pair-wide vPC intent can own a local port.
+                # Inspect both slots instead of trusting slot orientation while
+                # the target's configured member identity has already vanished.
+                is_vpc = str(record.get("interfaceType") or "").casefold() == "vpc"
+                if owner_id != switch_id and not is_vpc:
+                    continue
+                for field in _LOCAL_PARENT_MEMBER_FIELDS:
+                    if field not in record_policy:
+                        continue
+                    names = self._valid_vpc_member_names(record_policy[field])
+                    if names is None:
+                        raise MembershipValidationError(f"Malformed {field} on parent {record.get('interfaceName')!r}")
+                    if member_name in names:
+                        raise MembershipValidationError(f"Parent {record.get('interfaceName')!r} still claims {interface_name!r}")
+                if is_vpc and operational_id in {
+                    normalize_port_channel_id(record_policy.get("peer1PortChannelId")),
+                    normalize_port_channel_id(record_policy.get("peer2PortChannelId")),
+                }:
+                    raise MembershipValidationError("Operational parent ID is also claimed by a vPC")
+
+        parents = [
+            record
+            for record in inventory.values()
+            if str(record.get("interfaceType") or "").casefold() == "portchannel"
+            and normalize_port_channel_id(record.get("interfaceName")) == operational_id
+        ]
+        if len(parents) != 1:
+            raise MembershipValidationError("Cannot prove one exact configured operational parent")
+        parent = parents[0]
+        parent_config = self._mapping(parent.get("configData"))
+        parent_os = self._mapping(parent_config.get("networkOS"))
+        parent_policy = self._required_policy(parent)
+        if (parent_os.get("networkOSType") != "nx-os"
+                or parent_config.get("primaryInterface") not in (None, "")):
+            raise MembershipValidationError("Staged parent must be standalone NX-OS intent without a configured owner")
+        if parent_policy == {
+            "policyType": "userDefined",
+            "templateName": "interface_delete",
+            "templateConfig": {"ReadOnlyOnEdit": True},
+        }:
+            return parent
+        ports = self._valid_vpc_member_names(parent_policy.get("ports"))
+        if (
+            parent_config.get("mode") == expected_mode
+            and parent_policy.get("policyType") == expected_parent_policy
+            and normalize_port_channel_id(parent_policy.get("portChannelId")) == operational_id
+            and "ports" in parent_policy
+            and ports is not None
+            and member_name not in ports
+            and not any(field in parent_policy for field in ("peer1MemberPorts", "peer2MemberPorts", "primaryInterface"))
+        ):
+            return parent
+        raise MembershipValidationError("Exact operational parent has neither staged deletion nor matching typed host detachment intent")
+
     def validate(self, switch_id: str, interface_name: str) -> ValidatedMemberOwnership:
         """Validate and return ownership proof for one indexed member.
 
