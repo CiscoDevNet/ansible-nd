@@ -1,0 +1,38 @@
+---
+- name: Wait only between read attempts
+  ansible.builtin.pause:
+    seconds: "{{ nd_test_smart_switches_poll_delay | int }}"
+  when: ss_poll_number | int > 0
+
+- name: Read a fresh complete independent snapshot
+  ansible.builtin.include_tasks: inventory.yaml
+
+- name: Require both physical fixture switches to remain in inventory
+  ansible.builtin.assert:
+    that:
+      - ss_a in ss_inventory
+      - ss_b in ss_inventory
+
+- name: Compare exact full-fabric association membership
+  ansible.builtin.set_fact:
+    ss_observed_expected: >-
+      {{ (ss_associations | map(attribute='switch_id') | sort(case_sensitive=true) | list)
+      == (ss_expected_ids | sort(case_sensitive=true) | list) }}
+
+- name: Verify every observed association and original fixture hostname
+  ansible.builtin.assert:
+    that:
+      - item.integration_name == nd_test_smart_switches_integration_name
+      - item.switch_name == ss_fixture_inventory[item.switch_id].switch_name
+  loop: "{{ ss_associations }}"
+  when: ss_observed_expected
+
+- name: Advance bounded read-only poll counter
+  ansible.builtin.set_fact:
+    ss_poll_number: "{{ ss_poll_number | int + 1 }}"
+
+- name: Read another snapshot only while unmatched and within bounds
+  ansible.builtin.include_tasks: verify_attempt.yaml
+  when:
+    - not ss_observed_expected
+    - ss_poll_number | int < nd_test_smart_switches_poll_attempts | int

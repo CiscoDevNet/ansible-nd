@@ -1,0 +1,79 @@
+---
+- name: Read fabric inventory page independently of the onboarding module
+  cisco.nd.nd_rest:
+    method: get
+    path: >-
+      /api/v1/manage/fabrics/{{ nd_test_smart_switches_fabric_name | urlencode | replace('/', '%2F') }}/switches?max={{ nd_test_smart_switches_page_size | int }}&offset={{ ss_offset }}&sort=switchId%3Aasc{{ ('&clusterName=' ~ (nd_test_smart_switches_cluster_name | urlencode)) if nd_test_smart_switches_cluster_name | length > 0 else '' }}
+  register: ss_page
+  changed_when: false
+
+- name: Validate inventory response wrapper and metadata
+  ansible.builtin.assert:
+    that:
+      - ss_page.status | int == 200
+      - ss_page.jsondata is mapping
+      - ss_page.jsondata.switches is sequence
+      - ss_page.jsondata.switches is not string
+      - ss_page.jsondata.switches is not mapping
+      - ss_page.jsondata.meta | default({}) is mapping
+
+- name: Normalize every returned inventory row
+  ansible.builtin.include_tasks: inventory_row.yaml
+  loop: "{{ ss_page.jsondata.switches }}"
+  loop_control:
+    loop_var: ss_row
+    label: "{{ ss_row.switchId | default('missing-switchId') }}"
+
+- name: Advance collected row count
+  ansible.builtin.set_fact:
+    ss_offset: "{{ ss_offset | int + ss_page.jsondata.switches | length }}"
+
+- name: Validate supplied inventory counts
+  vars:
+    ss_counts: "{{ ss_page.jsondata.meta.counts }}"
+  ansible.builtin.assert:
+    that:
+      - ss_counts is mapping
+      - ss_counts.total is integer
+      - ss_counts.total is not boolean
+      - ss_counts.remaining is integer
+      - ss_counts.remaining is not boolean
+      - ss_counts.total >= 0
+      - ss_counts.remaining >= 0
+      - ss_total | int == -1 or ss_counts.total == ss_total | int
+      - ss_offset | int <= ss_counts.total
+      - ss_counts.remaining == ss_counts.total - ss_offset | int
+      - ss_counts.remaining == 0 or ss_page.jsondata.switches | length > 0
+    fail_msg: Inventory counts changed, are malformed, or made no progress; refusing an incomplete snapshot.
+  when: ss_page.jsondata.meta.counts is defined
+
+- name: Record supplied total and terminal page
+  ansible.builtin.set_fact:
+    ss_total: "{{ ss_page.jsondata.meta.counts.total }}"
+    ss_inventory_done: "{{ ss_page.jsondata.meta.counts.remaining == 0 }}"
+  when: ss_page.jsondata.meta.counts is defined
+
+- name: Terminate count-free pagination only on an empty page
+  ansible.builtin.set_fact:
+    ss_inventory_done: true
+  when:
+    - ss_page.jsondata.meta.counts is not defined
+    - ss_page.jsondata.switches | length == 0
+
+- name: Reject premature count-free termination after a counted page
+  ansible.builtin.assert:
+    that:
+      - ss_total | int == -1 or ss_offset | int == ss_total | int
+  when:
+    - ss_inventory_done
+    - ss_page.jsondata.meta.counts is not defined
+
+- name: Advance bounded page counter
+  ansible.builtin.set_fact:
+    ss_inventory_page_number: "{{ ss_inventory_page_number | int + 1 }}"
+
+- name: Read another page only while incomplete and within bounds
+  ansible.builtin.include_tasks: inventory_page.yaml
+  when:
+    - not ss_inventory_done
+    - ss_inventory_page_number | int < nd_test_smart_switches_max_pages | int

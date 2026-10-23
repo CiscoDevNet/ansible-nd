@@ -1,0 +1,18 @@
+---
+- name: Initialize independent complete inventory collection
+  ansible.builtin.set_fact:
+    ss_inventory: {}
+    ss_associations: []
+    ss_offset: 0
+    ss_total: -1
+    ss_inventory_done: false
+    ss_inventory_page_number: 0
+
+- name: Collect bounded independent inventory pages
+  ansible.builtin.include_tasks: inventory_page.yaml
+
+- name: Require safe pagination termination
+  ansible.builtin.assert:
+    that:
+      - ss_inventory_done
+    fail_msg: Complete inventory could not be proven within the configured page bound.

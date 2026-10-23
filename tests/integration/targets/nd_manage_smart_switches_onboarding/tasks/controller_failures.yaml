@@ -1,0 +1,50 @@
+---
+# The operator-confirmed fixture must reject both switch IDs with failureResults.
+- name: Verify absent baseline for optional controller failures
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    ss_expected_ids: []
+
+- name: Test controller mixed success and failure in one bulk request
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: CONTROLLER mixed resource outcomes
+    ss_state: replaced
+    ss_config:
+      - switch_id: "{{ ss_a }}"
+        integration_name: "{{ nd_test_smart_switches_integration_name }}"
+      - switch_id: "{{ ss_b }}"
+        integration_name: "{{ nd_test_smart_switches_rejection_integration_name }}"
+    ss_before: []
+    ss_after: "{{ [ss_a] }}"
+    ss_changed: true
+    ss_failure: true
+    ss_create: "{{ [ss_a] }}"
+    ss_rejected: "{{ [ss_b] }}"
+
+- name: Reset only owned fixtures after mixed failure
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: CONTROLLER reset confirmed successful association
+    ss_state: deleted
+    ss_config: "{{ ss_delete_both }}"
+    ss_before: "{{ [ss_a] }}"
+    ss_after: []
+    ss_changed: true
+    ss_delete: "{{ [ss_a] }}"
+
+- name: Test controller all-resource failure from absent baseline
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: CONTROLLER all resource outcomes failed
+    ss_state: replaced
+    ss_config:
+      - switch_id: "{{ ss_a }}"
+        integration_name: "{{ nd_test_smart_switches_rejection_integration_name }}"
+      - switch_id: "{{ ss_b }}"
+        integration_name: "{{ nd_test_smart_switches_rejection_integration_name }}"
+    ss_before: []
+    ss_after: []
+    ss_changed: false
+    ss_failure: true
+    ss_rejected: "{{ [ss_a, ss_b] }}"

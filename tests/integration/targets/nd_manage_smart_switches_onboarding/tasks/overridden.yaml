@@ -1,0 +1,68 @@
+---
+- name: OVERRIDDEN preview adding A and removing omitted B
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "OVERRIDDEN preview adding A and removing omitted B"
+    ss_state: overridden
+    ss_config: "{{ ss_both[:1] }}"
+    ss_before: "{{ [ss_b] }}"
+    ss_after: "{{ [ss_a] }}"
+    ss_changed: true
+    ss_check: true
+    ss_create: "{{ [ss_a] }}"
+    ss_delete: "{{ [ss_b] }}"
+
+- name: OVERRIDDEN add A and remove omitted B
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "OVERRIDDEN add A and remove omitted B"
+    ss_state: overridden
+    ss_config: "{{ ss_both[:1] }}"
+    ss_before: "{{ [ss_b] }}"
+    ss_after: "{{ [ss_a] }}"
+    ss_changed: true
+    ss_create: "{{ [ss_a] }}"
+    ss_delete: "{{ [ss_b] }}"
+
+- name: OVERRIDDEN repeat is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "OVERRIDDEN repeat is unchanged"
+    ss_state: overridden
+    ss_config: "{{ ss_both[:1] }}"
+    ss_before: "{{ [ss_a] }}"
+    ss_after: "{{ [ss_a] }}"
+    ss_changed: false
+
+- name: OVERRIDDEN preview empty desired set
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "OVERRIDDEN preview empty desired set"
+    ss_state: overridden
+    ss_config: "{{ [] }}"
+    ss_before: "{{ [ss_a] }}"
+    ss_after: []
+    ss_changed: true
+    ss_check: true
+    ss_delete: "{{ [ss_a] }}"
+
+- name: OVERRIDDEN empty config deboards owned association
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "OVERRIDDEN empty config deboards owned association"
+    ss_state: overridden
+    ss_config: "{{ [] }}"
+    ss_before: "{{ [ss_a] }}"
+    ss_after: []
+    ss_changed: true
+    ss_delete: "{{ [ss_a] }}"
+
+- name: OVERRIDDEN repeat empty config is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "OVERRIDDEN repeat empty config is unchanged"
+    ss_state: overridden
+    ss_config: "{{ [] }}"
+    ss_before: []
+    ss_after: []
+    ss_changed: false

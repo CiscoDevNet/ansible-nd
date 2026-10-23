@@ -1,0 +1,75 @@
+---
+- name: Assert truthful result flags and confidence
+  ansible.builtin.assert:
+    that:
+      - ss_result.failed | default(false) == ss_failure | default(false)
+      - ss_result.changed == ss_changed
+      - ss_result.after_status == ('planned' if ss_check | default(false) else 'confirmed')
+      - ss_result.diff_status == ss_result.after_status
+      - ss_result.reconciliation_complete
+      - not ss_result.may_have_changed
+      - ss_result.unknown_identifiers == []
+      - ss_result.before | length == ss_before | length
+      - ss_result.after | length == ss_after | length
+      - >-
+        (ss_result.before | map(attribute='switch_id') | sort(case_sensitive=true) | list)
+        == (ss_before | sort(case_sensitive=true) | list)
+      - >-
+        (ss_result.after | map(attribute='switch_id') | sort(case_sensitive=true) | list)
+        == (ss_after | sort(case_sensitive=true) | list)
+      - >-
+        ss_result.action_results | length ==
+        (0 if ss_check | default(false) else
+        (ss_create | default([]) | length + ss_delete | default([]) | length + ss_rejected | default([]) | length))
+      - >-
+        (ss_result.action_results | map(attribute='identifier') | sort(case_sensitive=true) | list)
+        == ([] if ss_check | default(false) else
+        ((ss_create | default([]) + ss_delete | default([]) + ss_rejected | default([])) | sort(case_sensitive=true) | list))
+      - (ss_result.msg | default('') | length > 0) if ss_failure | default(false) else true
+
+- name: Validate normalized snapshot fields and hostname backfill
+  ansible.builtin.assert:
+    that:
+      - item.keys() | sort | list == ['integration_name', 'switch_id', 'switch_name']
+      - item.integration_name == nd_test_smart_switches_integration_name
+      - item.switch_name == ss_fixture_inventory[item.switch_id].switch_name
+  loop: "{{ ss_result.before + ss_result.after }}"
+
+- name: Validate each exact resource outcome
+  ansible.builtin.assert:
+    that:
+      - item.operation == ('delete' if item.identifier in ss_delete | default([]) else 'create')
+      - item.outcome == ('failed' if item.identifier in ss_rejected | default([]) else 'succeeded')
+      - item.effect_confirmed == (item.identifier not in ss_rejected | default([]))
+      - item.correlation | length > 0
+      - item.statuses is sequence and item.statuses is not string
+      - item.messages is sequence and item.messages is not string
+      - item.statuses | select('string') | list | length == item.statuses | length
+      - item.messages | select('string') | list | length == item.messages | length
+      - >-
+        item.correlation == [{'http_status': 202, 'match': 'bulk_request_completion'}]
+        if item.operation == 'delete' else
+        (item.correlation | map(attribute='returned_name') | unique(case_sensitive=true) | list == [item.identifier])
+      - >-
+        item.operation == 'delete' or
+        (item.correlation | map(attribute='source') | unique(case_sensitive=true) | list
+        == [('failureResults' if item.identifier in ss_rejected | default([]) else 'successResults')])
+      - >-
+        item.operation == 'delete' or
+        (item.correlation | map(attribute='match') | unique(case_sensitive=true) | list == ['exact_switch_id'])
+  loop: "{{ ss_result.action_results }}"
+
+- name: Validate unchanged snapshot diff
+  ansible.builtin.assert:
+    that:
+      - ss_result.diff == []
+  when: not ss_changed
+
+- name: Validate changed snapshot diff without relying on bulk order
+  ansible.builtin.assert:
+    that:
+      - ss_result.diff is mapping
+      - ss_result.diff.keys() | sort | list == ['after', 'before']
+      - ss_result.diff.before | sort(case_sensitive=true, attribute='switch_id') == ss_result.before | sort(case_sensitive=true, attribute='switch_id')
+      - ss_result.diff.after | sort(case_sensitive=true, attribute='switch_id') == ss_result.after | sort(case_sensitive=true, attribute='switch_id')
+  when: ss_changed

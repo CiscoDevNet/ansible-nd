@@ -1,0 +1,16 @@
+---
+# All destructive and controller-rejection fixtures require operator opt-in.
+nd_test_smart_switches_allow_destructive: false
+nd_test_smart_switches_isolated_fabric: false
+nd_test_smart_switches_fabric_name: ""
+nd_test_smart_switches_cluster_name: ""
+nd_test_smart_switches_switch_ids: []
+nd_test_smart_switches_integration_name: ""
+nd_test_smart_switches_non_smart_id: ""
+nd_test_smart_switches_controller_failures: false
+nd_test_smart_switches_rejection_integration_name: ""
+nd_test_smart_switches_rejection_fixture_confirmed: false
+nd_test_smart_switches_page_size: 100
+nd_test_smart_switches_max_pages: 100
+nd_test_smart_switches_poll_attempts: 6
+nd_test_smart_switches_poll_delay: 5

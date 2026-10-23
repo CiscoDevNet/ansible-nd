@@ -1,0 +1,11 @@
+---
+- name: Refresh fabric ownership before broad override
+  ansible.builtin.include_tasks: inventory.yaml
+
+- name: Refuse broad override if an unowned association appeared
+  ansible.builtin.assert:
+    that:
+      - item.switch_id in nd_test_smart_switches_switch_ids
+      - item.integration_name == nd_test_smart_switches_integration_name
+    fail_msg: Concurrent or unowned association detected; broad override is unsafe.
+  loop: "{{ ss_associations }}"

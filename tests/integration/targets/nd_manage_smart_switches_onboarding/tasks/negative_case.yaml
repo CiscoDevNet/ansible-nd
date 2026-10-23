@@ -1,0 +1,24 @@
+---
+- name: "Reject {{ ss_negative.name }}"
+  cisco.nd.nd_manage_smart_switches_onboarding:
+    fabric_name: "{{ nd_test_smart_switches_fabric_name }}"
+    cluster_name: "{{ nd_test_smart_switches_cluster_name | default(omit, true) }}"
+    state: "{{ ss_negative.state }}"
+    config: "{{ ss_negative.config }}"
+    output_level: debug
+  register: ss_negative_result
+  ignore_errors: true
+
+- name: Preserve and assert actual expected failure
+  ansible.builtin.assert:
+    that:
+      - ss_negative_result is failed
+      - not ss_negative_result.changed
+      - ss_negative_result.msg | length > 0
+      - ss_negative_result.msg is search(ss_negative.error)
+      - ss_negative_result.action_results | default([]) == []
+
+- name: Independently confirm unchanged empty fabric associations
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    ss_expected_ids: []

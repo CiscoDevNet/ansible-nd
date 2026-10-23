@@ -1,0 +1,16 @@
+---
+- name: Initialize bounded read-only propagation check
+  ansible.builtin.set_fact:
+    ss_observed_expected: false
+    ss_poll_number: 0
+
+- name: Poll complete inventory without replaying any mutation
+  ansible.builtin.include_tasks: verify_attempt.yaml
+
+- name: Require independently observed full fabric association set
+  ansible.builtin.assert:
+    that:
+      - ss_observed_expected
+    fail_msg: >-
+      Expected exactly {{ ss_expected_ids }}, observed {{ ss_associations }}.
+      No mutation is retried; inspect the controller and fixture assumptions.

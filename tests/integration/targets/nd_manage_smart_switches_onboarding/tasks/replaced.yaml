@@ -1,0 +1,96 @@
+---
+- name: REPLACED preview bulk onboarding
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "REPLACED preview bulk onboarding"
+    ss_state: replaced
+    ss_config: "{{ ss_both }}"
+    ss_before: []
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: true
+    ss_check: true
+    ss_create: "{{ [ss_a, ss_b] }}"
+
+- name: REPLACED onboard both switches in bulk
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "REPLACED onboard both switches in bulk"
+    ss_state: replaced
+    ss_config: "{{ ss_both }}"
+    ss_before: []
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: true
+    ss_create: "{{ [ss_a, ss_b] }}"
+
+- name: REPLACED repeat is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "REPLACED repeat is unchanged"
+    ss_state: replaced
+    ss_config: "{{ ss_both }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: false
+
+- name: REPLACED subset retains omitted association
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "REPLACED subset retains omitted association"
+    ss_state: replaced
+    ss_config: "{{ ss_both[:1] }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: false
+
+- name: REPLACED empty config is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "REPLACED empty config is unchanged"
+    ss_state: replaced
+    ss_config: "{{ [] }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: false
+
+- name: DELETED empty config is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "DELETED empty config is unchanged"
+    ss_state: deleted
+    ss_config: "{{ [] }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: false
+
+- name: DELETED preview subset removal
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "DELETED preview subset removal"
+    ss_state: deleted
+    ss_config: "{{ ss_delete_both[:1] }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: "{{ [ss_b] }}"
+    ss_changed: true
+    ss_check: true
+    ss_delete: "{{ [ss_a] }}"
+
+- name: DELETED remove only first association
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "DELETED remove only first association"
+    ss_state: deleted
+    ss_config: "{{ ss_delete_both[:1] }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: "{{ [ss_b] }}"
+    ss_changed: true
+    ss_delete: "{{ [ss_a] }}"
+
+- name: DELETED repeat absent subset is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "DELETED repeat absent subset is unchanged"
+    ss_state: deleted
+    ss_config: "{{ ss_delete_both[:1] }}"
+    ss_before: "{{ [ss_b] }}"
+    ss_after: "{{ [ss_b] }}"
+    ss_changed: false

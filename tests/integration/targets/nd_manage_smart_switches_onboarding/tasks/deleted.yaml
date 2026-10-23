@@ -1,0 +1,32 @@
+---
+- name: REPLACED seed both associations for bulk deletion
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "REPLACED seed both associations for bulk deletion"
+    ss_state: replaced
+    ss_config: "{{ ss_both }}"
+    ss_before: []
+    ss_after: "{{ [ss_a, ss_b] }}"
+    ss_changed: true
+    ss_create: "{{ [ss_a, ss_b] }}"
+
+- name: DELETED bulk remove both associations
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "DELETED bulk remove both associations"
+    ss_state: deleted
+    ss_config: "{{ ss_delete_both }}"
+    ss_before: "{{ [ss_a, ss_b] }}"
+    ss_after: []
+    ss_changed: true
+    ss_delete: "{{ [ss_a, ss_b] }}"
+
+- name: DELETED repeat bulk removal is unchanged
+  ansible.builtin.include_tasks: run_case.yaml
+  vars:
+    ss_case: "DELETED repeat bulk removal is unchanged"
+    ss_state: deleted
+    ss_config: "{{ ss_delete_both }}"
+    ss_before: []
+    ss_after: []
+    ss_changed: false
