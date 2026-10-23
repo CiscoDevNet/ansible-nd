@@ -1357,7 +1357,7 @@ def test_vrfs_00110_bulk_create_per_item_failure_names_the_vrf():
     with pytest.raises(Exception, match=r"Bulk create VRFs failed: .*ansible-vrf-b: VRF ID 50001 is already in use") as exc:
         orchestrator.create_bulk(models)
 
-    assert "ansible-vrf-a" not in str(exc.value).split("ND Error:")[-1]
+    assert "ansible-vrf-a" not in str(exc.value).rsplit("ND Error:", maxsplit=1)[-1]
     assert len(orchestrator.rest_send.responses) == 1
     assert orchestrator.rest_send.path == "/api/v1/manage/fabrics/AK-VXLAN/vrfs"
 
