@@ -81,7 +81,8 @@ options:
         description:
           - Network layer.
           - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
-          - New Networks and authoritative states require enough context to derive the layer. Layer 3 Networks require C(vrf_name).
+          - New Networks and authoritative states require enough context to derive the layer. Layer 3 and Layer 2 with VRF require C(vrf_name).
+          - Layer 2 with VRF requires fabric Security Groups and MAC segmentation.
           - On External fabrics, a new Network defaults to Layer 2 when C(layer) is omitted.
           - Layer 2 Networks do not accept L3-only properties such as gateways, MTU, and ARP suppression.
         type: str
@@ -295,7 +296,7 @@ options:
         description: Routing tag; NX-OS only.
         type: int
       dhcp_servers:
-        description: DHCP server definitions; not applicable on parent fabrics.
+        description: DHCP relay servers; requires fabric Tenant DHCP; not applicable on parent fabrics.
         type: list
         elements: dict
         suboptions:
@@ -317,7 +318,7 @@ options:
         type: int
         choices: [ 1, 2, 3 ]
       trm_enable:
-        description: Enable IPv4 Tenant Routed Multicast; not applicable on parent fabrics.
+        description: Enable IPv4 Tenant Routed Multicast; requires fabric IPv4 TRM; not applicable on parent fabrics.
         type: bool
       ipv6_trm:
         description: Enable IPv6 Tenant Routed Multicast; not applicable on parent fabrics.
@@ -334,10 +335,10 @@ options:
         type: bool
       vlan_netflow_monitor:
         description:
-          - VLAN netflow monitor name.
+          - Layer 2 VLAN NetFlow monitor name.
           - Requires O(config[].netflow_enable=true).
           - Not applicable on parent fabrics.
-          - Use a fabric-defined Layer 3 monitor; Campus requires N9000.
+          - Use a fabric-defined Layer 2 monitor; Campus requires N9000.
         type: str
       interface_netflow_monitor:
         description:
@@ -348,7 +349,7 @@ options:
           - Use a fabric-defined Layer 3 monitor on N9000; the fabric Layer 2 Record must be disabled.
         type: str
       gateway_on_border:
-        description: Enable gateway on border; not applicable on parent fabrics.
+        description: Enable L3 gateway on border and border gateway switches; not applicable on parent fabrics.
         type: bool
       child_fabric_config:
         description:
@@ -373,7 +374,7 @@ options:
             description: Child cross-connect; Layer 2 Networks only.
             type: bool
           dhcp_servers:
-            description: DHCP server definitions.
+            description: DHCP relay servers; requires Tenant DHCP enabled on the child fabric.
             type: list
             elements: dict
             suboptions:
@@ -408,9 +409,9 @@ options:
             type: bool
           vlan_netflow_monitor:
             description:
-              - VLAN netflow monitor name.
+              - Layer 2 VLAN NetFlow monitor name.
               - Requires O(config[].child_fabric_config[].netflow_enable=true).
-              - Use a fabric-defined Layer 3 monitor; Campus requires N9000.
+              - Use a fabric-defined Layer 2 monitor; Campus requires N9000.
             type: str
           interface_netflow_monitor:
             description:
