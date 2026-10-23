@@ -60,6 +60,9 @@ options:
         routing, TRM, security, attachment, deployment, and other settings.
       - On standalone fabrics, all VRF definition, attachment, and deployment
         options are applied directly to the target fabric.
+      - On standalone fabrics, custom-template VRFs accept identity, VLAN ID,
+        security defaults, template parameters, and attachment/deployment controls;
+        standard VXLAN core and fabric-instance options are not applicable.
       - For parent fabrics each item may include a C(child_fabric_config)
         list to provide per-child-fabric overrides. The parent-level
         C(attach), C(deploy), and C(deploy_type) options are applied only on
@@ -103,7 +106,8 @@ options:
       default_security_action:
         description:
           - Default security group enforcement action.
-          - Enforced actions require fabric security groups; use C(unenforcedOrNone) otherwise.
+          - On standalone fabrics, enforced actions require fabric security groups; use C(unenforcedOrNone) otherwise.
+          - On standalone VXLAN fabrics, ND allocates a tag when an enforced action is selected and C(default_security_group_tag) is omitted.
           - Supported on standalone and parent VRF definitions.
         type: str
         choices:
@@ -113,7 +117,8 @@ options:
       default_security_group_tag:
         description:
           - Default security group tag ID (16-65535).
-          - Requires fabric security groups to be enabled and enforced.
+          - Optional for enforced actions on standalone VXLAN fabrics; ND allocates a tag when omitted.
+          - Requires fabric security groups to be enabled and enforced when supplied.
           - Supported on standalone and parent VRF definitions.
         type: int
       vlan_id:
@@ -137,6 +142,7 @@ options:
       vrf_int_mtu:
         description:
           - MTU for the VRF SVI interface (68-9216).
+          - Not applicable when C(l3vni_wo_vlan=true).
           - Supported on standalone and parent VRF definitions.
         type: int
         default: 9216
@@ -146,8 +152,7 @@ options:
           - When omitted on creation, uses the fabric's L3VNI without VLAN setting; an explicit value overrides it.
           - On existing VRFs, omission in C(merged) retains the current value; C(replaced), C(overridden), and C(staged) use the fabric default when available.
           - Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - Not applicable on parent fabrics.
         type: bool
       vrf_description:
         description: Description of the VRF (max 255 characters), including External VRF definitions.
@@ -161,9 +166,11 @@ options:
         type: str
         default: FABRIC-RMAP-REDIST-SUBNET
       v6_redist_direct_rmap:
-        description: Route map for redistribute direct (IPv6).
+        description:
+          - Route map for redistribute direct (IPv6).
+          - On create or authoritative update, omission uses C(redist_direct_rmap).
+          - A sparse C(merged) update retains an existing IPv6 map.
         type: str
-        default: FABRIC-RMAP-REDIST-SUBNET
       max_bgp_paths:
         description: Maximum eBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
         type: int
@@ -176,6 +183,21 @@ options:
         description: Enable IPv6 link-local on a VRF SVI; NX-OS only, not with C(l3vni_wo_vlan=true).
         type: bool
         default: true
+      bgp_best_path_relax:
+        description: Enable BGP best-path AS-path multipath-relax on standalone or child VRFs; NX-OS only.
+        type: bool
+        default: false
+      bgp_log_neighbor_change:
+        description: Log BGP neighbor up/down events on standalone or child VRFs.
+        type: bool
+        default: false
+      route_distinguisher_id:
+        description: VRF route distinguisher ID (0-65535) on IOS XE standalone and parent fabrics. If omitted, ND generates one.
+        type: int
+      enable_vrf_vpn_route_leaking:
+        description: Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches of a standalone or child fabric.
+        type: bool
+        default: false
       disable_rt_auto:
         description: Disable automatic route-target assignment.
         type: bool
@@ -208,87 +230,128 @@ options:
         description:
           - Enable Tenant Routed Multicast.
           - Requires TRM support to be enabled in fabric settings.
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - On standalone VRFs, an effective underlay multicast address is required; an internal RP also needs C(rp_address) and C(rp_loopback_id).
+          - Not applicable on parent fabrics.
+        type: bool
+        default: false
+      ipv6_trm:
+        description:
+          - Enable IPv6 Tenant Routed Multicast on a standalone VRF; NX-OS only.
+          - Requires IPv6 Tenant Routed Multicast in the fabric settings.
+          - An effective underlay multicast address is required; an internal IPv6 RP also needs C(v6_rp_address) and C(rp_loopback_id).
         type: bool
         default: false
       no_rp:
-        description: No RP for TRM (SSM only). Requires C(trm_enable=true).
+        description: No RP for TRM (SSM only). Requires C(trm_enable=true). Not applicable on parent fabrics.
         type: bool
         default: false
       rp_external:
-        description: RP is external to the fabric. Requires C(trm_enable=true).
+        description: RP is external to the fabric. Requires C(trm_enable=true). Not applicable on parent fabrics.
         type: bool
         default: false
       rp_address:
-        description: IPv4 RP address. Requires C(trm_enable=true).
+        description: IPv4 RP address. Requires C(trm_enable=true). Not applicable on parent fabrics.
+        type: str
+      v6_no_rp:
+        description: Use IPv6 SSM without an RP. Requires C(ipv6_trm=true); incompatible with IPv6 RP settings.
+        type: bool
+        default: false
+      v6_rp_external:
+        description: IPv6 RP is external to the fabric. Requires C(ipv6_trm=true); NX-OS only.
+        type: bool
+        default: false
+      v6_rp_address:
+        description: IPv6 RP address. Requires C(ipv6_trm=true); NX-OS only.
         type: str
       rp_loopback_id:
-        description: Loopback interface ID for RP (0-1023). Requires C(trm_enable=true).
+        description: Loopback interface ID for RP (0-1023). Requires IPv4 or IPv6 TRM. Not applicable on parent fabrics.
         type: int
       underlay_mcast_ip:
-        description: Underlay IPv4 multicast address. Requires C(trm_enable=true).
+        description: Underlay IPv4 multicast address. Requires IPv4 or IPv6 TRM. Not applicable on parent fabrics.
         type: str
       overlay_mcast_group:
-        description: Overlay multicast group (224.0.0.0/4 range). Requires C(trm_enable=true).
+        description: Overlay multicast group (224.0.0.0/4 range). Requires C(trm_enable=true). Not applicable on parent fabrics.
         type: str
+      v6_overlay_mcast_group:
+        description: Overlay IPv6 multicast group/prefix in CIDR notation. Requires C(ipv6_trm=true); NX-OS only.
+        type: str
+      mvpn_inter_as:
+        description: Use inter-AS MVPN routes when IPv4 or IPv6 TRM is enabled; IOS XE only.
+        type: bool
+        default: false
       trm_bgw_msite:
-        description: Enable TRM on border gateway multisite. Requires C(trm_enable=true).
+        description: Enable IPv4/IPv6 TRM on border gateway multisite. Requires IPv4 or IPv6 TRM. Not applicable on parent fabrics.
         type: bool
         default: false
       import_mvpn_rt:
-        description: MVPN import route targets; requires C(trm_enable=true) and NX-OS.
+        description: MVPN import route targets; requires IPv4 or IPv6 TRM and NX-OS. Not applicable on parent fabrics.
         type: list
         elements: str
       export_mvpn_rt:
-        description: MVPN export route targets; requires C(trm_enable=true) and NX-OS.
+        description: MVPN export route targets; requires IPv4 or IPv6 TRM and NX-OS. Not applicable on parent fabrics.
         type: list
         elements: str
       adv_host_routes:
         description:
           - Advertise /32 and /128 host routes to edge routers.
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - Not applicable on parent fabrics.
         type: bool
         default: false
       adv_default_routes:
         description:
           - Advertise default route internally.
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - Not applicable on parent fabrics.
         type: bool
         default: true
       static_default_route:
         description:
           - Configure static default route.
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - Not applicable on parent fabrics.
         type: bool
         default: true
+      bgp_allow_as_in:
+        description: Accept VRF Lite paths containing the local AS on standalone or child VRFs.
+        type: bool
+        default: false
+      bgp_allow_as_in_num:
+        description: Allowed local-AS occurrences in the VRF Lite AS path (1-10); requires C(bgp_allow_as_in=true) on a child VRF.
+        type: int
+        default: 3
+      bgp_as_override:
+        description: Override matching AS in outbound VRF Lite routes on standalone or child VRFs.
+        type: bool
+        default: false
+      bgp_disable_peer_as_check:
+        description: Disable peer-AS check on outbound VRF Lite routes on standalone or child VRFs; NX-OS only.
+        type: bool
+        default: false
+      bgp_soft_reconfig_always:
+        description: Always permit inbound BGP soft reconfiguration on standalone or child VRFs.
+        type: bool
+        default: false
       bgp_password:
         description:
-          - VRF-Lite BGP neighbour password (4-32 characters).
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - VRF-Lite BGP neighbour password as a 4-32 character hexadecimal string.
+          - Requires C(bgp_passwd_encrypt), or inherits the existing key type on a sparse standalone C(merged) update.
+          - Not applicable on parent fabrics.
         type: str
       bgp_passwd_encrypt:
         description:
-          - BGP password encryption type, 3 (3DES) or 7 (Cisco Type-7).
-          - Required when C(bgp_password) is set.
-          - May also be overridden per child fabric under C(child_fabric_config).
-        type: int
-        choices: [ 3, 7 ]
+          - BGP password key type, C(3des), C(type6), or C(type7).
+          - Requires C(bgp_password), or inherits the existing password on a sparse standalone C(merged) update.
+          - Not applicable on parent fabrics.
+        type: str
+        choices: [3des, type6, type7]
       netflow_enable:
         description:
           - Enable VRF-Lite NetFlow; requires fabric and extension NetFlow enablement.
-          - Supported on standalone and parent VRF definitions.
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - Not applicable on parent fabrics.
         type: bool
         default: false
       nf_monitor:
         description:
           - NX-OS NetFlow monitor; required when C(netflow_enable=true).
-          - May also be overridden per child fabric under C(child_fabric_config).
+          - Not applicable on parent fabrics.
         type: str
       deploy:
         description:
@@ -384,11 +447,13 @@ options:
         description:
           - Per-child-fabric override entries for MSD and MCFG parent fabrics.
           - Each entry targets a child member fabric and may override
-            TRM, advertising, BGP auth, netflow, and MVPN route-target settings.
-          - Omitted fields inherit the parent VRF setting.
-          - C(attach), C(deploy), C(deploy_type), VLAN/SVI fields, VRF
-            identity, custom template fields, and security group fields are not
-            valid inside C(child_fabric_config).
+            editable Advanced toggles, IPv4/IPv6 TRM, MVPN route targets, and
+            VRF Lite advertising, BGP, and NetFlow settings.
+          - In C(state=merged), omitted fields retain the existing child VRF setting.
+            C(state=replaced) and C(state=overridden) use authoritative state semantics.
+          - VRF identity, security, VLAN/SVI and other General fields, Advanced
+            text fields and IPv6 link-local, VPN/EVPN targets, RT auto-generation,
+            templates, attachments, and deployment are parent-owned or locked.
           - Ignored when C(state=deleted); child fabric tasks are not executed
             for delete operations.
         type: list
@@ -401,8 +466,20 @@ options:
           l3vni_wo_vlan:
             description: Enable L3VNI without VLAN; Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
             type: bool
+          bgp_best_path_relax:
+            description: Enable BGP best-path AS-path multipath-relax; NX-OS only.
+            type: bool
+          enable_vrf_vpn_route_leaking:
+            description: Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches.
+            type: bool
+          bgp_log_neighbor_change:
+            description: Log BGP neighbor up/down events.
+            type: bool
           trm_enable:
             description: Enable IPv4 Tenant Routed Multicast on this child fabric. Requires the feature in child fabric settings.
+            type: bool
+          ipv6_trm:
+            description: Enable IPv6 Tenant Routed Multicast on this child fabric; NX-OS only. Requires the feature in child fabric settings.
             type: bool
           no_rp:
             description: No RP, SSM only. Requires C(trm_enable=true).
@@ -413,24 +490,39 @@ options:
           rp_address:
             description: IPv4 RP address. Requires C(trm_enable=true).
             type: str
+          v6_no_rp:
+            description: Use IPv6 SSM without an RP. Requires C(ipv6_trm=true).
+            type: bool
+          v6_rp_external:
+            description: IPv6 RP is external to the child fabric. Requires C(ipv6_trm=true).
+            type: bool
+          v6_rp_address:
+            description: IPv6 RP address. Required for IPv6 TRM without SSM; NX-OS only.
+            type: str
           rp_loopback_id:
-            description: Loopback ID for RP (0-1023). Requires C(trm_enable=true).
+            description: Loopback ID for an internal IPv4 or IPv6 RP (0-1023).
             type: int
           underlay_mcast_ip:
-            description: Underlay IPv4 multicast address. Requires C(trm_enable=true).
+            description: Underlay IPv4 multicast address. Required for IPv4 or IPv6 TRM.
             type: str
           overlay_mcast_group:
             description: Overlay multicast group (224.0.0.0/4 range). Requires C(trm_enable=true).
             type: str
+          v6_overlay_mcast_group:
+            description: Overlay IPv6 multicast group/prefix in CIDR notation. Requires C(ipv6_trm=true); NX-OS only.
+            type: str
+          mvpn_inter_as:
+            description: Use inter-AS MVPN routes when IPv4 or IPv6 TRM is enabled; IOS XE only.
+            type: bool
           trm_bgw_msite:
-            description: Enable TRM on border gateway multisite. Requires C(trm_enable=true).
+            description: Enable IPv4/IPv6 TRM on border gateway multisite.
             type: bool
           import_mvpn_rt:
-            description: MVPN import route targets; requires C(trm_enable=true) and NX-OS.
+            description: MVPN import route targets; requires IPv4 or IPv6 TRM and NX-OS.
             type: list
             elements: str
           export_mvpn_rt:
-            description: MVPN export route targets; requires C(trm_enable=true) and NX-OS.
+            description: MVPN export route targets; requires IPv4 or IPv6 TRM and NX-OS.
             type: list
             elements: str
           adv_host_routes:
@@ -443,12 +535,27 @@ options:
             description: Configure static default route.
             type: bool
           bgp_password:
-            description: VRF-Lite BGP neighbour password (4-32 characters).
+            description: VRF-Lite BGP neighbour password as a 4-32 character hexadecimal string; requires C(bgp_passwd_encrypt).
             type: str
           bgp_passwd_encrypt:
-            description: BGP password encryption type.
+            description: BGP password key type; requires C(bgp_password).
+            type: str
+            choices: [3des, type6, type7]
+          bgp_allow_as_in:
+            description: Accept VRF Lite paths containing the local AS.
+            type: bool
+          bgp_allow_as_in_num:
+            description: Allowed local-AS occurrences in the VRF Lite AS path (1-10); requires C(bgp_allow_as_in=true).
             type: int
-            choices: [ 3, 7 ]
+          bgp_as_override:
+            description: Override matching AS in outbound VRF Lite routes.
+            type: bool
+          bgp_disable_peer_as_check:
+            description: Disable peer-AS check on outbound VRF Lite routes; NX-OS only.
+            type: bool
+          bgp_soft_reconfig_always:
+            description: Always permit inbound BGP soft reconfiguration.
+            type: bool
           netflow_enable:
             description: Enable VRF-Lite NetFlow; requires child fabric and extension NetFlow enablement.
             type: bool
@@ -541,11 +648,6 @@ EXAMPLES = r"""
         vrf_id: 50010
         vlan_id: 2001
         vrf_vlan_name: VRF_BLUE_VLAN
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
-        bgp_password: abcdef12
-        bgp_passwd_encrypt: 3
         attach:
           - ip_address: 192.0.2.10
             attachment_options:
@@ -562,7 +664,7 @@ EXAMPLES = r"""
             adv_default_routes: false
             static_default_route: false
             bgp_password: abcdef12
-            bgp_passwd_encrypt: 3
+            bgp_passwd_encrypt: 3des
 
 # MCFG parent fabric - create VRF with child fabric-instance overrides
 - name: Create VRF on MCFG parent with child fabric overrides
@@ -816,14 +918,19 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
     vrf_parent_argument_spec,
+    vrf_standalone_argument_spec,
 )
 
 # ---------------------------------------------------------------------------
@@ -833,18 +940,27 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argumen
 
 def main():
     argument_spec = nd_argument_spec()
+    config_spec = vrf_parent_argument_spec()
+    config_spec.update(vrf_standalone_argument_spec())
     argument_spec.update(
         fabric_name=dict(type="str", required=True),
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "replaced", "overridden", "deleted", "gathered", "staged"],
+            choices=[
+                "merged",
+                "replaced",
+                "overridden",
+                "deleted",
+                "gathered",
+                "staged",
+            ],
         ),
         config=dict(
             type="list",
             elements="dict",
             required=True,
-            options=vrf_parent_argument_spec(),
+            options=config_spec,
         ),
     )
 
@@ -861,7 +977,11 @@ def main():
         coordinator = VrfWorkflowCoordinator(module=module)
         result = coordinator.run()
 
-        module_log.debug("main: completed VRF workflow changed=%s failed=%s", result.get("changed"), result.get("failed"))
+        module_log.debug(
+            "main: completed VRF workflow changed=%s failed=%s",
+            result.get("changed"),
+            result.get("failed"),
+        )
         module.exit_json(**result)
 
     except NDStateMachineError as e:

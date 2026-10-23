@@ -13,6 +13,7 @@ files can import them at the top level without creating a circular dependency
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
     DpuAffinity,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import PARENT_CHILD_ONLY_VRF_FIELDS
 
 
 def _route_target_spec():
@@ -24,14 +25,14 @@ def _trm_fields_spec(defaults=True):
     """TRM-related fields. When defaults=True, booleans default to False."""
     if defaults:
         return dict(
-            trm_enable=dict(type="bool", default=False),
-            no_rp=dict(type="bool", default=False),
-            rp_external=dict(type="bool", default=False),
+            trm_enable=dict(type="bool"),
+            no_rp=dict(type="bool"),
+            rp_external=dict(type="bool"),
             rp_address=dict(type="str"),
             rp_loopback_id=dict(type="int"),
             underlay_mcast_ip=dict(type="str"),
             overlay_mcast_group=dict(type="str"),
-            trm_bgw_msite=dict(type="bool", default=False),
+            trm_bgw_msite=dict(type="bool"),
             import_mvpn_rt=_route_target_spec(),
             export_mvpn_rt=_route_target_spec(),
         )
@@ -98,32 +99,32 @@ def vrf_base_argument_spec():
         vlan_id=dict(type="int"),
         vrf_vlan_name=dict(type="str"),
         vrf_intf_desc=dict(type="str"),
-        vrf_int_mtu=dict(type="int", default=9216),
+        vrf_int_mtu=dict(type="int"),
         l3vni_wo_vlan=dict(type="bool"),
         # Description
         vrf_description=dict(type="str"),
         # Routing
-        loopback_route_tag=dict(type="int", default=12345),
-        redist_direct_rmap=dict(type="str", default="FABRIC-RMAP-REDIST-SUBNET"),
-        v6_redist_direct_rmap=dict(type="str", default="FABRIC-RMAP-REDIST-SUBNET"),
-        max_bgp_paths=dict(type="int", default=1),
-        max_ibgp_paths=dict(type="int", default=2),
-        ipv6_linklocal_enable=dict(type="bool", default=True),
+        loopback_route_tag=dict(type="int"),
+        redist_direct_rmap=dict(type="str"),
+        v6_redist_direct_rmap=dict(type="str"),
+        max_bgp_paths=dict(type="int"),
+        max_ibgp_paths=dict(type="int"),
+        ipv6_linklocal_enable=dict(type="bool"),
         # Route targets
-        disable_rt_auto=dict(type="bool", default=False),
+        disable_rt_auto=dict(type="bool"),
         import_vpn_rt=_route_target_spec(),
         export_vpn_rt=_route_target_spec(),
         import_evpn_rt=_route_target_spec(),
         export_evpn_rt=_route_target_spec(),
         # Advertising
-        adv_host_routes=dict(type="bool", default=False),
-        adv_default_routes=dict(type="bool", default=True),
-        static_default_route=dict(type="bool", default=True),
+        adv_host_routes=dict(type="bool"),
+        adv_default_routes=dict(type="bool"),
+        static_default_route=dict(type="bool"),
         # BGP authentication
         bgp_password=dict(type="str", no_log=True),
-        bgp_passwd_encrypt=dict(type="int", choices=[3, 7]),
+        bgp_passwd_encrypt=dict(type="str", choices=["3des", "type6", "type7"]),
         # Netflow
-        netflow_enable=dict(type="bool", default=False),
+        netflow_enable=dict(type="bool"),
         nf_monitor=dict(type="str"),
         # Attachment/deploy controls
         deploy=dict(type="bool", default=True),
@@ -138,6 +139,29 @@ def vrf_base_argument_spec():
     return spec
 
 
+def vrf_standalone_argument_spec():
+    """VRF fields verified for direct standalone fabric operations."""
+    spec = vrf_base_argument_spec()
+    spec.update(
+        bgp_best_path_relax=dict(type="bool"),
+        bgp_log_neighbor_change=dict(type="bool"),
+        route_distinguisher_id=dict(type="int"),
+        enable_vrf_vpn_route_leaking=dict(type="bool"),
+        bgp_allow_as_in=dict(type="bool"),
+        bgp_allow_as_in_num=dict(type="int"),
+        bgp_as_override=dict(type="bool"),
+        bgp_disable_peer_as_check=dict(type="bool"),
+        bgp_soft_reconfig_always=dict(type="bool"),
+        ipv6_trm=dict(type="bool"),
+        v6_no_rp=dict(type="bool"),
+        v6_rp_external=dict(type="bool"),
+        v6_rp_address=dict(type="str"),
+        v6_overlay_mcast_group=dict(type="str"),
+        mvpn_inter_as=dict(type="bool"),
+    )
+    return spec
+
+
 def _child_fabric_config_element_spec():
     """Argument spec for one entry inside child_fabric_config."""
     spec = dict(
@@ -145,16 +169,30 @@ def _child_fabric_config_element_spec():
         fabric_name=dict(type="str", required=True),
         # L3VNI without VLAN
         l3vni_wo_vlan=dict(type="bool"),
+        bgp_best_path_relax=dict(type="bool"),
+        enable_vrf_vpn_route_leaking=dict(type="bool"),
+        bgp_log_neighbor_change=dict(type="bool"),
         # Advertising overrides
         adv_host_routes=dict(type="bool"),
         adv_default_routes=dict(type="bool"),
         static_default_route=dict(type="bool"),
         # BGP authentication overrides
         bgp_password=dict(type="str", no_log=True),
-        bgp_passwd_encrypt=dict(type="int", choices=[3, 7]),
+        bgp_passwd_encrypt=dict(type="str", choices=["3des", "type6", "type7"]),
+        bgp_allow_as_in=dict(type="bool"),
+        bgp_allow_as_in_num=dict(type="int"),
+        bgp_as_override=dict(type="bool"),
+        bgp_disable_peer_as_check=dict(type="bool"),
+        bgp_soft_reconfig_always=dict(type="bool"),
         # Netflow overrides
         netflow_enable=dict(type="bool"),
         nf_monitor=dict(type="str"),
+        ipv6_trm=dict(type="bool"),
+        v6_no_rp=dict(type="bool"),
+        v6_rp_external=dict(type="bool"),
+        v6_rp_address=dict(type="str"),
+        v6_overlay_mcast_group=dict(type="str"),
+        mvpn_inter_as=dict(type="bool"),
     )
     spec.update(_trm_fields_spec(defaults=False))
     return spec
@@ -163,6 +201,9 @@ def _child_fabric_config_element_spec():
 def vrf_parent_argument_spec():
     """Argument spec for a VRF config entry on parent (MSD / MFD) fabrics."""
     spec = vrf_base_argument_spec()
+    for field in PARENT_CHILD_ONLY_VRF_FIELDS:
+        spec.pop(field, None)
+    spec["route_distinguisher_id"] = dict(type="int")
     spec["child_fabric_config"] = dict(
         type="list",
         elements="dict",

@@ -107,7 +107,6 @@ class VrfStateMachine:
 
         sm, original_config, original_state = self.coordinator._new_state_machine(module_args, active_strategy)
         try:
-            self.coordinator._inherit_l3vni_default_for_new_vrfs(module_args, sm, active_strategy)
             desired_attachments = self.coordinator._desired_attachment_map(module_args, active_strategy)
             current_details = []
             current_attachments = None

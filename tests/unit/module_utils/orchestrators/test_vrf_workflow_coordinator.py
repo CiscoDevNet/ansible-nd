@@ -15,6 +15,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import pytest
 from unittest.mock import patch
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -213,20 +214,21 @@ class _ParentStrategy:
         }
 
 
-def test_vrf_parent_parse_propagates_trm_for_child_mvpn_targets():
-    """Preserve the resolved child TRM flag through coordinator parsing."""
+def test_vrf_parent_parse_requires_child_trm_for_mvpn_targets():
+    """Parent TRM input cannot satisfy a member-only prerequisite."""
     coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
     parsed = coordinator._parse_config(
         [
             {
                 "vrf_name": "BLUE",
                 "trm_enable": True,
-                "child_fabric_config": [{"fabric_name": "AK-VXLAN", "import_mvpn_rt": ["65000:1"]}],
+                "child_fabric_config": [{"fabric_name": "AK-VXLAN", "trm_enable": True, "import_mvpn_rt": ["65000:1"]}],
             }
         ],
         VrfParentConfigModel,
         "merged",
     )
+    assert "trm_enable" not in parsed[0]
     assert parsed[0]["child_fabric_config"][0]["trm_enable"] is True
 
 
@@ -273,36 +275,20 @@ def test_vrf_authoritative_states_use_fabric_l3vni_default_when_omitted(state):
     assert coordinator._parse_config([{"vrf_name": "BLUE", "l3vni_wo_vlan": False}], VrfConfigModel, state)[0]["l3vni_wo_vlan"] is False
 
 
-def test_vrf_merged_omission_stays_sparse_and_new_attachment_uses_fabric_default():
-    """Use the fabric default for new attachments while preserving existing sparse intent."""
-    from types import SimpleNamespace
-
-    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_FabricDefaultStrategy())
-    parsed = coordinator._parse_config([{"vrf_name": "BLUE"}], VrfConfigModel, "merged")
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_vrf_parent_does_not_inject_fabric_l3vni_default(state):
+    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
+    parsed = coordinator._parse_config([{"vrf_name": "BLUE", "vlan_id": 2001}], VrfParentConfigModel, state)
     assert "l3vni_wo_vlan" not in parsed[0]
-
-    module_args = {"state": "merged", "config": parsed}
-    proposed_vrf = VrfDataModel.from_config({"fabric_name": "AK-VXLAN", "vrf_name": "BLUE", "fabric_data": {"l3_vni_without_vlan": None}})
-    missing = SimpleNamespace(existing=SimpleNamespace(get=lambda name: None), proposed=SimpleNamespace(get=lambda name: proposed_vrf))
-    coordinator._inherit_l3vni_default_for_new_vrfs(module_args, missing, coordinator.strategy)
-    assert parsed[0]["l3vni_wo_vlan"] is True
-    assert proposed_vrf.to_payload()["fabricData"]["l3VniWithoutVlan"] is True
-
-    existing = SimpleNamespace(existing=SimpleNamespace(get=lambda name: object()))
-    other_args = {"state": "merged", "config": [{"vrf_name": "EXISTING"}]}
-    coordinator._inherit_l3vni_default_for_new_vrfs(other_args, existing, coordinator.strategy)
-    assert "l3vni_wo_vlan" not in other_args["config"][0]
+    assert parsed[0]["vlan_id"] == 2001
 
 
-def test_vrf_new_merged_default_rejects_conflicting_vlan_before_write():
-    """Reject a VLAN-backed create when the fabric default is no-VLAN mode."""
-    from types import SimpleNamespace
-
-    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_FabricDefaultStrategy())
-    module_args = {"state": "merged", "config": [{"vrf_name": "BLUE", "vlan_id": 2001}]}
-    missing = SimpleNamespace(existing=SimpleNamespace(get=lambda name: None))
-    with pytest.raises(AssertionError, match="conflicts with the fabric L3VNI-without-VLAN default"):
-        coordinator._inherit_l3vni_default_for_new_vrfs(module_args, missing, coordinator.strategy)
+def test_standalone_merged_parsing_defers_cross_field_dependencies():
+    coordinator = VrfWorkflowCoordinator(_Module({}), _StandaloneStrategy())
+    intent = {"vrf_name": "BLUE", "rp_address": "192.0.2.9"}
+    assert coordinator._parse_config([intent], VrfConfigModel, "merged") == [intent]
+    with pytest.raises(AssertionError, match="require trm_enable=True"):
+        coordinator._parse_config([intent], VrfConfigModel, "replaced")
 
 
 class _ChildStrategy:
@@ -1221,87 +1207,16 @@ def test_vrf_workflow_coordinator_00003_child_rejects_direct_attach():
         raise AssertionError("child attach was not rejected")
 
 
-def test_vrf_workflow_coordinator_000035_mcfg_parent_scrubs_child_scoped_defaults():
-    """
-    # Summary
-
-    Verify defaulted parent fabric options are removed from MCFG parent rows
-    that are controlled through child_fabric_config.
-    """
-    parent_vrf = {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": False,
-        "adv_host_routes": False,
-        "adv_default_routes": True,
-        "static_default_route": True,
-        "netflow_enable": False,
-        "trm_enable": False,
-        "max_bgp_paths": 4,
-    }
-
-    VrfWorkflowCoordinator._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
-
-    assert parent_vrf == {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": False,
-        "max_bgp_paths": 4,
-    }
-
-
-def test_vrf_workflow_coordinator_000036_mcfg_parent_keeps_nondefault_fabric_options():
-    """
-    # Summary
-
-    Verify non-default MCFG parent fabric options survive the default scrub.
-    """
-    parent_vrf = {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": True,
-        "adv_host_routes": True,
-        "adv_default_routes": False,
-        "static_default_route": False,
-        "netflow_enable": True,
-    }
-
-    VrfWorkflowCoordinator._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
-
-    assert parent_vrf == {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": True,
-        "adv_host_routes": True,
-        "adv_default_routes": False,
-        "static_default_route": False,
-        "netflow_enable": True,
-    }
-
-
-def test_vrf_workflow_coordinator_000037_mcfg_parent_scrubs_child_owned_fabric_options():
-    """
-    # Summary
-
-    Verify MCFG parent rows with child_fabric_config leave fabric-instance
-    options to the child manage endpoint.
-    """
-    parent_vrf = {
-        "vrf_name": "ansible-mcfg-vrf",
-        "vrf_id": 9008037,
-        "l3vni_wo_vlan": True,
-        "adv_host_routes": True,
-        "adv_default_routes": False,
-        "static_default_route": False,
-        "bgp_password": "abcdef12",
-        "bgp_passwd_encrypt": 3,
-        "netflow_enable": True,
-        "max_bgp_paths": 4,
-    }
-
-    VrfWorkflowCoordinator._remove_child_owned_mcfg_parent_fabric_options(parent_vrf)
-
-    assert parent_vrf == {
-        "vrf_name": "ansible-mcfg-vrf",
-        "vrf_id": 9008037,
-        "max_bgp_paths": 4,
-    }
+def test_vrf_parent_filters_child_only_fields_for_msd_and_mcfg():
+    """Both parent topologies use the same typed ownership rule."""
+    for strategy in (_ParentStrategy(), _McfgParentStrategy()):
+        coordinator = VrfWorkflowCoordinator(_Module({}), strategy)
+        parsed = coordinator._parse_config(
+            [{"vrf_name": "BLUE", "vrf_id": 50001, "adv_host_routes": True, "trm_enable": True, "netflow_enable": False}],
+            VrfParentConfigModel,
+            "merged",
+        )
+        assert parsed == [{"vrf_name": "BLUE", "vrf_id": 50001}]
 
 
 def test_vrf_workflow_coordinator_000038_attachment_match_treats_missing_extra_config_as_empty():
@@ -3326,6 +3241,105 @@ def test_vrf_orchestrator_creation_enriches_mcfg_only_for_gathered(state, expect
     assert coordinator.module.params == {"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}
 
 
+@pytest.mark.parametrize(
+    ("state", "existing", "explicit_v6", "expect_fallback"),
+    [
+        ("merged", False, False, True),
+        ("merged", True, False, True),
+        ("merged", True, True, True),
+        ("replaced", True, False, True),
+        ("overridden", True, False, True),
+    ],
+)
+def test_vrf_sparse_ipv4_map_preserves_existing_ipv6_override(monkeypatch, state, existing, explicit_v6, expect_fallback):
+    coordinator = VrfWorkflowCoordinator(_Module({"state": "original", "config": []}), _StandaloneStrategy())
+    existing_models = (
+        [
+            VrfDataModel.from_response(
+                {
+                    "fabricName": "AK-VXLAN",
+                    "vrfName": "BLUE",
+                    "coreData": {
+                        "vrfRouteMap": "OLD-V4",
+                        "v6VrfRouteMap": "CUSTOM-V6",
+                    },
+                }
+            )
+        ]
+        if existing
+        else []
+    )
+
+    class Orchestrator:
+        def __init__(self, **_kwargs):
+            pass
+
+        @staticmethod
+        def prepare_config_data(config):
+            return [
+                {
+                    "fabric_name": "AK-VXLAN",
+                    "vrf_name": "BLUE",
+                    "core_data": {
+                        "vrfRouteMap": "NEW-V4",
+                        **({"v6VrfRouteMap": "CUSTOM-V6"} if explicit_v6 else {}),
+                    },
+                }
+            ]
+
+    class StateMachine:
+        def __init__(self, module, **_kwargs):
+            self.existing = NDConfigCollection(VrfDataModel, existing_models)
+            self.proposed = NDConfigCollection.from_ansible_config(module.params["config"], VrfDataModel)
+
+    monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", StateMachine)
+    monkeypatch.setattr(coordinator, "_new_rest_send", lambda _params: object())
+    entry = {"vrf_name": "BLUE", "redist_direct_rmap": "NEW-V4"}
+    if explicit_v6:
+        entry["v6_redist_direct_rmap"] = "CUSTOM-V6"
+    sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": [entry]})
+    try:
+        proposed = sm.proposed.get(("BLUE", "AK-VXLAN"))
+        assert ("v6VrfRouteMap" in proposed.core_data) is (expect_fallback and (state != "merged" or not existing or explicit_v6))
+        if existing:
+            assert sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "changed"
+        if existing and state == "merged" and not explicit_v6:
+            merged = sm.existing.merge(proposed)
+            assert merged.core_data["v6VrfRouteMap"] == "CUSTOM-V6"
+            assert merged.to_payload()["coreData"] == {
+                "vrfRouteMap": "NEW-V4",
+                "v6VrfRouteMap": "CUSTOM-V6",
+            }
+    finally:
+        coordinator._restore_state_machine_params(original_config, original_state)
+
+
+def test_standalone_effective_validation_failure_restores_module_params(monkeypatch):
+    original = {"state": "original", "config": []}
+    coordinator = VrfWorkflowCoordinator(_Module(original.copy()), _StandaloneStrategy())
+
+    class Orchestrator:
+        def __init__(self, **_kwargs):
+            pass
+
+        @staticmethod
+        def prepare_config_data(_config):
+            return [{"fabric_name": "AK-VXLAN", "vrf_name": "BLUE", "fabric_data": {"trmData": {"v4RpAddress": "192.0.2.9"}}}]
+
+    class StateMachine:
+        def __init__(self, module, **_kwargs):
+            self.existing = NDConfigCollection(VrfDataModel)
+            self.proposed = NDConfigCollection.from_ansible_config(module.params["config"], VrfDataModel)
+
+    monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", StateMachine)
+    monkeypatch.setattr(coordinator, "_new_rest_send", lambda _params: object())
+    with pytest.raises(ValidationError, match="require trm_enable=True"):
+        coordinator._new_state_machine({"state": "merged", "config": [{"vrf_name": "BLUE", "rp_address": "192.0.2.9"}]})
+    assert coordinator.module.params == original
+
+
 def test_vrf_parent_skips_child_task_when_only_fabric_name_is_given(monkeypatch):
     coordinator = VrfWorkflowCoordinator(_Module({"fabric_name": "MSD", "state": "merged", "config": []}), _ParentStrategy())
     monkeypatch.setattr(coordinator, "_parse_config", lambda config, *_args: config)
@@ -3340,9 +3354,9 @@ def test_vrf_parent_skips_child_task_when_only_fabric_name_is_given(monkeypatch)
     assert any(entry["event"] == "child_task_skipped_without_child_options" for entry in coordinator.workflow_trace)
 
 
-@pytest.mark.parametrize("parent_value,child_value,expected", [(False, None, False), (True, False, False), (True, None, True)])
-def test_mcfg_parent_l3vni_override_reaches_child_when_parent_field_is_scrubbed(monkeypatch, parent_value, child_value, expected):
-    """Keep explicit no-VLAN intent on the child path when MCFG omits parent fabric data."""
+@pytest.mark.parametrize("child_value", [False, True])
+def test_mcfg_child_l3vni_override_reaches_child(monkeypatch, child_value):
+    """MCFG routes explicit no-VLAN intent through the child path."""
     coordinator = VrfWorkflowCoordinator(_Module({"fabric_name": "MCFG_C", "state": "merged", "config": []}), _McfgParentStrategy())
     monkeypatch.setattr(coordinator.strategy, "child_fabric_members", lambda: ["nacfab"])
     monkeypatch.setattr(coordinator, "_parse_config", lambda config, *_args: config)
@@ -3352,13 +3366,11 @@ def test_mcfg_parent_l3vni_override_reaches_child_when_parent_field_is_scrubbed(
     monkeypatch.setattr(coordinator, "_build_structured_result", lambda *_args: {"changed": False, "failed": False})
     child_tasks = []
     monkeypatch.setattr(coordinator, "_run_child_task", lambda task: (child_tasks.append(task) or {"changed": False, "failed": False}))
-    child = {"fabric_name": "nacfab"}
-    if child_value is not None:
-        child["l3vni_wo_vlan"] = child_value
+    child = {"fabric_name": "nacfab", "l3vni_wo_vlan": child_value}
     module_args = {
         "fabric_name": "MCFG_C",
         "state": "merged",
-        "config": [{"vrf_name": "BLUE", "l3vni_wo_vlan": parent_value, "child_fabric_config": [child]}],
+        "config": [{"vrf_name": "BLUE", "child_fabric_config": [child]}],
     }
     coordinator._handle_parent_workflow(module_args, "multicluster_parent")
-    assert child_tasks[0]["module_args"]["config"][0]["l3vni_wo_vlan"] is expected
+    assert child_tasks[0]["module_args"]["config"][0]["l3vni_wo_vlan"] is child_value
