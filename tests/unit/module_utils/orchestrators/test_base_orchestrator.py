@@ -260,6 +260,36 @@ class TestRegisterApiCallVerbosityTagging:
         assert len(results._tasks) == 1
         assert results._tasks[0].verbosity_level == 2
 
+    def test_multi_call_registration_preserves_state_and_check_mode(self):
+        """Every paginated-style request restores metadata after Results resets its current task."""
+
+        rest_send = _make_rest_send([_success_response(), _success_response()])
+        rest_send.params["state"] = "overridden"
+        rest_send.params["check_mode"] = True
+        rest_send.check_mode = True
+        results = Results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch._request("/api/v1/stub?offset=0", HttpVerbEnum.GET, operation_type=OperationType.QUERY)
+        orch._request("/api/v1/stub?offset=500", HttpVerbEnum.GET, operation_type=OperationType.QUERY)
+
+        assert len(results._tasks) == 2
+        assert [task.metadata["state"] for task in results._tasks] == ["overridden", "overridden"]
+        assert [task.metadata["check_mode"] for task in results._tasks] == [True, True]
+
+    def test_registration_preserves_invocation_check_mode_during_transport_override(self):
+        """A read-only POST transport override must not erase invocation check-mode metadata."""
+
+        rest_send = _make_rest_send([_success_response()])
+        rest_send.params["check_mode"] = True
+        rest_send.check_mode = False
+        results = Results()
+        orch = _make_orchestrator(rest_send, results)
+
+        orch._request("/api/v1/stub/preview", HttpVerbEnum.POST, data={"items": []}, operation_type=OperationType.QUERY)
+
+        assert results._tasks[0].metadata["check_mode"] is True
+
 
 # =============================================================================
 # Test: _register_api_call field population
@@ -410,6 +440,33 @@ class TestRequestErrorHandlingWithResults:
 
         assert result == {}
         assert len(results._tasks) == 1
+
+    @pytest.mark.parametrize("not_found_ok", [False, True])
+    def test_get_204_fails_even_when_not_found_is_optional(self, not_found_ok):
+        """No-content GET never proves a complete inventory or empty list."""
+        response = _success_response()
+        response["RETURN_CODE"] = 204
+        rest_send = _make_rest_send([response])
+        orch = _make_orchestrator(rest_send)
+
+        with pytest.raises(RuntimeError, match="Request failed"):
+            orch._request("/api/v1/stub", HttpVerbEnum.GET, not_found_ok=not_found_ok)
+
+    def test_get_404_fails_when_not_explicitly_optional(self):
+        rest_send = _make_rest_send([_not_found_response()])
+        orch = _make_orchestrator(rest_send)
+
+        with pytest.raises(RuntimeError, match="Request failed"):
+            orch._request("/api/v1/stub", HttpVerbEnum.GET)
+
+    def test_non_get_204_remains_successful(self):
+        response = _success_response()
+        response["RETURN_CODE"] = 204
+        response["METHOD"] = "POST"
+        rest_send = _make_rest_send([response])
+        orch = _make_orchestrator(rest_send)
+
+        assert orch._request("/api/v1/stub", HttpVerbEnum.POST, data={}) == {}
 
 
 # =============================================================================

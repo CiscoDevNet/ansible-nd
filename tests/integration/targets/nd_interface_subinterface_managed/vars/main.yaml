@@ -104,3 +104,104 @@ cleanup_config:
     interface_name: "{{ ethernet_parent }}.4"
   - switch_ip: "{{ test_switch_ip }}"
     interface_name: "{{ port_channel_parent }}.5"
+
+# --- IOS-XE coverage (issue #541) ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name / nd_test_xe_parent_interface) in inventory/extra-vars to enable;
+# xe.yaml is skipped when nd_test_xe_switch_ip is unset. The parent port is converted to a routed host for the run and reset to the
+# fabric-default trunk host afterwards; sub-ids 100-103 on it are reserved. Lab-verified on CAMPUS1 Catalyst 9000v leaves against
+# ND 4.2.1.10 and 4.3.1.175.
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+xe_parent: "{{ nd_test_xe_parent_interface | default('GigabitEthernet1/0/2') }}"
+
+# The routed parent, applied with nd_interface_ethernet_routed before the subinterfaces are created (ND checks the parent's
+# DISCOVERED mode, so the parent is deployed and xe.yaml waits for discovery before the first create).
+xe_parent_routed:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        description: "Ansible integration test XE subinterface parent"
+
+xe_subif_100:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.100"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type (iosXeSubinterface); xe.yaml asserts the echo carries it.
+        admin_state: true
+        description: "Ansible integration test XE subif 100"
+        vlan_id: 100
+        # vrf_interface intentionally omitted: the Catalyst has no VRF named default; omit it for the global routing table.
+        ip: 10.99.100.1
+        prefix: 24
+        ipv6: "2001:db8:100::1"
+        ipv6_prefix: 64
+
+xe_subif_101_shut:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.101"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSubinterfaceShutNoshut
+        admin_state: false
+
+xe_subif_102:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.102"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSubinterface
+        admin_state: true
+        description: "Ansible integration test XE subif 102"
+        vlan_id: 102
+        ip: 10.99.102.1
+        prefix: 24
+
+xe_subif_100_updated:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.100"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        description: "Updated XE subif 100"
+        vlan_id: 100
+        # vrf_interface intentionally omitted: the Catalyst has no VRF named default; omit it for the global routing table.
+        ip: 10.99.100.2
+        prefix: 24
+        ipv6: "2001:db8:100::1"
+        ipv6_prefix: 64
+
+# NX-OS-only field on the IOS-XE branch: must fail argument/model validation before any controller call.
+xe_subif_bad_mtu:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.103"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        vlan_id: 103
+        ip: 10.99.103.1
+        prefix: 24
+        mtu: 9216
+
+xe_cleanup_config:
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.100"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.101"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.102"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.103"

@@ -1,0 +1,33 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow cleanup | Reset cleanup tracking
+  ansible.builtin.set_fact:
+    nd_iw_cleanup_failures: []
+
+- name: Interface workflow cleanup | Batch-delete test-owned resources per fabric
+  ansible.builtin.include_tasks:
+    file: cleanup_fabric.yaml
+    apply:
+      tags:
+        - always
+        - nd_iw_cleanup
+  vars:
+    nd_iw_cleanup_phase: always
+  loop: "{{ nd_iw_active_fabrics }}"
+  loop_control:
+    loop_var: nd_iw_current_fabric
+    label: "{{ nd_iw_current_fabric.discriminator }}:{{ nd_iw_current_fabric.fabric_name }}"
+  tags:
+    - always
+    - nd_iw_cleanup
+
+- name: Interface workflow cleanup | Report any cleanup failures
+  ansible.builtin.assert:
+    that:
+      - nd_iw_cleanup_failures | length == 0
+    fail_msg: >-
+      Test execution completed, but cleanup failed for: {{ nd_iw_cleanup_failures | join(', ') }}.
+      The listed fabrics require manual inspection before reuse.
+  when: nd_iw_cleanup_strict | bool

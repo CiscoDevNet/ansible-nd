@@ -1,13 +1,10 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -71,23 +68,27 @@ options:
       telemetry_collection_type:
         description:
         - Telemetry collection method.
+        - Applies when O(config.telemetry_collection=true).
         type: str
         default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
         - Telemetry Streaming Protocol.
+        - Applies when O(config.telemetry_collection=true).
         type: str
         default: ipv4
         choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
         - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
+        - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
         - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
+        - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         type: str
         default: default
       security_domain:
@@ -103,8 +104,9 @@ options:
           bgp_asn:
             description:
             - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
+            - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
+            - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-            required: true
           aaa:
             description:
             - Include AAA configs from Advanced tab during device bootup.
@@ -123,11 +125,14 @@ options:
           allow_smart_switch_onboarding:
             description:
             - Enable onboarding of smart switches to Hypershield for firewall service.
+            - The Hypershield connectivity options below apply to onboarded smart switches.
             type: bool
             default: false
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            - Used for switch bootstrap when O(config.management.day0_bootstrap=true).
+            - Within each entry, C(start_ip), C(end_ip), and C(default_gateway) must be valid addresses from the same IP family.
             - When O(state=merged), omitting this option preserves the existing collection.
             - When O(state=merged), providing this option replaces the entire collection with the supplied list.
             - Under O(state=merged), entries in this list are not merged item-by-item.
@@ -154,7 +159,7 @@ options:
                 required: true
               subnet_prefix:
                 description:
-                - Subnet prefix length (8-30).
+                - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
           cdp:
@@ -172,53 +177,74 @@ options:
           create_bgp_config:
             description:
             - Generate BGP configuration for core and edge routers.
+            - Uses O(config.management.bgp_asn) when enabled.
             type: bool
             default: true
           day0_bootstrap:
             description:
             - Support day 0 touchless switch bringup.
+            - Enables the POAP context for O(config.management.local_dhcp_server) and O(config.management.bootstrap_subnet_collection).
             type: bool
             default: false
           day0_plug_and_play:
             description:
             - Enable Plug n Play for Catalyst 9000 switches.
+            - Applies to the day 0 bootstrap workflow controlled by O(config.management.day0_bootstrap).
             type: bool
             default: false
           dhcp_end_address:
             description:
             - DHCP Scope End Address For Switch POAP.
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true).
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
-            default: ""
           dhcp_protocol_version:
             description:
             - IP protocol version for Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true) and O(config.management.local_dhcp_server=true).
             type: str
             default: dhcpv4
             choices: [ dhcpv4, dhcpv6 ]
           dhcp_start_address:
             description:
             - DHCP Scope Start Address For Switch POAP.
+            - Applies when O(config.management.day0_bootstrap=true),
+              O(config.management.local_dhcp_server=true).
+            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
+            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
+              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
-            default: ""
           dns_collection:
             description:
             - List of IPv4 and IPv6 DNS addresses.
             type: list
             elements: str
+            default: []
           dns_vrf_collection:
             description:
             - DNS Server VRFs.
             - One VRF for all DNS servers or a list of VRFs, one per DNS server.
+            - Entries correspond to the addresses in O(config.management.dns_collection).
             type: list
             elements: str
+            default: []
           domain_name:
             description:
             - Domain name for DHCP server PnP block.
+            - Applies to the day 0 Plug and Play DHCP block when O(config.management.day0_plug_and_play=true).
             type: str
             default: ""
           enable_dpu_pinning:
             description:
             - Enable pinning of VRFs and networks to specific DPUs on smart switches.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: bool
             default: false
           extra_config_aaa:
@@ -244,6 +270,7 @@ options:
           inband_day0_bootstrap:
             description:
             - Support day 0 touchless switch bringup via inband management.
+            - Applies to O(config.management.day0_bootstrap=true) using O(config.management.inband_management=true).
             type: bool
             default: false
           inband_management:
@@ -254,18 +281,26 @@ options:
           interface_statistics_load_interval:
             description:
             - Interface Statistics Load Interval Time in seconds.
+            - Applies when O(config.management.real_time_interface_statistics_collection=true).
             type: int
             default: 10
           local_dhcp_server:
             description:
             - Automatic IP Assignment For POAP from Local DHCP Server.
+            - Applies when O(config.management.day0_bootstrap=true); O(config.management.dhcp_protocol_version) selects the address family.
             type: bool
             default: false
           management_gateway:
             description:
             - Default Gateway For Management VRF On The Switch.
+            - Applies to management addressing when O(config.management.day0_bootstrap=true).
+            - Use an IPv4 address without a prefix length on ND 4.2 or later.
+            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
+            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
+            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
+            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
+            - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
-            default: ""
           management_ipv4_prefix:
             description:
             - Switch Mgmt IP Subnet Prefix if ipv4.
@@ -290,10 +325,13 @@ options:
           mpls_loopback_identifier:
             description:
             - Underlay MPLS Loopback Identifier.
+            - Applies when O(config.management.mpls_handoff=true).
             type: int
+            default: 101
           mpls_loopback_ip_range:
             description:
             - MPLS Loopback IP Address Range.
+            - Applies when O(config.management.mpls_handoff=true).
             type: str
             default: "10.102.0.0/25"
           netflow_settings:
@@ -304,11 +342,13 @@ options:
               netflow:
                 description:
                 - Enable netflow collection.
+                - Enables use of the exporter, record, and monitor collections in O(config.management.netflow_settings).
                 type: bool
                 default: false
               netflow_exporter_collection:
                 description:
                 - List of netflow exporters.
+                - Used when O(config.management.netflow_settings.netflow=true); monitors reference exporters by name.
                 type: list
                 elements: dict
                 suboptions:
@@ -339,6 +379,7 @@ options:
               netflow_record_collection:
                 description:
                 - List of netflow records.
+                - Used when O(config.management.netflow_settings.netflow=true); monitors reference records by name.
                 type: list
                 elements: dict
                 suboptions:
@@ -355,11 +396,13 @@ options:
                   layer2_record:
                     description:
                     - Enable layer 2 record fields.
+                    - Applies when O(config.management.netflow_settings.netflow_record_collection.record_template=netflowLayer2Record).
                     type: bool
                     default: false
               netflow_monitor_collection:
                 description:
                 - List of netflow monitors.
+                - Used when O(config.management.netflow_settings.netflow=true); each monitor names a record and at least one exporter.
                 type: list
                 elements: dict
                 suboptions:
@@ -371,16 +414,19 @@ options:
                   record_name:
                     description:
                     - Associated record name.
+                    - Matches an entry in O(config.management.netflow_settings.netflow_record_collection).
                     type: str
                     required: true
                   exporter1_name:
                     description:
                     - Primary exporter name.
+                    - Matches an entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     required: true
                   exporter2_name:
                     description:
                     - Secondary exporter name.
+                    - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
           nxapi:
@@ -396,11 +442,13 @@ options:
           nxapi_http_port:
             description:
             - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http=true).
             type: int
             default: 80
           nxapi_https_port:
             description:
             - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi=true).
             type: int
             default: 443
           performance_monitoring:
@@ -423,11 +471,13 @@ options:
           ptp_domain_id:
             description:
             - Multiple Independent PTP Clocking Subdomains on a Single Network.
+            - Applies when O(config.management.ptp=true).
             type: int
             default: 0
           ptp_loopback_id:
             description:
             - Precision Time Protocol Source Loopback Id.
+            - Applies when O(config.management.ptp=true).
             type: int
             default: 0
           real_time_backup:
@@ -446,9 +496,9 @@ options:
             type: bool
           scheduled_backup_time:
             description:
-            - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
+            - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
+            - Applies when O(config.management.scheduled_backup=true).
             type: str
-            default: ""
           snmp_trap:
             description:
             - Configure Nexus Dashboard as a receiver for SNMP traps.
@@ -462,18 +512,22 @@ options:
           connectivity_domain_name:
             description:
             - Domain name to connect to Hypershield.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
           hypershield_connectivity_proxy_server:
             description:
             - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
           hypershield_connectivity_proxy_server_port:
             description:
             - Proxy port number for communication with Hypershield.
+            - Applies when O(config.management.hypershield_connectivity_proxy_server) is set.
             type: int
           hypershield_connectivity_source_intf:
             description:
             - Loopback interface on smart switch for communication with Hypershield.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
       telemetry_settings:
         description:
@@ -489,21 +543,29 @@ options:
                 description:
                 - Traffic analytics state.
                 type: str
+                choices:
+                - compatibility
+                - disabled
+                - enabled
                 default: enabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
+                - Applies when O(config.telemetry_settings.flow_collection.traffic_analytics) is C(enabled) or C(compatibility).
                 type: str
+                choices:
+                - interFabric
+                - interFabricAndExternal
+                - intraFabric
                 default: intraFabric
-              operating_mode:
-                description:
-                - Operating mode.
-                type: str
-                default: flowTelemetry
               udp_categorization:
                 description:
                 - UDP categorization.
+                - Applies when O(config.telemetry_settings.flow_collection.traffic_analytics) is C(enabled) or C(compatibility).
                 type: str
+                choices:
+                - disabled
+                - enabled
                 default: enabled
           microburst:
             description:
@@ -518,7 +580,12 @@ options:
               sensitivity:
                 description:
                 - Microburst sensitivity level.
+                - Applies when O(config.telemetry_settings.microburst.microburst=true).
                 type: str
+                choices:
+                - high
+                - low
+                - medium
                 default: low
           analysis_settings:
             description:
@@ -543,17 +610,25 @@ options:
               export_settings:
                 description:
                 - NAS export settings.
+                - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                 type: dict
                 suboptions:
                   export_type:
                     description:
                     - Export type.
+                    - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                     type: str
+                    choices:
+                    - base
+                    - full
                     default: full
                   export_format:
                     description:
                     - Export format.
+                    - Applies when O(config.telemetry_settings.nas.server) names a configured NAS server.
                     type: str
+                    choices:
+                    - json
                     default: json
           energy_management:
             description:
@@ -575,11 +650,13 @@ options:
             - Email streaming configuration.
             type: list
             elements: dict
+            default: []
           message_bus:
             description:
             - Message bus configuration.
             type: list
             elements: dict
+            default: []
           syslog:
             description:
             - Syslog streaming configuration.
@@ -589,15 +666,18 @@ options:
             - Webhook configuration.
             type: list
             elements: dict
+            default: []
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
     - Use O(state=merged) to create new fabrics and update existing ones as defined in the configuration.
       Resources on ND that are not specified in the configuration will be left unchanged.
-    - Use O(state=replaced) to replace the fabric configuration specified in the configuration.
-      Any settings not explicitly provided will revert to their defaults.
-    - Use O(state=overridden) to enforce the configuration as the single source of truth.
-      Any fabric existing on ND but not present in the configuration will be deleted. Use with extra caution.
+    - Use O(state=replaced) to replace the supported configuration of each fabric specified in O(config).
+      Omitted settings revert to their documented defaults except for dynamic or controller-owned settings identified
+      by the module for preservation; those settings retain their existing values. Explicitly supplied values take precedence.
+    - Use O(state=overridden) to apply the same per-fabric replacement behavior and enforce O(config) as the complete
+      inventory for this fabric type. Existing fabrics of this type that are absent from O(config) are deleted.
+      Use with extra caution.
     - Use O(state=deleted) to remove the fabrics specified in the configuration from the Cisco Nexus Dashboard.
     type: str
     default: merged
@@ -607,6 +687,7 @@ options:
     - Controls save and deploy behavior after fabric configuration is updated.
     - Save writes pending configuration to the controller.
     - Deploy pushes the saved configuration to switches.
+    - Omitting O(config_actions), or leaving both actions disabled, stages changes only; it does not save or deploy them.
     - Skipped automatically when O(state=deleted) or when no changes are made.
     type: dict
     suboptions:
@@ -626,6 +707,7 @@ options:
         - Scope of the deploy operation.
         - C(switch) deploys only to affected switches.
         - C(global) deploys to all switches in the fabric.
+        - Applies when O(config_actions.deploy=true).
         type: str
         default: switch
         choices: [ switch, global ]
@@ -635,11 +717,13 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only External Connectivity fabric type (C(externalConnectivity)) is supported by this module.
-- When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
+- With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
+  dynamic or controller-owned values, which are preserved from an existing fabric.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
 """
 
 EXAMPLES = r"""
+# Omitting config_actions stages changes without saving or deploying them.
 - name: Create an External Connectivity fabric using state merged
   cisco.nd.nd_manage_fabric_external:
     state: merged
@@ -669,9 +753,6 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
   register: result
 
@@ -716,20 +797,31 @@ EXAMPLES = r"""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
           management_ipv4_prefix: 24
           management_ipv6_prefix: 64
   register: result
 
-- name: Replace fabric with only required fields (all optional settings revert to defaults)
+- name: Replace fabric with only required fields
   cisco.nd.nd_manage_fabric_external:
     state: replaced
     config:
       - fabric_name: my_ext_fabric
         management:
           bgp_asn: "65004"
+  register: result
+
+- name: Save and deploy External Connectivity fabric configuration after changes
+  cisco.nd.nd_manage_fabric_external:
+    state: merged
+    config:
+      - fabric_name: my_ext_fabric
+        management:
+          bgp_asn: "65004"
+          interface_statistics_load_interval: 30
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
 
 - name: Delete a specific fabric using state deleted
@@ -749,6 +841,11 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+msg:
+    description: A human-readable error message, present only when the module fails.
+    type: str
+    returned: on failure
+    sample: "Module execution failed: fabric validation failed"
 changed:
     description: Whether the module made any changes.
     type: bool
@@ -756,15 +853,15 @@ changed:
     sample: true
 before:
     description:
-    - External fabric configuration before changes.
-    - Queried from the controller and may contain read-only properties.
+    - Normalized, supported External fabric configuration before changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65501"}}]
 after:
     description:
-    - External fabric configuration after changes.
-    - Refreshed from the controller after write operations.
+    - Normalized, supported External fabric configuration after changes.
+    - Unsupported controller-only properties are omitted.
     type: list
     returned: always
     sample: [{"fabric_name": "ext_fabric_east", "management": {"bgp_asn": "65502"}}]
@@ -829,6 +926,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_external import ManageExternalFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 
 
 def main():
@@ -845,14 +945,14 @@ def main():
     # Parse and validate config_actions BEFORE any state mutation so invalid
     # input fails deterministically on every run, including idempotent no-drift
     # runs, and never mutates ND before failing.
-    config_actions = module.params.get("config_actions") or {}
-    save = config_actions.get("save", False)
-    deploy = config_actions.get("deploy", False)
-    deploy_type = config_actions.get("type", "switch")
     state = module.params.get("state", "merged")
-
     try:
-        ManageExternalFabricOrchestrator.validate_config_actions(save=save, deploy=deploy, deploy_type=deploy_type)
+        config_actions = parse_config_actions(
+            params=module.params,
+            raw_args=get_raw_module_args(),
+            policy=FABRIC_CONFIG_ACTIONS,
+            state=state,
+        )
     except ValueError as e:
         module.fail_json(msg=str(e))
 
@@ -867,7 +967,7 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        # Execute config save/deploy actions via orchestrator mixin (only on real changes)
+        # Execute config save/deploy actions via the shared controller (only on real changes)
         if state != "deleted" and len(nd_state_machine.sent) > 0:
             fabric_names = []
             for item in nd_state_machine.sent:
@@ -875,11 +975,11 @@ def main():
                 if name and name not in fabric_names:
                     fabric_names.append(name)
             if fabric_names:
-                nd_state_machine.model_orchestrator.execute_config_actions(
+                nd_state_machine.model_orchestrator.run_config_actions(
+                    actions=config_actions,
                     fabric_names=fabric_names,
-                    save=save,
-                    deploy=deploy,
-                    deploy_type=deploy_type,
+                    state=state,
+                    check_mode=module.check_mode,
                 )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0

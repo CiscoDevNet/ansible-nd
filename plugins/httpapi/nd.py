@@ -80,6 +80,7 @@ class HttpApi(HttpApiBase):
         self.status = -1
         self.info = {}
         self.version = None
+        self._nd_version_resolved = False
 
         # Cached auth endpoint base path, set after first successful login to new endpoint.
         # "" (default) means not yet detected or legacy, "/api/v1/infra" means ND 4.2.1+.
@@ -108,9 +109,15 @@ class HttpApi(HttpApiBase):
                 self.version = 12
             return self.version
         elif platform == "nd":
-            if self.version is None:
-                response_json = self._send_nd_request("GET", "/version.json", self.headers)
-                self.version = ".".join(str(response_json.get("body")[key]) for key in ["major", "minor", "maintenance"])
+            if not self._nd_version_resolved:
+                # Unified ND 4.2.1+ reports the build version (e.g. "4.2.1.10") from /api/v1/infra/about.
+                response_json = self._send_nd_request("GET", "/api/v1/infra/about", self.headers)
+                self.version = response_json.get("body", {}).get("buildVersion")
+                # Cache a successful lookup even when an older/unexpected
+                # response omits buildVersion. This persistent HTTPAPI object
+                # is shared by collection tasks, so repeated version gates do
+                # not create one about request per module invocation.
+                self._nd_version_resolved = True
             return self.version
         else:
             raise ValueError("Unknown platform type: {0}".format(platform))

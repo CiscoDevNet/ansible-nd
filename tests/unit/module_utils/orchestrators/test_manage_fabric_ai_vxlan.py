@@ -31,8 +31,16 @@ def test_manage_fabric_ai_vxlan_00010(monkeypatch) -> None:
         captured["kwargs"] = kwargs
         return {
             "fabrics": [
-                {"name": "ai1", "management": {"type": "aimlVxlanEbgp"}},
-                {"name": "std1", "management": {"type": "vxlanEbgp"}},
+                {
+                    "name": "ai1",
+                    "category": "fabric",
+                    "management": {"type": "aimlVxlanEbgp"},
+                },
+                {
+                    "name": "std1",
+                    "category": "fabric",
+                    "management": {"type": "vxlanEbgp"},
+                },
             ]
         }
 
@@ -41,7 +49,7 @@ def test_manage_fabric_ai_vxlan_00010(monkeypatch) -> None:
     result = instance.query_all()
 
     assert captured["kwargs"]["not_found_ok"] is True
-    assert result == [{"name": "ai1", "management": {"type": "aimlVxlanEbgp"}}]
+    assert result == [{"name": "ai1", "category": "fabric", "management": {"type": "aimlVxlanEbgp"}}]
 
 
 def test_manage_fabric_ai_vxlan_00020(monkeypatch) -> None:
@@ -58,8 +66,16 @@ def test_manage_fabric_ai_vxlan_00020(monkeypatch) -> None:
         captured["kwargs"] = kwargs
         return {
             "fabrics": [
-                {"name": "ai1", "management": {"type": "aimlVxlanIbgp"}},
-                {"name": "std1", "management": {"type": "vxlanIbgp"}},
+                {
+                    "name": "ai1",
+                    "category": "fabric",
+                    "management": {"type": "aimlVxlanIbgp"},
+                },
+                {
+                    "name": "std1",
+                    "category": "fabric",
+                    "management": {"type": "vxlanIbgp"},
+                },
             ]
         }
 
@@ -68,4 +84,4 @@ def test_manage_fabric_ai_vxlan_00020(monkeypatch) -> None:
     result = instance.query_all()
 
     assert captured["kwargs"]["not_found_ok"] is True
-    assert result == [{"name": "ai1", "management": {"type": "aimlVxlanIbgp"}}]
+    assert result == [{"name": "ai1", "category": "fabric", "management": {"type": "aimlVxlanIbgp"}}]

@@ -14,6 +14,7 @@ the `local` and `fabricStatus` fields used by the pre-flight checks.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 from typing import Literal
 
@@ -83,6 +84,8 @@ class FabricContext:
         self._switches: list[dict] | None = None
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
+        self._platform_map: dict[str, PlatformType | None] | None = None
+        self._switch_records_by_id: dict[str, dict] | None = None
 
     def _fabric_not_found_message(self) -> str:
         """
@@ -225,8 +228,8 @@ class FabricContext:
         """
         # Summary
 
-        Drop all cached state so the next access to `fabric_summary`, `switches`, `switch_map`, `switch_map_by_id`, or the
-        `platformType` lookup re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
+        Drop all cached state so the next access to `fabric_summary`, `switches`, switch lookup, platform type, or
+        switch synchronization status re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
 
@@ -236,13 +239,15 @@ class FabricContext:
         self._switches = None
         self._switch_map = None
         self._switch_map_by_id = None
+        self._platform_map = None
+        self._switch_records_by_id = None
 
     def _load_switch_maps(self) -> None:
         """
         # Summary
 
         Fetch the fabric switch inventory once, retain the raw switch records, and populate the IP-keyed and ID-keyed
-        lookup maps. Per-switch `platformType` is read on demand from the retained records by `get_platform_type`.
+        lookup maps, plus the IP-keyed `platformType` index that `get_platform_type` reads in O(1) (PR #558 review).
 
         Fails closed on a nonexistent fabric: the switches endpoint returns HTTP 404 when the parent fabric is absent.
         `_query_get` maps that 404 to an empty dict, which would otherwise yield empty maps and surface a misleading
@@ -257,6 +262,10 @@ class FabricContext:
         - If the fabric does not exist (switches GET 404 confirmed by an absent `fabric_summary`).
         """
         if self._switch_map is not None:
+            # Some injected/shared contexts predate the platform index and carry only the two identity maps. Treat their platform
+            # evidence as unknown rather than asserting: unknown is already the documented safe no-mismatch result.
+            if self._platform_map is None:
+                self._platform_map = {switch_ip: None for switch_ip in self._switch_map}
             return
         ep = EpManageSwitchesListGet()
         ep.fabric_name = self._fabric_name
@@ -270,6 +279,28 @@ class FabricContext:
         self._switches = switches
         self._switch_map = {sw["fabricManagementIp"]: sw["switchId"] for sw in switches if sw.get("fabricManagementIp") and sw.get("switchId")}
         self._switch_map_by_id = {sw["switchId"]: sw["fabricManagementIp"] for sw in switches if sw.get("switchId") and sw.get("fabricManagementIp")}
+        self._platform_map = {
+            sw["fabricManagementIp"]: self._parse_platform_type((sw.get("additionalData") or {}).get("platformType"))
+            for sw in switches
+            if sw.get("fabricManagementIp") and sw.get("switchId")
+        }
+        self._switch_records_by_id = {sw["switchId"]: sw for sw in switches if sw.get("switchId")}
+
+    @staticmethod
+    def _parse_platform_type(raw: object) -> PlatformType | None:
+        """
+        # Summary
+
+        Coerce a raw `additionalData.platformType` value to a `PlatformType`, or `None` when it is absent or a value newer than the enum.
+
+        ## Raises
+
+        None
+        """
+        try:
+            return PlatformType(raw)
+        except ValueError:
+            return None
 
     @property
     def switches(self) -> list[dict]:
@@ -376,8 +407,9 @@ class FabricContext:
         """
         # Summary
 
-        Resolve a switch management IP address to its `platformType` (as a `PlatformType`) via the cached switch
-        inventory. Callers use this to select the platform-appropriate feature model (e.g. `loopback` vs `iosXeLoopback`).
+        Resolve a switch management IP address to its `platformType` (as a `PlatformType`) via the IP-keyed index built from the cached
+        switch inventory, so a per-interface lookup is O(1) and never rescans the switch list. Callers use this to verify the requested
+        `network_os_type` against the switch's actual platform before any write (`NDBaseInterfaceOrchestrator._check_platform_match`).
 
         Returns `None` when the switch exists in the fabric but reports no recognizable `platformType` (the field is
         nested under a `oneOf` variant and may be absent, or ND may report a value newer than `PlatformType`).
@@ -389,18 +421,55 @@ class FabricContext:
         - If no switch matches the given IP in the fabric.
         """
         self._load_switch_maps()
-        if self._switch_map is None or self._switches is None:
-            raise AssertionError("switch records are None after _load_switch_maps()")
-        if switch_ip not in self._switch_map:
+        if self._platform_map is None:
+            raise AssertionError("platform map is None after _load_switch_maps()")
+        if switch_ip not in self._platform_map:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
-        for switch in self._switches:
-            if switch.get("fabricManagementIp") == switch_ip:
-                raw = (switch.get("additionalData") or {}).get("platformType")
-                try:
-                    return PlatformType(raw)
-                except ValueError:
-                    # Absent (None) or a value newer than PlatformType -> no recognizable platform type.
-                    return None
+        return self._platform_map[switch_ip]
+
+    @staticmethod
+    def _normalize_config_sync_status(value: object) -> bool | None:
+        """Normalize controller switch synchronization spellings to true, false, or unknown."""
+        if not isinstance(value, str):
+            return None
+        normalized = "".join(character for character in value.casefold() if character.isalnum())
+        if normalized in {"insync", "synced", "synchronized", "synchronised"}:
+            return True
+        if normalized in {"outofsync", "notsync", "notsynced", "notsynchronized", "notsynchronised", "pending"}:
+            return False
+        return None
+
+    def switch_config_in_sync(self, switch_id: str) -> bool | None:
+        """
+        # Summary
+
+        Return the cached switch configuration synchronization state.
+
+        The Manage Switches inventory commonly reports `configSyncStatus` under `additionalData`, with some API
+        variants returning it at the top level. `True` means explicitly synchronized, `False` means explicitly
+        out of sync or pending, and `None` means the controller omitted or returned an unrecognized status. This
+        method reuses the switch inventory already loaded for IP/ID resolution and does not issue a separate request.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switches API query fails.
+        """
+        self._load_switch_maps()
+        if self._switch_records_by_id is None:
+            raise AssertionError("switch records are None after _load_switch_maps()")
+        record = self._switch_records_by_id.get(switch_id)
+        if not isinstance(record, Mapping):
+            return None
+        additional_data = record.get("additionalData")
+        containers = (additional_data, record)
+        for container in containers:
+            if not isinstance(container, Mapping):
+                continue
+            normalized = self._normalize_config_sync_status(container.get("configSyncStatus"))
+            if normalized is not None:
+                return normalized
         return None
 
     def validate_for_mutation(self) -> None:

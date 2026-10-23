@@ -17,11 +17,14 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.interface_performance_profile import InterfacePerformanceProfile
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest import rest_send as rest_send_module
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.legacy_response_strategy import LegacyStrategy
@@ -110,6 +113,61 @@ def test_rest_send_00030():
         instance.check_mode = "invalid"  # type: ignore[assignment]
 
 
+@pytest.mark.parametrize("result", ("4.3.1.175", None))
+def test_controller_version_caches_success_and_unknown(result: str | None) -> None:
+    """A sender version lookup, including a None result, is performed only once."""
+
+    class VersionSender:
+        def __init__(self):
+            self.calls = 0
+
+        def get_version(self):
+            self.calls += 1
+            return result
+
+    instance = RestSend({"check_mode": False})
+    sender = VersionSender()
+    instance._sender = sender
+
+    assert instance.controller_version == result
+    assert instance.controller_version == result
+    assert sender.calls == 1
+
+
+def test_controller_version_caches_lookup_failure() -> None:
+    """A failed connection version lookup is negatively cached for the session."""
+
+    class VersionSender:
+        def __init__(self):
+            self.calls = 0
+
+        def get_version(self):
+            self.calls += 1
+            raise RuntimeError("about endpoint unavailable")
+
+    instance = RestSend({"check_mode": False})
+    sender = VersionSender()
+    instance._sender = sender
+
+    assert instance.controller_version is None
+    assert instance.controller_version is None
+    assert sender.calls == 1
+
+
+def test_controller_version_setter_bypasses_sender_lookup() -> None:
+    """An explicitly injected version remains the unit-test and caller override."""
+
+    class VersionSender:
+        def get_version(self):
+            raise AssertionError("sender lookup must not run")
+
+    instance = RestSend({"check_mode": False})
+    instance._sender = VersionSender()
+    instance.controller_version = "4.2.1.10"
+
+    assert instance.controller_version == "4.2.1.10"
+
+
 # =============================================================================
 # Test: RestSend property setters/getters
 # =============================================================================
@@ -191,7 +249,8 @@ def test_rest_send_00120():
 
     - payload can be set and retrieved
     - payload defaults to None
-    - TypeError raised if not dict
+    - TypeError raised if not dict or list
+    - a top-level JSON array (list) is accepted
 
     ## Classes and Methods
 
@@ -215,6 +274,12 @@ def test_rest_send_00120():
         instance.payload = {"key": "value"}
         result = instance.payload
     assert result == {"key": "value"}
+
+    # Test setter/getter with a top-level JSON array (list)
+    with does_not_raise():
+        instance.payload = [{"key": "value"}]
+        result = instance.payload
+    assert result == [{"key": "value"}]
 
 
 def test_rest_send_00130():
@@ -551,6 +616,69 @@ def test_rest_send_00300():
     assert instance.response_current.get("CHECK_MODE") is None
     assert instance.result_current["success"] is True
     assert instance.result_current["found"] is True
+
+
+def test_disabled_debug_does_not_serialize_full_response(monkeypatch):
+    """Normal requests must not JSON-format a response when debug logging is off."""
+    response = {"RETURN_CODE": 200, "METHOD": "GET", "MESSAGE": "OK", "DATA": {"interfaces": [{"interfaceName": "Ethernet1/1"}]}}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(iter((response,)))
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test/interfaces"
+    instance.verb = HttpVerbEnum.GET
+    monkeypatch.setattr(instance.log, "isEnabledFor", lambda _level: False)
+    monkeypatch.setattr(
+        rest_send_module, "json", SimpleNamespace(dumps=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected JSON formatting")))
+    )
+
+    instance.commit()
+
+    assert instance.result_current["success"] is True
+
+
+def test_profile_counts_actual_sender_attempt():
+    """A successful GET contributes one categorized request, not just one logical commit."""
+    response = {"RETURN_CODE": 200, "METHOD": "GET", "MESSAGE": "OK", "DATA": {"interfaces": []}}
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(iter((response,)))
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/manage/fabrics/F/switches/S/interfaces?max=500"
+    instance.verb = HttpVerbEnum.GET
+    instance.performance_profile = InterfacePerformanceProfile()
+
+    with instance.performance_profile.phase("inventory"):
+        instance.commit()
+
+    result = instance.performance_profile.to_dict()
+    assert result["requests"]["inventory:interface_inventory:GET"]["count"] == 1
+    assert result["requests"]["inventory:interface_inventory:GET"]["response_json_bytes"] > 0
+
+
+def test_profile_counts_sender_exception_attempt(monkeypatch):
+    """A transport exception still counts as one attempted request."""
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    monkeypatch.setattr(sender, "commit", lambda: (_ for _ in ()).throw(RuntimeError("transport disconnected")))
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/manage/fabrics/F/switches/S/interfaces?max=500"
+    instance.verb = HttpVerbEnum.GET
+    instance.performance_profile = InterfacePerformanceProfile()
+
+    with pytest.raises(RuntimeError, match="transport disconnected"):
+        with instance.performance_profile.phase("inventory"):
+            instance.commit()
+
+    result = instance.performance_profile.to_dict()
+    assert result["requests"]["inventory:interface_inventory:GET"]["count"] == 1
+    assert result["requests"]["inventory:interface_inventory:GET"]["response_json_bytes"] == 0
 
 
 def test_rest_send_00310():
@@ -901,20 +1029,20 @@ def test_rest_send_00510():
     ## Test
 
     - Failed POST request returns 400 response
-    - Loop retries until timeout is exhausted
+    - The deterministic 400 is terminal and is submitted exactly once
+    - A following sentinel 200 response is not consumed
 
     ## Classes and Methods
 
     - RestSend.commit()
     - RestSend._commit_normal_mode()
+    - ResponseHandler._is_terminal_client_error()
     """
     method_name = inspect.stack()[0][3]
-    key = f"{method_name}a"
 
     def responses():
-        # Provide responses for multiple retry attempts (60 retries * 5 second interval = 300 seconds)
-        for _ in range(60):
-            yield responses_rest_send(key)
+        yield responses_rest_send(f"{method_name}a")
+        yield responses_rest_send(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
 
@@ -941,9 +1069,10 @@ def test_rest_send_00510():
         instance.payload = {"invalid": "data"}
         instance.commit()
 
-    # Verify error response
+    # One submission: the terminal 400 is final; the sentinel 200 was never consumed.
     assert instance.response_current["RETURN_CODE"] == 400
     assert instance.result_current["success"] is False
+    assert instance.result_current["retryable"] is False
 
 
 def test_rest_send_00520():
@@ -1711,6 +1840,86 @@ def test_rest_send_add_response_type_error():
     match = r"RestSend\.add_response:.*value must be a dict"
     with pytest.raises(TypeError, match=match):
         instance.add_response("invalid")  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Test: RestSend.response_count
+# =============================================================================
+
+
+def test_rest_send_response_count():
+    """
+    # Summary
+
+    Verify `response_count` reports the number of accumulated responses without copying them: it is the cheap freshness token the
+    orchestrators snapshot before a request and compare after (issue #554, PR #563 review), so it must track `add_response` exactly.
+
+    ## Test
+
+    - A fresh instance reports 0
+    - Each `add_response()` increments it by one and it matches `len(responses)`
+    - Reading it does not go through the deep-copying `responses` property
+
+    ## Classes and Methods
+
+    - RestSend.response_count
+    - RestSend.add_response
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    assert instance.response_count == 0
+
+    instance.add_response({"RETURN_CODE": 200})
+    assert instance.response_count == 1
+    instance.add_response({"RETURN_CODE": 404})
+    assert instance.response_count == 2
+    assert instance.response_count == len(instance.responses)
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("response_count must not read the deep-copying responses property")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(RestSend, "responses", property(_no_copy))
+        assert instance.response_count == 2
+
+
+def test_rest_send_result_count():
+    """`result_count` tracks results without reading the deep-copying public history."""
+    instance = RestSend({"check_mode": False})
+
+    assert instance.result_count == 0
+    instance.add_result({"success": True})
+    instance.add_result({"success": False})
+    assert instance.result_count == 2
+
+    def _no_copy(self):  # pylint: disable=unused-argument
+        raise AssertionError("result_count must not read the deep-copying results property")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(RestSend, "results", property(_no_copy))
+        assert instance.result_count == 2
+
+
+def test_history_since_copies_only_new_records(monkeypatch) -> None:
+    """The workflow can inspect a fresh write without cloning old inventory pages."""
+    instance = RestSend({"check_mode": False})
+    instance.add_response({"DATA": {"old": [1]}})
+    instance.add_result({"success": True, "old": [1]})
+    response_start, result_start = instance.response_count, instance.result_count
+    instance.add_response({"DATA": {"new": [2]}})
+    instance.add_result({"success": True, "new": [2]})
+
+    def no_full_history(_self):
+        raise AssertionError("full history getter must not be used")
+
+    monkeypatch.setattr(RestSend, "responses", property(no_full_history))
+    monkeypatch.setattr(RestSend, "results", property(no_full_history))
+    responses, results = instance.history_since(response_start, result_start)
+    assert responses == [{"DATA": {"new": [2]}}]
+    assert results == [{"success": True, "new": [2]}]
+    responses[0]["DATA"]["new"].append(3)
+    assert instance._response[-1]["DATA"]["new"] == [2]
 
 
 # =============================================================================

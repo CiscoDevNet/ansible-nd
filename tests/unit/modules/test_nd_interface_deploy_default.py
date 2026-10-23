@@ -30,6 +30,7 @@ INTERFACE_MODULES = (
     "nd_interface_ethernet_trunk_host",
     "nd_interface_loopback",
     "nd_interface_port_channel_access",
+    "nd_interface_port_channel_routed",
     "nd_interface_port_channel_trunk_host",
     "nd_interface_subinterface_managed",
     "nd_interface_subinterface_unmanaged",

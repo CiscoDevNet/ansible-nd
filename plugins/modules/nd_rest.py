@@ -60,6 +60,10 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - All payloads to the REST interface must be in YAML (if PyYAML package is installed) or JSON format using this module.
+- HTTP 207 Multi-Status responses are accepted and their complete parsed body is returned in RV(jsondata).
+- A successful task with HTTP 207 does not guarantee that every item succeeded or that asynchronous operations have completed.
+- The module does not interpret individual results in HTTP 207 responses. Use endpoint-specific parsing of RV(jsondata) with C(failed_when)
+  to determine failure and C(changed_when) to control change reporting. Perform follow-up requests when the endpoint requires them.
 - For Cisco Nexus Dashboard REST API references, visit U(https://developer.cisco.com/docs/nexus-dashboard/latest/api-reference/)
 """
 
@@ -188,6 +192,23 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+jsondata:
+  description:
+  - The complete parsed JSON response body, including individual results from HTTP 207 responses.
+  - In check mode, this contains the supplied request content.
+  returned: success
+  type: raw
+  sample:
+    results:
+    - status: success
+      switchId: FDO123456AB
+status:
+  description:
+  - The HTTP response status code. HTTP 207 indicates a Multi-Status response whose individual outcomes require caller validation.
+  - In check mode, this may reflect a previous-state GET. It is null if no request was made.
+  returned: success
+  type: int
+  sample: 207
 """
 
 import json
@@ -232,7 +253,7 @@ def main():
     file_path = module.params.get("config_file")
     suppress_previous = module.params.get("suppress_previous")
 
-    nd = NDModule(module)
+    nd = NDModule(module, accept_multistatus=True)
 
     # Report missing file
     if file_path and not os.path.isfile(file_path):

@@ -30,12 +30,14 @@ class FabricTypeEnum(str, Enum):
     ## Values
 
     - `VXLAN_IBGP` - VXLAN fabric with iBGP overlay
+    - `CAMPUS_IBGP_VXLAN` - VXLAN Campus fabric (campus iBGP VXLAN)
     - `VXLAN_EBGP` - VXLAN fabric with eBGP overlay
     - `AIML_VXLAN_IBGP` - AI/ML VXLAN fabric with iBGP overlay
     - `AIML_VXLAN_EBGP` - AI/ML VXLAN fabric with eBGP overlay
     """
 
     VXLAN_IBGP = "vxlanIbgp"
+    CAMPUS_IBGP_VXLAN = "vxlanCampus"
     VXLAN_EBGP = "vxlanEbgp"
     EXTERNAL_CONNECTIVITY = "externalConnectivity"
     AIML_VXLAN_IBGP = "aimlVxlanIbgp"
@@ -122,6 +124,22 @@ class LinkStateRoutingProtocolEnum(str, Enum):
 
     OSPF = "ospf"
     ISIS = "isis"
+
+
+class VlanTrunkingProtocolModeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for Campus VXLAN VLAN Trunking Protocol modes.
+
+    ## Values
+
+    - `OFF` - Disable VLAN Trunking Protocol
+    - `TRANSPARENT` - Run VLAN Trunking Protocol in transparent mode
+    """
+
+    OFF = "off"
+    TRANSPARENT = "transparent"
 
 
 class CoppPolicyEnum(str, Enum):
@@ -407,6 +425,50 @@ class TelemetryStreamingProtocolEnum(str, Enum):
 
     IPV4 = "ipv4"
     IPV6 = "ipv6"
+
+
+class TelemetryTrafficAnalyticsEnum(str, Enum):
+    """Enumeration for telemetry traffic-analytics states."""
+
+    COMPATIBILITY = "compatibility"
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+
+class TelemetryTrafficAnalyticsScopeEnum(str, Enum):
+    """Enumeration for telemetry traffic-analytics scopes."""
+
+    INTER_FABRIC = "interFabric"
+    INTER_FABRIC_AND_EXTERNAL = "interFabricAndExternal"
+    INTRA_FABRIC = "intraFabric"
+
+
+class TelemetryUdpCategorizationEnum(str, Enum):
+    """Enumeration for telemetry UDP-categorization states."""
+
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+
+class TelemetryMicroburstSensitivityEnum(str, Enum):
+    """Enumeration for telemetry microburst sensitivity levels."""
+
+    HIGH = "high"
+    LOW = "low"
+    MEDIUM = "medium"
+
+
+class TelemetryNasExportTypeEnum(str, Enum):
+    """Enumeration for telemetry NAS export types."""
+
+    BASE = "base"
+    FULL = "full"
+
+
+class TelemetryNasExportFormatEnum(str, Enum):
+    """Enumeration for telemetry NAS export formats."""
+
+    JSON = "json"
 
 
 class VrfLiteAutoConfigEnum(str, Enum):

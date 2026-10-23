@@ -15,8 +15,8 @@ import copy
 import inspect
 import json
 import logging
-from time import sleep
-from typing import Any, Optional
+from time import monotonic, process_time, sleep
+from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
@@ -117,9 +117,11 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.log.debug(msg)
 
         self._check_mode: bool = False
-        self._committed_payload: Optional[dict] = None
+        self._committed_payload: Optional[Union[dict, list]] = None
+        self._controller_version: Optional[str] = None
+        self._controller_version_resolved: bool = False
         self._path: Optional[str] = None
-        self._payload: Optional[dict] = None
+        self._payload: Optional[Union[dict, list]] = None
         self._response: list[dict[str, Any]] = []
         self._response_current: dict[str, Any] = {}
         self._response_handler: Optional[ResponseHandlerProtocol] = None
@@ -130,6 +132,10 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._timeout: int = 300
         self._unit_test: bool = False
         self._verb: HttpVerbEnum = HttpVerbEnum.GET
+        # Counts dispatches even if the transport raises before recording a response.
+        self.mutation_attempt_count = 0
+        self.deployment_attempt_count = 0
+        self.performance_profile = None
 
         # See save_settings() and restore_settings()
         self.saved_timeout: Optional[int] = None
@@ -344,12 +350,35 @@ class RestSend:  # pylint: disable=too-many-public-methods
             msg += f"timeout {timeout}, success {success}, verb {self.verb}, path {self.path}."
             self.log.debug(msg)
 
+            profile = self.performance_profile
+            start_wall, start_cpu = (monotonic(), process_time()) if profile is not None else (0.0, 0.0)
+            if self.verb != HttpVerbEnum.GET:
+                request_path = str(self.path or "")
+                if "interfaceActions/deploy" in request_path:
+                    self.deployment_attempt_count += 1
+                elif "interfaceActions/preview" not in request_path:
+                    self.mutation_attempt_count += 1
             try:
                 self.sender.commit()
             except ValueError as error:
+                if profile is not None:
+                    profile.record_request(
+                        verb=self.verb.value, path=self.path, payload=self._payload, response=None, start_wall=start_wall, start_cpu=start_cpu
+                    )
                 raise ValueError(error) from error
+            except Exception:  # pylint: disable=broad-except
+                if profile is not None:
+                    profile.record_request(
+                        verb=self.verb.value, path=self.path, payload=self._payload, response=None, start_wall=start_wall, start_cpu=start_cpu
+                    )
+                raise
 
-            self.response_current = self.sender.response
+            response = self.sender.response
+            if profile is not None:
+                profile.record_request(
+                    verb=self.verb.value, path=self.path, payload=self._payload, response=response, start_wall=start_wall, start_cpu=start_cpu
+                )
+            self.response_current = response
             # Handle controller response and derive result
             try:
                 self.response_handler.response = self.response_current
@@ -363,16 +392,17 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 self.log.debug(msg)
                 raise ValueError(msg) from error
 
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"timeout: {timeout}. "
-            msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
-            self.log.debug(msg)
+            if self.log.isEnabledFor(logging.DEBUG):
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"timeout: {timeout}. "
+                msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
+                self.log.debug(msg)
 
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"timeout: {timeout}. "
-            msg += "response_current: "
-            msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
-            self.log.debug(msg)
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"timeout: {timeout}. "
+                msg += "response_current: "
+                msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
+                self.log.debug(msg)
 
             success = self.result_current["success"]
             if success is False:
@@ -535,24 +565,28 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._path = value
 
     @property
-    def payload(self) -> Optional[dict]:
+    def payload(self) -> Optional[Union[dict, list]]:
         """
         # Summary
 
         Return the payload to send to the controller, or None.
 
+        Most endpoints take a JSON object (``dict``). A few ND action
+        endpoints (e.g. access/ToR associate/disassociate) take a top-level
+        JSON array, so a ``list`` is also accepted.
+
         ## Raises
 
-        -   setter: `TypeError` if value is not a `dict`
+        -   setter: `TypeError` if value is not a `dict` or `list`
         """
         return self._payload
 
     @payload.setter
-    def payload(self, value: dict):
+    def payload(self, value: Union[dict, list]):
         method_name = "payload"
-        if not isinstance(value, dict):
+        if not isinstance(value, (dict, list)):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"{method_name} must be a dict. Got {value}."
+            msg += f"{method_name} must be a dict or list. Got {value}."
             raise TypeError(msg)
         self._payload = value
 
@@ -591,6 +625,28 @@ class RestSend:  # pylint: disable=too-many-public-methods
         `commit()` must be called first.
         """
         return copy.deepcopy(self._response)
+
+    def history_since(self, response_start: int, result_start: int) -> tuple[list[dict], list[dict]]:
+        """Return isolated new records without copying the entire accumulated history."""
+        if response_start < 0 or result_start < 0:
+            raise ValueError("History offsets must be non-negative")
+        return copy.deepcopy(self._response[response_start:]), copy.deepcopy(self._result[result_start:])
+
+    @property
+    def response_count(self) -> int:
+        """
+        # Summary
+
+        The number of responses accumulated so far, read without copying them. The list only ever grows (it is never cleared or
+        replaced after `__init__`), so the count is a freshness token: snapshot it before a request and, if it has not grown afterwards,
+        the sender raised before the controller answered and `response_current` still holds the previous request's response (issue #554).
+        Use this instead of `len(responses)`, which deep-copies the whole history on every read.
+
+        ## Raises
+
+        None
+        """
+        return len(self._response)
 
     def add_response(self, value: dict) -> None:
         """
@@ -679,6 +735,23 @@ class RestSend:  # pylint: disable=too-many-public-methods
         `commit()` must be called first.
         """
         return copy.deepcopy(self._result)
+
+    @property
+    def result_count(self) -> int:
+        """
+        # Summary
+
+        Return the number of accumulated result records without copying the result history.
+
+        Like `response_count`, this is a cheap freshness token. Callers can snapshot both counts before a request and read
+        `response_current` / `result_current` only when the corresponding count grew, avoiding both stale-current attribution and
+        repeated deep copies of an ever-growing history.
+
+        ## Raises
+
+        None
+        """
+        return len(self._result)
 
     def add_result(self, value: dict) -> None:
         """
@@ -800,6 +873,32 @@ class RestSend:  # pylint: disable=too-many-public-methods
             msg += f"Got type {type(value).__name__}."
             raise TypeError(msg)
         self._sender = value
+        if self._controller_version is None:
+            self._controller_version_resolved = False
+
+    @property
+    def controller_version(self) -> Optional[str]:
+        """
+        Controller build version string (e.g. ``"4.2.1.10"``), or ``None`` when unknown.
+
+        Fetched once from the sender's connection (``get_version``) and cached. Not all
+        senders expose a connection (the file-based test sender does not), so callers
+        may also set this directly to drive version-gated behaviour in unit tests.
+        """
+        if not self._controller_version_resolved:
+            self._controller_version_resolved = True
+            getter = getattr(self._sender, "get_version", None)
+            if callable(getter):
+                try:
+                    self._controller_version = getter()
+                except Exception:  # pragma: no cover - connection failures fall back to None
+                    self._controller_version = None
+        return self._controller_version
+
+    @controller_version.setter
+    def controller_version(self, value: Optional[str]):
+        self._controller_version = value
+        self._controller_version_resolved = True
 
     @property
     def timeout(self) -> int:

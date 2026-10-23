@@ -28,9 +28,8 @@ The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 
 
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import ClassVar
+import re
+from typing import ClassVar, Sequence
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -45,39 +44,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-
-
-@dataclass(frozen=True, slots=True)
-class _BulkCreateGroupKey:
-    """
-    # Summary
-
-    Grouping key for bulk create: one POST is sent per `(switch_id, policy_type)` group. `policy_type` is `None` for
-    identifier-only items with no policy configured.
-
-    ## Raises
-
-    None
-    """
-
-    switch_id: str
-    policy_type: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class _BulkCreateItem:
-    """
-    # Summary
-
-    A single interface within a bulk-create group: the interface name (for deploy queueing) and its ready-to-send payload.
-
-    ## Raises
-
-    None
-    """
-
-    interface_name: str
-    payload: dict
 
 
 class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
@@ -117,9 +83,16 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
     model_class: ClassVar[type[NDBaseModel]] = LoopbackInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
+    # TODO(4.2.1) ios-xe-loopback-remove-case: Recheck whether ND removal
+    # accepts lowercase names and still generates device-side deletion.
+    # IOS-XE needs the switch-canonical Loopback<N> spelling on the removal wire.
+    # Lowercase removal drops intent without generating `no interface Loopback<N>`.
+    xe_removal_requires_discovery: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -128,6 +101,55 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def preflight_delete(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """Check IOS-XE delete spelling, ownership, and discovery before removal."""
+        pairs = []
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._switch_interfaces(switch_id)
+            self._delete_side_name(model_instance.interface_name, switch_id)
+            pairs.append((model_instance.interface_name, switch_id))
+        self._check_xe_removal_discovered(pairs)
+
+    def _check_overridden_removals_discovered(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+        """Apply the same IOS-XE delete checks to managed loopbacks removed by override."""
+        if self.rest_send.params.get("state") != "overridden":
+            return
+        proposed = {(model.switch_ip, model.interface_name.strip().lower()) for model in model_instances}
+        switch_map = self.fabric_context.switch_map
+        pairs = []
+        for iface in self.query_all() or []:
+            switch_ip = iface.get("switchIp")
+            name = str(iface.get("interfaceName") or "")
+            if switch_ip in switch_map and (switch_ip, name.strip().lower()) not in proposed:
+                switch_id = switch_map[switch_ip]
+                self._delete_side_name(name, switch_id)
+                pairs.append((name, switch_id))
+        self._check_xe_removal_discovered(pairs)
+
+    def _delete_side_name(self, name: str, switch_id: str) -> str:
+        """Use canonical IOS-XE spelling so ND queues an actual switch-side remove."""
+        # Normal state planning and the delete preflight have already loaded
+        # the complete switch inventory. Do not add a GET during queueing.
+        record = self._switch_interfaces_cache.get(switch_id, {}).get(name.strip().lower())
+        if not isinstance(record, dict) or record.get("interfaceType") != "loopback":
+            return name
+        config_data = record.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        if network_os.get("networkOSType") != "ios-xe":
+            return name
+        if config_data.get("mode") == "unknown" and not network_os.get("policy"):
+            raise RuntimeError(
+                f"Cannot delete IOS-XE loopback {name} on {switch_id}: "
+                "Nexus Dashboard has only an operational-only row and no policy from which to generate a device removal."
+            )
+        if not network_os.get("policy"):
+            raise RuntimeError(f"Cannot delete IOS-XE loopback {name} on {switch_id}: managed policy is missing")
+        match = re.fullmatch(r"loopback([0-9]+)", name.strip(), flags=re.IGNORECASE)
+        if match is None:
+            raise RuntimeError(f"Cannot safely canonicalize IOS-XE loopback name {name!r} on {switch_id}")
+        return f"Loopback{match.group(1)}"
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -194,33 +216,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         None
         """
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
-        self._queue_remove(model_instance.interface_name, switch_id)
-        self._queue_deploy(model_instance.interface_name, switch_id)
-
-    def _group_by_switch_and_policy_type(self, model_instances: list[LoopbackInterfaceModel]) -> dict[_BulkCreateGroupKey, list[_BulkCreateItem]]:
-        """
-        # Summary
-
-        Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, inject it into the payload, and
-        group the resulting items by `(switch_id, policy_type)`.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
-        """
-        # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
-        # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is
-        # created), even though the create schema allows mixed arrays. One POST per (switch, policyType).
-        groups: dict[_BulkCreateGroupKey, list[_BulkCreateItem]] = defaultdict(list)
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            group_key = _BulkCreateGroupKey(switch_id=switch_id, policy_type=model_instance.policy_type)
-            groups[group_key].append(_BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
-        return groups
+        name = self._delete_side_name(model_instance.interface_name, switch_id)
+        self._queue_remove(name, switch_id)
+        self._queue_deploy(name, switch_id)
 
     def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
         """
@@ -235,20 +233,14 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         ### RuntimeError
 
         - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
-          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults); no deploy is queued for that
-          group's items in that case.
+          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults). The items that response reports as accepted
+          are still queued for deploy (`_post_bulk_create_group`); the rejected ones are not.
         """
         try:
-            groups = self._group_by_switch_and_policy_type(model_instances)
+            groups = self.bulk_create_groups(model_instances)
             results = []
             for group_key, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=group_key.switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [item.payload for item in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
-                for item in items:
-                    self._queue_deploy(item.interface_name, group_key.switch_id)
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
@@ -267,8 +259,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._queue_remove(model_instance.interface_name, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
+            name = self._delete_side_name(model_instance.interface_name, switch_id)
+            self._queue_remove(name, switch_id)
+            self._queue_deploy(name, switch_id)
 
     def query_one(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """

@@ -98,12 +98,12 @@ def test_vpc_trunk_host_interface_00100():
     """
     # Summary
 
-    Verify every policy field defaults to None except the frozen policy_type.
+    Verify every policy field defaults to None except the frozen policy_type and canonical empty member lists.
 
     ## Test
 
     - Instantiate with no arguments
-    - Every per-peer and shared field is None
+    - Every per-peer and shared field is None except the member lists, which default to `[]`
     - policy_type defaults to "trunkVpcHost"
 
     ## Classes and Methods
@@ -118,11 +118,11 @@ def test_vpc_trunk_host_interface_00100():
     assert instance.allowed_vlans is None
     assert instance.native_vlan is None
     # Per-peer
-    assert instance.peer1_member_ports is None
+    assert instance.peer1_member_ports == []
     assert instance.peer1_port_channel_configuration is None
     assert instance.peer1_port_channel_description is None
     assert instance.peer1_port_channel_id is None
-    assert instance.peer2_member_ports is None
+    assert instance.peer2_member_ports == []
     assert instance.peer2_port_channel_configuration is None
     assert instance.peer2_port_channel_description is None
     assert instance.peer2_port_channel_id is None
@@ -352,7 +352,7 @@ def test_vpc_trunk_host_interface_00155_allowed_vlans_rejects(value):
         # Any casing of the full prefix canonicalizes to "Ethernet".
         (["ETHERNET1/2", "etHernet1/3"], ["Ethernet1/2", "Ethernet1/3"]),
         ([], []),
-        (None, None),
+        (None, []),
         (["ethernet1/1/1"], ["Ethernet1/1/1"]),
     ],
     ids=[
@@ -376,7 +376,7 @@ def test_vpc_trunk_host_interface_00180_peer1(value, expected):
 
     - Lowercase and abbreviated member names (`e1/1`, `eth1/1`, `et1/1`) expand to `Ethernet...`
     - Any casing of the full prefix canonicalizes to `Ethernet`
-    - Already-canonical values pass through; empty list and None pass through; breakout suffixes are preserved
+    - Already-canonical values pass through; empty list passes through; None becomes an empty member list; breakout suffixes are preserved
 
     ## Classes and Methods
 
@@ -394,7 +394,7 @@ def test_vpc_trunk_host_interface_00180_peer1(value, expected):
         (["ethernet1/1", "ethernet1/2"], ["Ethernet1/1", "Ethernet1/2"]),
         (["Ethernet1/1"], ["Ethernet1/1"]),
         (["eth1/1"], ["Ethernet1/1"]),
-        (None, None),
+        (None, []),
     ],
     ids=["lowercase_to_canonical", "already_canonical_passthrough", "abbreviation_expanded", "none_passthrough"],
 )
@@ -553,7 +553,8 @@ def test_vpc_trunk_host_interface_00300_identifier():
 
     Verify the identifier is the composite (`switch_ip`, `interface_name`), matching the other interface modules. Two vPC pairs in one
     fabric may legally reuse the same vPC id (ND's `vpcId` resource pool is devicePair-scoped; issue #356), so name-only identity cannot
-    represent them. The dual-peer GET echo is deduped in `VpcInterfaceBaseOrchestrator.query_all` (pair-set key), not via the identity.
+    represent them. Standalone and aggregate consumers dedupe the dual-peer GET echo by authoritative peer-pair identity before
+    collection construction; the identity itself does not collapse the echoes.
 
     ## Test
 
@@ -881,3 +882,55 @@ def test_vpc_trunk_host_interface_00600_nested_defaults():
     config = TrunkVpcHostConfigDataModel(network_os=network_os)
     assert config.mode == "trunk"
     assert config.network_os.network_os_type == "nx-os"
+
+
+# =============================================================================
+# Test: payload_defaults (issue #564)
+# =============================================================================
+
+
+def test_vpc_trunk_host_interface_00610():
+    """
+    # Summary
+
+    Verify the `trunkVpcHost` payload always carries the per-peer allowed-VLAN keys: when the user set no `allowed_vlans`, the
+    template default (`none`) is injected and fanned out to `peer1AllowedVlans` / `peer2AllowedVlans`. ND 4.3.1 rejects both the
+    POST and the PUT body when they are absent, where 4.2.1 defaulted them (issue #564, vault `vpc-trunk-allowedvlans-required-431`).
+    `nativeVlan` has no template default and is never injected.
+
+    ## Test
+
+    - `from_config` with no `allowed_vlans` -> `to_payload()` policy carries `peer1AllowedVlans` and `peer2AllowedVlans` as `"none"`,
+      no single `allowedVlans` key, and no `peer1NativeVlan` / `peer2NativeVlan`
+    - `from_config` with `allowed_vlans: "100-200"` -> both per-peer keys carry `"100-200"`
+    - `to_diff_dict()` of the unset model carries no allowed-VLAN key in any spelling, and `to_config()` carries no `allowed_vlans`
+      (payload-only injection; the contextless diff dump still fans out but never injects)
+
+    ## Classes and Methods
+
+    - TrunkVpcHostPolicyModel.payload_defaults
+    - TrunkVpcHostPolicyModel.expand_per_peer_fields()
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "vpc500",
+        "config_data": {"network_os": {"policy": {"peer1_port_channel_id": 500, "peer2_port_channel_id": 500}}},
+    }
+    unset = TrunkVpcHostInterfaceModel.from_config(config)
+    policy = unset.to_payload()["configData"]["networkOS"]["policy"]
+    assert policy["peer1AllowedVlans"] == "none"
+    assert policy["peer2AllowedVlans"] == "none"
+    assert "allowedVlans" not in policy
+    assert "peer1NativeVlan" not in policy
+    assert "peer2NativeVlan" not in policy
+    diff_policy = unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+    assert not {"allowedVlans", "peer1AllowedVlans", "peer2AllowedVlans"} & set(diff_policy)
+    assert "allowed_vlans" not in unset.to_config()["config_data"]["network_os"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["allowed_vlans"] = "100-200"
+    explicit = TrunkVpcHostInterfaceModel.from_config(explicit_config)
+    explicit_policy = explicit.to_payload()["configData"]["networkOS"]["policy"]
+    assert explicit_policy["peer1AllowedVlans"] == "100-200"
+    assert explicit_policy["peer2AllowedVlans"] == "100-200"

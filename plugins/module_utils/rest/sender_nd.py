@@ -22,7 +22,7 @@ import copy
 import inspect
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
@@ -82,7 +82,7 @@ class Sender:
         self._connection: Optional[Connection] = None
 
         self._path: Optional[str] = path
-        self._payload: Optional[dict[str, Any]] = payload
+        self._payload: Optional[Union[dict, list]] = payload
         self._response: Optional[dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = verb
 
@@ -164,6 +164,13 @@ class Sender:
             self.log.error(msg)
             raise ValueError(msg) from error
 
+    def get_version(self) -> Optional[str]:
+        """Return the ND controller build version (e.g. ``"4.2.1.10"``) via the HttpApi plugin."""
+        if self._connection is None:
+            self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
+            self._connection.set_params(self.ansible_module.params)
+        return self._connection.get_version("nd")
+
     def _normalize_response(self, response: dict) -> dict:
         """
         # Summary
@@ -237,23 +244,26 @@ class Sender:
         self._path = value
 
     @property
-    def payload(self) -> Optional[dict[str, Any]]:
+    def payload(self) -> Optional[Union[dict, list]]:
         """
         # Summary
 
         Return the payload to send to the controller
 
+        Usually a JSON object (``dict``); a ``list`` is also accepted for
+        endpoints whose request body is a top-level JSON array.
+
         ## Raises
-        -   `TypeError` if value is not a `dict`.
+        -   `TypeError` if value is not a `dict`, `list`, or None.
         """
         return self._payload
 
     @payload.setter
-    def payload(self, value: Optional[dict]):
+    def payload(self, value: Optional[Union[dict, list]]):
         method_name = "payload"
-        if value is not None and not isinstance(value, dict):
+        if value is not None and not isinstance(value, (dict, list)):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"{method_name} must be a dict or None. "
+            msg += f"{method_name} must be a dict, list, or None. "
             msg += f"Got type {type(value).__name__}, "
             msg += f"value {value}."
             raise TypeError(msg)

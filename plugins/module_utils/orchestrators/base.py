@@ -75,6 +75,16 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         """Register the most recent REST call with Results for observability."""
         if self.results is None:
             return
+        # ``Results.register_api_call`` resets its current task after every
+        # request. Reapply stable module context for each registration so a
+        # paginated query (or any multi-call workflow) does not lose state and
+        # check-mode metadata after page one.
+        self.results.state = str(self.rest_send.params.get("state") or "")
+        # ``rest_send.check_mode`` can be disabled temporarily for a read-only
+        # POST (for example interface preview).  Metadata describes the module
+        # invocation, not that transport override, so read the immutable input
+        # captured when RestSend was constructed.
+        self.results.check_mode = bool(self.rest_send.params.get("check_mode", False))
         self.results.action = operation_type.value
         self.results.operation_type = operation_type
         self.results.path_current = path
@@ -106,7 +116,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         ### Exception
 
         - If the request fails (non-success result from the controller).
-        - If `not_found_ok` is False and the controller returns a 404.
+        - For any GET that returns 204 (no content); an empty query-all list
+          must be a successful 200 response with an explicit empty result.
+        - For any GET that returns 404 unless `not_found_ok` is True; only
+          callers explicitly requesting optional-not-found semantics get `{}`.
+          This shared contract applies to all Gen3 orchestrators, not just
+          interface inventory reads. Non-GET 204 handling is unchanged.
         """
         self.rest_send.path = path
         self.rest_send.verb = verb
@@ -123,6 +138,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         # a GET 404 would fall through and return the raw 404 DATA body.
         if not_found_ok and self.rest_send.return_code == 404:
             return {}
+
+        if verb == HttpVerbEnum.GET and self.rest_send.return_code in (204, 404):
+            raise RuntimeError(f"Request failed {self.rest_send.error_summary}")
 
         if not self.rest_send.success:
             raise Exception(f"Request failed {self.rest_send.error_summary}")
@@ -175,6 +193,37 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         None
         """
         return
+
+    def reconcile_no_diff(self, model_instances: Sequence[ModelType]) -> bool:
+        """Reconcile execution-side state for proposed objects with no intent diff.
+
+        Most resources have no action to perform when controller intent already
+        matches the proposal.  Orchestrators whose requested action has a
+        separate execution phase may override this hook.  Interface
+        orchestrators use it to recover a prior accepted-but-not-yet-deployed
+        intent when ``deploy: true`` is replayed.
+
+        ## Raises
+
+        None
+        """
+        return False
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Reconcile execution-side state for explicitly deleted absent objects.
+
+        Most resources have no action to perform after controller intent is
+        already absent.  Resources with a separate deployment phase may
+        override this hook to detect and recover an accepted-but-not-deployed
+        deletion.  Return whether a normal run performs, or check mode would
+        perform, an execution-side change.
+
+        ## Raises
+
+        None
+        """
+
+        return False
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:

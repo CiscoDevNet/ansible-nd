@@ -112,6 +112,8 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
         "negotiateAuto": True,
         "netflow": False,
         "pfc": False,
+        "peer1MemberPorts": [],
+        "peer2MemberPorts": [],
         "portChannelMode": "active",
         "portTypeEdgeTrunk": True,
         "qos": False,
@@ -145,7 +147,7 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
 
     # --- Per-Peer Fields (peer1 = switch_ip, peer2 = peer_switch_id) ---
 
-    peer1_member_ports: list[str] | None = Field(default=None, alias="peer1MemberPorts", description="Member interface names on Peer-1")
+    peer1_member_ports: list[str] = Field(default_factory=list, alias="peer1MemberPorts", description="Member interface names on Peer-1")
     peer1_port_channel_configuration: str | None = Field(
         default=None, alias="peer1PortChannelConfiguration", description="Additional CLI for Peer-1's port-channel"
     )
@@ -153,7 +155,7 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
         default=None, alias="peer1PortChannelDescription", max_length=254, description="Description for Peer-1's port-channel"
     )
     peer1_port_channel_id: int | None = Field(default=None, alias="peer1PortChannelId", ge=1, le=4096, description="Peer-1 vPC port-channel number")
-    peer2_member_ports: list[str] | None = Field(default=None, alias="peer2MemberPorts", description="Member interface names on Peer-2")
+    peer2_member_ports: list[str] = Field(default_factory=list, alias="peer2MemberPorts", description="Member interface names on Peer-2")
     peer2_port_channel_configuration: str | None = Field(
         default=None, alias="peer2PortChannelConfiguration", description="Additional CLI for Peer-2's port-channel"
     )
@@ -312,6 +314,8 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
 
         None
         """
+        if value is None:
+            return []
         if not isinstance(value, list):
             return value
         return [cls._normalize_member_name(name) for name in value]
@@ -389,11 +393,12 @@ class AccessVpcHostInterfaceModel(NDBaseModel):
     # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
     # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
-    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in
-    # `VpcInterfaceBaseOrchestrator.query_all`, keyed on `interfaceName` + the unordered `{switchId, peerSwitchId}` pair
-    # set, so the composite identifier below stays safe: two vPC pairs in one fabric may legally reuse the same vPC id
-    # (ND's `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot represent.
-    # `switch_ip` remains excluded from payload and diff (routing-only on the wire).
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). Standalone reads dedupe that
+    # echo in `VpcInterfaceBaseOrchestrator.query_all`; the aggregate workflow selects one echo using its authoritative
+    # unordered peer-pair inventory. Both key on `interfaceName` plus the pair set, so the composite identifier below
+    # stays safe: two vPC pairs in one fabric may legally reuse the same vPC id (ND's `vpcId` resource pool is
+    # devicePair-scoped; issue #356), which a name-only identity cannot represent. `switch_ip` remains excluded from
+    # payload and diff because it is routing-only on the wire.
 
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"

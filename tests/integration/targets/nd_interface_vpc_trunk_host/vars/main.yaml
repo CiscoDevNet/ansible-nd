@@ -7,6 +7,10 @@
 test_fabric_name: "{{ nd_test_vpc_trunk_host_fabric_name | default(nd_test_fabric_name | default('SITE1')) }}"
 test_switch_ip_peer1: "{{ nd_test_vpc_peer1_ip | default('192.168.12.151') }}"
 test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.152') }}"
+vpc_trunk_member_primary: "{{ nd_test_vpc_trunk_member_primary | default('Ethernet1/8') }}"
+vpc_trunk_member_secondary: "{{ nd_test_vpc_trunk_member_secondary | default('Ethernet1/9') }}"
+vpc_trunk_member_overridden: "{{ nd_test_vpc_trunk_member_overridden | default('Ethernet1/10') }}"
+vpc_trunk_member_multi_pair: "{{ nd_test_vpc_trunk_member_multi_pair | default('Ethernet1/9') }}"
 
 # vPC pair substrate created by setup via M(cisco.nd.nd_manage_vpc_pair) (from PR #197 on develop).
 # The previous nd_vpc_pair module was closed (PR #278); the shared vPC interface infrastructure was
@@ -60,10 +64,10 @@ vpc_trunk_host_baseline:
         native_vlan: 99
         peer1_port_channel_id: 200
         peer1_member_ports:
-          - Ethernet1/8
+          - "{{ vpc_trunk_member_primary }}"
         peer2_port_channel_id: 200
         peer2_member_ports:
-          - Ethernet1/8
+          - "{{ vpc_trunk_member_primary }}"
         port_channel_mode: active
         lacp_rate: fast
         mtu: jumbo
@@ -80,11 +84,11 @@ vpc_trunk_host_updated:
         native_vlan: 100
         peer1_port_channel_id: 200
         peer1_member_ports:
-          - Ethernet1/8
-          - Ethernet1/9
+          - "{{ vpc_trunk_member_primary }}"
+          - "{{ vpc_trunk_member_secondary }}"
         peer2_port_channel_id: 200
         peer2_member_ports:
-          - Ethernet1/8
+          - "{{ vpc_trunk_member_primary }}"
         port_channel_mode: active
         lacp_rate: fast
         mtu: jumbo
@@ -101,10 +105,10 @@ vpc_trunk_host_overridden:
         native_vlan: 1
         peer1_port_channel_id: 201
         peer1_member_ports:
-          - Ethernet1/10
+          - "{{ vpc_trunk_member_overridden }}"
         peer2_port_channel_id: 201
         peer2_member_ports:
-          - Ethernet1/10
+          - "{{ vpc_trunk_member_overridden }}"
         port_channel_mode: active
 
 # VLAN mapping case — only run when supports_vlan_mapping is true (hardware-backed testbeds).
@@ -120,10 +124,10 @@ vpc_trunk_host_with_vlan_mapping:
         native_vlan: 99
         peer1_port_channel_id: 200
         peer1_member_ports:
-          - Ethernet1/8
+          - "{{ vpc_trunk_member_primary }}"
         peer2_port_channel_id: 200
         peer2_member_ports:
-          - Ethernet1/8
+          - "{{ vpc_trunk_member_primary }}"
         port_channel_mode: active
         vlan_mapping: true
         vlan_mapping_entries:
@@ -156,10 +160,10 @@ vpc_multi_pair_pair1:
         native_vlan: 99
         peer1_port_channel_id: 210
         peer1_member_ports:
-          - Ethernet1/9
+          - "{{ vpc_trunk_member_multi_pair }}"
         peer2_port_channel_id: 210
         peer2_member_ports:
-          - Ethernet1/9
+          - "{{ vpc_trunk_member_multi_pair }}"
         port_channel_mode: active
 vpc_multi_pair_pair2:
   switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
@@ -168,12 +172,12 @@ vpc_multi_pair_pair2:
     network_os:
       policy:
         admin_state: true
-        allowed_vlans: "100-200"
-        native_vlan: 99
+        allowed_vlans: "300-400"
+        native_vlan: 98
         peer1_port_channel_id: 210
         peer1_member_ports:
-          - Ethernet1/9
+          - "{{ vpc_trunk_member_multi_pair }}"
         peer2_port_channel_id: 210
         peer2_member_ports:
-          - Ethernet1/9
+          - "{{ vpc_trunk_member_multi_pair }}"
         port_channel_mode: active

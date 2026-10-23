@@ -198,18 +198,22 @@ class TestResultsCurrentProperties:
             r.verb_current = "POST"
 
     def test_payload_current_get_set(self):
-        """payload_current getter/setter works with dict and None."""
+        """payload_current getter/setter works with dict, list, and None."""
         r = Results()
         assert r.payload_current is None
         r.payload_current = {"key": "val"}
         assert r.payload_current == {"key": "val"}
         r.payload_current = None
         assert r.payload_current is None
+        # Some ND action endpoints (e.g. access/ToR associate) send a
+        # top-level JSON array, so a list payload is also accepted.
+        r.payload_current = [{"a": 1}, {"b": 2}]
+        assert r.payload_current == [{"a": 1}, {"b": 2}]
 
     def test_payload_current_type_error(self):
-        """payload_current setter rejects non-dict/non-None."""
+        """payload_current setter rejects non-dict/non-list/non-None."""
         r = Results()
-        with pytest.raises(TypeError, match="value must be a dict or None"):
+        with pytest.raises(TypeError, match="value must be a dict, list, or None"):
             r.payload_current = "not a dict"
 
     def test_verbosity_level_current_get_set(self):
