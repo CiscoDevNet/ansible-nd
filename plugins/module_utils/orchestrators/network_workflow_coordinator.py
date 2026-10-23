@@ -27,7 +27,8 @@ from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkChildConfigModel, NetworkConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
     NetworkAttachmentManager,
@@ -50,6 +51,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_fab
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_state_machine import (
     NetworkStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_feature_preflight import (
+    preflight_child_feature_tasks,
+    preflight_workflow_features,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -57,6 +62,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sen
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
 
 class NetworkWorkflowCoordinator:
@@ -121,7 +128,6 @@ class NetworkWorkflowCoordinator:
             check_mode=self.module.check_mode,
         )
         try:
-            self._normalize_module_args(module_args)
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
 
@@ -173,11 +179,67 @@ class NetworkWorkflowCoordinator:
             rest_send=rest_send,
             fabric_name=module_args["fabric_name"],
         )
+        self._fabric_resolver = resolver
         strategy = resolver.resolve()
         resolver_trace = getattr(resolver, "workflow_trace", None)
         if resolver_trace:
             self._workflow_trace.extend(dict(entry) for entry in resolver_trace)
         return strategy
+
+    def _preflight_fabric_features(
+        self,
+        sm: NDStateMachine,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        *,
+        current_attachments: dict | None = None,
+        desired_attachments: dict | None = None,
+    ) -> None:
+        """
+        # Summary
+
+        Validate actionable Network features against the owning fabric before writes.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a requested feature is unavailable on the effective fabric.
+        """
+        try:
+            preflight_workflow_features(
+                self, sm, module_args, strategy, "Network", current_attachments=current_attachments, desired_attachments=desired_attachments
+            )
+        except ValueError as exc:
+            raise NDStateMachineError(str(exc)) from exc
+
+    def _preflight_child_feature_tasks(self, child_tasks: dict[str, dict], state: str) -> None:
+        """
+        # Summary
+
+        Reject invalid child feature writes before the parent workflow mutates anything.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a child feature requires a disabled fabric setting.
+        """
+        preflight_child_feature_tasks(child_tasks, state, self._new_state_machine, self._preflight_fabric_features, self._restore_state_machine_params)
+        if state in ("gathered", "deleted"):
+            return
+        for child_task in child_tasks.values():
+            sm = child_task.get("preflight_state_machine")
+            if sm is None:
+                continue
+            for entry in child_task["module_args"]["config"]:
+                existing = sm.existing.get(entry["network_name"])
+                layer = entry.get("layer") or getattr(existing, "layer", None)
+                try:
+                    child_options = {key: value for key, value in entry.items() if key not in ("network_name", "layer")}
+                    NetworkChildConfigModel.from_config({"fabric_name": child_task["fabric"], **child_options}).validate_layer(layer)
+                except ValueError as exc:
+                    raise NDStateMachineError(str(exc)) from exc
 
     def _trace_enabled(self) -> bool:
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
@@ -199,12 +261,6 @@ class NetworkWorkflowCoordinator:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
         return result
-
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,
@@ -256,17 +312,21 @@ class NetworkWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        ``state`` is passed for context in error messages only; all states
-        are validated the same way since the models enforce required fields.
+        State context defers sparse merged layer validation until current
+        inventory is available and exempts read/delete selectors from
+        definition-only layer requirements.
 
         Validation errors are reported immediately via ``module.fail_json``.
         """
         parsed = []
         for idx, entry in enumerate(config):
             try:
-                operational_only = isinstance(entry, dict) and not NDNetworkOrchestrator.has_network_definition_intent(entry)
-                model = model_cls.from_config(entry)
-                parsed_config = model.to_config()
+                context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(self.strategy.fabric_data)}
+                if NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
+                    context["defer_omitted_layer"] = True
+                model = model_cls.from_config(entry, context=context)
+                parsed_config = model.to_config(exclude_unset=True)
+                operational_only = not NDNetworkOrchestrator.has_network_definition_intent(parsed_config)
                 if operational_only:
                     sparse_config = {"network_name": parsed_config["network_name"]}
                     for key in ("attach", "deploy", "deploy_type"):
@@ -348,6 +408,7 @@ class NetworkWorkflowCoordinator:
         state = module_args.get("state", "merged")
         self._trace("parent_workflow_start", state=state, parent_fabric=parent_fabric, fabric_type=fabric_type)
         config: list[dict] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
+        self._validate_parent_network_capabilities(config)
         self._trace("parent_config_parsed", parsed_count=len(config))
 
         # Collect member fabric names for relationship validation
@@ -389,6 +450,8 @@ class NetworkWorkflowCoordinator:
             parent_config.append(parent_network)
         self._trace("parent_child_tasks_built", parent_config_count=len(parent_config), child_task_count=len(child_tasks_dict))
 
+        self._preflight_child_feature_tasks(child_tasks_dict, state)
+
         # Step 4 — run parent state machine
         parent_module_args = dict(module_args)
         parent_module_args["config"] = parent_config
@@ -398,6 +461,14 @@ class NetworkWorkflowCoordinator:
             defer_deploy=True,
         )
         self._trace("parent_state_machine_end", changed=parent_result.get("changed"), failed=parent_result.get("failed"))
+
+        if state == "gathered" and isinstance(parent_result.get("gathered"), list):
+            parent_spec = self.strategy.get_argument_spec()
+            parent_result["gathered"] = [prune_to_spec(item, parent_spec) for item in parent_result["gathered"]]
+
+        if parent_result.get("changed") and not self.module.check_mode:
+            for child_task in child_tasks_dict.values():
+                child_task.pop("preflight_state_machine", None)
 
         # Step 5 — execute child tasks (only if parent succeeded)
         child_results: list[dict] = []
@@ -423,14 +494,17 @@ class NetworkWorkflowCoordinator:
             self._trace("parent_deferred_deploys_start", deploy_payload_count=len(deploy_payloads))
             for deploy_payload in deploy_payloads:
                 if deploy_payload:
-                    self._trace("parent_deferred_deploy_start", deploy_payload=deploy_payload)
+                    undeploy = deploy_payload.get("_undeploy", False)
+                    request_payload = {key: value for key, value in deploy_payload.items() if key != "_undeploy"}
+                    self._trace("parent_deferred_deploy_start", deploy_payload=request_payload)
                     deploy_trace = self._deploy_network_attachments(
                         parent_module_args,
                         self.strategy,
-                        deploy_payload,
+                        request_payload,
+                        undeploy=undeploy,
                     )
                     self._merge_api_trace(parent_result, deploy_trace)
-                    self._trace("parent_deferred_deploy_end", deploy_payload=deploy_payload)
+                    self._trace("parent_deferred_deploy_end", deploy_payload=request_payload)
 
         # Step 6 — aggregate and structure results
         result = self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
@@ -443,6 +517,17 @@ class NetworkWorkflowCoordinator:
     def _has_child_network_options(child_cfg: dict[str, Any]) -> bool:
         """Return True when a child_fabric_config entry contains fabric-data options."""
         return any(key != "fabric_name" and value is not None for key, value in child_cfg.items())
+
+    def _validate_parent_network_capabilities(self, config: list[dict]) -> None:
+        """Validate parent-fabric Network options that depend on resolved topology."""
+        if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
+            return
+
+        for idx, network in enumerate(config):
+            if NDNetworkOrchestrator.is_pvlan_network_type(network.get("vlan_network_type")):
+                self.module.fail_json(
+                    msg="config[{idx}].vlan_network_type primary, community, and isolated are not supported on Multicluster parent fabrics.".format(idx=idx)
+                )
 
     def _accumulate_child_task(
         self,
@@ -465,11 +550,10 @@ class NetworkWorkflowCoordinator:
         # Inherit the Network identifier plus layer context from the parent
         # definition.  The parent owns create/delete and immutable identity
         # fields; layer context only prevents child PUTs from being interpreted
-        # as an isLayer2Only change by ND.
+        # as a network-mode change by ND.
         child_cfg["network_name"] = parent_network.get("network_name")
-        for field in ("layer", "is_l2only"):
-            if child_cfg.get(field) is None and parent_network.get(field) is not None:
-                child_cfg[field] = parent_network.get(field)
+        if child_cfg.get("layer") is None and parent_network.get("layer") is not None:
+            child_cfg["layer"] = parent_network.get("layer")
 
         if child_fabric_name in child_tasks_dict:
             # Append to existing child task (batch multiple Networks together)
@@ -540,6 +624,7 @@ class NetworkWorkflowCoordinator:
         original_config = self.module.params.get("config")
         original_state = self.module.params.get("state")
         sm = None
+        initialization_complete = False
         try:
             self.module.params["config"] = module_args.get("config") or []
             self.module.params["state"] = state
@@ -567,6 +652,8 @@ class NetworkWorkflowCoordinator:
                 prepared_config_count=len(self.module.params["config"] or []),
             )
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
+            if state == "merged" and not active_strategy.is_child:
+                self._resolve_merged_layers(sm, module_args.get("config") or [], active_strategy)
             self._trace(
                 "state_machine_init_end",
                 fabric_name=active_strategy.fabric_name,
@@ -575,10 +662,40 @@ class NetworkWorkflowCoordinator:
                 existing_count=len(sm.existing),
                 proposed_count=len(sm.proposed),
             )
+            initialization_complete = True
             return sm, original_config, original_state
         finally:
-            if sm is None:
+            if not initialization_complete:
                 self._restore_state_machine_params(original_config, original_state)
+
+    def _resolve_merged_layers(self, sm: NDStateMachine, config: list[dict], strategy: BaseNetworkStrategy) -> None:
+        """
+        # Summary
+
+        Validate deferred merged definitions against the cached inventory and resolve their proposed layer before CRUD.
+
+        Existing definitions retain their layer and VRF when omitted. New definitions use normal model inference.
+        Only proposed models are updated; the inventory snapshot and sparse property intent remain unchanged.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If requested fields conflict with the effective layer or a new L3 definition has no VRF.
+        """
+        for entry in config:
+            if not NDNetworkOrchestrator.should_defer_omitted_layer(entry, "merged"):
+                continue
+            current = sm.existing.get(entry["network_name"])
+            context = {"state": "merged", "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
+            if current is not None:
+                context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
+            validated = strategy.config_model_cls.from_config(entry, context=context)
+            proposed = sm.proposed.get(entry["network_name"])
+            if validated.layer is not None:
+                proposed.layer = validated.layer
+                if current is None and validated.layer == NetworkLayer.LAYER2.value and proposed.vrf_name is None:
+                    proposed.vrf_name = "NA"
 
     def _restore_state_machine_params(self, original_config: Any, original_state: Any) -> None:
         """Restore module params saved by ``_new_state_machine``."""
@@ -647,9 +764,8 @@ class NetworkWorkflowCoordinator:
 
         ND rejects Network removal while attached or pending attachment changes are
         present.  For ``state=deleted`` the requested ``attach`` block and
-        per-Network ``deploy`` boolean are intentionally ignored; only
-        ``deploy_type`` controls whether the pre-delete deployment is scoped to
-        switches or to the Network.
+        per-Network ``deploy`` is ignored. Standalone/MSD cleanup honors
+        ``deploy_type``; MCFG parent cleanup uses OneManage Network deployment.
         """
         return self._network_state_machine().run_deleted(module_args, strategy)
 
@@ -1005,15 +1121,16 @@ class NetworkWorkflowCoordinator:
         *target_maps: dict[str, set[str]],
     ) -> list[dict[str, Any]]:
         """Build deploy requests from one or more Network/switch maps."""
-        return self.attachments.build_deploy_payloads(config, *target_maps)
+        return self.attachments.build_deploy_payloads(config, *target_maps, strategy=self.strategy)
 
     def _build_delete_deploy_payloads(
         self,
         config: list[dict],
         *target_maps: dict[str, set[str]],
+        strategy: BaseNetworkStrategy | None = None,
     ) -> list[dict[str, Any]]:
         """Build delete cleanup deploy requests from Network/switch maps."""
-        return self.attachments.build_delete_deploy_payloads(config, *target_maps)
+        return self.attachments.build_delete_deploy_payloads(config, *target_maps, strategy=strategy)
 
     def _build_pending_network_deploy_payloads(
         self,
@@ -1050,33 +1167,57 @@ class NetworkWorkflowCoordinator:
             networks = []
         return networks, self._finalize_api_trace(results)
 
+    def _query_current_networks_by_names(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather selected current Network records for the target fabric."""
+        orchestrator, _results = self._new_network_orchestrator(module_args, strategy)
+        data = orchestrator.query_by_names(network_names)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("networks") or data.get("items") or []
+        return []
+
     def _wait_for_networks_delete_ready(
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
         network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         """Wait until configured Networks are absent or in notApplicable state."""
         if self.module.check_mode:
             return
-        self.attachments.wait_for_networks_delete_ready(module_args, strategy, network_names)
+        self.attachments.wait_for_networks_delete_ready(module_args, strategy, network_names, deadline, timeout_seconds)
 
     def _wait_for_network_attachments_delete_ready(
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
         network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         """Wait until configured Network attachments no longer block deletion."""
         if self.module.check_mode:
             return
-        self.attachments.wait_for_attachments_delete_ready(module_args, strategy, network_names)
+        self.attachments.wait_for_attachments_delete_ready(module_args, strategy, network_names, deadline, timeout_seconds)
+
+    def _network_delete_wait_deadline(self, item_count: int) -> tuple[float, int]:
+        """Return the shared Network delete-readiness deadline and timeout."""
+        return self.attachments.delete_wait_deadline(item_count)
 
     def _deploy_network_attachments(
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
         deploy_payload: dict[str, Any],
+        undeploy: bool = False,
     ) -> dict[str, Any]:
         """Deploy pending Network attachment changes once."""
         if self.module.check_mode:
@@ -1085,7 +1226,7 @@ class NetworkWorkflowCoordinator:
                 "failed": False,
                 "check_mode_deploy_payloads": [deploy_payload],
             }
-        return self.attachments.deploy_network_attachments(module_args, strategy, deploy_payload)
+        return self.attachments.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=undeploy)
 
     # ── Child task runner ─────────────────────────────────────────
 
@@ -1103,7 +1244,12 @@ class NetworkWorkflowCoordinator:
         child_strategy = child_task["strategy"]
         trace_start = len(self._workflow_trace)
         try:
-            result = self._run_state_machine(module_args, strategy=child_strategy)
+            prepared = child_task.get("preflight_state_machine")
+            result = (
+                self._network_state_machine().run_basic(module_args, strategy=child_strategy, prebuilt_sm=prepared)
+                if prepared is not None
+                else self._run_state_machine(module_args, strategy=child_strategy)
+            )
         except Exception as exc:
             self._trace(
                 "child_task_error",

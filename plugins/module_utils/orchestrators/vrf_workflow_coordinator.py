@@ -27,7 +27,9 @@ from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import VrfConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import VrfChildConfigModel, VrfConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import VrfType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import NDVrfOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
     VrfAttachmentManager,
@@ -50,6 +52,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_state_machine import (
     VrfStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_feature_preflight import (
+    preflight_child_feature_tasks,
+    preflight_workflow_features,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -57,6 +63,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sen
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
 class VrfWorkflowCoordinator:
@@ -110,7 +117,6 @@ class VrfWorkflowCoordinator:
         """
         module_args: dict = dict(self.module.params)
         try:
-            self._normalize_module_args(module_args)
             if self.strategy is None:
                 self.strategy = self._resolve_strategy(module_args)
             self._trace(
@@ -173,11 +179,53 @@ class VrfWorkflowCoordinator:
             rest_send=rest_send,
             fabric_name=module_args["fabric_name"],
         )
+        self._fabric_resolver = resolver
         strategy = resolver.resolve()
         resolver_trace = getattr(resolver, "workflow_trace", None)
         if resolver_trace:
             self._workflow_trace.extend(dict(entry) for entry in resolver_trace)
         return strategy
+
+    def _preflight_fabric_features(
+        self,
+        sm: NDStateMachine,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        *,
+        current_attachments: dict | None = None,
+        desired_attachments: dict | None = None,
+    ) -> None:
+        """
+        # Summary
+
+        Validate actionable VRF features against the owning fabric before writes.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a requested feature is unavailable on the effective fabric.
+        """
+        try:
+            preflight_workflow_features(
+                self, sm, module_args, strategy, "VRF", current_attachments=current_attachments, desired_attachments=desired_attachments
+            )
+        except ValueError as exc:
+            raise NDStateMachineError(str(exc)) from exc
+
+    def _preflight_child_feature_tasks(self, child_tasks: dict[str, dict], state: str) -> None:
+        """
+        # Summary
+
+        Reject invalid child feature writes before the parent workflow mutates anything.
+
+        ## Raises
+
+        ### NDStateMachineError
+
+        - If a child feature requires a disabled fabric setting.
+        """
+        preflight_child_feature_tasks(child_tasks, state, self._new_state_machine, self._preflight_fabric_features, self._restore_state_machine_params)
 
     def _trace_enabled(self) -> bool:
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
@@ -199,12 +247,6 @@ class VrfWorkflowCoordinator:
         if self._trace_enabled():
             result["workflow_trace"] = list(self._workflow_trace)
         return result
-
-    @staticmethod
-    def _normalize_module_args(module_args: dict) -> None:
-        """Normalize legacy module-level aliases before workflow routing."""
-        if module_args.get("state") == "query":
-            module_args["state"] = "gathered"
 
     def _validate_topology_argument_scope(
         self,
@@ -246,6 +288,107 @@ class VrfWorkflowCoordinator:
 
     # ── Config parsing ─────────────────────────────────────────
 
+    @staticmethod
+    def _fabric_l3vni_default(strategy: BaseVrfStrategy) -> bool | None:
+        """
+        # Summary
+
+        Return the resolved fabric's L3VNI-without-VLAN creation default.
+
+        ## Raises
+
+        None
+        """
+        fabric_data = getattr(strategy, "fabric_data", None) or {}
+        details = fabric_data.get("manageFabricDetails") or fabric_data
+        management = details.get("management") if isinstance(details, dict) else None
+        value = management.get("l3VniNoVlanDefaultOption") if isinstance(management, dict) else None
+        return value if isinstance(value, bool) else None
+
+    @staticmethod
+    def _resolve_parent_route_map_fallback(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
+        """Apply the parent IPv4 route-map fallback only when it is authoritative."""
+        for entry in entries:
+            if "v6_redist_direct_rmap" in entry:
+                continue
+            identifier = (entry["vrf_name"], strategy.fabric_name)
+            proposed = sm.proposed.get(identifier)
+            if proposed is None or proposed.vrf_type not in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+                continue
+            if state == "merged" and sm.existing.get(identifier) is not None:
+                continue
+            core = proposed.core_data if isinstance(proposed.core_data, dict) else {}
+            proposed.core_data = {**core, "v6VrfRouteMap": core.get("vrfRouteMap", "FABRIC-RMAP-REDIST-SUBNET")}
+
+    def _resolve_standalone_vrf_intent(self, sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
+        """Validate effective VXLAN definitions while keeping merged intent sparse."""
+        fabric_default = self._fabric_l3vni_default(strategy)
+        for entry in entries:
+            identifier = (entry["vrf_name"], strategy.fabric_name)
+            proposed = sm.proposed.get(identifier)
+            if proposed is None or proposed.vrf_type not in (VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+                continue
+            current = sm.existing.get(identifier)
+
+            if state == "merged" and current is None and entry.get("l3vni_wo_vlan") is None and fabric_default is not None:
+                candidate = {**entry, "l3vni_wo_vlan": fabric_default}
+                VrfConfigModel.from_config(candidate, context={"state": state})
+                proposed.fabric_data = {**(proposed.fabric_data or {}), "l3VniWithoutVlan": fabric_default}
+                entry["l3vni_wo_vlan"] = fabric_default
+
+            core = proposed.core_data if isinstance(proposed.core_data, dict) else {}
+            current_core = current.core_data if current is not None and isinstance(current.core_data, dict) else {}
+            if "redist_direct_rmap" in entry and "v6_redist_direct_rmap" not in entry and (state != "merged" or "v6VrfRouteMap" not in current_core):
+                proposed.core_data = {**core, "v6VrfRouteMap": entry["redist_direct_rmap"]}
+
+            if (
+                state != "merged"
+                and current is not None
+                and "default_security_group_tag" not in entry
+                and proposed.default_security_action in ("enforcedPermit", "enforcedDeny")
+                and current.default_security_action in ("enforcedPermit", "enforcedDeny")
+                and current.default_security_group_tag is not None
+            ):
+                proposed.default_security_group_tag = current.default_security_group_tag
+
+            if state == "merged" and current is not None:
+                effective = current.model_copy(deep=True).merge(proposed)
+            else:
+                effective = proposed
+            effective_payload = effective.to_payload()
+            if effective_payload.get("fabricData", {}).get("l3VniWithoutVlan") is True and set(entry).intersection(
+                {"vlan_id", "vrf_vlan_name", "vrf_intf_desc", "vrf_int_mtu", "ipv6_linklocal_enable"}
+            ):
+                VrfConfigModel.from_config({**entry, "l3vni_wo_vlan": True}, context={"state": state})
+            VrfDataModel.normalize_no_vlan(effective_payload)
+            public = VrfDataModel.from_config(effective_payload).to_gathered_config()
+            public_fields = set(getattr(VrfConfigModel, "model_fields", {}))
+            public = {key: value for key, value in public.items() if key in public_fields}
+            if "bgp_password" not in public and "bgp_passwd_encrypt" not in entry:
+                public.pop("bgp_passwd_encrypt", None)
+            VrfConfigModel.from_config(public, context={"state": state})
+
+    @staticmethod
+    def _validate_child_vrf_intent(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
+        """Validate child feature dependencies against the one cached GET."""
+        for entry in entries:
+            identifier = (entry["vrf_name"], strategy.fabric_name)
+            proposed = sm.proposed.get(identifier)
+            if proposed is None:
+                continue
+            current = sm.existing.get(identifier)
+            effective = current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
+            public = effective.to_gathered_config()
+            child_fields = set(getattr(VrfChildConfigModel, "model_fields", {}))
+            public = {key: value for key, value in public.items() if key in child_fields}
+            public["fabric_name"] = strategy.fabric_name
+            if "bgp_password" not in public and "bgp_passwd_encrypt" not in entry:
+                public.pop("bgp_passwd_encrypt", None)
+            VrfChildConfigModel.from_config(
+                public,
+                context={"validate_effective": True, "supplied_fields": set(entry), "state": state},
+            )
+
     def _parse_config(
         self,
         config: list[dict],
@@ -256,16 +399,21 @@ class VrfWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        ``state`` is passed for context in error messages only; all states
-        are validated the same way since the models enforce required fields.
+        For authoritative states, an omitted L3VNI-without-VLAN setting uses
+        the resolved fabric default. Merged leaves it unset for sparse updates;
+        new VRFs receive the fabric default after existing-state lookup.
 
         Validation errors are reported immediately via ``module.fail_json``.
         """
         parsed = []
+        fabric_default = self._fabric_l3vni_default(self.strategy) if not self.strategy.is_parent else None
         for idx, entry in enumerate(config):
             try:
-                model = model_cls.from_config(entry)
-                parsed.append(model.to_config())
+                candidate = entry
+                if state in ("replaced", "overridden", "staged") and fabric_default is not None and entry.get("l3vni_wo_vlan") is None:
+                    candidate = {**entry, "l3vni_wo_vlan": fabric_default}
+                model = model_cls.from_config(candidate, context={"state": state, "defer_dependencies": model_cls is VrfConfigModel and state == "merged"})
+                parsed.append(model.to_config(exclude_unset=True))
             except ValidationError as exc:
                 self.module.fail_json(msg=(f"config[{idx}] validation failed " f"({model_cls.__name__}, state={state!r}): {exc}"))
         return parsed
@@ -363,6 +511,9 @@ class VrfWorkflowCoordinator:
                                 f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
+                    if not self._has_child_vrf_options(child_cfg):
+                        self._trace("child_task_skipped_without_child_options", child_fabric=child_fabric_name, state=state)
+                        continue
                     child_tasks_dict = self._accumulate_child_task(
                         vrf,
                         child_cfg,
@@ -374,12 +525,10 @@ class VrfWorkflowCoordinator:
             # Parent config: same VRF but without child_fabric_config
             parent_vrf = dict(vrf)
             parent_vrf.pop("child_fabric_config", None)
-            if getattr(self.strategy, "is_multicluster", False):
-                self._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
-                if child_configs:
-                    self._remove_child_owned_mcfg_parent_fabric_options(parent_vrf)
             parent_config.append(parent_vrf)
         self._trace("parent_child_tasks_built", parent_config_count=len(parent_config), child_task_count=len(child_tasks_dict))
+
+        self._preflight_child_feature_tasks(child_tasks_dict, state)
 
         # Step 4 — run parent state machine
         parent_module_args = dict(module_args)
@@ -390,6 +539,10 @@ class VrfWorkflowCoordinator:
             defer_deploy=True,
         )
         self._trace("parent_state_machine_end", changed=parent_result.get("changed"), failed=parent_result.get("failed"))
+
+        if parent_result.get("changed") and not self.module.check_mode:
+            for child_task in child_tasks_dict.values():
+                child_task.pop("preflight_state_machine", None)
 
         # Step 5 — execute child tasks (only if parent succeeded)
         child_results: list[dict] = []
@@ -432,83 +585,9 @@ class VrfWorkflowCoordinator:
     # ── Config splitting helpers ──────────────────────────────────
 
     @staticmethod
-    def _remove_defaulted_mcfg_parent_fabric_options(parent_vrf: dict[str, Any]) -> None:
-        """
-        Remove Ansible-injected fabric option defaults from MCFG parent rows
-        that are scoped to child fabrics.
-
-        The parent template-config readback does not consistently include these default
-        flags when child fabrics disagree, so sending implicit defaults causes
-        repeated parent updates.  Non-default values are left intact.
-        """
-        defaulted_fabric_values = {
-            "l3vni_wo_vlan": False,
-            "adv_host_routes": False,
-            "adv_default_routes": True,
-            "static_default_route": True,
-            "trm_enable": False,
-            "ipv6_trm": False,
-            "no_rp": False,
-            "rp_external": False,
-            "trm_bgw_msite": False,
-            "netflow_enable": False,
-        }
-        for key, default_value in defaulted_fabric_values.items():
-            if parent_vrf.get(key) == default_value:
-                parent_vrf.pop(key, None)
-
-    @staticmethod
-    def _remove_child_owned_mcfg_parent_fabric_options(parent_vrf: dict[str, Any]) -> None:
-        """
-        Remove fabric-instance options from MCFG parent rows that also have
-        explicit child_fabric_config.
-
-        In MCFG, child-specific VRF fabric options are applied through the
-        child manage endpoints.  Keeping those same fields on the parent
-        template-config record causes repeated parent PUTs because parent readback and
-        child readback do not expose the exact same fabricData shape.
-        """
-        child_owned_fields = {
-            "l3vni_wo_vlan",
-            "l3_vni_without_vlan",
-            "adv_host_routes",
-            "advertise_host_route",
-            "adv_default_routes",
-            "advertise_default_route",
-            "static_default_route",
-            "configure_static_default_route",
-            "bgp_password",
-            "bgpPassword",
-            "bgp_passwd_encrypt",
-            "bgp_password_key_type",
-            "netflow_enable",
-            "netflow",
-            "nf_monitor",
-            "netflow_monitor",
-            "trm_enable",
-            "ipv4_trm",
-            "ipv6_trm",
-            "no_rp",
-            "v4_rp_absent",
-            "rp_external",
-            "v4_rp_external",
-            "rp_address",
-            "v4_rp_address",
-            "rp_loopback_id",
-            "loopback_number",
-            "underlay_mcast_ip",
-            "l3_vni_multicast_group",
-            "overlay_mcast_group",
-            "v4_multicast_group",
-            "trm_bgw_msite",
-            "trm_on_bgw",
-            "import_mvpn_rt",
-            "mvpn_route_target_import",
-            "export_mvpn_rt",
-            "mvpn_route_target_export",
-        }
-        for key in child_owned_fields:
-            parent_vrf.pop(key, None)
+    def _has_child_vrf_options(child_cfg: dict[str, Any]) -> bool:
+        """Return True when a child_fabric_config entry contains fabric-data options."""
+        return any(key != "fabric_name" and value is not None for key, value in child_cfg.items())
 
     def _accumulate_child_task(
         self,
@@ -599,18 +678,20 @@ class VrfWorkflowCoordinator:
         state = module_args.get("state", "merged")
         original_config = self.module.params.get("config")
         original_state = self.module.params.get("state")
-        sm = None
+        initialized = False
         try:
             self.module.params["config"] = module_args.get("config") or []
             self.module.params["state"] = state
 
             rest_send_params = dict(self.module.params)
             rest_send = self._new_rest_send(rest_send_params)
+            enrich_mcfg_parent_from_children = state == "gathered"
 
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=active_strategy,
                 trace_hook=self._trace,
+                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
@@ -622,6 +703,13 @@ class VrfWorkflowCoordinator:
                 prepared_config_count=len(self.module.params["config"] or []),
             )
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
+            if state in ("merged", "replaced", "overridden", "staged"):
+                if active_strategy.is_parent:
+                    self._resolve_parent_route_map_fallback(sm, module_args.get("config") or [], "replaced" if state == "staged" else state, active_strategy)
+                elif active_strategy.is_child:
+                    self._validate_child_vrf_intent(sm, module_args.get("config") or [], "replaced" if state == "staged" else state, active_strategy)
+                elif not active_strategy.is_child:
+                    self._resolve_standalone_vrf_intent(sm, module_args.get("config") or [], "replaced" if state == "staged" else state, active_strategy)
             self._trace(
                 "state_machine_init_end",
                 fabric_name=active_strategy.fabric_name,
@@ -630,9 +718,10 @@ class VrfWorkflowCoordinator:
                 existing_count=len(sm.existing),
                 proposed_count=len(sm.proposed),
             )
+            initialized = True
             return sm, original_config, original_state
         finally:
-            if sm is None:
+            if not initialized:
                 self._restore_state_machine_params(original_config, original_state)
 
     def _restore_state_machine_params(self, original_config: Any, original_state: Any) -> None:
@@ -740,11 +829,14 @@ class VrfWorkflowCoordinator:
             rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
+            state = module_args.get("state", "merged")
+            enrich_mcfg_parent_from_children = state == "gathered"
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=strategy,
                 results=results,
                 trace_hook=self._trace,
+                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             return orchestrator, results
         finally:
@@ -1092,6 +1184,21 @@ class VrfWorkflowCoordinator:
             vrfs = []
         return vrfs, self._finalize_api_trace(results)
 
+    def _query_current_vrfs_by_names(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather selected current VRF records for the target fabric."""
+        orchestrator, _results = self._new_vrf_orchestrator(module_args, strategy)
+        data = orchestrator.query_by_names(vrf_names)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("vrfs") or data.get("items") or []
+        return []
+
     def _wait_for_vrfs_delete_ready(
         self,
         module_args: dict,
@@ -1134,7 +1241,12 @@ class VrfWorkflowCoordinator:
         child_strategy = child_task["strategy"]
         trace_start = len(self._workflow_trace)
         try:
-            result = self._run_state_machine(module_args, strategy=child_strategy)
+            prepared = child_task.get("preflight_state_machine")
+            result = (
+                self._vrf_state_machine().run_basic(module_args, strategy=child_strategy, prebuilt_sm=prepared)
+                if prepared is not None
+                else self._run_state_machine(module_args, strategy=child_strategy)
+            )
         except Exception as exc:
             self._trace(
                 "child_task_error",

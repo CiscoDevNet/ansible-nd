@@ -15,6 +15,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsNetworkAttachmentsQueryPost,
     EpManageFabricsNetworkAttachmentsValidateInterfacesPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
     EpOneManageFabricsNetworkAttachmentsPost,
     EpOneManageFabricsNetworkAttachmentsQueryPost,
@@ -26,12 +29,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
-    NetworkAttachmentMode,
+    PublicNetworkAttachmentMode,
+    api_network_attachment_mode,
+    public_network_attachment_mode,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
     NetworkSwitchesListModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_attachment_models import (
+    NetworkAttachmentInstanceValuesModel,
     NetworkAttachmentModel,
     NetworkAttachDetachPayloadModel,
     NetworkAttachmentQueryRequestModel,
@@ -40,6 +46,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
+    DeleteReadinessPolicy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
@@ -57,6 +66,9 @@ class NetworkAttachmentManager:
     wait_attempts = 20
     wait_delay = 15
     wait_chunk_size = 30
+    delete_wait_base_timeout = 600
+    delete_wait_extra_chunk_timeout = 30
+    delete_wait_max_timeout = 900
     undeploy_retry_attempts = 3
     attachment_query_page_size = 10000
 
@@ -210,29 +222,24 @@ class NetworkAttachmentManager:
         for network in config:
             network_name = network.get("network_name") or network.get("networkName")
             for attachment in network.get("attach") or []:
-                ip_address = attachment.get("ip_address") or attachment.get("ipAddress")
+                ip_address = attachment.get("ip_address")
                 switch_id = ip_to_switch.get(ip_address)
                 if not network_name or not switch_id:
                     continue
                 payload = {
                     "networkName": network_name,
                     "switchId": switch_id,
-                    "vlanId": attachment.get("vlan_id") or attachment.get("vlanId"),
+                    "vlanId": attachment.get("vlan_id"),
                     "interfaces": self._attachment_interfaces(attachment),
-                    "instanceValues": attachment.get("attachment_options"),
-                    "extraConfig": attachment.get("extra_config") or attachment.get("extraConfig"),
+                    "instanceValues": self.attachment_instance_values(attachment) if attachment.get("attachment_options") is not None else None,
+                    "extraConfig": attachment.get("freeform_config"),
                     "attach": True,
                 }
                 desired[(network_name, switch_id)] = {k: v for k, v in payload.items() if v is not None}
         return desired
 
     def resolve_switch_ids(self, module_args: dict, strategy: BaseNetworkStrategy, config: list[dict]) -> dict[str, str]:
-        wanted_ips = {
-            attachment.get("ip_address") or attachment.get("ipAddress")
-            for network in config
-            for attachment in network.get("attach") or []
-            if attachment.get("ip_address") or attachment.get("ipAddress")
-        }
+        wanted_ips = {attachment.get("ip_address") for network in config for attachment in network.get("attach") or [] if attachment.get("ip_address")}
         if not wanted_ips:
             self._trace("network_attachment_switch_resolve_end", requested_count=0, resolved_count=0)
             return {}
@@ -256,21 +263,25 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def _attachment_interfaces(attachment: dict[str, Any]) -> list[dict[str, Any]] | None:
+        if "interfaces" not in attachment:
+            return None
         interfaces = attachment.get("interfaces")
         if not interfaces:
-            return None
+            return []
         payloads = []
         for interface in interfaces:
-            mapping_type = interface.get("mapping_type") or interface.get("mappingType")
+            mapping_type = interface.get("mapping_type")
+            mode = interface.get("mode") or PublicNetworkAttachmentMode.ACCESS.value
             payload = {
-                "mode": interface.get("mode") or NetworkAttachmentMode.ACCESS.value,
-                "interfaceRange": interface.get("interface_range") or interface.get("interfaceRange"),
-                "interfaceGroupName": interface.get("interface_group_name") or interface.get("interfaceGroupName"),
-                "nativeVlan": interface.get("native_vlan") if "native_vlan" in interface else interface.get("nativeVlan"),
+                "mode": mode,
+                "interfaceRange": interface.get("interface_range"),
+                "interfaceGroupName": interface.get("interface_group_name"),
             }
+            if mode == PublicNetworkAttachmentMode.TRUNK.value:
+                payload["nativeVlan"] = interface.get("native_vlan")
             if mapping_type:
                 mapping = {"mappingType": mapping_type}
-                customer_vlan = interface.get("customer_vlan") or interface.get("customerVlan")
+                customer_vlan = interface.get("customer_vlan")
                 if mapping_type == MappingType.SINGLE.value and customer_vlan is not None:
                     mapping["customerVlan"] = customer_vlan
                 payload["mapping"] = mapping
@@ -493,7 +504,7 @@ class NetworkAttachmentManager:
         for interface in interfaces or []:
             mapping = interface.get("mapping") or {}
             normalized_interface = {
-                "mode": NetworkAttachmentManager._status_value(interface.get("mode")).lower(),
+                "mode": public_network_attachment_mode(NetworkAttachmentManager._status_value(interface.get("mode"))),
                 "interfaceRange": interface.get("interfaceRange") or interface.get("interface_range"),
                 "interfaceGroupName": interface.get("interfaceGroupName") or interface.get("interface_group_name"),
                 "nativeVlan": bool(interface.get("nativeVlan") if "nativeVlan" in interface else interface.get("native_vlan", False)),
@@ -515,8 +526,20 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def attachment_instance_values(attachment: dict[str, Any]) -> dict[str, Any]:
-        """Return playbook attachment options that map to ND instanceValues."""
-        return attachment.get("attachment_options") or {}
+        """Map playbook attachment options to ND instanceValues."""
+        attachment_options = attachment.get("attachment_options") or {}
+        raw = {
+            "dpu_secure": attachment_options.get("dpu_secure"),
+            "dpu_affinity": attachment_options.get("dpu_affinity"),
+            "svi_enabled": attachment_options.get("svi_enabled"),
+            "switch_route_target_import": attachment_options.get("switch_route_target_import"),
+            "switch_route_target_export": attachment_options.get("switch_route_target_export"),
+            "is_active": attachment_options.get("is_active"),
+        }
+        raw = {key: value for key, value in raw.items() if value is not None}
+        if not raw:
+            return {}
+        return NetworkAttachmentInstanceValuesModel(**raw).to_payload()
 
     @staticmethod
     def switch_ip_candidates(switch: dict[str, Any]) -> set[str]:
@@ -560,9 +583,11 @@ class NetworkAttachmentManager:
                 "payloads": payloads,
                 "check_mode_attachment_payloads": payloads,
             }
-        payloads = self._prepare_attachment_payloads(strategy, payloads)
-        request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        controller_version = getattr(getattr(orchestrator, "rest_send", None), "controller_version", None)
+        payloads = self._prepare_attachment_payloads(strategy, payloads)
+        payloads = self._payloads_for_controller(payloads, controller_version)
+        request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         self.validate_attachment_interfaces(orchestrator, strategy, payloads)
         endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
         response = orchestrator._request(
@@ -578,7 +603,7 @@ class NetworkAttachmentManager:
 
     def validate_attachment_interfaces(self, orchestrator: Any, strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> None:
         """Ask ND to validate attachment interfaces before mutation."""
-        validation_payloads = [self._validation_payload(payload) for payload in payloads if "interfaces" in payload]
+        validation_payloads = [self._validation_payload(payload) for payload in payloads if payload.get("interfaces")]
         if not validation_payloads:
             self._trace("network_attachment_validate_skip", reason="no_interfaces")
             return
@@ -609,6 +634,31 @@ class NetworkAttachmentManager:
             item.setdefault("extraConfig", "")
             prepared.append(item)
         return prepared
+
+    @staticmethod
+    def _payloads_for_controller(payloads: list[dict[str, Any]], controller_version: str | None) -> list[dict[str, Any]]:
+        """Return attachment payload copies with interface modes converted to controller API spelling."""
+        converted = []
+        for payload in payloads:
+            item = dict(payload)
+            if "interfaces" in item:
+                item["interfaces"] = NetworkAttachmentManager._interfaces_for_controller(item.get("interfaces"), controller_version)
+            converted.append(item)
+        return converted
+
+    @staticmethod
+    def _interfaces_for_controller(interfaces: Any, controller_version: str | None) -> Any:
+        if not isinstance(interfaces, list):
+            return interfaces
+        converted = []
+        for interface in interfaces:
+            if not isinstance(interface, dict):
+                converted.append(interface)
+                continue
+            item = dict(interface)
+            item["mode"] = api_network_attachment_mode(item.get("mode"), controller_version)
+            converted.append(item)
+        return converted
 
     @staticmethod
     def _validation_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -643,16 +693,18 @@ class NetworkAttachmentManager:
     def build_deploy_payloads(
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
+        strategy: BaseNetworkStrategy | None = None,
     ) -> list[dict[str, Any]]:
         deploy_enabled = deploy_enabled_by_network(config)
         deploy_types = deploy_type_by_network(config)
+        mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
         grouped: dict[tuple[str, ...], set[str]] = {}
         network_level: set[str] = set()
         for target_map in deploy_target_maps:
             for network_name, switch_ids in (target_map or {}).items():
                 if not deploy_enabled.get(network_name, True):
                     continue
-                if deploy_types.get(network_name, "switch") == "network" or not switch_ids:
+                if not switch_ids or (deploy_types.get(network_name, "switch") == "network" and not mcfg_parent):
                     network_level.add(network_name)
                 else:
                     grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
@@ -667,28 +719,33 @@ class NetworkAttachmentManager:
     def build_delete_deploy_payloads(
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
+        strategy: BaseNetworkStrategy | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Build deploy requests for delete cleanup.
+        Build switch- or Network-scoped deploy requests for detach cleanup.
 
         Delete must deploy the detach/undeploy work before the Network delete is
-        attempted, so this intentionally ignores per-Network ``deploy: false``.
-        The configured deploy type is still honored as the deploy scope.
+        attempted, regardless of per-Network ``deploy``. Standalone and MSD
+        honor ``deploy_type``; MCFG parent uses OneManage Network deployment.
+        Never widen a missing switch target to an unscoped Network request.
         """
         deploy_types = deploy_type_by_network(config)
-        grouped: dict[tuple[str, ...], set[str]] = {}
-        network_level: set[str] = set()
+        mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
+        switch_ids: set[str] = set()
+        network_groups: dict[tuple[str, ...], set[str]] = {}
         for target_map in deploy_target_maps:
-            for network_name, switch_ids in (target_map or {}).items():
-                if deploy_types.get(network_name, "switch") == "network" or not switch_ids:
-                    network_level.add(network_name)
+            for network_name, target_switch_ids in (target_map or {}).items():
+                if not target_switch_ids:
+                    continue
+                if mcfg_parent or deploy_types.get(network_name, "switch") == "network":
+                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
                 else:
-                    grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
-        payloads = [
-            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())
-        ]
-        if network_level:
-            payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
+                    switch_ids.update(target_switch_ids)
+        payloads = [{"switchIds": sorted(switch_ids)}] if switch_ids else []
+        payloads.extend(
+            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(target_ids)).to_payload()
+            for target_ids, names in sorted(network_groups.items())
+        )
         return payloads
 
     def build_pending_network_deploy_payloads(
@@ -730,39 +787,83 @@ class NetworkAttachmentManager:
 
         if not deploy_targets:
             return []
-        return self.build_deploy_payloads(config, deploy_targets)
+        return self.build_deploy_payloads(config, deploy_targets, strategy=strategy)
 
-    def deploy_network_attachments(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
+    def deploy_network_attachments(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        deploy_payload: dict[str, Any],
+        undeploy: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Deploy attachment changes at the scope selected for the operation.
+
+        ## Raises
+
+        ### ValueError
+
+        - If detach deployment has no affected switch IDs.
+        - If an MCFG parent deploy has no Network names.
+        """
+        if undeploy and not deploy_payload.get("switchIds"):
+            raise ValueError("Network detach undeploy requires affected switch IDs; unscoped fallback is not allowed.")
+        if strategy.is_multicluster and strategy.is_parent and not deploy_payload.get("networkNames"):
+            raise ValueError("MCFG parent Network deployment requires Network names.")
         self._trace("network_attachment_deploy_start", deploy_payload=deploy_payload)
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         data = deploy_payload
-        if strategy.is_multicluster and strategy.is_parent and deploy_payload.get("switchIds"):
-            endpoint = orchestrator._make_endpoint(EpOneManageFabricsSwitchActionsDeployPost)
-            data = {"switchIds": deploy_payload.get("switchIds")}
+        switch_ids = deploy_payload.get("switchIds")
+        switch_deploy = bool(undeploy and switch_ids and not deploy_payload.get("networkNames") and not (strategy.is_multicluster and strategy.is_parent))
+        if switch_deploy:
+            endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if strategy.is_multicluster and strategy.is_parent else EpManageSwitchActionsDeployPost
+            endpoint = orchestrator._make_endpoint(endpoint_cls)
+            data = {"switchIds": switch_ids}
         else:
             endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
-        orchestrator._request(
+        response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=data,
             operation_type=OperationType.UPDATE,
         )
+        if switch_deploy and undeploy:
+            self._raise_on_failed_switch_deploy(response)
         trace = self.coordinator._finalize_api_trace(results)
         self._trace("network_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
         return trace
+
+    @staticmethod
+    def _raise_on_failed_switch_deploy(response: Any) -> None:
+        """Reject an explicit per-switch failure in a multi-status deploy response."""
+        entries = response.get("switchIds") if isinstance(response, dict) else response if isinstance(response, list) else []
+        failures = []
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("status", "")).lower()
+            if status not in {"success", "notexecuted", "completed", "started"}:
+                failures.append(f"{entry.get('switchId', '?')}: {entry.get('message') or status}")
+        if failures:
+            raise RuntimeError(f"Switch undeploy failed: {'; '.join(failures)}")
 
     def wait_for_attachments_delete_ready(
         self,
         module_args: dict,
         strategy: BaseNetworkStrategy,
         network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
     ) -> None:
         pending = set(network_names if network_names is not None else configured_network_names(module_args.get("config") or []))
         if not pending:
             return
+        if deadline is None or timeout_seconds is None:
+            deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
+        started_at = DeleteReadinessPolicy.now()
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str], int] = {}
-        for attempt in range(self._delete_wait_attempts(len(pending))):
+        while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
             retry_targets: dict[str, set[str]] = {}
@@ -786,56 +887,137 @@ class NetworkAttachmentManager:
                             retry_targets[network_name].add(switch_id)
                         retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets):
-                    self.deploy_network_attachments(module_args, strategy, deploy_payload)
+                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy):
+                    self.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
             ready = {name for name, values in blockers.items() if not values}
             pending.difference_update(ready)
             if not pending:
                 return
             last_blockers = {name: values for name, values in blockers.items() if name in pending}
+            if DeleteReadinessPolicy.now() >= deadline:
+                self.coordinator.module.fail_json(
+                    msg=f"Timed out waiting for network attachments to become deletable on fabric '{strategy.fabric_name}'.",
+                    pending_network_names=sorted(pending),
+                    last_blockers=last_blockers,
+                    elapsed_seconds=int(DeleteReadinessPolicy.now() - started_at),
+                    timeout_seconds=timeout_seconds,
+                )
             time.sleep(self.wait_delay)
-        self.coordinator.module.fail_json(
-            msg=f"Timed out waiting for network attachments to become deletable on fabric '{strategy.fabric_name}': {last_blockers}"
-        )
 
-    def wait_for_networks_delete_ready(self, module_args: dict, strategy: BaseNetworkStrategy, network_names: list[str] | None = None) -> None:
+    def wait_for_networks_delete_ready(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: list[str] | None = None,
+        deadline: float | None = None,
+        timeout_seconds: int | None = None,
+    ) -> None:
+        """Wait until Network attachments and Network definitions no longer block deletion."""
         pending = set(network_names if network_names is not None else configured_network_names(module_args.get("config") or []))
         if not pending:
             return
-        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
-        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress"}
+        if deadline is None or timeout_seconds is None:
+            deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
+        started_at = DeleteReadinessPolicy.now()
+        ready_statuses = {"", "na", "notapplicable", "notdeployed", "deleted"}
+        retry_statuses = {"pending", "inprogress", "deploymentinprogress", "previewinprogress", "outofsync", "failed"}
+        blocking_statuses = {"outofsync", "failed"}
         last_statuses: dict[str, str] = {}
+        last_blockers: dict[str, list[dict[str, Any]]] = {}
+        retried_targets: dict[tuple[str, str, str], int] = {}
         retried_networks: dict[str, int] = {}
-        for attempt in range(self._delete_wait_attempts(len(pending))):
-            orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
-            networks = orchestrator.query_all() or []
+        while True:
+            attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
+            blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
+            attachment_retry_targets: dict[str, set[str]] = {}
+            detached_attachment_networks: set[str] = set()
+            for attachment in attachments:
+                network_name = attachment.get("networkName")
+                if network_name not in pending:
+                    continue
+                if self.attachment_blocks_delete(attachment):
+                    switch_id = attachment.get("switchId")
+                    status = self.attachment_status(attachment)
+                    blockers.setdefault(network_name, []).append(
+                        {
+                            "switchId": switch_id,
+                            "attach": attachment.get("attach"),
+                            "status": status,
+                        }
+                    )
+                    retry_key = (network_name, switch_id or "", status.lower())
+                    if retried_targets.get(retry_key, 0) < self.undeploy_retry_attempts:
+                        attachment_retry_targets.setdefault(network_name, set())
+                        if switch_id:
+                            attachment_retry_targets[network_name].add(switch_id)
+                        retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
+                else:
+                    detached_attachment_networks.add(network_name)
+
+            networks = self.coordinator._query_current_networks_by_names(module_args, strategy, sorted(pending))
             last_statuses = {}
             for network in networks:
                 name = network.get("networkName") or network.get("network_name")
                 if name in pending:
                     last_statuses[name] = network.get("networkStatus") or network.get("network_status") or ""
-            retry_targets = {
+            network_retry_targets = {
                 name: set()
                 for name, status in last_statuses.items()
                 if (name in pending and retried_networks.get(name, 0) < self.undeploy_retry_attempts and str(status).strip().lower() in retry_statuses)
             }
+            retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, network_retry_targets)
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets):
-                    self.deploy_network_attachments(module_args, strategy, deploy_payload)
-                for network_name in retry_targets:
+                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy):
+                    self.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
+                for network_name in network_retry_targets:
                     retried_networks[network_name] = retried_networks.get(network_name, 0) + 1
-            ready = {name for name in pending if name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses}
+            ready = {
+                name
+                for name in pending
+                if not blockers.get(name)
+                and str(last_statuses.get(name, "")).strip().lower() not in blocking_statuses
+                and (name in detached_attachment_networks or name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses)
+            }
             pending.difference_update(ready)
             if not pending:
                 return
+            last_blockers = {name: values for name, values in blockers.items() if name in pending and values}
+            if DeleteReadinessPolicy.now() >= deadline:
+                self.coordinator.module.fail_json(
+                    msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}'.",
+                    pending_network_names=sorted(pending),
+                    last_statuses=last_statuses,
+                    last_attachment_blockers=last_blockers,
+                    elapsed_seconds=int(DeleteReadinessPolicy.now() - started_at),
+                    timeout_seconds=timeout_seconds,
+                )
             time.sleep(self.wait_delay)
-        self.coordinator.module.fail_json(msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}': {last_statuses}")
 
-    def _delete_wait_attempts(self, item_count: int) -> int:
+    @staticmethod
+    def _merge_deploy_target_maps(*target_maps: dict[str, set[str]]) -> dict[str, set[str]]:
+        merged: dict[str, set[str]] = {}
+        for target_map in target_maps:
+            for network_name, switch_ids in target_map.items():
+                merged.setdefault(network_name, set()).update(switch_ids)
+        return merged
+
+    def _delete_wait_timeout(self, item_count: int) -> int:
         if self.wait_attempts != type(self).wait_attempts:
-            return int(self.wait_attempts)
-        extra_attempts = max(0, (max(item_count, 1) - 1) // self.wait_chunk_size)
-        return min(80, int(self.wait_attempts) + extra_attempts)
+            return max(0, int(self.wait_attempts) * int(self.wait_delay))
+        return self._delete_wait_policy().timeout_for(item_count)
+
+    def delete_wait_deadline(self, item_count: int) -> tuple[float, int]:
+        timeout = self._delete_wait_timeout(item_count)
+        return DeleteReadinessPolicy.now() + timeout, timeout
+
+    def _delete_wait_policy(self) -> DeleteReadinessPolicy:
+        return DeleteReadinessPolicy(
+            poll_interval=self.wait_delay,
+            chunk_size=self.wait_chunk_size,
+            base_timeout=self.delete_wait_base_timeout,
+            extra_chunk_timeout=self.delete_wait_extra_chunk_timeout,
+            max_timeout=self.delete_wait_max_timeout,
+        )
 
     def _current_attachment_details_for_wait(
         self,
@@ -886,5 +1068,5 @@ class NetworkAttachmentManager:
         status = NetworkAttachmentManager.attachment_status(attachment).lower()
         if not status:
             return False
-        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted", "outofsync", "failed"}
+        terminal_statuses = {"na", "notapplicable", "notdeployed", "deleted"}
         return status not in terminal_statuses

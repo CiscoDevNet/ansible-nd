@@ -57,15 +57,21 @@ class VrfStateMachine:
         """Return True when the owning Ansible module is running in check mode."""
         return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
 
-    def run_basic(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> dict[str, Any]:
+    def run_basic(self, module_args: dict, strategy: BaseVrfStrategy | None = None, prebuilt_sm: Any = None) -> dict[str, Any]:
         """
         Run only the generic NDStateMachine-backed VRF CRUD/gathered flow.
         """
         state = module_args.get("state", "merged")
-        sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
+        if prebuilt_sm is None:
+            sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
+        else:
+            sm = prebuilt_sm
+            original_config = self.coordinator.module.params.get("config")
+            original_state = self.coordinator.module.params.get("state")
         try:
             prepare_crud_state(sm, state)
             if state != "gathered":
+                self.coordinator._preflight_fabric_features(sm, module_args, strategy or self.coordinator.strategy)
                 self._trace("manage_state_start", state=state)
                 sm.manage_state()
                 self._trace("manage_state_end", state=state)
@@ -99,46 +105,59 @@ class VrfStateMachine:
         desired_attachments = None
         desired_vrf_names = None
 
-        self._trace("attachment_phase_pre_start", state=state)
-        pre_attach = self.coordinator._apply_attachment_phase(
-            module_args,
-            active_strategy,
-            phase="pre",
-            desired=desired_attachments,
-            current_vrf_names=desired_vrf_names,
-        )
-        self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
-        desired_attachments = pre_attach.get("desired", desired_attachments)
-        current_attachments = self._current_after_pre_detach(pre_attach)
+        sm, original_config, original_state = self.coordinator._new_state_machine(module_args, active_strategy)
+        try:
+            desired_attachments = self.coordinator._desired_attachment_map(module_args, active_strategy)
+            current_details = []
+            current_attachments = None
+            if desired_attachments:
+                desired_vrf_names = self.coordinator._configured_vrf_names(config)
+                current_details = self.coordinator._current_attachment_details_ignore_missing(module_args, active_strategy, desired_vrf_names)
+                current_attachments = self.coordinator._attachment_map_from_details(current_details, desired_vrf_names)
+            self.coordinator._preflight_fabric_features(
+                sm, module_args, active_strategy, current_attachments=current_attachments, desired_attachments=desired_attachments
+            )
 
-        result = self.coordinator._run_state_machine(module_args, strategy=active_strategy)
+            self._trace("attachment_phase_pre_start", state=state)
+            pre_attach = self.coordinator._apply_attachment_phase(
+                module_args,
+                active_strategy,
+                phase="pre",
+                desired=desired_attachments,
+                current_vrf_names=desired_vrf_names,
+                current=current_attachments,
+                attachment_details=current_details,
+            )
+            self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
+            desired_attachments = pre_attach.get("desired", desired_attachments)
+            if pre_attach.get("current") is not None:
+                current_attachments = self._current_after_pre_detach(pre_attach)
 
-        self._prepend_traces(result, [pre_attach])
+            self._trace("manage_state_start", state=state)
+            sm.manage_state()
+            self._trace("manage_state_end", state=state)
+            result = self.coordinator._format_state_machine_output(sm)
+            self._prepend_traces(result, [pre_attach])
+            if result.get("failed", False):
+                return result
 
-        if result.get("failed", False):
-            return result
-
-        self._trace("attachment_phase_post_start", state=state)
-        post_attach = self.coordinator._apply_attachment_phase(
-            module_args,
-            active_strategy,
-            phase="post",
-            desired=desired_attachments,
-            current_vrf_names=desired_vrf_names,
-            current=current_attachments,
-        )
-        self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
-        self.coordinator._merge_api_trace(result, post_attach)
-
-        return self._deploy_after_attachment_changes(
-            result,
-            config,
-            module_args,
-            active_strategy,
-            pre_attach,
-            post_attach,
-            defer_deploy,
-        )
+            existing_vrf_names = set(self._vrf_names_from_models(sm.before))
+            if desired_attachments and any(name not in existing_vrf_names for name in desired_vrf_names):
+                current_attachments = None
+            self._trace("attachment_phase_post_start", state=state)
+            post_attach = self.coordinator._apply_attachment_phase(
+                module_args,
+                active_strategy,
+                phase="post",
+                desired=desired_attachments,
+                current_vrf_names=desired_vrf_names,
+                current=current_attachments,
+            )
+            self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
+            self.coordinator._merge_api_trace(result, post_attach)
+            return self._deploy_after_attachment_changes(result, config, module_args, active_strategy, pre_attach, post_attach, defer_deploy)
+        finally:
+            self.coordinator._restore_state_machine_params(original_config, original_state)
 
     def run_overridden(
         self,
@@ -190,6 +209,9 @@ class VrfStateMachine:
             current_desired_attachments = self.coordinator._attachment_map_from_details(
                 current_attachment_details,
                 current_desired_vrf_names,
+            )
+            self.coordinator._preflight_fabric_features(
+                sm, module_args, strategy, current_attachments=current_desired_attachments, desired_attachments=desired_attachments
             )
 
             pre_delete_traces: list[dict[str, Any]] = []
