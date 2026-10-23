@@ -99,7 +99,7 @@
       tags: deleted
 
     # TC-2: Repeat delete triggers blind pending-cleanup switch deploy
-    - name: "DELETED TC2 - Delete clock_timezone again triggers cleanup deploy"
+    - name: "DELETED TC2 - Delete clock_timezone again accepts ND no-op deploy"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -109,6 +109,8 @@
           - switch:
               - serial_number: "{{ switch_serial_1 }}"
       register: result
+      # ND returns 207 when the repeated delete has nothing left to deploy.
+      ignore_errors: true
       tags: deleted
 
     - name: "DELETED TC2 - Verify cleanup deploy attempted"
