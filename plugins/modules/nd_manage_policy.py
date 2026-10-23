@@ -276,6 +276,14 @@ notes:
   The final task result is failed when any entry fails. Failures returned after
   write calls begin are reported in task output and may require a rerun or manual
   cleanup.
+- Check mode reports C(changed=true) for planned policy changes or deletion
+  cleanup, without sending mutation or deployment requests.
+  C(state=gathered) always returns a C(gathered) list, including when empty.
+- C(before) preserves the original known target configuration. C(after) reports
+  accepted configuration, or predicted configuration in check mode. After a
+  partial failure, accepted changes are retained and rejected or unattempted
+  updates preserve their original values. These snapshots do not independently
+  verify controller persistence or switch running configuration.
 - C(state=gathered) and C(state=merged) idempotency checks use the active-policy
   view. Policies with C(markDeleted=true) and generated/internal policies with
   non-empty C(source) do not satisfy desired state, so replaying the same config
@@ -644,6 +652,27 @@ def _format_module_result(
     return output.format_with_verbosity(_module_verbosity(module), results, **kwargs)
 
 
+def _format_failure_result(
+    module: AnsibleModule,
+    output_level: str | None,
+    results: Results,
+    policy_module: NDPolicyModule | None,
+    log: logging.Logger,
+    **kwargs,
+) -> dict:
+    """Preserve local accepted state without replacing the original error."""
+    try:
+        if policy_module is not None:
+            kwargs = {**policy_module.result_kwargs(failed=True), **kwargs}
+        return _format_module_result(module, output_level, results, **kwargs)
+    except Exception as error:  # Last-resort reporting must not hide the failure.
+        log.error("Failed to format error result: %s", error)
+        changed = True in results.changed
+        if policy_module is not None:
+            changed = policy_module._module_changed() or policy_module._accepted_config_change
+        return {**kwargs, "changed": changed}
+
+
 def _record_failed_result(
     results: Results,
     message: str,
@@ -765,6 +794,7 @@ def main():
     results.state = state
     results.check_mode = module.check_mode
     results.action = f"policy_{state}"
+    policy_module = None
 
     try:
         log.info("Starting nd_manage_policy module: state=%s", state)
@@ -787,7 +817,10 @@ def main():
     except NDModuleError as error:
         log.error("NDModule error: %s", error.msg)
 
-        _record_nd_module_error_result(results, nd, error, log)
+        try:
+            _record_nd_module_error_result(results, nd, error, log)
+        except Exception as reporting_error:
+            log.error("Failed to register error result: %s", reporting_error)
 
         # ``error_details`` is debug-only; everything else flows through
         # the standard NDOutput shape so the failure looks like a normal
@@ -796,7 +829,7 @@ def main():
         if output_level == "debug":
             extra_kwargs["error_details"] = error.to_dict()
 
-        final_result = _format_module_result(module, output_level, results, **extra_kwargs)
+        final_result = _format_failure_result(module, output_level, results, policy_module, log, **extra_kwargs)
         log.error("Module failed: %s", final_result)
         module.fail_json(msg=error.msg, **final_result)
 
@@ -813,15 +846,12 @@ def main():
                 results,
                 message=f"Unexpected error: {str(error)}",
             )
-            extra_kwargs: dict = {}
-            if output_level == "debug":
-                extra_kwargs["traceback"] = tb_str
-            fail_kwargs = _format_module_result(module, output_level, results, **extra_kwargs)
-        except Exception as fmt_error:  # pragma: no cover — last-resort safety net
-            log.error("Failed to format error result: %s", fmt_error)
-            fail_kwargs = {}
-            if output_level == "debug":
-                fail_kwargs["traceback"] = tb_str
+        except Exception as reporting_error:  # pragma: no cover — last-resort safety net
+            log.error("Failed to register error result: %s", reporting_error)
+        extra_kwargs: dict = {}
+        if output_level == "debug":
+            extra_kwargs["traceback"] = tb_str
+        fail_kwargs = _format_failure_result(module, output_level, results, policy_module, log, **extra_kwargs)
 
         module.fail_json(msg=f"{error.__class__.__name__}: {str(error)}", **fail_kwargs)
 
