@@ -27,14 +27,14 @@ def test_orchestrator_has_narrow_host_policy_scope() -> None:
 
 def test_grouped_config_expands_once_per_switch_interface() -> None:
     grouped = [
-        {"switch_ip": "192.0.2.11", "interface_names": ["Ethernet1/40", "Ethernet1/41"],
-         "config_data": {"network_os": {"policy": {"access_vlan": 150}}}},
-        {"switch_ip": "192.0.2.12", "interface_names": ["Ethernet1/40"],
-         "config_data": {"network_os": {"policy": {"access_vlan": 151}}}},
+        {"switch_ip": "192.0.2.11", "interface_names": ["Ethernet1/40", "Ethernet1/41"], "config_data": {"network_os": {"policy": {"access_vlan": 150}}}},
+        {"switch_ip": "192.0.2.12", "interface_names": ["Ethernet1/40"], "config_data": {"network_os": {"policy": {"access_vlan": 151}}}},
     ]
     expanded = expand_ethernet_config(grouped)
     assert [(item["switch_ip"], item["interface_name"]) for item in expanded] == [
-        ("192.0.2.11", "Ethernet1/40"), ("192.0.2.11", "Ethernet1/41"), ("192.0.2.12", "Ethernet1/40")
+        ("192.0.2.11", "Ethernet1/40"),
+        ("192.0.2.11", "Ethernet1/41"),
+        ("192.0.2.12", "Ethernet1/40"),
     ]
     assert all("interface_names" not in item for item in expanded)
 

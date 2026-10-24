@@ -13,15 +13,43 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     EthernetDot1qTunnelHostPolicyModel,
 )
 
-
 WIRE_FIELDS = frozenset(
     {
-        "accessVlan", "adminState", "bandwidth", "bpduFilter", "bpduGuard", "cdp", "debounceLinkupTimer", "debounceTimer",
-        "description", "duplexMode", "errorDetectionAcl", "extraConfig", "fec", "inheritBandwidth", "linkType", "mtu",
-        "negotiateAuto", "netflow", "netflowMonitor", "netflowSampler", "orphanPort", "pfc", "portTypeEdgeTrunk", "qos",
-        "qosPolicy", "queuingPolicy", "speed", "stormControl", "stormControlAction", "stormControlBroadcastLevel",
-        "stormControlBroadcastLevelPps", "stormControlMulticastLevel", "stormControlMulticastLevelPps",
-        "stormControlUnicastLevel", "stormControlUnicastLevelPps",
+        "accessVlan",
+        "adminState",
+        "bandwidth",
+        "bpduFilter",
+        "bpduGuard",
+        "cdp",
+        "debounceLinkupTimer",
+        "debounceTimer",
+        "description",
+        "duplexMode",
+        "errorDetectionAcl",
+        "extraConfig",
+        "fec",
+        "inheritBandwidth",
+        "linkType",
+        "mtu",
+        "negotiateAuto",
+        "netflow",
+        "netflowMonitor",
+        "netflowSampler",
+        "orphanPort",
+        "pfc",
+        "portTypeEdgeTrunk",
+        "qos",
+        "qosPolicy",
+        "queuingPolicy",
+        "speed",
+        "stormControl",
+        "stormControlAction",
+        "stormControlBroadcastLevel",
+        "stormControlBroadcastLevelPps",
+        "stormControlMulticastLevel",
+        "stormControlMulticastLevelPps",
+        "stormControlUnicastLevel",
+        "stormControlUnicastLevelPps",
     }
 )
 
@@ -81,9 +109,7 @@ def test_ios_xe_and_wrong_mode_are_rejected() -> None:
             {**base, "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"access_vlan": 150}}}}
         )
     with pytest.raises(ValidationError):
-        EthernetDot1qTunnelHostInterfaceModel.from_config(
-            {**base, "config_data": {"mode": "trunk", "network_os": {"policy": {"access_vlan": 150}}}}
-        )
+        EthernetDot1qTunnelHostInterfaceModel.from_config({**base, "config_data": {"mode": "trunk", "network_os": {"policy": {"access_vlan": 150}}}})
 
 
 def test_identifier_only_delete_model_has_no_policy() -> None:
@@ -119,22 +145,16 @@ def test_nondefault_bpdu_filter_remains_in_reverse_diff() -> None:
 
 def test_storm_control_same_class_mutex_is_reused() -> None:
     with pytest.raises(ValidationError, match="broadcast"):
-        EthernetDot1qTunnelHostPolicyModel.from_config(
-            {"storm_control_broadcast_level": 1.0, "storm_control_broadcast_level_pps": 1000}
-        )
+        EthernetDot1qTunnelHostPolicyModel.from_config({"storm_control_broadcast_level": 1.0, "storm_control_broadcast_level_pps": 1000})
 
 
 def test_storm_control_units_are_exclusive_across_the_interface() -> None:
     with pytest.raises(ValidationError, match="across the interface"):
-        EthernetDot1qTunnelHostPolicyModel.from_config(
-            {"storm_control_broadcast_level": 10.0, "storm_control_multicast_level_pps": 1000}
-        )
+        EthernetDot1qTunnelHostPolicyModel.from_config({"storm_control_broadcast_level": 10.0, "storm_control_multicast_level_pps": 1000})
 
 
 def test_storm_control_zero_is_a_clearing_sentinel() -> None:
-    policy = EthernetDot1qTunnelHostPolicyModel.from_config(
-        {"storm_control_broadcast_level": 0.0, "storm_control_multicast_level_pps": 1000}
-    )
+    policy = EthernetDot1qTunnelHostPolicyModel.from_config({"storm_control_broadcast_level": 0.0, "storm_control_multicast_level_pps": 1000})
     assert policy.storm_control_multicast_level_pps == 1000
 
 
