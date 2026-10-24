@@ -124,6 +124,28 @@ class EthernetDot1qTunnelHostPolicyModel(StormControlMutexMixin, InterfacePolicy
             raise ValueError("storm-control percentage and PPS thresholds cannot be mixed across the interface")
         return self
 
+    def has_mixed_storm_units(self) -> bool:
+        """Detect a live ND echo with active percentage and PPS thresholds."""
+        percentages = (self.storm_control_broadcast_level, self.storm_control_multicast_level, self.storm_control_unicast_level)
+        pps = (self.storm_control_broadcast_level_pps, self.storm_control_multicast_level_pps, self.storm_control_unicast_level_pps)
+        return any(value not in (None, 0) for value in percentages) and any(value not in (None, 0) for value in pps)
+
+    def merge(self, other: NDBaseModel) -> NDBaseModel:
+        """Fail before assignment or a write when ND already holds unsafe units."""
+        if self.has_mixed_storm_units():
+            raise ValueError(
+                "ND returned both percentage and PPS storm-control thresholds on this dot1q host. "
+                "A merged full-policy update could replay that conflict. Use state: replaced with one consistent "
+                "threshold unit across the interface to correct it before merging other properties."
+            )
+        return super().merge(other)
+
+    def merge_would_change(self, other: NDBaseModel) -> bool:
+        """An explicit empty description clears a nonempty ND description."""
+        if "description" in other.model_fields_set and other.description == "" and self.description not in (None, ""):
+            return True
+        return super().merge_would_change(other)
+
 
 class EthernetDot1qTunnelHostNetworkOSModel(NDNestedModel):
     """NX-OS-only network-OS container for a dot1q tunnel host."""
@@ -157,6 +179,14 @@ class EthernetDot1qTunnelHostInterfaceModel(NDBaseModel):
         if self.config_data is None or self.config_data.network_os.policy is None:
             return None
         return self.config_data.network_os.policy.policy_type
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Treat empty and omitted descriptions as the same cleared state."""
+        data = super().to_diff_dict(**kwargs)
+        policy = ((data.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        if policy.get("description") == "":
+            policy.pop("description")
+        return data
 
     @field_validator("interface_name", mode="before")
     @classmethod

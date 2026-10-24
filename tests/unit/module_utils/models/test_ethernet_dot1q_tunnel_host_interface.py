@@ -167,6 +167,35 @@ def test_storm_control_mixed_nd_echo_can_be_read_but_not_replayed() -> None:
         EthernetDot1qTunnelHostPolicyModel.from_config(echoed.model_dump(exclude_none=True))
 
 
+def test_mixed_nd_echo_gives_actionable_merged_preflight_error() -> None:
+    echoed = EthernetDot1qTunnelHostPolicyModel.from_response(
+        {"policyType": "dot1qTunnelHost", "stormControlBroadcastLevel": 10.0, "stormControlMulticastLevelPps": 1000}
+    )
+    proposed = EthernetDot1qTunnelHostPolicyModel.from_config({"description": "unrelated edit"})
+    with pytest.raises(ValueError, match="Use state: replaced with one consistent threshold unit"):
+        echoed.merge(proposed)
+    assert echoed.description is None
+    assert echoed.storm_control_broadcast_level == 10.0
+    assert echoed.storm_control_multicast_level_pps == 1000
+
+
+def test_empty_description_clear_diff_is_idempotent_after_controller_omits_it() -> None:
+    identity = {"switch_ip": "192.0.2.11", "interface_name": "Ethernet1/40"}
+    proposed = EthernetDot1qTunnelHostInterfaceModel.from_config({**identity, "config_data": {"network_os": {"policy": {"description": ""}}}})
+    existing = EthernetDot1qTunnelHostInterfaceModel.from_response(
+        {
+            "switchIp": "192.0.2.11",
+            "interfaceName": "Ethernet1/40",
+            "interfaceType": "ethernet",
+            "configData": {"mode": "dot1qTunnel", "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "dot1qTunnelHost", "description": "old"}}},
+        }
+    )
+    assert existing.get_diff(proposed, exclude_unset=True) is False
+    assert proposed.to_payload()["configData"]["networkOS"]["policy"]["description"] == ""
+    existing.config_data.network_os.policy.description = None
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
 def test_grouped_argument_spec_is_nx_os_only() -> None:
     spec = EthernetDot1qTunnelHostInterfaceModel.get_argument_spec()
     options = spec["config"]["options"]

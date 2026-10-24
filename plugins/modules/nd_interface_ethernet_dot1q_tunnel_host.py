@@ -41,7 +41,9 @@ options:
         type: str
         required: true
       interface_names:
-        description: Physical Ethernet interface names in this group.
+        description:
+        - Physical Ethernet interface names in this group; a group must name at least one interface.
+        - Use an empty top-level O(config) list, not an empty group, to reset all dot1q hosts with O(state=overridden).
         type: list
         elements: str
         required: true
@@ -95,7 +97,9 @@ options:
                     description: Link debounce timer in milliseconds, 0 through 20000.
                     type: int
                   description:
-                    description: ASCII interface description, up to 254 characters.
+                    description:
+                    - ASCII interface description, up to 254 characters.
+                    - An explicit empty string clears an existing description; ND 4.3.1 requires the module to omit the field on retry.
                     type: str
                   duplex_mode:
                     description: Duplex mode; ND default is V(auto).
@@ -238,6 +242,35 @@ EXAMPLES = r"""
     state: deleted
     config_actions:
       deploy: true
+
+- name: Replace the named dot1q-tunnel host policy
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.0.2.11
+        interface_names: [Ethernet1/40]
+        config_data:
+          network_os:
+            policy:
+              access_vlan: 150
+              description: Replacement host policy
+    state: replaced
+    config_actions:
+      deploy: false
+
+- name: Keep one dot1q host and reset all others in the fabric
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.0.2.11
+        interface_names: [Ethernet1/40]
+        config_data:
+          network_os:
+            policy:
+              access_vlan: 150
+    state: overridden
+    config_actions:
+      deploy: false
 """
 
 RETURN = r"""
@@ -247,6 +280,11 @@ changed:
   returned: always
   type: bool
   sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
 before:
   description: Managed dot1q-tunnel host interfaces before the operation.
   returned: always
@@ -289,9 +327,7 @@ import logging
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import (
-    expand_ethernet_config,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_config
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
 )
@@ -302,6 +338,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceOrchestrator,
 )
+
+
+def expand_config(config_list: list[dict]) -> list[dict]:
+    """Reject accidental empty groups without changing other Ethernet families."""
+    for index, group in enumerate(config_list):
+        if isinstance(group, dict) and group.get("interface_names") == []:
+            raise ValueError(
+                f"interface_names for dot1q config item {index} must name at least one interface. "
+                "Use top-level config: [] with state: overridden for an intentional fabric-wide reset."
+            )
+    return expand_ethernet_config(config_list)
 
 
 def main() -> None:
@@ -316,7 +363,7 @@ def main() -> None:
     module_log = logging.getLogger("nd.nd_interface_ethernet_dot1q_tunnel_host")
 
     try:
-        module.params["config"] = expand_ethernet_config(module.params["config"])
+        module.params["config"] = expand_config(module.params["config"])
     except ValueError as exc:
         module.fail_json(msg=f"Configuration error: {exc}")
 

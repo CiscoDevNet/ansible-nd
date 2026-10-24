@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
@@ -16,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     classify_member_policy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
 class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
@@ -45,3 +48,46 @@ class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
                 "the dot1q-tunnel host module does not manage port-channel members."
             )
         return False
+
+    @staticmethod
+    def _without_empty_description(data: dict | None) -> dict | None:
+        """Prepare a 4.3.1 retry only for explicit empty dot1q descriptions."""
+        if not isinstance(data, dict):
+            return None
+        retry = deepcopy(data)
+        interfaces = retry.get("interfaces")
+        rows = interfaces if isinstance(interfaces, list) else [retry]
+        found = False
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            policy = ((row.get("configData") or {}).get("networkOS") or {}).get("policy")
+            if isinstance(policy, dict) and policy.get("policyType") == "dot1qTunnelHost" and policy.get("description") == "":
+                policy.pop("description")
+                found = True
+        return retry if found else None
+
+    def _request(
+        self,
+        path: str,
+        verb: HttpVerbEnum,
+        data: dict | None = None,
+        not_found_ok: bool = False,
+        operation_type: OperationType = OperationType.QUERY,
+    ) -> ResponseType:
+        """Retry only ND's exact empty-description 400 with the field omitted.
+
+        The first request preserves 4.2.1's explicit-empty clearing behavior.
+        ND 4.3.1 rejects that body but clears an omitted description on PUT.
+        No timeout, transport error, or partial 207 is retried.
+        """
+        retry = self._without_empty_description(data) if verb in (HttpVerbEnum.POST, HttpVerbEnum.PUT) else None
+        if retry is None:
+            return super()._request(path, verb, data, not_found_ok, operation_type)
+        response_count = self.rest_send.response_count
+        try:
+            return super()._request(path, verb, data, not_found_ok, operation_type)
+        except Exception:
+            if not self._rejected_empty_description(response_count):
+                raise
+            return super()._request(path, verb, retry, not_found_ok, operation_type)
