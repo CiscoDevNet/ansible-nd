@@ -694,6 +694,29 @@ def test_omitted_state_is_not_injected_into_target_module_args(action_plugin):
     assert all("state" not in invocation.kwargs["module_args"] for invocation in target_calls)
 
 
+def test_null_state_is_treated_as_omitted_and_not_injected(action_plugin):
+    action_plugin._task.args["state"] = None
+    action_plugin._task.args["idempotency"] = False
+    action_plugin._task.args["expected"] = {
+        "check_mode": {"changed": True, "failed": False},
+        "apply": {"changed": False, "failed": False},
+    }
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    run_plugin(action_plugin)
+
+    target_calls = [
+        invocation
+        for invocation in action_plugin._execute_module.call_args_list
+        if invocation.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    ]
+    assert target_calls
+    assert all("state" not in invocation.kwargs["module_args"] for invocation in target_calls)
+
+
 def test_idempotency_retries_until_expected_result(action_plugin):
     action_plugin._task.args["idempotency_retries"] = 3
     action_plugin._task.args["idempotency_delay"] = 10
