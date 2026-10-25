@@ -1,0 +1,214 @@
+---
+- name: Run nd_manage_prefix_list validation scenarios
+  block:
+    - name: "VALIDATION SETUP: Remove invalid-test prefix-list names"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-V4-CIDR
+          - ip_version: ipv6
+            name: PL-ND4X-INVALID-V6-CIDR
+          - ip_version: ipv4
+            name: PL-ND4X-WRONG-FAMILY
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-V4-MASK
+          - ip_version: ipv6
+            name: PL-ND4X-INVALID-V6-MASK
+          - ip_version: ipv4
+            name: PL-ND4X-DUPLICATE-SEQ
+          - ip_version: ipv4
+            name: PL-ND4X-CONFLICTING-LENGTHS
+          - ip_version: ipv4
+            name: PL-ND4X-REVERSED-BOUNDS
+          - ip_version: ipv4
+            name: PL-ND4X-V4-LENGTH-BOUND
+          - ip_version: ipv6
+            name: PL-ND4X-V6-LENGTH-BOUND
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-MIN
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-MAX
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-SEQ-LOW
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-SEQ-HIGH
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-ENTRIES
+          - ip_version: ipv4
+            name: PL-ND4X-DESCRIPTION-LONG
+          - ip_version: ipv4
+            name: PL-ND4X-DESCRIPTION-NONASCII
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-ACTION
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-IP-VERSION
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-SEQUENCE
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-PREFIX
+          - ip_version: ipv4
+            name: PL-ND4X-DEFAULT-STATE
+        state: deleted
+      failed_when: false
+
+    - name: "VALIDATION SETUP VERIFY: Require validation fixtures to be absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+      vars:
+        nd4x_prefix_list_cleanup_ipv4_names: "{{ nd4x_prefix_list_validation_ipv4_names }}"
+        nd4x_prefix_list_cleanup_ipv6_names: "{{ nd4x_prefix_list_validation_ipv6_names }}"
+
+    - name: "VALIDATION: Reject invalid prefix-list configurations"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        state: merged
+        check_mode: true
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config: "{{ item.config }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: true
+          apply:
+            changed: false
+            failed: true
+      loop: "{{ nd4x_prefix_list_validation_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: nd4x_validation_results
+
+    - name: "VALIDATION: Verify every invalid configuration failed in both phases"
+      ansible.builtin.assert:
+        that:
+          - item.check_mode_result.failed | bool
+          # Failed Ansible module results may omit ``changed`` entirely.
+          - (item.check_mode_result.get('changed', false) | bool) == false
+          - item.first_run_result.failed | bool
+          - (item.first_run_result.get('changed', false) | bool) == false
+          - item.idempotency_attempts == 0
+          - item.item.expected_error in (item.check_mode_result.msg | default(''))
+          - item.item.expected_error in (item.first_run_result.msg | default(''))
+      loop: "{{ nd4x_validation_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: "VALIDATION: Verify rejected configurations created no resources"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+      vars:
+        nd4x_prefix_list_cleanup_ipv4_names: "{{ nd4x_prefix_list_validation_ipv4_names }}"
+        nd4x_prefix_list_cleanup_ipv6_names: "{{ nd4x_prefix_list_validation_ipv6_names }}"
+
+    - name: "VALIDATION: Verify omitted state defaults to merged through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_prefix_list
+        # Deliberately omit state so the target module's default is exercised.
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-DEFAULT-STATE
+            entries:
+              - sequence_number: 10
+                prefix: "198.51.100.0/24"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_prefix_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify omitted-state resource uses default permit
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/ipv4PrefixLists/PL-ND4X-DEFAULT-STATE
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: PL-ND4X-DEFAULT-STATE
+              - jsonpath: "$.current.entries[0].action"
+                equals: permit
+              - jsonpath: "$.current.entries[0].prefix"
+                equals: 198.51.100.0/24
+      register: nd4x_default_state
+
+    - name: "VALIDATION: Assert omitted state and default permit action"
+      ansible.builtin.assert:
+        that:
+          - nd4x_default_state.check_mode_result.changed | bool
+          - nd4x_default_state.first_run_result.changed | bool
+          - nd4x_default_state.second_run_result.changed == false
+          - >-
+            (
+              nd4x_default_state.first_run_result.after
+              | selectattr('name', 'equalto', 'PL-ND4X-DEFAULT-STATE')
+              | first
+            ).entries[0].action == 'permit'
+  always:
+    - name: "VALIDATION CLEANUP: Remove invalid-test prefix-list names"
+      cisco.nd.nd_manage_prefix_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-V4-CIDR
+          - ip_version: ipv6
+            name: PL-ND4X-INVALID-V6-CIDR
+          - ip_version: ipv4
+            name: PL-ND4X-WRONG-FAMILY
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-V4-MASK
+          - ip_version: ipv6
+            name: PL-ND4X-INVALID-V6-MASK
+          - ip_version: ipv4
+            name: PL-ND4X-DUPLICATE-SEQ
+          - ip_version: ipv4
+            name: PL-ND4X-CONFLICTING-LENGTHS
+          - ip_version: ipv4
+            name: PL-ND4X-REVERSED-BOUNDS
+          - ip_version: ipv4
+            name: PL-ND4X-V4-LENGTH-BOUND
+          - ip_version: ipv6
+            name: PL-ND4X-V6-LENGTH-BOUND
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-MIN
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-MAX
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-SEQ-LOW
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-SEQ-HIGH
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-ENTRIES
+          - ip_version: ipv4
+            name: PL-ND4X-DESCRIPTION-LONG
+          - ip_version: ipv4
+            name: PL-ND4X-DESCRIPTION-NONASCII
+          - ip_version: ipv4
+            name: PL-ND4X-INVALID-ACTION
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-IP-VERSION
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-SEQUENCE
+          - ip_version: ipv4
+            name: PL-ND4X-MISSING-PREFIX
+          - ip_version: ipv4
+            name: PL-ND4X-DEFAULT-STATE
+        state: deleted
+      failed_when: false
+
+    - name: "VALIDATION CLEANUP VERIFY: Verify invalid-test prefix-list names are absent"
+      ansible.builtin.include_tasks: nd4x_demo_prefix_list_cleanup_verify.yaml
+      vars:
+        nd4x_prefix_list_cleanup_ipv4_names: "{{ nd4x_prefix_list_validation_ipv4_names }}"
+        nd4x_prefix_list_cleanup_ipv6_names: "{{ nd4x_prefix_list_validation_ipv6_names }}"

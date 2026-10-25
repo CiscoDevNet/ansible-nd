@@ -10,14 +10,27 @@
 #
 # Override the following in your inventory or extra-vars to match a real ND 4.2 testbed:
 #
-#   nd_test_fabric_name   (str, default: "SITE1")
+#   nd_test_fabric_name   (str, required)
 #     Name of the NDFC fabric in which to create and delete prefix lists.
 #
 # Prefix list names used across tests (PL-IPV4-BORDERS, PL-IPV4-DATACENTER,
 # PL-IPV6-DATACENTER) are reserved for this test suite and cleaned up by setup.yaml.
 # Do NOT re-use these names in other concurrent test runs.
 
-test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+test_fabric_name: "{{ nd_test_fabric_name }}"
+
+# ND 4.x harness settings. The overridden workflow can delete every prefix
+# list in the fabric, so it is opt-in and only permits the names reserved by
+# this target.
+nd4x_prefix_list_destructive_tests_enabled: >-
+  {{ nd_prefix_list_destructive_tests_enabled | default(false) | bool }}
+
+nd4x_prefix_list_reserved_names_by_family:
+  ipv4:
+    - PL-IPV4-BORDERS
+    - PL-IPV4-DATACENTER
+  ipv6:
+    - PL-IPV6-DATACENTER
 
 # ---------------------------------------------------------------------------
 # IPv4 prefix list configs
@@ -106,3 +119,288 @@ prefix_list_ipv6_datacenter_updated:
     - sequence_number: 30
       action: permit
       prefix: "fc00::/7"
+
+# ---------------------------------------------------------------------------
+# ND 4.x extended harness validation cases
+# ---------------------------------------------------------------------------
+
+nd4x_prefix_list_invalid_default_long_name: "{{ 'N' * 64 }}"
+nd4x_prefix_list_invalid_tenant_long_name: "{{ 'T' * 64 }}"
+nd4x_prefix_list_invalid_qualified_tenant: "{{ 'T' * 63 }}"
+nd4x_prefix_list_invalid_qualified_name: "{{ 'N' * 52 }}"
+nd4x_prefix_list_invalid_description: "{{ 'D' * 91 }}"
+
+nd4x_prefix_list_validation_ipv4_names:
+  - PL-ND4X-INVALID-V4-CIDR
+  - PL-ND4X-WRONG-FAMILY
+  - PL-ND4X-INVALID-V4-MASK
+  - PL-ND4X-DUPLICATE-SEQ
+  - PL-ND4X-CONFLICTING-LENGTHS
+  - PL-ND4X-REVERSED-BOUNDS
+  - PL-ND4X-V4-LENGTH-BOUND
+  - PL-ND4X-INVALID-MIN
+  - PL-ND4X-INVALID-MAX
+  - PL-ND4X-INVALID-SEQ-LOW
+  - PL-ND4X-INVALID-SEQ-HIGH
+  - PL-ND4X-MISSING-ENTRIES
+  - PL.ND4X.INVALID.NAME
+  - PL-ND4X-INVALID-TENANT
+  - PL-ND4X-INVALID-TENANT-LENGTH
+  - "{{ nd4x_prefix_list_invalid_default_long_name }}"
+  - "{{ nd4x_prefix_list_invalid_qualified_tenant ~ '~' ~ nd4x_prefix_list_invalid_qualified_name }}"
+  - PL-ND4X-DESCRIPTION-LONG
+  - PL-ND4X-DESCRIPTION-NONASCII
+  - PL-ND4X-INVALID-ACTION
+  - PL-ND4X-MISSING-IP-VERSION
+  - PL-ND4X-MISSING-SEQUENCE
+  - PL-ND4X-MISSING-PREFIX
+  - PL-ND4X-DEFAULT-STATE
+
+nd4x_prefix_list_validation_ipv6_names:
+  - PL-ND4X-INVALID-V6-CIDR
+  - PL-ND4X-INVALID-V6-MASK
+  - PL-ND4X-V6-LENGTH-BOUND
+
+nd4x_prefix_list_validation_cases:
+  - name: invalid IPv4 CIDR
+    expected_error: not a valid IP network
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-V4-CIDR
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "999.999.999.999/24"
+  - name: invalid IPv6 CIDR
+    expected_error: not a valid IP network
+    config:
+      - ip_version: ipv6
+        name: PL-ND4X-INVALID-V6-CIDR
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "gggg::/32"
+  - name: IPv6 prefix under IPv4 list
+    expected_error: must be an IPv4 CIDR
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-WRONG-FAMILY
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+  - name: invalid IPv4 mask
+    expected_error: must be an IPv4 address
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-V4-MASK
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "192.0.2.0/24"
+            mask: "ffff:ffff::"
+  - name: invalid IPv6 mask
+    expected_error: must be an IPv6 address
+    config:
+      - ip_version: ipv6
+        name: PL-ND4X-INVALID-V6-MASK
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+            mask: "255.255.255.0"
+  - name: duplicate sequence numbers
+    expected_error: duplicated
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-DUPLICATE-SEQ
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+          - sequence_number: 10
+            action: deny
+            prefix: "192.0.2.0/24"
+  - name: exact length with minimum length
+    expected_error: cannot define exactLength together
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-CONFLICTING-LENGTHS
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+            exact_length: 24
+            min_prefix_length: 16
+  - name: minimum length greater than maximum length
+    expected_error: cannot be greater
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-REVERSED-BOUNDS
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+            min_prefix_length: 30
+            max_prefix_length: 24
+  - name: IPv4 exact length out of range
+    expected_error: out of range
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-V4-LENGTH-BOUND
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+            exact_length: 33
+  - name: IPv6 exact length out of range
+    expected_error: out of range
+    config:
+      - ip_version: ipv6
+        name: PL-ND4X-V6-LENGTH-BOUND
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+            exact_length: 129
+  - name: minimum length below valid range
+    expected_error: out of range
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-MIN
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+            min_prefix_length: 0
+  - name: maximum length above valid range
+    expected_error: out of range
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-MAX
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+            max_prefix_length: 33
+  - name: sequence number below valid range
+    expected_error: greater than or equal to 1
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-SEQ-LOW
+        entries:
+          - sequence_number: 0
+            action: permit
+            prefix: "10.0.0.0/8"
+  - name: sequence number above valid range
+    expected_error: less than or equal to 4294967294
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-SEQ-HIGH
+        entries:
+          - sequence_number: 4294967295
+            action: permit
+            prefix: "10.0.0.0/8"
+  - name: missing entries for merged state
+    expected_error: entries is required
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-MISSING-ENTRIES
+  - name: invalid prefix-list name characters
+    expected_error: Prefix list name
+    config:
+      - ip_version: ipv4
+        name: PL.ND4X.INVALID.NAME
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: invalid tenant name characters
+    expected_error: Tenant name
+    config:
+      - ip_version: ipv4
+        tenant_name: tenant.name
+        name: PL-ND4X-INVALID-TENANT
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: tenant name exceeds 63 characters
+    expected_error: tenant_name
+    config:
+      - ip_version: ipv4
+        tenant_name: "{{ nd4x_prefix_list_invalid_tenant_long_name }}"
+        name: PL-ND4X-INVALID-TENANT-LENGTH
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: default-tenant name exceeds 63 characters
+    expected_error: 63 characters or fewer
+    config:
+      - ip_version: ipv4
+        name: "{{ nd4x_prefix_list_invalid_default_long_name }}"
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: tenant-qualified name exceeds 115 characters
+    expected_error: at most 115 characters
+    config:
+      - ip_version: ipv4
+        tenant_name: "{{ nd4x_prefix_list_invalid_qualified_tenant }}"
+        name: "{{ nd4x_prefix_list_invalid_qualified_name }}"
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: description exceeds 90 characters
+    expected_error: 90 characters
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-DESCRIPTION-LONG
+        description: "{{ nd4x_prefix_list_invalid_description }}"
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: description contains non-ASCII content
+    expected_error: description must contain only ASCII characters
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-DESCRIPTION-NONASCII
+        description: "café"
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: invalid prefix-list action
+    expected_error: permit
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-INVALID-ACTION
+        entries:
+          - sequence_number: 10
+            action: log
+            prefix: "198.51.100.0/24"
+  - name: missing ip_version
+    expected_error: "missing required arguments: ip_version found in config"
+    config:
+      - name: PL-ND4X-MISSING-IP-VERSION
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: missing name
+    expected_error: "missing required arguments: name found in config"
+    config:
+      - ip_version: ipv4
+        entries:
+          - sequence_number: 10
+            prefix: "198.51.100.0/24"
+  - name: missing sequence number
+    expected_error: "missing required arguments: sequence_number found in config -> entries"
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-MISSING-SEQUENCE
+        entries:
+          - prefix: "198.51.100.0/24"
+  - name: missing prefix
+    expected_error: "missing required arguments: prefix found in config"
+    config:
+      - ip_version: ipv4
+        name: PL-ND4X-MISSING-PREFIX
+        entries:
+          - sequence_number: 10

@@ -9,3 +9,17 @@ fabric_name: <FABRIC_NAME>
 switch_serial_1: <SWITCH_SERIAL_1>
 switch_serial_2: <SWITCH_SERIAL_2>
 switch_serial_3: <SWITCH_SERIAL_3>
+
+# Required existing fabric used by the nd_manage_prefix_list harness.
+nd_test_fabric_name: <PREFIX_LIST_TEST_FABRIC>
+
+# Optional: two existing tenants for tenant-scoped feature coverage.
+nd_test_tenant_name_a: <TENANT_NAME_A>
+nd_test_tenant_name_b: <TENANT_NAME_B>
+
+# Optional: existing cluster for cluster-routing feature coverage.
+nd_test_cluster_name: <CLUSTER_NAME>
+
+# Keep false unless running the overridden scenario on a dedicated
+# destructive-test fabric.
+nd_prefix_list_destructive_tests_enabled: false
