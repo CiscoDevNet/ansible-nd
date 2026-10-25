@@ -151,7 +151,9 @@
         - never
         - nd4x_demo
         - nd4x_demo_overridden
-      when: nd4x_supported | default(false) | bool
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd4x_prefix_list_destructive_tests_enabled | default(false) | bool
 
     - name: Run ND 4.x extended feature-surface tests using the harness
       ansible.builtin.include_tasks:
