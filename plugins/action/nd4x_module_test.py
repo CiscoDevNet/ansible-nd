@@ -149,7 +149,10 @@ class ActionModule(ActionBase):
         if not isinstance(module_name, str) or not module_name.strip():
             raise AnsibleActionFail("Argument module must be a non-empty string")
 
-        if "state" in args and (not isinstance(state, str) or not state.strip()):
+        # Ansible can materialize an omitted optional module argument as None.
+        # Treat that the same as an absent state so the target module's own
+        # default remains effective.
+        if state is not None and (not isinstance(state, str) or not state.strip()):
             raise AnsibleActionFail("Argument state must be a non-empty string when provided")
 
         for name in ("common_args", "module_args", "expected"):
