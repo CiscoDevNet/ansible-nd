@@ -1,4 +1,15 @@
 ---
+- name: "ND4X PREFLIGHT: Require an explicit test fabric"
+  ansible.builtin.assert:
+    that:
+      - nd_test_fabric_name is defined
+      - nd_test_fabric_name | string | trim | length > 0
+    fail_msg: >-
+      Define nd_test_fabric_name with an existing dedicated Nexus Dashboard
+      fabric before running the nd_manage_prefix_list harness.
+  tags:
+    - always
+
 - name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
   cisco.nd.nd_version:
     output_level: "{{ nd_info.output_level }}"

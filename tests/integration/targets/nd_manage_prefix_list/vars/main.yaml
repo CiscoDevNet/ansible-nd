@@ -10,14 +10,14 @@
 #
 # Override the following in your inventory or extra-vars to match a real ND 4.2 testbed:
 #
-#   nd_test_fabric_name   (str, default: "SITE1")
+#   nd_test_fabric_name   (str, required)
 #     Name of the NDFC fabric in which to create and delete prefix lists.
 #
 # Prefix list names used across tests (PL-IPV4-BORDERS, PL-IPV4-DATACENTER,
 # PL-IPV6-DATACENTER) are reserved for this test suite and cleaned up by setup.yaml.
 # Do NOT re-use these names in other concurrent test runs.
 
-test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+test_fabric_name: "{{ nd_test_fabric_name }}"
 
 # ND 4.x harness settings. The overridden workflow can delete every prefix
 # list in the fabric, so it is opt-in and only permits the names reserved by
@@ -324,7 +324,7 @@ nd4x_prefix_list_validation_cases:
           - sequence_number: 10
             prefix: "198.51.100.0/24"
   - name: tenant name exceeds 63 characters
-    expected_error: tenantName
+    expected_error: tenant_name
     config:
       - ip_version: ipv4
         tenant_name: "{{ nd4x_prefix_list_invalid_tenant_long_name }}"
@@ -341,7 +341,7 @@ nd4x_prefix_list_validation_cases:
           - sequence_number: 10
             prefix: "198.51.100.0/24"
   - name: tenant-qualified name exceeds 115 characters
-    expected_error: 115 characters or fewer
+    expected_error: at most 115 characters
     config:
       - ip_version: ipv4
         tenant_name: "{{ nd4x_prefix_list_invalid_qualified_tenant }}"
@@ -377,7 +377,7 @@ nd4x_prefix_list_validation_cases:
             action: log
             prefix: "198.51.100.0/24"
   - name: missing ip_version
-    expected_error: ipVersion
+    expected_error: ip_version
     config:
       - name: PL-ND4X-MISSING-IP-VERSION
         entries:
@@ -391,7 +391,7 @@ nd4x_prefix_list_validation_cases:
           - sequence_number: 10
             prefix: "198.51.100.0/24"
   - name: missing sequence number
-    expected_error: sequenceNumber
+    expected_error: sequence_number
     config:
       - ip_version: ipv4
         name: PL-ND4X-MISSING-SEQUENCE

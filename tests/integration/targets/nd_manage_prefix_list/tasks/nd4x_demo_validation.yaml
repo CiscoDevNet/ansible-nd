@@ -85,9 +85,10 @@
       ansible.builtin.assert:
         that:
           - item.check_mode_result.failed | bool
-          - item.check_mode_result.changed == false
+          # Failed Ansible module results may omit ``changed`` entirely.
+          - (item.check_mode_result.get('changed', false) | bool) == false
           - item.first_run_result.failed | bool
-          - item.first_run_result.changed == false
+          - (item.first_run_result.get('changed', false) | bool) == false
           - item.idempotency_attempts == 0
           - item.item.expected_error in (item.check_mode_result.msg | default(''))
           - item.item.expected_error in (item.first_run_result.msg | default(''))

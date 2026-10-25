@@ -4,8 +4,40 @@ This document maps every scenario in the original integration suite to the
 ND 4.x harness replacement. The legacy files remain enabled while parity is
 validated against the same controller and fabric.
 
-Live testing status: manual harness execution is in progress. The test results
-will be added to this document soon.
+Live testing status: ND 4.x harness preflight completed successfully on
+2026-10-22 against the local live inventory :
+`ok=6`, `changed=0`, `failed=0`, `skipped=2`. The merged scenario completed
+successfully: `ok=52`, `changed=6`, `failed=0`, `skipped=10`. The replaced
+scenario also completed successfully: `ok=48`, `changed=5`, `failed=0`,
+`skipped=10`. The deleted scenario completed successfully: `ok=52`,
+`changed=6`, `failed=0`, `skipped=10`.
+The validation scenario also completed successfully on 2026-10-24:
+`ok=55`, `changed=2`, `failed=0`, `skipped=14`.
+The overridden-only scenario completed successfully on 2026-10-24:
+`ok=62`, `changed=4`, `failed=0`, `skipped=14`. It was run with a dedicated
+temporary inventory containing `nd_prefix_list_destructive_tests_enabled=true`
+and `--allow-destructive`.
+
+The extended scenario is blocked during tenant-scoped IPv6 replacement. The
+tenant-scoped resource was created successfully and was visible through the
+qualified GET endpoint. Both the direct module `state=replaced` operation and
+an independent raw REST `PUT` received HTTP 500 from ND:
+
+`Prefix list not found for key: CompositeKey
+[ANSIBLE_TENANT_B~PL-ND4X-TENANT-SHARED, 1949020, ipv6]`
+
+The raw REST endpoint was
+`/api/v1/manage/fabrics/VXLAN_Fabric/ipv6PrefixLists/ANSIBLE_TENANT_B~PL-ND4X-TENANT-SHARED`
+and the ND trace ID was `b6105287560041cdbd04bbccd1fa56d7`. The resource was
+successfully removed afterward with `state=deleted`. This is an ND
+controller/API or API-contract blocker, not a harness sequencing failure.
+
+Core state, validation, and overridden live testing is complete. Extended
+feature-surface coverage remains incomplete because the tenant-scoped IPv6
+replacement fails with an ND HTTP 500. Tenant replacement verification,
+tenant-scoped deletion, and conditional cluster create, replacement, deletion,
+and cleanup are not proven by that run. The overridden scenario has a
+successful isolated live result recorded above.
 
 ## Scenario mapping
 
@@ -120,7 +152,7 @@ Core replacement scenarios:
 ```bash
 ansible-test network-integration nd_manage_prefix_list \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo_preflight,nd4x_demo_merged,nd4x_demo_replaced,nd4x_demo_deleted -vv
+  --tags nd4x_demo_merged,nd4x_demo_replaced,nd4x_demo_deleted -vv
 ```
 
 The overridden replacement requires a dedicated fabric, the inventory
@@ -133,7 +165,7 @@ nd_prefix_list_destructive_tests_enabled=true
 ```bash
 ansible-test network-integration nd_manage_prefix_list \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo_overridden,nd4x_demo_preflight \
+  --tags nd4x_demo_overridden \
   --allow-destructive -vv
 ```
 
@@ -143,11 +175,11 @@ scenario-local cleanup and can be selected with:
 ```bash
 ansible-test network-integration nd_manage_prefix_list \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo,nd4x_demo_preflight,nd4x_demo_extended -vv
+  --tags nd4x_demo_extended -vv
 
 ansible-test network-integration nd_manage_prefix_list \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo,nd4x_demo_preflight,nd4x_demo_validation -vv
+  --tags nd4x_demo_validation -vv
 ```
 
 Do not retire `setup.yaml`, `merged.yaml`, `replaced.yaml`,

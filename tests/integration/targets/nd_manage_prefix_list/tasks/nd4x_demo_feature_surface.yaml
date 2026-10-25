@@ -475,12 +475,12 @@
             feature_tenants.first_run_result.after
             | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
             | selectattr('tenant_name', 'equalto', nd_test_tenant_name_a)
-            | list | length == 1
+            | list | length == 2
           - >-
             feature_tenants.first_run_result.after
             | selectattr('name', 'equalto', 'PL-ND4X-TENANT-SHARED')
             | selectattr('tenant_name', 'equalto', nd_test_tenant_name_b)
-            | list | length == 1
+            | list | length == 2
           - >-
             (
               feature_tenants.first_run_result.after
