@@ -11,8 +11,8 @@ successfully: `ok=52`, `changed=6`, `failed=0`, `skipped=10`. The replaced
 scenario also completed successfully: `ok=48`, `changed=5`, `failed=0`,
 `skipped=10`. The deleted scenario completed successfully: `ok=52`,
 `changed=6`, `failed=0`, `skipped=10`.
-The validation scenario also completed successfully on 2026-10-24:
-`ok=55`, `changed=2`, `failed=0`, `skipped=14`.
+The validation scenario also completed successfully on 2026-10-25:
+`ok=56`, `changed=2`, `failed=0`, `skipped=14`.
 The overridden-only scenario completed successfully on 2026-10-24:
 `ok=62`, `changed=4`, `failed=0`, `skipped=14`. It was run with a dedicated
 temporary inventory containing `nd_prefix_list_destructive_tests_enabled=true`
@@ -27,7 +27,7 @@ an independent raw REST `PUT` received HTTP 500 from ND:
 [ANSIBLE_TENANT_B~PL-ND4X-TENANT-SHARED, 1949020, ipv6]`
 
 The raw REST endpoint was
-`/api/v1/manage/fabrics/VXLAN_Fabric/ipv6PrefixLists/ANSIBLE_TENANT_B~PL-ND4X-TENANT-SHARED`
+`/api/v1/manage/fabrics/[Fabric_name]/ipv6PrefixLists/ANSIBLE_TENANT_B~PL-ND4X-TENANT-SHARED`
 and the ND trace ID was `b6105287560041cdbd04bbccd1fa56d7`. The resource was
 successfully removed afterward with `state=deleted`. This is an ND
 controller/API or API-contract blocker, not a harness sequencing failure.

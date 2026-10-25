@@ -377,28 +377,28 @@ nd4x_prefix_list_validation_cases:
             action: log
             prefix: "198.51.100.0/24"
   - name: missing ip_version
-    expected_error: ip_version
+    expected_error: "missing required arguments: ip_version found in config"
     config:
       - name: PL-ND4X-MISSING-IP-VERSION
         entries:
           - sequence_number: 10
             prefix: "198.51.100.0/24"
   - name: missing name
-    expected_error: name
+    expected_error: "missing required arguments: name found in config"
     config:
       - ip_version: ipv4
         entries:
           - sequence_number: 10
             prefix: "198.51.100.0/24"
   - name: missing sequence number
-    expected_error: sequence_number
+    expected_error: "missing required arguments: sequence_number found in config -> entries"
     config:
       - ip_version: ipv4
         name: PL-ND4X-MISSING-SEQUENCE
         entries:
           - prefix: "198.51.100.0/24"
   - name: missing prefix
-    expected_error: prefix
+    expected_error: "missing required arguments: prefix found in config"
     config:
       - ip_version: ipv4
         name: PL-ND4X-MISSING-PREFIX
