@@ -1,6 +1,7 @@
 ---
+
 - name: Refresh fabric ownership before broad override
-  ansible.builtin.include_tasks: inventory.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/inventory.yaml"
 
 - name: Refuse broad override if an unowned association appeared
   ansible.builtin.assert:

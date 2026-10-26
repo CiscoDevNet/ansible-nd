@@ -1,47 +1,48 @@
 ---
+
 - name: Exercise pre-write validation failures
-  ansible.builtin.include_tasks: negative_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/negative_case.yaml"
   loop:
     - name: duplicate exact switch IDs
       state: replaced
       config: "{{ [ss_both[0], ss_both[0]] }}"
-      error: "(?i)duplicate"
+      error: (?i)duplicate
     - name: missing switch ID
       state: replaced
       config:
         - integration_name: "{{ nd_test_smart_switches_integration_name }}"
-      error: "switch_id"
+      error: switch_id
     - name: missing integration name
       state: replaced
       config: "{{ ss_delete_both[:1] }}"
-      error: "integration_name"
+      error: integration_name
     - name: proven absent inventory selector
       state: replaced
       config:
         - switch_id: "{{ ss_absent_id }}"
           integration_name: "{{ nd_test_smart_switches_integration_name }}"
-      error: "(?i)absent"
+      error: (?i)absent
     - name: conflicting supplied hostname
       state: replaced
       config:
         - switch_id: "{{ ss_a }}"
           switch_name: "{{ ss_fixture_inventory[ss_a].switch_name ~ '-deliberately-conflicting' }}"
           integration_name: "{{ nd_test_smart_switches_integration_name }}"
-      error: "(?i)conflict"
+      error: (?i)conflict
     - name: unsupported merged state
       state: merged
       config: "{{ ss_both }}"
-      error: "(?i)(state|supported)"
+      error: (?i)(state|supported)
     - name: unsupported gathered state
       state: gathered
       config: "{{ ss_both }}"
-      error: "(?i)(state|supported)"
+      error: (?i)(state|supported)
   loop_control:
     loop_var: ss_negative
     label: "{{ ss_negative.name }}"
 
 - name: Exercise optional verified non-Smart rejection
-  ansible.builtin.include_tasks: negative_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/negative_case.yaml"
   vars:
     ss_negative:
       name: verified non-Smart inventory selector
@@ -49,5 +50,5 @@
       config:
         - switch_id: "{{ nd_test_smart_switches_non_smart_id }}"
           integration_name: "{{ nd_test_smart_switches_integration_name }}"
-      error: "(?i)(not Smart|not.*capable)"
+      error: (?i)(not Smart|not.*capable)
   when: nd_test_smart_switches_non_smart_id | length > 0

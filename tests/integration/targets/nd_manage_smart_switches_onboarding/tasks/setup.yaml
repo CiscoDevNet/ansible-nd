@@ -1,6 +1,7 @@
 ---
+
 - name: Read complete inventory before any write
-  ansible.builtin.include_tasks: inventory.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/inventory.yaml"
 
 - name: Require an entirely unassociated fabric
   ansible.builtin.assert:
@@ -31,7 +32,7 @@
         integration_name: "{{ nd_test_smart_switches_integration_name }}"
       - switch_id: "{{ nd_test_smart_switches_switch_ids[1] }}"
         integration_name: "{{ nd_test_smart_switches_integration_name }}"
-    ss_absent_id: "__ansible_smart_switch_absent__"
+    ss_absent_id: __ansible_smart_switch_absent__
     ss_fixture_inventory: "{{ ss_inventory }}"
 
 - name: Prove negative inventory selector absent
@@ -54,7 +55,5 @@
       - nd_test_smart_switches_rejection_integration_name is string
       - nd_test_smart_switches_rejection_integration_name | trim | length > 0
       - nd_test_smart_switches_rejection_integration_name != nd_test_smart_switches_integration_name
-    fail_msg: >-
-      Confirm that this integration fixture produces per-resource failureResults
-      with no effect for both selected switches on this controller.
+    fail_msg: Confirm that this integration fixture produces per-resource failureResults with no effect for both selected switches on this controller.
   when: nd_test_smart_switches_controller_failures | bool

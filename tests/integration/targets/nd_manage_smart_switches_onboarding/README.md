@@ -43,6 +43,36 @@ variables with the `nd_test_smart_switches_` prefix; mutations are never retried
 Pagination similarly uses `page_size` and `max_pages`; increase bounds for a
 larger isolated fabric.
 
+The task entrypoint runs validation negatives, `replaced.yaml`, `deleted.yaml`,
+`overridden.yaml`, then optional controller-failure cases. Deletion scenarios live
+in `deleted.yaml`; each state section labels its fixture preparation explicitly.
+The suite is ordered and the state files are not standalone entrypoints.
+
+Reusable execution, result assertions, inventory reads and polling live under
+`tasks/helpers/`. The small case runner checks ownership before every real
+override. Each scenario supplies one include-local `ss_case` mapping:
+
+```yaml
+ss_case:
+  name: Description of the scenario
+  state: replaced
+  config: "{{ ss_both }}"
+  check_mode: false          # Optional; defaults to false.
+  expect:
+    changed: true
+    failed: false            # Optional; defaults to false.
+    before_ids: []
+    after_ids: "{{ [ss_a, ss_b] }}"
+    created: "{{ [ss_a, ss_b] }}"
+    deleted: []              # Optional; defaults to [].
+    rejected: []             # Optional; defaults to [].
+```
+
+`created` also defaults to an empty list. Case inputs are not accumulated as
+host facts. Inventory processing validates each page before accumulating its
+rows, then builds the normalized index once per complete snapshot. Reads still
+cover every fabric switch so unowned associations cannot be overlooked.
+
 Validation cases cover duplicate IDs, missing fields, an independently proven
 absent selector, conflicting hostname and unsupported merged/gathered states.
 Optionally supply `nd_test_smart_switches_non_smart_id` for a present, explicitly

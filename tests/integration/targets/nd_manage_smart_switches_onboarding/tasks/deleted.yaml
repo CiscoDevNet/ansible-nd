@@ -1,32 +1,102 @@
 ---
-- name: REPLACED seed both associations for bulk deletion
-  ansible.builtin.include_tasks: run_case.yaml
+
+- name: SETUP DELETED seed both owned associations
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "REPLACED seed both associations for bulk deletion"
-    ss_state: replaced
-    ss_config: "{{ ss_both }}"
-    ss_before: []
-    ss_after: "{{ [ss_a, ss_b] }}"
-    ss_changed: true
-    ss_create: "{{ [ss_a, ss_b] }}"
+    ss_case:
+      name: SETUP DELETED seed both owned associations
+      state: replaced
+      config: "{{ ss_both }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+
+- name: DELETED empty config is unchanged
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: DELETED empty config is unchanged
+      state: deleted
+      config: "{{ [] }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+
+- name: DELETED preview subset removal
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: DELETED preview subset removal
+      state: deleted
+      config: "{{ ss_delete_both[:1] }}"
+      check_mode: true
+      expect:
+        changed: true
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_b] }}"
+        deleted: "{{ [ss_a] }}"
+
+- name: DELETED remove only first association
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: DELETED remove only first association
+      state: deleted
+      config: "{{ ss_delete_both[:1] }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_b] }}"
+        deleted: "{{ [ss_a] }}"
+
+- name: DELETED repeat absent subset is unchanged
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: DELETED repeat absent subset is unchanged
+      state: deleted
+      config: "{{ ss_delete_both[:1] }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_b] }}"
+        after_ids: "{{ [ss_b] }}"
+
+- name: SETUP DELETED restore both associations before bulk removal
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: SETUP DELETED restore both associations before bulk removal
+      state: replaced
+      config: "{{ ss_both }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+        created: "{{ [ss_a] }}"
 
 - name: DELETED bulk remove both associations
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "DELETED bulk remove both associations"
-    ss_state: deleted
-    ss_config: "{{ ss_delete_both }}"
-    ss_before: "{{ [ss_a, ss_b] }}"
-    ss_after: []
-    ss_changed: true
-    ss_delete: "{{ [ss_a, ss_b] }}"
+    ss_case:
+      name: DELETED bulk remove both associations
+      state: deleted
+      config: "{{ ss_delete_both }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: []
+        deleted: "{{ [ss_a, ss_b] }}"
 
 - name: DELETED repeat bulk removal is unchanged
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "DELETED repeat bulk removal is unchanged"
-    ss_state: deleted
-    ss_config: "{{ ss_delete_both }}"
-    ss_before: []
-    ss_after: []
-    ss_changed: false
+    ss_case:
+      name: DELETED repeat bulk removal is unchanged
+      state: deleted
+      config: "{{ ss_delete_both }}"
+      expect:
+        changed: false
+        before_ids: []
+        after_ids: []

@@ -1,68 +1,94 @@
 ---
-- name: OVERRIDDEN preview adding A and removing omitted B
-  ansible.builtin.include_tasks: run_case.yaml
+
+- name: SETUP OVERRIDDEN seed only B in the empty fabric
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "OVERRIDDEN preview adding A and removing omitted B"
-    ss_state: overridden
-    ss_config: "{{ ss_both[:1] }}"
-    ss_before: "{{ [ss_b] }}"
-    ss_after: "{{ [ss_a] }}"
-    ss_changed: true
-    ss_check: true
-    ss_create: "{{ [ss_a] }}"
-    ss_delete: "{{ [ss_b] }}"
+    ss_case:
+      name: SETUP OVERRIDDEN seed only B in the empty fabric
+      state: replaced
+      config: "{{ ss_both[1:] }}"
+      expect:
+        changed: true
+        before_ids: []
+        after_ids: "{{ [ss_b] }}"
+        created: "{{ [ss_b] }}"
+
+- name: OVERRIDDEN preview adding A and removing omitted B
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: OVERRIDDEN preview adding A and removing omitted B
+      state: overridden
+      config: "{{ ss_both[:1] }}"
+      check_mode: true
+      expect:
+        changed: true
+        before_ids: "{{ [ss_b] }}"
+        after_ids: "{{ [ss_a] }}"
+        created: "{{ [ss_a] }}"
+        deleted: "{{ [ss_b] }}"
 
 - name: OVERRIDDEN add A and remove omitted B
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "OVERRIDDEN add A and remove omitted B"
-    ss_state: overridden
-    ss_config: "{{ ss_both[:1] }}"
-    ss_before: "{{ [ss_b] }}"
-    ss_after: "{{ [ss_a] }}"
-    ss_changed: true
-    ss_create: "{{ [ss_a] }}"
-    ss_delete: "{{ [ss_b] }}"
+    ss_case:
+      name: OVERRIDDEN add A and remove omitted B
+      state: overridden
+      config: "{{ ss_both[:1] }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_b] }}"
+        after_ids: "{{ [ss_a] }}"
+        created: "{{ [ss_a] }}"
+        deleted: "{{ [ss_b] }}"
 
 - name: OVERRIDDEN repeat is unchanged
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "OVERRIDDEN repeat is unchanged"
-    ss_state: overridden
-    ss_config: "{{ ss_both[:1] }}"
-    ss_before: "{{ [ss_a] }}"
-    ss_after: "{{ [ss_a] }}"
-    ss_changed: false
+    ss_case:
+      name: OVERRIDDEN repeat is unchanged
+      state: overridden
+      config: "{{ ss_both[:1] }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a] }}"
+        after_ids: "{{ [ss_a] }}"
 
 - name: OVERRIDDEN preview empty desired set
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "OVERRIDDEN preview empty desired set"
-    ss_state: overridden
-    ss_config: "{{ [] }}"
-    ss_before: "{{ [ss_a] }}"
-    ss_after: []
-    ss_changed: true
-    ss_check: true
-    ss_delete: "{{ [ss_a] }}"
+    ss_case:
+      name: OVERRIDDEN preview empty desired set
+      state: overridden
+      config: "{{ [] }}"
+      check_mode: true
+      expect:
+        changed: true
+        before_ids: "{{ [ss_a] }}"
+        after_ids: []
+        deleted: "{{ [ss_a] }}"
 
 - name: OVERRIDDEN empty config deboards owned association
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "OVERRIDDEN empty config deboards owned association"
-    ss_state: overridden
-    ss_config: "{{ [] }}"
-    ss_before: "{{ [ss_a] }}"
-    ss_after: []
-    ss_changed: true
-    ss_delete: "{{ [ss_a] }}"
+    ss_case:
+      name: OVERRIDDEN empty config deboards owned association
+      state: overridden
+      config: "{{ [] }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_a] }}"
+        after_ids: []
+        deleted: "{{ [ss_a] }}"
 
 - name: OVERRIDDEN repeat empty config is unchanged
-  ansible.builtin.include_tasks: run_case.yaml
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
-    ss_case: "OVERRIDDEN repeat empty config is unchanged"
-    ss_state: overridden
-    ss_config: "{{ [] }}"
-    ss_before: []
-    ss_after: []
-    ss_changed: false
+    ss_case:
+      name: OVERRIDDEN repeat empty config is unchanged
+      state: overridden
+      config: "{{ [] }}"
+      expect:
+        changed: false
+        before_ids: []
+        after_ids: []
