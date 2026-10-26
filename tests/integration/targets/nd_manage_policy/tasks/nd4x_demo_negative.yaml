@@ -250,7 +250,7 @@
       ansible.builtin.assert:
         that:
           - >-
-            nd4x_lifecycle_after_delete.gathered
+            (nd4x_lifecycle_after_delete.gathered | default([]))
             | selectattr('description', 'equalto', 'ND4X-lifecycle-created')
             | list
             | length == 0

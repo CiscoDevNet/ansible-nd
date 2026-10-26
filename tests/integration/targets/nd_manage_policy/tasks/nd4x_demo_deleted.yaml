@@ -251,7 +251,7 @@
       ansible.builtin.assert:
         that:
           - >-
-            nd4x_pending_after_gathered.gathered
+            (nd4x_pending_after_gathered.gathered | default([]))
             | selectattr('description', 'equalto', 'ND4X-deleted-pending-timezone')
             | list
             | length == 0
@@ -358,7 +358,7 @@
       ansible.builtin.assert:
         that:
           - >-
-            nd4x_python_pending_after_gathered.gathered
+            (nd4x_python_pending_after_gathered.gathered | default([]))
             | selectattr('description', 'equalto', 'ND4X-deleted-pending-python')
             | list
             | length == 0
@@ -430,7 +430,7 @@
       ansible.builtin.assert:
         that:
           - >-
-            nd4x_description_after_gathered.gathered
+            (nd4x_description_after_gathered.gathered | default([]))
             | selectattr('description', 'equalto', 'ND4X-deleted-by-description')
             | list
             | length == 0
