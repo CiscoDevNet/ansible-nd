@@ -1,0 +1,423 @@
+---
+- name: Run replacement and intentional-duplicate scenarios
+  block:
+    - name: "EDGE SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "REPLACE SETUP: Create original clock_timezone policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-replace-clock"
+            priority: 300
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "REPLACE SETUP: Capture original clock_timezone policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_replace_before
+
+    - name: "REPLACE SETUP: Select original clock_timezone policy"
+      ansible.builtin.set_fact:
+        nd4x_replace_original: >-
+          {{
+            nd4x_replace_before.gathered
+            | selectattr('description', 'equalto', 'ND4X-replace-clock')
+            | list
+          }}
+
+    - name: "REPLACE SETUP: Verify original replacement policy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_replace_original | length == 1
+          - nd4x_replace_original[0].name == 'clock_timezone'
+          - nd4x_replace_original[0].priority == 300
+          - nd4x_replace_original[0].template_inputs.TIME_ZONE == 'CET'
+          - nd4x_replace_original[0].template_inputs.HOUR_OFFSET == '1'
+          - nd4x_replace_original[0].template_inputs.MINUTE_OFFSET == '0'
+          - nd4x_replace_original[0].switch | length == 1
+          - nd4x_replace_original[0].switch[0].serial_number == test_switch_serial_1
+
+    - name: "REPLACE: Reuse description with a different template"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "ND4X-replace-clock"
+            priority: 300
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate clock template replacement
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-replace-clock' & @.templateName == 'clock_summertime' & @.priority == 300 & @.templateInputs.SUMMER_TIME == 'CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60')]"
+                exists: true
+
+    - name: "REPLACE: Gather normal replacement end state"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_replace_after
+
+    - name: "REPLACE: Select normal replacement end state"
+      ansible.builtin.set_fact:
+        nd4x_replace_matches: >-
+          {{
+            nd4x_replace_after.gathered
+            | selectattr('description', 'equalto', 'ND4X-replace-clock')
+            | list
+          }}
+
+    - name: "REPLACE: Verify normal replacement removed the old policy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_replace_matches | length == 1
+          - nd4x_replace_matches[0].name == 'clock_summertime'
+          - nd4x_replace_matches[0].priority == 300
+          - nd4x_replace_matches[0].template_inputs.SUMMER_TIME == 'CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60'
+          - nd4x_replace_matches[0].policy_id != nd4x_replace_original[0].policy_id
+          - nd4x_replace_matches[0].switch | length == 1
+          - nd4x_replace_matches[0].switch[0].serial_number == test_switch_serial_1
+          - >-
+            nd4x_replace_after.gathered
+            | selectattr('description', 'equalto', 'ND4X-replace-clock')
+            | selectattr('name', 'equalto', 'clock_timezone')
+            | list
+            | length == 0
+
+    - name: "REPLACE SETUP: Create PYTHON-content original policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-replace-python"
+            priority: 310
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "REPLACE SETUP: Capture original PYTHON policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_replace_python_before_gathered
+
+    - name: "REPLACE SETUP: Select original PYTHON policy"
+      ansible.builtin.set_fact:
+        nd4x_replace_python_before: >-
+          {{
+            nd4x_replace_python_before_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-replace-python')
+            | list
+          }}
+
+    - name: "REPLACE SETUP: Verify original PYTHON policy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_replace_python_before | length == 1
+          - nd4x_replace_python_before[0].name == 'switch_freeform'
+          - nd4x_replace_python_before[0].priority == 310
+          - nd4x_replace_python_before[0].template_inputs.CONF == 'system vlan long-name'
+          - nd4x_replace_python_before[0].switch | length == 1
+          - nd4x_replace_python_before[0].switch[0].serial_number == test_switch_serial_1
+
+    - name: "REPLACE: Trigger PYTHON direct-delete fallback"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+          use_description_as_key: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "ND4X-replace-python"
+            priority: 310
+            template_inputs:
+              featureName: lldp
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate PYTHON replacement
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-replace-python' & @.templateName == 'feature_enable' & @.priority == 310 & @.templateInputs.featureName == 'lldp')]"
+                exists: true
+
+    - name: "REPLACE: Gather PYTHON replacement end state"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_replace_python_after
+
+    - name: "REPLACE: Select PYTHON replacement policy"
+      ansible.builtin.set_fact:
+        nd4x_replace_python_after_match: >-
+          {{
+            nd4x_replace_python_after.gathered
+            | selectattr('description', 'equalto', 'ND4X-replace-python')
+            | list
+          }}
+
+    - name: "REPLACE: Verify PYTHON direct-delete replacement end state"
+      ansible.builtin.assert:
+        that:
+          - nd4x_replace_python_after_match | length == 1
+          - nd4x_replace_python_after_match[0].name == 'feature_enable'
+          - nd4x_replace_python_after_match[0].priority == 310
+          - nd4x_replace_python_after_match[0].template_inputs.featureName == 'lldp'
+          - nd4x_replace_python_after_match[0].policy_id is match('^POLICY-')
+          - nd4x_replace_python_after_match[0].policy_id != nd4x_replace_python_before[0].policy_id
+          - nd4x_replace_python_after_match[0].switch | length == 1
+          - nd4x_replace_python_after_match[0].switch[0].serial_number == test_switch_serial_1
+          - >-
+            nd4x_replace_python_after.gathered
+            | selectattr('description', 'equalto', 'ND4X-replace-python')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | list
+            | length == 0
+
+    - name: "ADDITIONAL SETUP: Create first duplicate-allowed policy"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            description: "ND4X-additional-duplicate"
+            priority: 400
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "ADDITIONAL: Gather first duplicate policy ID"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "ND4X-additional-duplicate"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_additional_first_gathered
+
+    - name: "ADDITIONAL: Capture first duplicate policy ID"
+      ansible.builtin.set_fact:
+        nd4x_additional_first_id: "{{ nd4x_additional_first_gathered.gathered[0].policy_id }}"
+
+    - name: "ADDITIONAL: Reapply by policy ID must not force-create"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: "{{ nd4x_additional_first_id }}"
+            create_additional_policy: true
+            description: "ND4X-additional-duplicate"
+            priority: 400
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "ADDITIONAL: Create second duplicate intentionally"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            description: "ND4X-additional-duplicate"
+            priority: 400
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "ADDITIONAL: Create third duplicate intentionally"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            description: "ND4X-additional-duplicate"
+            priority: 400
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        idempotency: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "ADDITIONAL: Verify three distinct duplicate policy IDs"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "ND4X-additional-duplicate"
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_additional_final_gathered
+
+    - name: "ADDITIONAL: Assert duplicate creation semantics"
+      ansible.builtin.assert:
+        that:
+          - nd4x_additional_final_gathered.gathered | length == 3
+          - >-
+            nd4x_additional_final_gathered.gathered
+            | map(attribute='policy_id')
+            | list
+            | unique
+            | length == 3
+
+  always:
+    - name: "EDGE CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml

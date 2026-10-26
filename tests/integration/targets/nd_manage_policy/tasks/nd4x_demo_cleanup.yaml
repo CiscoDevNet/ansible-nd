@@ -1,0 +1,120 @@
+---
+# Remove only policies created by the opt-in harness scenarios. Matching by
+# controller policy ID avoids deleting unrelated policies that happen to use
+# one of the same templates or legacy descriptions as the original suite.
+
+- name: "ND4X CLEANUP: Query policies in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+    method: get
+  register: nd4x_cleanup_policies
+  changed_when: false
+
+- name: "ND4X CLEANUP: Select described harness policy IDs"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_described_ids: >-
+      {{
+        nd4x_cleanup_policies.current.policies
+        | default([])
+        | selectattr('description', 'defined')
+        | selectattr('description', 'match', nd4x_policy_cleanup_regex)
+        | map(attribute='policyId')
+        | select('defined')
+        | list
+      }}
+
+- name: "ND4X CLEANUP: Select explicitly owned legacy-description policy IDs"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_legacy_description_ids: >-
+      {{
+        nd4x_cleanup_policies.current.policies
+        | default([])
+        | selectattr('description', 'defined')
+        | selectattr('description', 'in', nd4x_cleanup_owned_descriptions | default([]))
+        | map(attribute='policyId')
+        | select('defined')
+        | list
+      }}
+
+- name: "ND4X CLEANUP: Combine owned policy IDs"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_ids: >-
+      {{
+        (nd4x_cleanup_described_ids | default([])
+        + nd4x_cleanup_legacy_description_ids | default([])
+        + nd4x_cleanup_explicit_ids | default([]))
+        | unique
+        | list
+      }}
+
+- name: "ND4X CLEANUP: Refuse pre-existing matching policy records"
+  ansible.builtin.assert:
+    that:
+      - nd4x_cleanup_ids | length == 0
+    fail_msg: >-
+      Refusing to delete pre-existing nd_manage_policy records that match the
+      harness ownership markers ({{ nd4x_cleanup_ids | length }} record(s)).
+      Remove those records manually or use a dedicated harness fabric before
+      starting the ND4X scenarios.
+  when: not (nd4x_cleanup_baseline_initialized | default(false) | bool)
+
+- name: "ND4X CLEANUP: Mark ownership baseline initialized"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_baseline_initialized: true
+
+- name: "ND4X CLEANUP: Build switch scope from configured test switches"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_switches:
+      - serial_number: "{{ test_switch_serial_1 }}"
+
+- name: "ND4X CLEANUP: Add secondary switch for multi-switch scenarios"
+  ansible.builtin.set_fact:
+    nd4x_cleanup_switches: "{{ nd4x_cleanup_switches + [{'serial_number': test_switch_serial_2}] }}"
+  when:
+    - nd4x_requires_two_switches | default(false) | bool
+    - test_switch_serial_2 | length > 0
+
+- name: "ND4X CLEANUP: Delete harness-created policies by ID"
+  cisco.nd.nd_manage_policy:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    deploy: true
+    config:
+      - name: "{{ item }}"
+      - switch: "{{ nd4x_cleanup_switches }}"
+  loop: "{{ nd4x_cleanup_ids | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  register: nd4x_cleanup_delete_results
+
+- name: "ND4X CLEANUP: Verify owned policies were removed"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+    method: get
+  register: nd4x_cleanup_after
+  changed_when: false
+
+- name: "ND4X CLEANUP: Assert no owned policies remain"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_cleanup_after.current.policies
+        | default([])
+        | selectattr('description', 'defined')
+        | selectattr('description', 'match', nd4x_policy_cleanup_regex)
+        | list
+        | length == 0
+      - >-
+        nd4x_cleanup_after.current.policies
+        | default([])
+        | selectattr('description', 'defined')
+        | selectattr('description', 'in', nd4x_cleanup_owned_descriptions | default([]))
+        | list
+        | length == 0
+      - >-
+        nd4x_cleanup_after.current.policies
+        | default([])
+        | selectattr('policyId', 'defined')
+        | selectattr('policyId', 'in', nd4x_cleanup_explicit_ids | default([]))
+        | list
+        | length == 0

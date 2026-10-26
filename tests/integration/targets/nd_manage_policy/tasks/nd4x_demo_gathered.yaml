@@ -1,0 +1,409 @@
+---
+- name: Run gathered and gathered-output round-trip scenarios
+  block:
+    - name: "GATHERED SETUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+
+    - name: "GATHERED SETUP: Create policies on both switches"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "ND4X-gathered-timezone"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "ND4X-gathered-freeform"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: banner
+            create_additional_policy: false
+            description: "ND4X-gathered-banner"
+            priority: 200
+            template_inputs:
+              BANNER: "ND4X managed device"
+              BANNERDELIMITER: "_"
+              TYPE: motd
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+              - serial_number: "{{ test_switch_serial_2 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+
+    - name: "GATHERED: Gather all policies on switch one"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: gathered
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_gathered_switch_one
+
+    - name: "GATHERED: Verify switch-one gathered output"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_switch_one.first_run_result.changed == false
+          - >-
+            nd4x_gathered_switch_one.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | list
+            | length == 1
+          - >-
+            nd4x_gathered_switch_one.first_run_result.gathered
+            | selectattr('description', 'match', '^ND4X-gathered-(timezone|freeform|banner)$')
+            | selectattr('policy_id', 'defined')
+            | list
+            | length == 3
+          - >-
+            nd4x_gathered_switch_one.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-freeform')
+            | selectattr('name', 'equalto', 'switch_freeform')
+            | selectattr('priority', 'equalto', 110)
+            | selectattr('template_inputs.CONF', 'equalto', 'system vlan long-name')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+          - >-
+            nd4x_gathered_switch_one.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-banner')
+            | selectattr('name', 'equalto', 'banner')
+            | selectattr('priority', 'equalto', 200)
+            | selectattr('template_inputs.BANNER', 'equalto', 'ND4X managed device')
+            | selectattr('template_inputs.BANNERDELIMITER', 'equalto', '_')
+            | selectattr('template_inputs.TYPE', 'equalto', 'motd')
+            | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)
+            | list
+            | length == 1
+
+    - name: "GATHERED: Gather filtered template output"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: gathered
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_gathered_filtered
+
+    - name: "GATHERED: Gather both switches"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: gathered
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+        config:
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+              - serial_number: "{{ test_switch_serial_2 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_gathered_both
+
+    - name: "GATHERED: Gather all fabric policies without config"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: gathered
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_gathered_fabric
+
+    - name: "GATHERED: Verify gather scopes and reusable policy IDs"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_gathered_filtered.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | list
+            | length == 1
+          - nd4x_gathered_filtered.first_run_result.gathered | selectattr('name', 'equalto', 'clock_timezone') | list | length == 1
+          - nd4x_gathered_filtered.first_run_result.gathered | selectattr('description', 'equalto', 'ND4X-gathered-timezone') | list | length == 1
+          - >-
+            nd4x_gathered_both.first_run_result.gathered
+            | selectattr('description', 'match', '^ND4X-gathered-(timezone|freeform|banner)$')
+            | list
+            | length == 6
+          - nd4x_gathered_both.first_run_result.gathered | selectattr('description', 'equalto', 'ND4X-gathered-timezone') | list | length == 2
+          - nd4x_gathered_both.first_run_result.gathered | selectattr('description', 'equalto', 'ND4X-gathered-freeform') | list | length == 2
+          - nd4x_gathered_both.first_run_result.gathered | selectattr('description', 'equalto', 'ND4X-gathered-banner') | list | length == 2
+          - >-
+            nd4x_gathered_fabric.first_run_result.gathered
+            | selectattr('description', 'match', '^ND4X-gathered-(timezone|freeform|banner)$')
+            | list
+            | length == 6
+          - nd4x_gathered_fabric.first_run_result.gathered | selectattr('description', 'equalto', 'ND4X-gathered-timezone') | list | length == 2
+          - >-
+            nd4x_gathered_switch_one.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | map(attribute='policy_id')
+            | list
+            | first is match('^POLICY-')
+
+    - name: "GATHERED: Capture one gathered entry"
+      ansible.builtin.set_fact:
+        nd4x_gathered_seed: >-
+          {{
+            nd4x_gathered_switch_one.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | list
+            | first
+          }}
+
+    - name: "GATHERED: Replay unchanged gathered output through harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - "{{ nd4x_gathered_seed }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_gathered_round_trip
+
+    - name: "GATHERED: Verify unchanged round-trip is idempotent"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_gathered_round_trip.first_run_result.changed | bool
+          - not nd4x_gathered_round_trip.second_run_result.changed | bool
+
+    - name: "GATHERED: Re-gather after unchanged round-trip"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_gathered_after_round_trip
+
+    - name: "GATHERED: Verify unchanged round-trip created no duplicate"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_gathered_after_round_trip.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | list
+            | length == 1
+          - >-
+            nd4x_gathered_after_round_trip.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | selectattr('policy_id', 'equalto', nd4x_gathered_seed.policy_id)
+            | selectattr('template_inputs.TIME_ZONE', 'equalto', 'CET')
+            | list
+            | length == 1
+
+    - name: "GATHERED: Build modified gathered entry"
+      ansible.builtin.set_fact:
+        nd4x_gathered_modified: >-
+          {{
+            nd4x_gathered_seed
+            | combine({
+                'template_inputs': {
+                  'TIME_ZONE': 'PST',
+                  'HOUR_OFFSET': '-8',
+                  'MINUTE_OFFSET': '0'
+                }
+              })
+          }}
+
+    - name: "GATHERED: Update the gathered entry by policy ID"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - "{{ nd4x_gathered_modified }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+      register: nd4x_gathered_update
+
+    - name: "GATHERED: Verify gathered policy update stayed on same ID"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_update.first_run_result.changed | bool
+          - >-
+            nd4x_gathered_update.first_run_result.after
+            | selectattr('policyId', 'equalto', nd4x_gathered_seed.policy_id)
+            | selectattr('templateInputs.TIME_ZONE', 'equalto', 'PST')
+            | list
+            | length == 1
+
+    - name: "GATHERED: Build force-create entry without policy ID"
+      ansible.builtin.set_fact:
+        nd4x_gathered_force_create: >-
+          {{
+            nd4x_gathered_modified
+            | combine({
+                'description': 'ND4X-gathered-force-create',
+                'create_additional_policy': true
+              })
+            | dict2items
+            | rejectattr('key', 'equalto', 'policy_id')
+            | items2dict
+          }}
+
+    - name: "GATHERED: Force-create a fresh policy from gathered shape"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy
+        state: merged
+        common_args:
+          fabric_name: "{{ test_fabric_name }}"
+          output_level: "{{ nd_info.output_level }}"
+          deploy: false
+        config:
+          - "{{ nd4x_gathered_force_create }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        idempotency: false
+        check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
+        nd_queries:
+          - name: Validate force-created gathered policy
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-gathered-force-create' & @.templateName == 'clock_timezone' & @.templateInputs.TIME_ZONE == 'PST' & @.templateInputs.HOUR_OFFSET == '-8' & @.templateInputs.MINUTE_OFFSET == '0')]"
+                exists: true
+
+    - name: "GATHERED: Gather clock_timezone policies after force-create"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ test_fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ test_switch_serial_1 }}"
+      register: nd4x_gathered_after_force_create
+
+    - name: "GATHERED: Select original and force-created policies"
+      ansible.builtin.set_fact:
+        nd4x_gathered_original_after_force: >-
+          {{
+            nd4x_gathered_after_force_create.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-timezone')
+            | list
+          }}
+        nd4x_gathered_force_created_after_force: >-
+          {{
+            nd4x_gathered_after_force_create.gathered
+            | selectattr('description', 'equalto', 'ND4X-gathered-force-create')
+            | list
+          }}
+
+    - name: "GATHERED: Verify force-create preserved the original policy"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_force_create.first_run_result.changed | bool
+          - nd4x_gathered_original_after_force | length == 1
+          - nd4x_gathered_force_created_after_force | length == 1
+          - >-
+            (nd4x_gathered_original_after_force
+             + nd4x_gathered_force_created_after_force) | length == 2
+          - nd4x_gathered_original_after_force[0].policy_id == nd4x_gathered_seed.policy_id
+          - nd4x_gathered_force_created_after_force[0].policy_id != nd4x_gathered_seed.policy_id
+          - nd4x_gathered_original_after_force[0].name == 'clock_timezone'
+          - nd4x_gathered_force_created_after_force[0].name == 'clock_timezone'
+          - nd4x_gathered_original_after_force[0].template_inputs.TIME_ZONE == 'PST'
+          - nd4x_gathered_force_created_after_force[0].template_inputs.TIME_ZONE == 'PST'
+
+  always:
+    - name: "GATHERED CLEANUP: Remove harness-owned policy records"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
