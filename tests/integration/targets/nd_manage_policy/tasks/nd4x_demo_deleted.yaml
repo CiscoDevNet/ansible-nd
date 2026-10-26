@@ -47,7 +47,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
 
-    - name: "DELETED: Delete one policy by template name"
+    - name: "DELETED: Delete one policy by description key"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: deleted
@@ -55,8 +55,10 @@
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
           deploy: true
+          use_description_as_key: true
         config:
           - name: clock_timezone
+            description: "ND4X-deleted-timezone"
           - switch:
               - serial_number: "{{ test_switch_serial_1 }}"
         idempotency: false
@@ -76,9 +78,9 @@
             expect:
               - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-timezone')]"
                 exists: false
-      register: nd4x_deleted_by_template
+      register: nd4x_deleted_by_description
 
-    - name: "DELETED: Repeat clock_timezone deletion to exercise pending cleanup"
+    - name: "DELETED: Repeat clock_timezone description-key deletion to exercise pending cleanup"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: deleted
@@ -86,8 +88,10 @@
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
           deploy: true
+          use_description_as_key: true
         config:
           - name: clock_timezone
+            description: "ND4X-deleted-timezone"
           - switch:
               - serial_number: "{{ test_switch_serial_1 }}"
         idempotency: false
@@ -435,7 +439,7 @@
             | list
             | length == 0
 
-    - name: "DELETED SETUP: Create template-name deletion fixtures"
+    - name: "DELETED SETUP: Create description-key deletion fixtures"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: merged
@@ -466,7 +470,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
 
-    - name: "DELETED: Delete one policy by default template name"
+    - name: "DELETED: Delete one policy by description key"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: deleted
@@ -474,8 +478,10 @@
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
           deploy: true
+          use_description_as_key: true
         config:
           - name: clock_timezone
+            description: "ND4X-deleted-default-timezone"
           - switch:
               - serial_number: "{{ test_switch_serial_1 }}"
         idempotency: false
@@ -488,7 +494,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
         nd_queries:
-          - name: Verify default-key timezone deletion
+          - name: Verify description-key timezone deletion
             path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
             method: get
             expected_status: 200
@@ -496,7 +502,7 @@
               - jsonpath: "$.current.policies[?(@.description == 'ND4X-deleted-default-timezone')]"
                 exists: false
 
-    - name: "DELETED: Repeat default template-name deletion"
+    - name: "DELETED: Repeat default description-key deletion"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: deleted
@@ -504,8 +510,10 @@
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
           deploy: true
+          use_description_as_key: true
         config:
           - name: clock_timezone
+            description: "ND4X-deleted-default-timezone"
           - switch:
               - serial_number: "{{ test_switch_serial_1 }}"
         idempotency: false
@@ -518,7 +526,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
 
-    - name: "DELETED SETUP: Create multiple template-name deletion fixtures"
+    - name: "DELETED SETUP: Create multiple description-key deletion fixtures"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: merged
@@ -553,7 +561,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
 
-    - name: "DELETED: Delete multiple policies by default template name"
+    - name: "DELETED: Delete multiple policies by description key"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: deleted
@@ -561,9 +569,12 @@
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
           deploy: true
+          use_description_as_key: true
         config:
           - name: clock_summertime
+            description: "ND4X-deleted-default-summertime"
           - name: switch_freeform
+            description: "ND4X-deleted-default-freeform"
           - switch:
               - serial_number: "{{ test_switch_serial_1 }}"
         idempotency: false
@@ -576,7 +587,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
         nd_queries:
-          - name: Verify multiple default-key deletions
+          - name: Verify multiple description-key deletions
             path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"
             method: get
             expected_status: 200

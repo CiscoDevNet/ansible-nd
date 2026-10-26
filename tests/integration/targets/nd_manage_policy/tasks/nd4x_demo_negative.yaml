@@ -214,7 +214,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
 
-    - name: "LIFECYCLE: Delete the policy"
+    - name: "LIFECYCLE: Delete the policy by description key"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: deleted
@@ -222,8 +222,10 @@
           fabric_name: "{{ test_fabric_name }}"
           output_level: "{{ nd_info.output_level }}"
           deploy: true
+          use_description_as_key: true
         config:
           - name: switch_freeform
+            description: "ND4X-lifecycle-created"
           - switch:
               - serial_number: "{{ test_switch_serial_1 }}"
         idempotency: false
@@ -236,7 +238,7 @@
             failed: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
 
-    - name: "LIFECYCLE: Verify template-name deletion removed the created policy"
+    - name: "LIFECYCLE: Verify description-key deletion removed the created policy"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ test_fabric_name }}"
         state: gathered
