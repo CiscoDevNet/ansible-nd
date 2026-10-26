@@ -584,13 +584,13 @@
           - final_groups | map(attribute='name') | sort == nd4x_rt_snapshot_groups | map(attribute='name') | sort
           - final_lacp | length == 1
           - snapshot_lacp | length == 1
-          - final_lacp[0].template_name == snapshot_lacp[0].template_name
+          - final_lacp[0].name == snapshot_lacp[0].name
           - final_lacp[0].priority == snapshot_lacp[0].priority
           - final_lacp[0].switch_ids | sort == snapshot_lacp[0].switch_ids | sort
           - final_lacp[0].template_inputs == snapshot_lacp[0].template_inputs
           - final_clock | length == 1
           - snapshot_clock | length == 1
-          - final_clock[0].template_name == snapshot_clock[0].template_name
+          - final_clock[0].name == snapshot_clock[0].name
           - final_clock[0].priority == snapshot_clock[0].priority
           - final_clock[0].switch_ids | sort == snapshot_clock[0].switch_ids | sort
           - final_clock[0].template_inputs == snapshot_clock[0].template_inputs
