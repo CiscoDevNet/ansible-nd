@@ -33,8 +33,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        # Baseline identity is all this setup needs.
-        deploy: false
+        deploy: true
         config:
           - name: switch_freeform
             description: "SPC-FORCE-baseline freeform"
