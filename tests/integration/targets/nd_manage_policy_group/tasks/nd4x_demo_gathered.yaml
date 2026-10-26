@@ -52,8 +52,13 @@
       vars:
         nd4x_verify_config:
           - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LACP"
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LLDP"
           - name: switch_freeform
+            description: "ND4X-PG-GATHERED-System vlan long-name"
           - name: clock_timezone
+            description: "ND4X-PG-GATHERED-Timezone CET"
         nd4x_verify_expected:
           - description: "ND4X-PG-GATHERED-Enable LACP"
             template_name: feature_enable

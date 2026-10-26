@@ -719,7 +719,9 @@
       vars:
         nd4x_verify_config:
           - name: feature_enable
+            description: "ND4X-PG-SPECIAL-BFD feature"
           - name: switch_freeform
+            description: "ND4X-PG-SPECIAL-BFD timers"
         nd4x_verify_expected:
           - description: "ND4X-PG-SPECIAL-BFD feature"
             template_name: feature_enable

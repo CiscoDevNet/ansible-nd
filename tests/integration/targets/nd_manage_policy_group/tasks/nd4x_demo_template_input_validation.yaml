@@ -207,6 +207,11 @@
       vars:
         nd4x_verify_config:
           - name: feature_enable
+            description: "ND4X-PG-TIV-cache LACP"
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache LLDP"
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache BFD"
         nd4x_verify_expected:
           - description: "ND4X-PG-TIV-cache LACP"
             template_name: feature_enable
