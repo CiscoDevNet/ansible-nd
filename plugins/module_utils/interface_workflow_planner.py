@@ -2495,6 +2495,12 @@ class InterfaceWorkflowPlanner:
                             f"expected {sorted(resource.adapter.interface_types)}.",
                         )
                         continue
+                    if resource.adapter.ownership_domain == "loopback" and resource.state in {"merged", "replaced"}:
+                        # The standalone family excludes policyless discovery
+                        # rows from its managed inventory and uses normal create
+                        # requests. Preserve that behavior without extra policy
+                        # checks, summary reads, or transition rewriting.
+                        continue
                     policy_type = InterfaceStateSnapshot.policy_type(current)
                     if self._is_unconfigured_ethernet_default(resource.adapter, ((switch_id, current),)):
                         continue
