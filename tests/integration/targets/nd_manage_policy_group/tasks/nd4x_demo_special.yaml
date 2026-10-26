@@ -68,7 +68,7 @@
       vars:
         force_created_groups: >-
           {{ nd4x_special_tc1_gather.first_run_result.gathered | default([])
-             | selectattr('template_name', 'equalto', 'switch_freeform')
+             | selectattr('name', 'equalto', 'switch_freeform')
              | selectattr('template_inputs.CONF', 'equalto', 'spanning-tree vlan 1-100 priority 4096') | list }}
       ansible.builtin.assert:
         that:
@@ -131,8 +131,8 @@
       vars:
         anonymous_groups: >-
           {{ nd4x_special_tc2_gather.first_run_result.gathered | default([])
-             | rejectattr('description', 'defined')
-             | selectattr('template_name', 'equalto', 'switch_freeform')
+             | selectattr('description', 'equalto', '')
+             | selectattr('name', 'equalto', 'switch_freeform')
              | selectattr('switch_ids', 'equalto', [test_switch_serial_1])
              | selectattr('template_inputs.CONF', 'equalto', 'as-format asdot') | list }}
       ansible.builtin.assert:
