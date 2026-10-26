@@ -364,8 +364,8 @@
           - tc10_groups[0].template_name == 'clock_timezone'
           - tc10_groups[0].switch_ids == [test_switch_serial_1]
           - tc10_groups[0].template_inputs.TIME_ZONE == 'CET'
-          - tc10_groups[0].template_inputs.HOUR_OFFSET == 1
-          - tc10_groups[0].template_inputs.MINUTE_OFFSET == 0
+          - (tc10_groups[0].template_inputs.HOUR_OFFSET | string) == '1'
+          - (tc10_groups[0].template_inputs.MINUTE_OFFSET | string) == '0'
 
     - name: "MERGED TC10 - Independently verify applied policy state"
       ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
@@ -412,8 +412,8 @@
           - tc11_groups | length == 1
           - tc11_groups[0].template_name == 'clock_timezone'
           - tc11_groups[0].template_inputs.TIME_ZONE == 'CET'
-          - tc11_groups[0].template_inputs.HOUR_OFFSET == 5
-          - tc11_groups[0].template_inputs.MINUTE_OFFSET == 0
+          - (tc11_groups[0].template_inputs.HOUR_OFFSET | string) == '5'
+          - (tc11_groups[0].template_inputs.MINUTE_OFFSET | string) == '0'
 
     - name: "MERGED TC11 - Independently verify applied update"
       ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml

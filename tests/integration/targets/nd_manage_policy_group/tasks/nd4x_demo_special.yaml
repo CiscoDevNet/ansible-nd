@@ -559,8 +559,8 @@
           - new_policy[0].template_name == 'clock_timezone'
           - new_policy[0].switch_ids == [test_switch_serial_1]
           - new_policy[0].template_inputs.TIME_ZONE == 'EST'
-          - new_policy[0].template_inputs.HOUR_OFFSET == -5
-          - new_policy[0].template_inputs.MINUTE_OFFSET == 0
+          - (new_policy[0].template_inputs.HOUR_OFFSET | string) == '-5'
+          - (new_policy[0].template_inputs.MINUTE_OFFSET | string) == '0'
           - new_policy_before | length == 0
 
     - name: "SPECIAL D.TC12 - Independently verify mixed update and create"
