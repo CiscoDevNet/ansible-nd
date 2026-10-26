@@ -23,9 +23,9 @@
       {{
         nd4x_cleanup_gathered.gathered
         | default([])
-        | rejectattr('description', 'defined')
+        | selectattr('description', 'equalto', '')
         | selectattr('policy_id', 'defined')
-        | selectattr('template_name', 'equalto', nd4x_policy_group_anonymous_force_created_template)
+        | selectattr('name', 'equalto', nd4x_policy_group_anonymous_force_created_template)
         | selectattr('switch_ids', 'equalto', nd4x_policy_group_anonymous_force_created_switch_ids)
         | selectattr('template_inputs.CONF', 'equalto', nd4x_policy_group_anonymous_force_created_conf)
         | list
@@ -64,9 +64,9 @@
          | selectattr('description', 'match', nd4x_policy_group_cleanup_prefix) | list }}
     remaining_anonymous: >-
       {{ nd4x_cleanup_verified.gathered | default([])
-         | rejectattr('description', 'defined')
+         | selectattr('description', 'equalto', '')
          | selectattr('policy_id', 'defined')
-         | selectattr('template_name', 'equalto', nd4x_policy_group_anonymous_force_created_template)
+         | selectattr('name', 'equalto', nd4x_policy_group_anonymous_force_created_template)
          | selectattr('switch_ids', 'equalto', nd4x_policy_group_anonymous_force_created_switch_ids)
          | selectattr('template_inputs.CONF', 'equalto', nd4x_policy_group_anonymous_force_created_conf)
          | list }}
