@@ -104,7 +104,7 @@
     - name: "DELETED: Verify repeated deletion reports cleanup change"
       ansible.builtin.assert:
         that:
-          - nd4x_deleted_repeat.apply.changed | bool
+          - nd4x_deleted_repeat.first_run_result.changed | bool
         fail_msg: >-
           Repeated clock_timezone deletion did not report changed=true; the
           pending-cleanup deploy behavior is not preserved.
