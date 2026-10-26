@@ -39,6 +39,10 @@
           apply: {changed: true, failed: false}
       register: nd4x_special_tc1
 
+    - name: "SPECIAL A.TC1 - Save force-created policy_id"
+      ansible.builtin.set_fact:
+        nd4x_special_duplicate_id: "{{ nd4x_special_tc1.first_run_result.force_created[0].policy_id }}"
+
     - name: "SPECIAL A.TC1 - Verify force_created"
       ansible.builtin.assert:
         that:
@@ -82,10 +86,6 @@
           present:
             - "spanning-tree vlan 1-100 priority 4096"
 
-    - name: "SPECIAL A.TC1 - Save force-created policy_id"
-      ansible.builtin.set_fact:
-        nd4x_special_duplicate_id: "{{ nd4x_special_tc1.first_run_result.force_created[0].policy_id }}"
-
     - name: "SPECIAL A.TC2 - Force-create without description"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy_group
@@ -101,6 +101,10 @@
         expected:
           apply: {changed: true, failed: false}
       register: nd4x_special_tc2
+
+    - name: "SPECIAL A.TC2 - Save anonymous force-created policy_id"
+      ansible.builtin.set_fact:
+        nd4x_special_anonymous_id: "{{ nd4x_special_tc2.first_run_result.force_created[0].policy_id }}"
 
     - name: "SPECIAL A.TC2 - Verify anonymous force_created"
       ansible.builtin.assert:
@@ -137,10 +141,6 @@
         that:
           - anonymous_groups | length == 1
           - anonymous_groups[0].policy_id is match('^POLICY-GROUP-')
-
-    - name: "SPECIAL A.TC2 - Save anonymous force-created policy_id"
-      ansible.builtin.set_fact:
-        nd4x_special_anonymous_id: "{{ nd4x_special_tc2.first_run_result.force_created[0].policy_id }}"
 
     - name: "SPECIAL B.TC3 - Predictive merged check mode on nonexistent group"
       cisco.nd.nd4x_module_test:
