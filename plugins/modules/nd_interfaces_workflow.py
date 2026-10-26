@@ -87,6 +87,7 @@ options:
           implicit policy transition and applies the selected family's desired configuration.
         - V(replaced) replaces the fields of explicitly listed resources. If the current policy belongs to another eligible family in the
           same structural interface domain, it performs the same implicit policy transition.
+        - V(loopback) groups use standalone-family create/update handling for V(merged) and V(replaced), without implicit workflow policy transitions.
         - V(overridden) treats this family's configuration as authoritative and expands interface inventory scope to the complete fabric.
           It does not claim unlisted interfaces owned by other policy families.
           IOS-XE physical Ethernet families retain the standalone modules' merge-only override behavior; unlisted IOS-XE ports are
@@ -173,11 +174,12 @@ notes:
 - vPC identity is pair-scoped. Equal vPC names on different pairs are planned independently, while both peer echoes for one pair are
   required and treated as one resource.
 - vPC peer identity is resolved by the module and is not exposed as a user-configurable C(peer_switch_id) field or an operation change.
-- For V(merged) and V(replaced), O(resources[].type) is the desired policy family. An explicitly listed interface using another eligible
-  policy in the same structural interface domain is changed with one destination-family replacement request; no separate transition
-  option is required.
-- Within the V(loopback) family, V(merged) and V(replaced) also treat a same-NOS C(policy_type) change as an explicit
-  destination-policy transition. Changing C(network_os_type) is rejected before writes.
+- For non-loopback groups with V(merged) or V(replaced), O(resources[].type) is the desired policy family. An explicitly listed interface
+  using another eligible policy in the same structural interface domain is changed with one destination-family replacement request;
+  no separate transition option is required.
+- V(loopback) groups with V(merged) or V(replaced) use the standalone loopback family's ordinary create/update planning and API requests.
+  An existing operational row without a managed loopback policy does not trigger a workflow source-policy check or transition.
+  No additional summary queries, polling, or refresh retries are added for loopback creation or updates.
 - Configured V(loopback) items require both C(network_os_type) and C(policy_type); the workflow does not invent discriminator defaults.
   Identifier-only V(deleted) loopback items remain valid without C(config_data).
 - Configured V(ethernet_routed) items require C(network_os_type). The standalone model derives the matching routed policy when
@@ -251,10 +253,10 @@ notes:
 - Parent/child, parent/member, delete, and policy-transition operations are ordered by their safety dependencies, even when that
   differs from resource-group input order.
 - The Ethernet V(routedHost) to V(accessHost) and V(accessHost) to V(trunkHost) cross-policy PUTs have been live-qualified during this
-  development effort. Destination orchestrators exist for port-channel, vPC, managed and unmanaged subinterface, SVI, loopback, and other
+  development effort. Destination orchestrators exist for port-channel, vPC, managed and unmanaged subinterface, SVI, and other
   Ethernet transitions, but those source/destination combinations must be live-qualified against the intended Nexus Dashboard release
   and fabric type before production use. Architectural support is not a claim of live qualification.
-- In particular, NX-OS and IOS-XE loopback policy-to-policy PUT combinations have not yet been live-qualified through this workflow.
+- NX-OS and IOS-XE loopback policy changes follow standalone-family planning and have not yet been live-qualified through this workflow.
   IOS-XE loopback integration coverage requires an explicitly declared IOS-XE test switch and is not inferred from NX-OS inventory.
 - The workflow stops after a failed mutation phase, does not blindly retry mixed-success requests, and reports succeeded, failed,
   uncertain, skipped, and not-attempted items. It refreshes affected switches after successful writes when O(verify.enabled=true)

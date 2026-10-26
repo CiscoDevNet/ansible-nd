@@ -234,7 +234,9 @@ _ADAPTER_DEFINITIONS = (
         "interface_types": frozenset({"loopback"}),
         "policy_types": LOOPBACK_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
-        "supports_intra_family_policy_transitions": True,
+        # Keep the standalone loopback create/update plan instead of rewriting
+        # discovered rows or policy changes into workflow-only transitions.
+        "transition_states": frozenset(),
     },
     {
         "resource_type": "port_channel_access",
