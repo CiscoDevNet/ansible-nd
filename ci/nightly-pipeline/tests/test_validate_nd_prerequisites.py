@@ -1825,3 +1825,139 @@ def test_checkpoint_includes_source_files_and_optional_docs(tmp_path, include_do
     nested = link / "nested" / "checkpoint.json"
     with pytest.raises(ValueError, match="symlink"):
         write_checkpoint(checkpoint_root, "task-1", nested)
+
+
+@pytest.mark.parametrize("action,outcome", [
+    ("routed", "success"), ("admin_up", "success"), ("delete", "success"),
+    ("routed", "write_failure"), ("routed", "unverified"), ("delete", "stale_plan"),
+])
+def test_baseline_interface_repair_executes_with_mock_controller(tmp_path, action, outcome):
+    module_dir = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    module_dir.mkdir(parents=True)
+    module_dir.joinpath("nd_rest.py").write_text('''
+import json
+import os
+from pathlib import Path
+from ansible.module_utils.basic import AnsibleModule
+
+module = AnsibleModule(argument_spec={"path": {"type": "str"}, "method": {"type": "str"}, "content": {"type": "raw"}})
+state_path = Path(os.environ["REPAIR_TEST_STATE"])
+state = json.loads(state_path.read_text())
+path, method = module.params["path"], module.params["method"]
+if method != "get":
+    if not Path(os.environ["REPAIR_TEST_JOURNAL"]).exists():
+        module.fail_json(msg="mutation before journal")
+    state["writes"].append(method + " " + path)
+    state_path.write_text(json.dumps(state))
+    if state["outcome"] == "write_failure" and method == "put":
+        module.fail_json(msg="injected update refusal")
+    if method == "put" and state["outcome"] != "unverified":
+        state["current"]["configData"] = module.params["content"]["configData"]
+        state["current"]["operData"]["mode"] = "routed"
+    if method == "delete":
+        state["deleted"] = True
+    state_path.write_text(json.dumps(state))
+    module.exit_json(changed=True, current={})
+if path.endswith("/switches"):
+    module.exit_json(current={"switches": [{"switchId": "SERIAL00001", "fabricManagementIp": "192.0.2.10"}]})
+if "/interface?" in path:
+    policy = "unexpected" if state["outcome"] == "stale_plan" else "int_trunk_host"
+    module.exit_json(current=[] if state["deleted"] else [{"policy": policy, "interfaces": [{"nvPairs": {"ADMIN_STATE": "false"}}]}])
+module.exit_json(current=state["current"])
+''')
+    interface = "Ethernet1/1.100" if action == "delete" else "Ethernet1/1"
+    current = {"interfaceName": interface, "interfaceType": "ethernet",
+               "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os",
+                              "policy": {"policyType": "trunkHost", "adminState": False, "allowedVlans": "100"}}},
+               "operData": {"mode": "trunk"}}
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps({"current": current, "deleted": False, "writes": [], "outcome": outcome}))
+    helper = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_repair_interface.yaml").read_text())
+
+    def fast_tasks(tasks):
+        for task in tasks:
+            if "retries" in task:
+                task.update(retries=1, delay=0)
+            task.pop("no_log", None)
+            fast_tasks(task.get("block", []))
+
+    fast_tasks(helper)
+    operation = {"operation": "repair_interface", "action": action, "switch_ref": "leaf",
+                 "serial": "SERIAL00001", "switch_ip": "192.0.2.10", "fabric_name": "TEST",
+                 "interface": interface, "expected_policy": "int_trunk_host",
+                 "expected_nv_pairs": {"ADMIN_STATE": "false"}}
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"ansible_python_interpreter": sys.executable, "_ndp_repair_operation": operation,
+                      "_ndp_registry": {"lab": {"switches": {"leaf": {"serial": "SERIAL00001"}}}},
+                      "_ndp_baseline_repair_journal": [], "_ndp_state_dir": str(tmp_path),
+                      "_ndp_run_id": "mock", "_ndp_execution_id": "mock"}, "tasks": helper}]
+    playbook = tmp_path / "play.yaml"
+    playbook.write_text(yaml.safe_dump(play, sort_keys=False))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\nretry_files_enabled = False\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_COLLECTIONS_PATH=str(tmp_path / "collections"),
+                       REPAIR_TEST_STATE=str(state_file), REPAIR_TEST_JOURNAL=str(tmp_path / "baseline-repair-journal.yaml"))
+    result = subprocess.run([sys.executable, "-m", "ansible.cli.playbook", "-i", "localhost,", str(playbook)],
+                            env=environment, text=True, capture_output=True, timeout=60)
+    assert (result.returncode == 0) == (outcome == "success"), result.stdout + result.stderr
+    state = json.loads(state_file.read_text())
+    if outcome == "stale_plan":
+        assert state["writes"] == []
+    elif outcome == "write_failure":
+        assert len(state["writes"]) == 1
+        assert not any("deploy" in write for write in state["writes"])
+    else:
+        journal = tmp_path / "baseline-repair-journal.yaml"
+        assert yaml.safe_load(journal.read_text())["operations"][0]["before"] == current
+        assert journal.stat().st_mode & 0o777 == 0o600
+        if action == "admin_up":
+            assert state["current"]["configData"]["networkOS"]["policy"]["allowedVlans"] == "100"
+
+
+
+@pytest.mark.parametrize("mode,occupied,target_failure", [
+    ("live", False, False), ("live", True, False), ("live", False, True),
+    ("audit", False, False), ("check", False, False), ("fixture", False, False),
+    ("disabled", False, False), ("apply_false", False, False),
+])
+def test_baseline_repair_lock_and_readonly_modes(tmp_path, mode, occupied, target_failure):
+    wrapper = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    lock = next(task for task in wrapper if task["name"].startswith("Hold the exclusive baseline"))
+    repair_tasks = [copy.deepcopy(task) for task in wrapper if "ansible.builtin.include_tasks" in task
+                    and task["ansible.builtin.include_tasks"] == "repair_baseline.yaml"]
+    for task in repair_tasks:
+        del task["ansible.builtin.include_tasks"]
+        task["ansible.builtin.debug"] = {"msg": "REPAIR_ENABLED"}
+    restore = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_restore.yaml").read_text())
+    release = [task for task in restore if "baseline repair lock" in task["name"]]
+    release_file = tmp_path / "release.yaml"
+    release_file.write_text(yaml.safe_dump(release, sort_keys=False))
+    lock_dir = tmp_path / "nd-prerequisite-baseline.lock"
+    if occupied:
+        lock_dir.mkdir()
+        (lock_dir / "owner.json").write_text('{"run_id": "another-run"}')
+    variables = {"ansible_python_interpreter": sys.executable, "nd_prerequisite_mode": "fixture" if mode == "fixture" else "live",
+                 "nd_prerequisite_apply": mode != "apply_false", "nd_prerequisite_only": mode == "audit",
+                 "nd_prerequisite_repair_baseline": mode != "disabled", "test_module": "mock",
+                 "_ndp_profile": {"switches": {"members": ["leaf"]}}, "_ndp_run_id": "mock-run",
+                 "_ndp_execution_id": "mock", "nd_prerequisite_repair_lock_dir": str(lock_dir)}
+    tasks = [lock] + repair_tasks
+    if target_failure:
+        tasks.append({"name": "Injected target failure", "ansible.builtin.fail": {"msg": "target failed"}})
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False, "force_handlers": True,
+             "vars": variables, "tasks": tasks,
+             "handlers": [{"name": "Restore prerequisite interface changes", "ansible.builtin.include_tasks": str(release_file)}]}]
+    playbook = tmp_path / "lock.yaml"
+    playbook.write_text(yaml.safe_dump(play, sort_keys=False))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\nretry_files_enabled = False\n")
+    command = [sys.executable, "-m", "ansible.cli.playbook", "-i", "localhost,", str(playbook)]
+    if mode == "check":
+        command.append("--check")
+    result = subprocess.run(command, env=dict(os.environ, ANSIBLE_CONFIG=str(config)), text=True,
+                            capture_output=True, timeout=60)
+    assert (result.returncode == 0) == (not occupied and not target_failure), result.stdout + result.stderr
+    assert lock_dir.exists() == occupied, result.stdout
+    assert ('"msg": "REPAIR_ENABLED"' in result.stdout) == (mode == "live" and not occupied), result.stdout
+    if occupied:
+        assert json.loads((lock_dir / "owner.json").read_text())["run_id"] == "another-run"

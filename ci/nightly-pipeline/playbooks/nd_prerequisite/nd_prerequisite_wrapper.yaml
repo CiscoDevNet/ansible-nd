@@ -19,6 +19,8 @@
   ansible.builtin.set_fact:
     _ndp_restore_file: "{{ _ndp_state_dir }}/interface-restore.yaml"
     _ndp_prerequisite_restore_operations: []
+    _ndp_baseline_repair_journal: []
+    _ndp_baseline_repair_interfaces_done: false
   run_once: true
 
 - name: Load the canonical prerequisite registry
@@ -67,9 +69,6 @@
     - not (nd_prerequisite_only | default(false) | bool)
     - not ansible_check_mode
 
-- name: Capture the current prerequisite state before planning
-  ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
-
 - name: Assemble the offline ND prerequisite planner command
   ansible.builtin.set_fact:
     _ndp_argv: >-
@@ -85,6 +84,80 @@
         + (['--allow-auto-confirm'] if (nd_prerequisite_allow_auto_confirm | default(true) | bool) else [])
       }}
   run_once: true
+
+- name: Hold the exclusive baseline repair lock through the integration target
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - nd_prerequisite_repair_baseline | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+    - _ndp_profile.switches.members | length > 0
+  block:
+    - name: Resolve the shared baseline repair lock
+      ansible.builtin.set_fact:
+        _ndp_repair_lock_dir: "{{ nd_prerequisite_repair_lock_dir | default('/tmp/nd-prerequisite-baseline.lock') }}"
+      run_once: true
+
+    - name: Require the integration runner and a safe lock path
+      ansible.builtin.assert:
+        that:
+          - test_module is defined
+          - _ndp_repair_lock_dir is match('^/.+/nd-prerequisite-baseline[.]lock$')
+        fail_msg: "Baseline repair requires the integration runner and a shared nd-prerequisite-baseline.lock path."
+      run_once: true
+
+    - name: Acquire the exclusive baseline repair lock without stealing an existing owner
+      ansible.builtin.command:
+        argv: [mkdir, '-m', '0700', "{{ _ndp_repair_lock_dir }}"]
+      delegate_to: localhost
+      run_once: true
+      changed_when: true
+      notify: Restore prerequisite interface changes
+
+    - name: Record ownership of the baseline repair lock
+      ansible.builtin.set_fact:
+        _ndp_baseline_repair_lock_acquired: true
+      run_once: true
+
+    - name: Persist the repair lock owner for interrupted-run recovery
+      ansible.builtin.copy:
+        dest: "{{ _ndp_repair_lock_dir }}/owner.json"
+        content: "{{ {'run_id': _ndp_run_id, 'execution_id': _ndp_execution_id} | to_json }}"
+        mode: "0600"
+      delegate_to: localhost
+      run_once: true
+
+- name: Repair declared switch baseline before requiring full capture
+  ansible.builtin.include_tasks: repair_baseline.yaml
+  vars:
+    _ndp_repair_stage: switches
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - nd_prerequisite_repair_baseline | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+    - _ndp_profile.switches.members | length > 0
+
+- name: Capture the current prerequisite state before planning
+  ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
+
+- name: Repair and recapture the declared interface baseline in bounded passes
+  ansible.builtin.include_tasks: repair_baseline.yaml
+  loop: [0, 1, 2, 3]
+  loop_control:
+    loop_var: _ndp_baseline_repair_attempt
+  vars:
+    _ndp_repair_stage: interfaces
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - nd_prerequisite_repair_baseline | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+    - _ndp_profile.switches.members | length > 0
+    - not (_ndp_baseline_repair_interfaces_done | default(false) | bool)
 
 - name: Plan the ND prerequisite topology delta (offline, controller-local)
   ansible.builtin.command:
@@ -120,6 +193,12 @@
   when:
     - _ndp_plan.rc == 3
     - not (nd_prerequisite_only | default(false) | bool)
+
+- name: Release run-owned resources before skipping unavailable substrate
+  ansible.builtin.meta: flush_handlers
+  when:
+    - _ndp_plan.rc == 3
+    - _ndp_baseline_repair_lock_acquired | default(false) | bool
 
 - name: End the play cleanly because the declared lab substrate is unavailable
   ansible.builtin.meta: end_play

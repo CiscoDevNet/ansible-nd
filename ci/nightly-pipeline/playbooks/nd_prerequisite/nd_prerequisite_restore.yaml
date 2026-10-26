@@ -73,3 +73,33 @@
   ansible.builtin.set_fact:
     _ndp_prerequisite_restore_operations: []
   run_once: true
+
+- name: Read the baseline repair lock owner after successful cleanup
+  ansible.builtin.slurp:
+    src: "{{ _ndp_repair_lock_dir }}/owner.json"
+  delegate_to: localhost
+  register: _ndp_repair_lock_owner
+  run_once: true
+  when: _ndp_baseline_repair_lock_acquired | default(false) | bool
+
+- name: Verify this run still owns the baseline repair lock
+  ansible.builtin.assert:
+    that:
+      - (_ndp_repair_lock_owner.content | b64decode | from_json).run_id == _ndp_run_id
+      - (_ndp_repair_lock_owner.content | b64decode | from_json).execution_id == _ndp_execution_id
+    fail_msg: "Baseline repair lock ownership changed; refusing to release it."
+  run_once: true
+  when: _ndp_baseline_repair_lock_acquired | default(false) | bool
+
+- name: Release the baseline repair lock after successful cleanup
+  ansible.builtin.file:
+    path: "{{ _ndp_repair_lock_dir }}"
+    state: absent
+  delegate_to: localhost
+  run_once: true
+  when: _ndp_baseline_repair_lock_acquired | default(false) | bool
+
+- name: Disarm the released baseline repair lock
+  ansible.builtin.set_fact:
+    _ndp_baseline_repair_lock_acquired: false
+  run_once: true

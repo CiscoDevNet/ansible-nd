@@ -867,6 +867,181 @@ def plan_topology_delta(registry, resolved_execution, current_state):
     return operations
 
 
+def plan_baseline_repairs(registry, resolved_execution, current_state, stage="interfaces"):
+    """Plan repairs only for the selected profile's explicitly declared resources."""
+    _validated_registry(registry)
+    profile = resolved_execution.get("profile", {})
+    if resolved_execution.get("profile_id") != profile.get("profile_id"):
+        raise OrchestrationError("resolved execution/profile mismatch")
+    operations = []
+    members = {member["ref"]: member for member in profile.get("switches", {}).get("members", [])}
+    for resource in profile.get("resources", []):
+        if resource.get("existing_link"):
+            peer_ref = resource["existing_link"]["peer_switch_ref"]
+            peer = registry["lab"]["switches"][peer_ref]
+            members.setdefault(peer_ref, {"ref": peer_ref, "desired_fabric_ref": peer["baseline_fabric_ref"],
+                                         "desired_role": peer["baseline_role"]})
+    for switch_ref, member in members.items():
+        switch = registry["lab"]["switches"][switch_ref]
+        current = current_state.get("switches", {}).get(switch_ref)
+        desired_fabric = member["desired_fabric_ref"]
+        desired_role = member["desired_role"]
+        if desired_role == "preserve":
+            desired_role = current.get("role") if current else switch["baseline_role"]
+        if current is None:
+            if stage != "switches":
+                raise OrchestrationError(f"repair requires captured switch: {switch_ref}")
+            action = "onboard"
+        else:
+            if current.get("serial") != switch["serial"] or current.get("seed_ip") != switch["seed_ip"]:
+                raise OrchestrationError(f"switch identity mismatch: {switch_ref}")
+            source = current.get("fabric_ref")
+            if source not in registry["lab"]["fabrics"]:
+                raise OrchestrationError(f"unknown source fabric for {switch_ref}")
+            action = "move" if source != desired_fabric else "role" if current.get("role") != desired_role else ""
+        if action:
+            operations.append({
+                "operation": "repair_switch", "action": action, "switch_ref": switch_ref,
+                "serial": switch["serial"], "switch_ip": switch["seed_ip"],
+                "fabric_name": registry["lab"]["fabrics"][desired_fabric]["name"],
+                "fabric_ref": desired_fabric,
+                "fabric_type": registry["lab"]["fabrics"][desired_fabric]["type"],
+                "source_fabric_name": registry["lab"]["fabrics"][current["fabric_ref"]]["name"] if current else "",
+                "desired_role": desired_role, "before": copy.deepcopy(current),
+            })
+    if stage == "switches":
+        return operations
+    if stage != "interfaces" or operations:
+        raise OrchestrationError("switch baseline must converge before interface repair")
+
+    def interface_operation(switch_ref, interface, action, reason):
+        switch = registry["lab"]["switches"][switch_ref]
+        current = current_state.get("switches", {}).get(switch_ref, {})
+        if current.get("serial") != switch["serial"] or current.get("seed_ip") != switch["seed_ip"]:
+            raise OrchestrationError(f"switch identity mismatch: {switch_ref}")
+        if current.get("fabric_ref") != members[switch_ref]["desired_fabric_ref"]:
+            raise OrchestrationError(f"repair requires canonical fabric membership: {switch_ref}")
+        return {
+            "operation": "repair_interface", "action": action, "switch_ref": switch_ref,
+            "serial": switch["serial"], "switch_ip": switch["seed_ip"],
+            "fabric_name": registry["lab"]["fabrics"][current["fabric_ref"]]["name"],
+            "interface": interface, "reason": reason,
+        }
+
+    resources = profile.get("resources", [])
+    owned_ports = {}
+    endpoint_peers = {}
+    for resource in resources:
+        switch_ref = resource.get("switch_ref")
+        if resource.get("kind") == "verify_free_interfaces":
+            owned_ports.setdefault(switch_ref, set()).update(resource["interfaces"])
+        if resource.get("kind") == "ensure_routed_parent":
+            owned_ports.setdefault(switch_ref, set()).add(resource["interface"])
+            if resource.get("existing_link"):
+                peer = resource["existing_link"]
+                endpoint_peers[(switch_ref, resource["interface"])] = (peer["peer_switch_ref"], peer["peer_interface"])
+                endpoint_peers[(peer["peer_switch_ref"], peer["peer_interface"])] = (switch_ref, resource["interface"])
+    for spec in profile.get("interfabric_links", []):
+        if spec.get("requires_physical", True):
+            src, dst = spec["src"], spec["dst"]
+            endpoint_peers[(src["switch_ref"], src["interface"])] = (dst["switch_ref"], dst["interface"])
+            endpoint_peers[(dst["switch_ref"], dst["interface"])] = (src["switch_ref"], src["interface"])
+
+    for endpoint, peer in endpoint_peers.items():
+        serial = registry["lab"]["switches"][endpoint[0]]["serial"]
+        wanted = (registry["lab"]["switches"][peer[0]]["serial"].lower(), peer[1].lower())
+        if _port_link_peers(current_state, serial, endpoint[1]) - {wanted}:
+            raise OrchestrationError(f"unexpected link neighbor: {endpoint[0]}/{endpoint[1]}")
+
+    for resource in resources:
+        if resource.get("kind") != "verify_logical_interface_namespace":
+            continue
+        switch_ref = resource["switch_ref"]
+        for interface in resource["interfaces"]:
+            state = _logical_interface_state(current_state, switch_ref, interface)
+            if state is None or state.get("exists") not in (True, False):
+                raise OrchestrationError(f"logical interface was not captured: {switch_ref}/{interface}")
+            if state["exists"]:
+                operation = interface_operation(switch_ref, interface, "delete", "reserved subinterface namespace")
+                operation["expected_policy"] = state.get("policy", "")
+                operation["expected_nv_pairs"] = state.get("nv_pairs", {})
+                operations.append(operation)
+
+    if operations:
+        return operations
+
+    for resource in sorted(resources, key=lambda item: item.get("kind") != "ensure_routed_port_channel"):
+        kind = resource.get("kind")
+        if kind not in {"ensure_routed_parent", "ensure_routed_port_channel"}:
+            continue
+        switch_ref, interface = resource["switch_ref"], resource["interface"]
+        state = (_physical_interface_state if kind == "ensure_routed_parent" else _logical_interface_state)(
+            current_state, switch_ref, interface)
+        if state is None:
+            raise OrchestrationError(f"interface was not captured: {switch_ref}/{interface}")
+        if kind == "ensure_routed_parent":
+            if any(operation["action"] == "delete" for operation in operations):
+                return operations
+            if state.get("exists", True) is not True:
+                raise UnavailableError(f"required physical interface is missing: {switch_ref}/{interface}")
+            if _is_port_channel_member(current_state, switch_ref, interface, state):
+                raise OrchestrationError(f"parent belongs to an undeclared port-channel: {switch_ref}/{interface}")
+            if (switch_ref, interface) not in endpoint_peers and _is_fabric_link(
+                    current_state, registry["lab"]["switches"][switch_ref]["serial"], interface):
+                raise OrchestrationError(f"reserved parent carries a fabric link: {switch_ref}/{interface}")
+            if not _is_routed_ethernet(state) and not _is_default_free_port(state) and state.get("configured"):
+                operation = interface_operation(switch_ref, interface, "routed", "declared routedHost parent")
+                operation["expected_policy"] = state.get("policy", "")
+                operation["expected_nv_pairs"] = state.get("nv_pairs", {})
+                operations.append(operation)
+        elif state.get("exists") is True:
+            actual_members = _port_channel_members(state)
+            if set(actual_members) - owned_ports.get(switch_ref, set()):
+                raise OrchestrationError(f"port-channel contains undeclared members: {switch_ref}/{interface}")
+            if state.get("policy") != resource["desired_policy"] or actual_members != resource.get("member_interfaces", []):
+                operation = interface_operation(switch_ref, interface, "delete", "replace declared routed port-channel")
+                operation["member_interfaces"] = actual_members
+                operation["expected_policy"] = state.get("policy", "")
+                operation["expected_nv_pairs"] = state.get("nv_pairs", {})
+                operations.append(operation)
+
+    endpoints = set(endpoint_peers)
+    for link in profile.get("links", []):
+        endpoints.update((link["switch_ref"], interface) for interface in link["interfaces"])
+    for resource in resources:
+        if resource.get("kind") == "ensure_routed_parent":
+            endpoints.add((resource["switch_ref"], resource["interface"]))
+    for switch_ref, interface in sorted(endpoints):
+        if not any(operation.get("switch_ref") == switch_ref and operation.get("interface") == interface
+                   for operation in operations):
+            operations.append(interface_operation(switch_ref, interface, "admin_up", "declared link endpoint"))
+    return operations
+
+
+def normalize_repair_inventory(registry, inventory):
+    state = {"switches": {}}
+    for fabric in inventory:
+        if fabric.get("fabric_ref") not in registry["lab"]["fabrics"] or not isinstance(fabric.get("switches"), list):
+            raise OrchestrationError("incomplete switch repair inventory")
+        for switch_ref, expected in registry["lab"]["switches"].items():
+            matches = [switch for switch in fabric["switches"] if
+                       switch.get("switchId") == expected["serial"] or
+                       switch.get("fabricManagementIp") == expected["seed_ip"]]
+            if not matches:
+                continue
+            if len(matches) != 1 or switch_ref in state["switches"]:
+                raise OrchestrationError(f"ambiguous switch identity: {switch_ref}")
+            switch = matches[0]
+            if switch.get("switchId") != expected["serial"] or switch.get("fabricManagementIp") != expected["seed_ip"]:
+                raise OrchestrationError(f"switch identity mismatch: {switch_ref}")
+            role = switch.get("switchRole", "").lower().replace("edgerouter", "edge_router")
+            if not role:
+                raise OrchestrationError(f"missing switch role: {switch_ref}")
+            state["switches"][switch_ref] = {"serial": switch["switchId"], "seed_ip": switch["fabricManagementIp"],
+                                           "role": role, "fabric_ref": fabric["fabric_ref"]}
+    return state
+
+
 def _normalize(value):
     if isinstance(value, dict):
         return {
@@ -1150,6 +1325,8 @@ def main(argv=None):
     plan.add_argument("--run-id")
     plan.add_argument("--phase-baseline-id")
     plan.add_argument("--allow-auto-confirm", action="store_true")
+    plan.add_argument("--repair-stage", choices=("switches", "interfaces"))
+    plan.add_argument("--switch-inventory")
     schedule = sub.add_parser("schedule")
     schedule.add_argument("--registry", required=True)
     schedule.add_argument("--selected", required=True)
@@ -1165,9 +1342,14 @@ def main(argv=None):
             return 0
         if args.command == "plan":
             resolved = resolve_execution(registry, args.execution_id, allow_auto_confirm=args.allow_auto_confirm)
+            state = _load_state(args.state)
+            if args.switch_inventory:
+                inventory = _load_state(args.switch_inventory)
+                state.setdefault("switches", {}).update(normalize_repair_inventory(registry, inventory["inventory"])["switches"])
             output = {
                 "resolved": {key: resolved[key] for key in ("profile_id", "execution_id", "phase", "execution_style")},
-                "operations": plan_topology_delta(registry, resolved, _load_state(args.state)),
+                "operations": (plan_baseline_repairs(registry, resolved, state, args.repair_stage)
+                               if args.repair_stage else plan_topology_delta(registry, resolved, state)),
             }
             if args.run_id and args.phase_baseline_id:
                 output["runtime_vars"] = runtime_vars_for_execution(resolved, args.run_id, args.phase_baseline_id)

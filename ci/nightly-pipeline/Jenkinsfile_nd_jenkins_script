@@ -265,6 +265,9 @@ def CONSUL_PREREQUISITE_FILES = [
     'nd_prerequisite/nd_prerequisite_wrapper.yaml',
     'nd_prerequisite/nd_prerequisite_capture.yaml',
     'nd_prerequisite/refresh_existing_link.yaml',
+    'nd_prerequisite/repair_baseline.yaml',
+    'nd_prerequisite/apply_repair_switch.yaml',
+    'nd_prerequisite/apply_repair_interface.yaml',
     'nd_prerequisite/nd_prerequisite_reconcile.yaml',
     'nd_prerequisite/nd_prerequisite_wait.yaml',
     'nd_prerequisite/apply_change_role.yaml',
@@ -3511,6 +3514,7 @@ PEERLINK_PROBE_EOF
                                             -e "nd_test_fabric2_name=${SECONDARY_FABRIC_NAME}" \
                                             -e "nd_prerequisite_enable=${ND_PREREQUISITE_ENABLE_EFFECTIVE}" \
                                             -e "nd_prerequisite_apply=${ND_PREREQUISITE_APPLY_EFFECTIVE}" \
+                                            -e "nd_prerequisite_repair_baseline=true" \
                                             -e "nd_prerequisite_only=${ND_PREREQUISITE_ONLY_EFFECTIVE}" \
                                             -e "nd_prerequisite_mode=live" \
                                             -e "nd_prerequisite_run_id=${TEST_RUN_MARKER}_${m}" \
