@@ -10,9 +10,6 @@ test_switch_serial_1: "{{ nd_test_switch_serial_1 | default(switch_serial_1 | de
 test_switch_serial_2: "{{ nd_test_switch_serial_2 | default(switch_serial_2 | default('')) }}"
 
 nd4x_policy_cleanup_regex: '^ND4X-'
-nd4x_no_description_template: switch_freeform
-nd4x_no_description_priority: 115
-nd4x_no_description_conf: "bfd interval 250 min_rx 250 multiplier 3"
 nd4x_policy_check_mode_queries:
   - name: Snapshot all policies in the test fabric
     path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/policies?max=10000"

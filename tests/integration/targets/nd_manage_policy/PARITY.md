@@ -140,7 +140,7 @@ by the known check-mode defect in
 
 | Original scenario | Original file | Harness replacement | Coverage notes |
 |---|---|---|---|
-| Single-template merged creation and idempotency | `tests/merged.yaml` | `nd4x_demo_merged.yaml` | Harness predictive/apply/idempotency phases and REST validation cover clock timezone, summertime, freeform, feature enable, and the no-description BFD timer case. |
+| Single-template merged creation and idempotency | `tests/merged.yaml` | `nd4x_demo_merged.yaml` | Harness predictive/apply/idempotency phases and REST validation cover clock timezone, summertime, freeform, feature enable, and the harness-owned BFD timer case. |
 | Multiple policies in one merged task | `tests/merged.yaml` | `nd4x_demo_merged.yaml` | Preserved as separate harness calls so each module result is independently checked. |
 | Multi-switch fan-out and idempotency | `tests/merged_multi_switch.yaml` | `nd4x_demo_fanout.yaml` | Covers shared global policies on both switches. |
 | Per-switch policy override | `tests/merged_multi_switch.yaml` | `nd4x_demo_fanout.yaml` | Covers switch-specific policy data and a distinct override description. |
@@ -176,17 +176,16 @@ by the known check-mode defect in
   `idempotency: false`; their purpose is to prove an intentional second
   mutation, which conflicts with the harness's mandatory idempotency contract.
 - Cleanup failures are not ignored. Harness cleanup deletes by owned policy ID,
-  has a reserved no-description BFD fingerprint fallback, refuses to delete
-  matching records found before the first harness scenario, and asserts that
-  no owned records remain. Legacy-description fixtures are guarded against
+  uses the reserved `ND4X-` description prefix for harness-owned records,
+  refuses to delete matching records found before the first harness scenario,
+  and asserts that no owned records remain. Legacy-description fixtures are guarded against
   pre-existing records and are removed through captured policy IDs, with a
   guarded description fallback for partial setup failures. A
   pre-existing matching record must be removed manually or the harness must
   use a dedicated fabric.
-- The no-description BFD timer fixture is removed by its gathered controller
-  policy ID in `always` and by the fingerprint fallback if setup fails before the
-  ID is captured; it intentionally does not use the reserved-description
-  cleanup regex because the original behavior omits `description`.
+- The BFD timer fixture uses the unique `ND4X-merged-bfd` description, is
+  validated by its gathered controller policy ID, and is covered by the
+  reserved-description cleanup regex.
 - Legacy scenario files are not deleted. They remain the original-suite
   reference until live legacy-versus-harness results are recorded.
 - Positive REST checks include the exact template name, priority, and key

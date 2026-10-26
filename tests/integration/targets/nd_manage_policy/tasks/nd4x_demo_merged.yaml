@@ -155,7 +155,7 @@
             | list
             | length == 1
 
-    - name: "MERGED: Create BFD timers with omitted description"
+    - name: "MERGED: Create the harness-owned BFD timer policy"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_policy
         state: merged
@@ -166,6 +166,7 @@
         config:
           - name: switch_freeform
             create_additional_policy: false
+            description: "ND4X-merged-bfd"
             priority: 115
             template_inputs:
               CONF: "bfd interval 250 min_rx 250 multiplier 3"
@@ -188,11 +189,11 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.policies[?(@.templateName == 'switch_freeform' & @.priority == 115 & @.templateInputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3')]"
+              - jsonpath: "$.current.policies[?(@.description == 'ND4X-merged-bfd' & @.templateName == 'switch_freeform' & @.priority == 115 & @.templateInputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3')]"
                 exists: true
       register: nd4x_merged_bfd_timers
 
-    - name: "MERGED: Gather the no-description BFD timer policy"
+    - name: "MERGED: Gather the described BFD timer policy"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ test_fabric_name }}"
         state: gathered
@@ -202,11 +203,12 @@
               - serial_number: "{{ test_switch_serial_1 }}"
       register: nd4x_merged_bfd_timers_gathered
 
-    - name: "MERGED: Verify no-description policy shape and capture ID"
+    - name: "MERGED: Verify described policy shape and capture ID"
       ansible.builtin.set_fact:
         nd4x_merged_bfd_timer_matches: >-
           {{
             nd4x_merged_bfd_timers_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-merged-bfd')
             | selectattr('priority', 'equalto', 115)
             | selectattr('template_inputs.CONF', 'equalto', 'bfd interval 250 min_rx 250 multiplier 3')
             | list
@@ -214,23 +216,24 @@
         nd4x_merged_bfd_timer_id: >-
           {{
             nd4x_merged_bfd_timers_gathered.gathered
+            | selectattr('description', 'equalto', 'ND4X-merged-bfd')
             | selectattr('priority', 'equalto', 115)
             | selectattr('template_inputs.CONF', 'equalto', 'bfd interval 250 min_rx 250 multiplier 3')
             | map(attribute='policy_id')
             | first
           }}
 
-    - name: "MERGED: Assert no-description behavior was preserved"
+    - name: "MERGED: Assert described BFD policy shape"
       ansible.builtin.assert:
         that:
           - nd4x_merged_bfd_timers.first_run_result.changed | bool
           - nd4x_merged_bfd_timer_matches | length == 1
-          - (nd4x_merged_bfd_timer_matches[0].description | default('', true)) == ''
+          - nd4x_merged_bfd_timer_matches[0].description == 'ND4X-merged-bfd'
           - nd4x_merged_bfd_timer_matches[0].priority == 115
           - nd4x_merged_bfd_timer_matches[0].template_inputs.CONF == 'bfd interval 250 min_rx 250 multiplier 3'
 
   always:
-    - name: "MERGED CLEANUP: Remove no-description BFD timer by exact policy ID"
+    - name: "MERGED CLEANUP: Remove BFD timer by exact policy ID"
       cisco.nd.nd_manage_policy:
         fabric_name: "{{ test_fabric_name }}"
         state: deleted

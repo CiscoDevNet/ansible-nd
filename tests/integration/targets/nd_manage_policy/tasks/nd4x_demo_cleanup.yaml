@@ -23,34 +23,6 @@
         | list
       }}
 
-- name: "ND4X CLEANUP: Select no-description BFD policy IDs"
-  ansible.builtin.set_fact:
-    nd4x_cleanup_no_description_ids: >-
-      {{
-        (
-          (
-            nd4x_cleanup_policies.current.policies
-            | default([])
-            | selectattr('description', 'undefined')
-            | list
-          )
-          +
-          (
-            nd4x_cleanup_policies.current.policies
-            | default([])
-            | selectattr('description', 'defined')
-            | selectattr('description', 'equalto', '')
-            | list
-          )
-        )
-        | selectattr('templateName', 'equalto', nd4x_no_description_template)
-        | selectattr('priority', 'equalto', nd4x_no_description_priority)
-        | selectattr('templateInputs.CONF', 'equalto', nd4x_no_description_conf)
-        | map(attribute='policyId')
-        | select('defined')
-        | list
-      }}
-
 - name: "ND4X CLEANUP: Select explicitly owned legacy-description policy IDs"
   ansible.builtin.set_fact:
     nd4x_cleanup_legacy_description_ids: >-
@@ -69,7 +41,6 @@
     nd4x_cleanup_ids: >-
       {{
         (nd4x_cleanup_described_ids | default([])
-        + nd4x_cleanup_no_description_ids | default([])
         + nd4x_cleanup_legacy_description_ids | default([])
         + nd4x_cleanup_explicit_ids | default([]))
         | unique
@@ -131,28 +102,6 @@
         | default([])
         | selectattr('description', 'defined')
         | selectattr('description', 'match', nd4x_policy_cleanup_regex)
-        | list
-        | length == 0
-      - >-
-        (
-          (
-            nd4x_cleanup_after.current.policies
-            | default([])
-            | selectattr('description', 'undefined')
-            | list
-          )
-          +
-          (
-            nd4x_cleanup_after.current.policies
-            | default([])
-            | selectattr('description', 'defined')
-            | selectattr('description', 'equalto', '')
-            | list
-          )
-        )
-        | selectattr('templateName', 'equalto', nd4x_no_description_template)
-        | selectattr('priority', 'equalto', nd4x_no_description_priority)
-        | selectattr('templateInputs.CONF', 'equalto', nd4x_no_description_conf)
         | list
         | length == 0
       - >-
