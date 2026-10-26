@@ -14,8 +14,10 @@ description:
     Multisite (MSD), and Multicluster (MCFG) fabric topologies.
   - This module manages Network definitions, parent or standalone Network switch
     attachments, and optional deployment of pending Network changes.
-  - Supported Network definition properties include identity, custom templates,
-    VLAN, gateway, PVLAN, TRM, and netflow.
+  - Supported Network definition properties include identity, VLAN, gateway,
+    PVLAN, TRM, and netflow. Playbooks cannot select Network template names or
+    supply template configuration. Supported PVLAN modes select ND shipping
+    templates internally.
   - Automatically detects fabric type from the ND API and routes to the
     appropriate workflow without requiring extra user input.
   - For parent fabrics (MSD / MCFG), supports child-fabric coordination via the
@@ -55,7 +57,7 @@ options:
   config:
     description:
       - List of Network definition configurations to manage.
-      - Each element defines a Network with identity, template, VLAN, gateway,
+      - Each element defines a Network with identity, VLAN, gateway,
         PVLAN, attachment, deployment, and other settings.
       - On standalone fabrics, all Network definition, attachment, and deployment
         options are applied directly to the target fabric.
@@ -90,30 +92,6 @@ options:
       x_connect:
         description: Enable Layer 2 cross-connect; not applicable on parent fabrics.
         type: bool
-      network_template_name:
-        description:
-          - Custom Network template name.
-          - Supplying custom template fields makes the module use the
-            user-defined Network schema.
-        type: str
-      network_extension_template_name:
-        description:
-          - Custom Network extension template name.
-          - Supplying custom template fields makes the module use the
-            user-defined Network schema.
-        type: str
-      service_network_template_name:
-        description:
-          - Custom service Network template name.
-          - Supplying custom template fields makes the module use the
-            user-defined Network schema.
-        type: str
-      network_template_config:
-        description:
-          - Custom Network template configuration values.
-          - Supplying custom template fields makes the module use the
-            user-defined Network schema.
-        type: dict
       deploy:
         description:
           - Deploy pending Network attachment changes for this Network.
@@ -359,7 +337,7 @@ options:
           - Omitted fields are not explicitly changed on the child.
           - C(attach), C(deploy), C(deploy_type), Network name, mode, VRF,
             Network ID, VLAN ID, VLAN name, gateways, interface description,
-            MTU, routing tag, ARP suppression, custom templates,
+            MTU, routing tag, ARP suppression,
             and PVLAN fields remain parent-owned.
           - Ignored when C(state=deleted); child fabric tasks are not executed
             for delete operations.

@@ -1078,39 +1078,33 @@ def test_private_secondary_query_infers_vlan_type_from_template_config_for_manag
     assert orchestrator.model_class.from_response(normalized).to_config()["vlan_network_type"] == "community"
 
 
-def test_user_defined_template_fields_infer_user_defined_type():
-    model = NetworkConfigModel.from_config(
-        {
-            "network_name": "CUSTOM_TEMPLATE",
-            "network_template_name": "Custom_Network",
-        }
-    )
+@pytest.mark.parametrize("spec_factory", [network_base_argument_spec, network_parent_argument_spec])
+@pytest.mark.parametrize("model_cls", [NetworkConfigModel, NetworkParentConfigModel])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("network_template_name", "Custom_Network"),
+        ("networkTemplateName", "Custom_Network"),
+        ("network_extension_template_name", "Custom_Extension"),
+        ("networkExtensionTemplateName", "Custom_Extension"),
+        ("service_network_template_name", "Custom_Service"),
+        ("serviceNetworkTemplateName", "Custom_Service"),
+        ("network_template_config", {"segmentId": "50100"}),
+        ("networkTemplateConfig", {"segmentId": "50100"}),
+    ],
+)
+def test_custom_template_fields_are_not_public_network_options(spec_factory, model_cls, field, value):
+    spec = spec_factory()
+    assert field not in spec
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": spec}})
+    rejected = validator.validate({"config": [{"network_name": "N", field: value}]})
+    assert rejected.error_messages
+    assert field in str(rejected.error_messages)
 
-    assert model.network_type == "userDefined"
-
-
-def test_user_defined_network_type_maps_to_api_value_when_explicit():
-    model = NetworkConfigModel.from_config(
-        {
-            "network_name": "CUSTOM_TEMPLATE",
-            "network_type": "user_defined",
-            "network_template_name": "Custom_Network",
-            "network_template_config": {"segmentId": "50100"},
-        }
-    )
-
-    assert model.to_config()["network_type"] == "userDefined"
-
-
-def test_user_defined_template_fields_reject_explicit_non_user_defined_type():
-    with pytest.raises(ValueError, match="network_type must be omitted unless using user_defined"):
-        NetworkConfigModel.from_config(
-            {
-                "network_name": "BAD_TEMPLATE",
-                "network_type": "vxlanIbgp",
-                "network_template_name": "Custom_Network",
-            }
-        )
+    model = model_cls.from_config({"network_name": "N", field: value})
+    assert model.network_type is None
+    assert model.layer is None
+    assert field not in model.to_config(exclude_unset=True)
 
 
 def test_l2_fabric_data_raw_override_is_not_supported():

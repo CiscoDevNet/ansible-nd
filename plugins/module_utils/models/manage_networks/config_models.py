@@ -32,13 +32,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.va
     NetworkValidators,
 )
 
-_CUSTOM_NETWORK_TEMPLATE_FIELDS = (
-    "network_template_name",
-    "network_extension_template_name",
-    "service_network_template_name",
-    "network_template_config",
-)
-
 _VLAN_NETWORK_TYPE_ALIASES = {
     "normal": "normal",
     "primary": "privatePrimary",
@@ -78,14 +71,6 @@ _INTERFACE_MODES_WITH_INTERFACE_GROUP = frozenset(
 
 NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
     {
-        "network_template_name",
-        "networkTemplateName",
-        "network_extension_template_name",
-        "networkExtensionTemplateName",
-        "service_network_template_name",
-        "serviceNetworkTemplateName",
-        "network_template_config",
-        "networkTemplateConfig",
         "network_id",
         "networkId",
         "network_type",
@@ -408,10 +393,6 @@ class NetworkConfigModel(NDBaseModel):
     vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
     interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
-    network_template_name: str | None = Field(default=None, alias="networkTemplateName")
-    network_extension_template_name: str | None = Field(default=None, alias="networkExtensionTemplateName")
-    service_network_template_name: str | None = Field(default=None, alias="serviceNetworkTemplateName")
-    network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     deploy: bool = True
     deploy_type: str = Field(default="switch", alias="deployType")
     attach: list[NetworkAttachmentConfigModel] | None = None
@@ -436,10 +417,6 @@ class NetworkConfigModel(NDBaseModel):
             default_network_type=context.get("default_network_type"),
         )
 
-        has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS)
-        if has_custom_template_fields and not (normalized.get("network_type") or normalized.get("networkType")):
-            normalized["network_type"] = NetworkType.USER_DEFINED.value
-
         return normalized
 
     @staticmethod
@@ -455,8 +432,6 @@ class NetworkConfigModel(NDBaseModel):
             return layer
         if existing_layer is not None:
             return existing_layer
-        if any(data.get(field) is not None for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS):
-            return None
         if not NetworkConfigModel._has_definition_intent_for_layer(data):
             return None
         vlan_network_type = data.get("vlan_network_type") or data.get("vlanNetworkType")
@@ -581,10 +556,6 @@ class NetworkConfigModel(NDBaseModel):
     @model_validator(mode="after")
     def _check_cross_field_rules(self, info: ValidationInfo):
         network_type = self.network_type
-        custom_fields = {field: getattr(self, field) for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS}
-        set_custom_fields = [field for field, value in custom_fields.items() if value is not None]
-        if set_custom_fields and network_type != NetworkType.USER_DEFINED.value:
-            raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         context = info.context or {}
@@ -661,10 +632,6 @@ class NetworkConfigModel(NDBaseModel):
             "interface_netflow_monitor": None,
             "gateway_on_border": None,
             "x_connect": None,
-            "network_template_name": None,
-            "network_extension_template_name": None,
-            "service_network_template_name": None,
-            "network_template_config": None,
         }
         rejected_fields = []
         for field, default in disallowed_fields.items():

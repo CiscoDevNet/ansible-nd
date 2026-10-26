@@ -196,7 +196,6 @@ IGNORED_EXPECTED_FIELDS = {
     "child_fabric_config",
     "deploy",
     "deploy_type",
-    "network_template_config",
 }
 
 
