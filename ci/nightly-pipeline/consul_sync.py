@@ -31,7 +31,7 @@ import urllib.request
 CONSUL = os.environ.get(
     "ND_CONSUL_BASE", "http://198.51.100.155:8500/v1/kv/ansible-nd"
 )
-WORKSPACE = "/Users/sivakasi/Library/CloudStorage/OneDrive-Cisco/2/Ansible work/NX_ansible/jenkins/jenkins_nd"
+WORKSPACE = "/home/runner/Library/CloudStorage/OneDrive-Cisco/2/Ansible work/NX_ansible/jenkins/jenkins_nd"
 ROOT = os.environ.get("ND_LOCAL_ROOT", WORKSPACE)
 READ_TIMEOUT = int(os.environ.get("ND_READ_TIMEOUT", "12"))  # per-file hydrate cap
 NET_TIMEOUT = int(os.environ.get("ND_NET_TIMEOUT", "20"))
@@ -41,6 +41,7 @@ WORKERS = int(os.environ.get("ND_WORKERS", "8"))
 CONFIG_KEYS = {
     "ansible.cfg", "inventory.yaml", "requirements.txt",
     "requirements.yaml", "reset_fabric.yaml", "patch.git.diff",
+    "nd_vpc_pair_preclean.yaml",
 }
 TESTS_KEYS = {
     "integration_config.yml", "run_integration_module.yaml",

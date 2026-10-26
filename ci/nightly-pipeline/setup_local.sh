@@ -83,6 +83,7 @@ cp "$CONSUL_SRC/requirements.txt"  "$COLLECTIONS_DIRECTORY/requirements.txt"
 cp "$CONSUL_SRC/requirements.yaml" "$COLLECTIONS_DIRECTORY/requirements.yaml"
 cp "$CONSUL_SRC/inventory.yaml"    "$COLLECTIONS_DIRECTORY/inventory.yaml"
 cp "$CONSUL_SRC/reset_fabric.yaml" "$COLLECTIONS_DIRECTORY/reset_fabric.yaml"
+cp "$CONSUL_SRC/nd_vpc_pair_preclean.yaml" "$COLLECTIONS_DIRECTORY/nd_vpc_pair_preclean.yaml"
 chmod 600 "$COLLECTIONS_DIRECTORY/inventory.yaml"
 cp "$RUNNER_SRC" "$COLLECTIONS_DIRECTORY/run_integration_module.yaml"
 for pb in "${SMOKE_PLAYBOOKS[@]}"; do

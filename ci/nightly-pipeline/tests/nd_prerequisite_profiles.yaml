@@ -56,15 +56,19 @@ lab:
     external_edge_1: {baseline_fabric_ref: external, baseline_role: edge_router, serial: SERIAL00005, seed_ip: 192.0.2.89}
     external_edge_2: {baseline_fabric_ref: external, baseline_role: edge_router, serial: SERIAL00006, seed_ip: 192.0.2.90}
   interface_allowlist:
-    vxlan_leaf_1: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13, Ethernet1/31, Ethernet1/32, Ethernet1/33, Ethernet1/34, Ethernet1/35, Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48, Ethernet1/49, Ethernet1/50]
+    # Port-channel member pools are de-conflicted: access=Eth1/10-13, trunk_host=Eth1/14-17, routed=Eth1/18-21 (order must match CANONICAL_INTERFACE_ALLOWLIST).
+    vxlan_leaf_1: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13, Ethernet1/14, Ethernet1/15, Ethernet1/16, Ethernet1/17, Ethernet1/18, Ethernet1/19, Ethernet1/20, Ethernet1/21, Ethernet1/31, Ethernet1/32, Ethernet1/33, Ethernet1/34, Ethernet1/35, Ethernet1/41, Ethernet1/42, Ethernet1/43, Ethernet1/44, Ethernet1/45, Ethernet1/46, Ethernet1/47, Ethernet1/48, Ethernet1/49, Ethernet1/50]
     vxlan_leaf_2: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10, Ethernet1/30, Ethernet1/31, Ethernet1/32]
     vxlan_spine_1: []
     vxlan_border_1: [Ethernet1/1, Ethernet1/2, Ethernet1/4, Ethernet1/30, Ethernet1/31, Ethernet1/32]
     # leaf_3/leaf_4 form the second vPC pair over the cabled Eth1/1 <-> Eth1/1 and Eth1/2 <-> Eth1/2 peer-links; Eth1/5-1/10 are the vPC interface member ports.
     vxlan_leaf_3: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10]
     vxlan_leaf_4: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/6, Ethernet1/7, Ethernet1/8, Ethernet1/9, Ethernet1/10]
-    external_edge_1: [Ethernet1/2, Ethernet1/3, Ethernet1/4]
-    external_edge_2: []
+    # Eth1/1 is the subinterface parent's inter-fabric cable to vxlan_leaf_1: keep it admin-up so ND discovers the
+    # Eth1/1<->Eth1/1 adjacency the read-only existing_link gate verifies (else nd_interface_subinterface_* SKIP).
+    # Eth1/5+Eth1/7 (<-> edge_2 Eth1/6+Eth1/8) are the external vPC peer-link ports: kept admin-up so they stay ever-available once the lab cables them.
+    external_edge_1: [Ethernet1/1, Ethernet1/2, Ethernet1/3, Ethernet1/4, Ethernet1/5, Ethernet1/7]
+    external_edge_2: [Ethernet1/6, Ethernet1/8]
 
 phase_order: &phase_order
   [controller_disposable, retained_no_switch, advanced_leaf, vpc_pair_isolated,
@@ -163,7 +167,9 @@ topology_templates:
       src: {switch_ref: vxlan_border_1, interface: Ethernet1/4}
       dst: {switch_ref: external_edge_1, interface: Ethernet1/4}
       template_inputs: {trunk_allowed_vlans: "100,200,300", native_vlan: 1, port_type_fast: true, mtu_type: jumbo, speed: auto, bpdu_guard: default}
-  virtual_vpc: &virtual_vpc [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: virtual, physical_peer_links: []}]
+  smoke_physical_vpc: &smoke_physical_vpc [{fabric_ref: advanced, peer_refs: [vxlan_leaf_1, vxlan_leaf_2], state: present, mode: physical, required_path: module_creates_pair, physical_peer_links: [{src: {switch_ref: vxlan_leaf_1, interface: Ethernet1/2}, dst: {switch_ref: vxlan_leaf_2, interface: Ethernet1/1}}]}]
+  smoke_peer_links: &smoke_peer_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}]
+  smoke_vpc_links: &smoke_vpc_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/2, Ethernet1/3], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/1, Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
   # The leaf pairs over the cabled peer-links (ND 4.3 rejects a virtual peer-link on the N9K-C9300v leaves): pair 1 is leaf_1 Eth1/2 <->
   # leaf_2 Eth1/1; pair 2 is leaf_3 <-> leaf_4 over Eth1/1 <-> Eth1/1 and Eth1/2 <-> Eth1/2. The pairs are formed by the runner around the vPC
   # interface targets (pair 2 is the pre-existing second pair their multi-pair scenario asserts); the planner only needs the cables.
@@ -250,8 +256,9 @@ profiles:
     execution_style: smoke_playbook
     fabrics: [*advanced]
     switches: *advanced_leaves
-    vpc_pairs: *virtual_vpc
-    managed_domains: [vpc_pairs]
+    links: *smoke_peer_links
+    vpc_pairs: *smoke_physical_vpc
+    managed_domains: [vpc_pairs, physical_interfaces]
     runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vpc_peer1_switch_id: SERIAL00001, vpc_peer2_switch_id: SERIAL00002}
     timeouts: *disruptive_timeouts
   smoke.nd_interface_vpc_access:
@@ -261,8 +268,8 @@ profiles:
     execution_style: smoke_playbook
     fabrics: [*advanced]
     switches: *advanced_leaves
-    links: *access_links
-    vpc_pairs: *virtual_vpc
+    links: *smoke_vpc_links
+    vpc_pairs: *smoke_physical_vpc
     managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
     runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vpc_switch_ip: 192.0.2.195, vpc_peer1_switch_id: SERIAL00001, vpc_peer2_switch_id: SERIAL00002, vpc_peer1_members: [Ethernet1/3], vpc_peer2_members: [Ethernet1/3]}
     timeouts: *disruptive_timeouts
@@ -273,8 +280,8 @@ profiles:
     execution_style: smoke_playbook
     fabrics: [*advanced]
     switches: *advanced_leaves
-    links: *trunk_links
-    vpc_pairs: *virtual_vpc
+    links: *smoke_vpc_links
+    vpc_pairs: *smoke_physical_vpc
     managed_domains: [vpc_pairs, vpc_interfaces, physical_interfaces]
     runtime_vars: {nd_fabric_name: VXLAN_EVPN_Fabric, vpc_switch_ip: 192.0.2.195, vpc_peer1_switch_id: SERIAL00001, vpc_peer2_switch_id: SERIAL00002, vpc_peer1_members: [Ethernet1/3], vpc_peer2_members: [Ethernet1/3]}
     timeouts: *disruptive_timeouts
@@ -596,7 +603,7 @@ profiles:
       - kind: verify_free_interfaces
         requirement_status: ready
         switch_ref: vxlan_leaf_1
-        interfaces: [Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13]
+        interfaces: [Ethernet1/14, Ethernet1/15, Ethernet1/16, Ethernet1/17]
         constraints: [exists, not_port_channel_member, not_fabric_link]
       - kind: verify_logical_interface_namespace
         requirement_status: ready
@@ -605,8 +612,8 @@ profiles:
         interfaces: [Port-channel501, Port-channel502, Port-channel503]
         expected_state: absent
     managed_domains: [physical_interfaces, port_channels]
-    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_pc_member_a: Ethernet1/10, nd_test_pc_member_b: Ethernet1/11, nd_test_pc_member_c: Ethernet1/12, nd_test_pc_member_d: Ethernet1/13}
-    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve free Ethernet1/10-13 members and unused Port-channel501-503 namespace on vxlan_leaf_1]}
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_pc_member_a: Ethernet1/14, nd_test_pc_member_b: Ethernet1/15, nd_test_pc_member_c: Ethernet1/16, nd_test_pc_member_d: Ethernet1/17}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve free Ethernet1/14-17 members (disjoint member pool from the access target) and the unused Port-channel501-503 namespace on vxlan_leaf_1]}
   integration.nd_interface_port_channel_routed:
     <<: *profile
     profile_id: integration.nd_interface_port_channel_routed
@@ -618,7 +625,7 @@ profiles:
       - kind: verify_free_interfaces
         requirement_status: ready
         switch_ref: vxlan_leaf_1
-        interfaces: [Ethernet1/10, Ethernet1/11, Ethernet1/12, Ethernet1/13]
+        interfaces: [Ethernet1/18, Ethernet1/19, Ethernet1/20, Ethernet1/21]
         constraints: [exists, not_port_channel_member, not_fabric_link]
       - kind: verify_logical_interface_namespace
         requirement_status: ready
@@ -633,8 +640,8 @@ profiles:
         interfaces: [Port-channel523.5]
         expected_state: absent
     managed_domains: [physical_interfaces, port_channels, logical_interfaces]
-    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_pc_member_a: Ethernet1/10, nd_test_pc_member_b: Ethernet1/11, nd_test_pc_member_c: Ethernet1/12, nd_test_pc_member_d: Ethernet1/13}
-    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve free Ethernet1/10-13 members, unused Port-channel520-523 and the Port-channel523.5 sub-interface namespace on vxlan_leaf_1 (the routed target runs after the access/trunk-host port-channel targets, which release the same members); the optional IOS-XE scenario stays off because nd_test_xe_switch_ip is never supplied]}
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_switch_ip: 192.0.2.195, nd_test_pc_member_a: Ethernet1/18, nd_test_pc_member_b: Ethernet1/19, nd_test_pc_member_c: Ethernet1/20, nd_test_pc_member_d: Ethernet1/21}
+    confirmation: {status: pending, owner: "", evidence: "", reasons: [reserve free Ethernet1/18-21 members (disjoint member pool so a member left stuck by another port-channel target cannot starve this gate), unused Port-channel520-523 and the Port-channel523.5 sub-interface namespace on vxlan_leaf_1; the optional IOS-XE scenario stays off because nd_test_xe_switch_ip is never supplied]}
   integration.nd_interface_subinterface_managed:
     <<: *profile
     profile_id: integration.nd_interface_subinterface_managed
@@ -904,8 +911,15 @@ profile_executions:
       pair_mode: physical
       physical_peer_links: []
       # 2026-10-13: ND reports the intended leaf_1 Eth1/2 <-> leaf_2 Eth1/1 link missing and admin-down.
-      # Physical wiring needs CML confirmation; current switches are N9K-C9500v, so older virtual-support evidence is historical.
-      confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: ["physical peer-link required: verify leaf_1 Ethernet1/2 <-> leaf_2 Ethernet1/1 in current CML, add only if absent, then enable and verify both ends before recording physical_peer_links; ND currently reports admin-down/linkMissing; never repurpose leaf_1 Ethernet1/3 because it is the live spine uplink; virtual peering support on the current N9K-C9500v inventory has not been revalidated"]}
+      # Physical wiring needs CML confirmation; the leaves are N9K-C9300v, which do not support virtual fabric peering, so the physical peer-link is required.
+      # 2026-10-15: build failure confirmed serials are correct (STALE000008/STALE000009 match this registry
+      # everywhere). The suite's own nd_vpc_pair_delete.yaml TC1 setup creates with use_virtual_peer_link:true
+      # (no save/deploy) and reports changed=true/failed=false, but its own immediate gather+validate then
+      # reports "Validation failed. Missing pairs" -- consistent with virtual fabric peering not forming on the
+      # N9K-C9300v leaves, where it is unsupported. Added a Jenkinsfile pre-clean (best-effort delete) before
+      # every standalone nd_vpc_pair run so a half-created pair from this kind of mid-suite failure can never
+      # poison the next build; the physical peer-link leaf_1 Eth1/2 <-> leaf_2 Eth1/1 is the supported path.
+      confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: ["physical peer-link required: verify leaf_1 Ethernet1/2 <-> leaf_2 Ethernet1/1 in current CML, add only if absent, then enable and verify both ends before recording physical_peer_links; ND currently reports admin-down/linkMissing; never repurpose leaf_1 Ethernet1/3 because it is the live spine uplink; the N9K-C9300v leaves do not support virtual fabric peering, so only the physical peer-link is valid", "2026-10-15: standalone run failed in nd_vpc_pair_delete.yaml TC1 VALIDATE with 'Missing pairs' for STALE000008/STALE000009 right after a changed=true/failed=false merged create requesting use_virtual_peer_link:true; this is expected on N9K-C9300v where virtual fabric peering is unsupported -- finish cabling+confirming the physical peer-link leaf_1 Eth1/2 <-> leaf_2 Eth1/1 instead"]}
     - execution_id: integration.nd_vpc_pair.external
       fabric_ref: external
       switch_refs: [external_edge_1, external_edge_2]
@@ -914,4 +928,4 @@ profile_executions:
       physical_peer_links: []
       # 2026-10-13: no current edge_1 <-> edge_2 peer-link is discovered. Eth1/2-3 on edge_1 are live DCI ports.
       # The standalone target's extended fixture uses edge_1 Eth1/5+1/7 and edge_2 Eth1/6+1/8; it is not a traffic test.
-      confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: ["for operational external vPC coverage, verify or add edge_1 Ethernet1/5 <-> edge_2 Ethernet1/6 and edge_1 Ethernet1/7 <-> edge_2 Ethernet1/8, matching the extended standalone fixture; the lean delete-safe fixture does not configure peer-link members; never repurpose edge_1 Ethernet1/2 or Ethernet1/3 because they are live DCI links; keepalive addresses and native-VLAN alignment require separate operational validation; current N9K-C9500v virtual peering support is not revalidated"]}
+      confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: ["for operational external vPC coverage, verify or add edge_1 Ethernet1/5 <-> edge_2 Ethernet1/6 and edge_1 Ethernet1/7 <-> edge_2 Ethernet1/8, matching the extended standalone fixture; the lean delete-safe fixture does not configure peer-link members; never repurpose edge_1 Ethernet1/2 or Ethernet1/3 because they are live DCI links; keepalive addresses and native-VLAN alignment require separate operational validation; the N9K-C9300v edge switches do not support virtual fabric peering, so only the physical peer-link is valid"]}

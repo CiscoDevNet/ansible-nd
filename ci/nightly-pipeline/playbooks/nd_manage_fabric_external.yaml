@@ -13,42 +13,64 @@
       switch_roles: []
     nd_ext_fabric_name: ANSIBLE_NIGHTLY_EXTERNAL
     nd_ext_bgp_asn: "65099"
+    nd_ext_management:
+      bgp_asn: "{{ nd_ext_bgp_asn }}"
+      day0_bootstrap: false
+      local_dhcp_server: false
+      dhcp_start_address: 192.0.2.10
+      dhcp_end_address: 192.0.2.20
+      management_gateway: 192.0.2.1
+      scheduled_backup: false
+      scheduled_backup_time: "00:00"
   pre_tasks:
     - name: Prepare and confirm ND topology prerequisites
       ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
       when: nd_prerequisite_enable | default(false) | bool
   tasks:
-    - name: Guard the disposable external fabric name before pre-clean
-      ansible.builtin.assert:
-        that:
-          - nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')
-          - nd_ext_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
-        fail_msg: "Refusing to delete a fabric whose name is not disposable."
+    - name: Exercise the disposable External Connectivity fabric lifecycle
+      block:
+        - name: Guard the disposable external fabric name before pre-clean
+          ansible.builtin.assert:
+            that:
+              - nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')
+              - nd_ext_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+            fail_msg: "Refusing to delete a fabric whose name is not disposable."
 
-    - name: Pre-clean the External Connectivity fabric (ignore if absent)
-      cisco.nd.nd_manage_fabric_external:
-        state: deleted
-        config:
-          - fabric_name: "{{ nd_ext_fabric_name }}"
-      ignore_errors: true
+        - name: Pre-clean the disposable External Connectivity fabric
+          cisco.nd.nd_manage_fabric_external:
+            state: deleted
+            config:
+              - fabric_name: "{{ nd_ext_fabric_name }}"
 
-    - name: Create an External Connectivity fabric
-      cisco.nd.nd_manage_fabric_external:
-        state: merged
-        config:
-          - fabric_name: "{{ nd_ext_fabric_name }}"
-            management:
-              bgp_asn: "{{ nd_ext_bgp_asn }}"
+        - name: Create an External Connectivity fabric
+          cisco.nd.nd_manage_fabric_external:
+            state: merged
+            config:
+              - fabric_name: "{{ nd_ext_fabric_name }}"
+                management: "{{ nd_ext_management }}"
 
-    - name: Guard the disposable external fabric name before delete
-      ansible.builtin.assert:
-        that:
-          - nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')
-          - nd_ext_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
-        fail_msg: "Refusing to delete a fabric whose name is not disposable."
+        - name: Verify repeated creation is idempotent
+          cisco.nd.nd_manage_fabric_external:
+            state: merged
+            config:
+              - fabric_name: "{{ nd_ext_fabric_name }}"
+                management: "{{ nd_ext_management }}"
+          register: nd_ext_repeat
 
-    - name: Delete the External Connectivity fabric
-      cisco.nd.nd_manage_fabric_external:
-        state: deleted
-        config:
-          - fabric_name: "{{ nd_ext_fabric_name }}"
+        - name: Require idempotent External Connectivity creation
+          ansible.builtin.assert:
+            that:
+              - not nd_ext_repeat.changed
+      always:
+        - name: Guard the disposable external fabric name before delete
+          ansible.builtin.assert:
+            that:
+              - nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')
+              - nd_ext_fabric_name not in ['VXLAN_EVPN_Fabric', 'External_Connectivity_Fabric']
+            fail_msg: "Refusing to delete a fabric whose name is not disposable."
+
+        - name: Delete the disposable External Connectivity fabric
+          cisco.nd.nd_manage_fabric_external:
+            state: deleted
+            config:
+              - fabric_name: "{{ nd_ext_fabric_name }}"

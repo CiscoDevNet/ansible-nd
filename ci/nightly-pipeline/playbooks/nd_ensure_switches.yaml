@@ -39,6 +39,9 @@
 # type is checked BEFORE anything is removed (NDP_SWITCH_REHOME_BLOCKED), so a fabric the
 # module cannot onboard into never strands the switches outside every fabric. AUDIT mode
 # only reports the plan (NDP_SWITCH_REHOME_PLAN). Without the variable nothing is moved.
+# A switch ND refuses to delete ("...Please check Anomalies for possible reasons.") can
+# optionally be retried with switchActions/remove?force=true (nd_switch_rehome_force_delete,
+# default false - the cisco.nd modules never set this themselves).
 #
 #   ansible-playbook -i inventory.yaml playbooks/nd_ensure_switches.yaml \
 #     -e nd_switch_apply=true -e switch_username=admin -e switch_password=***
@@ -169,6 +172,59 @@
     # Bounded wait for ND to finish removing the moved switches (retries x delay seconds).
     nd_switch_rehome_retries: 18
     nd_switch_rehome_delay: 10
+    # BEFORE removing the re-homed switches, Recalculate & Deploy their source fabric
+    # so a pending "Leaf-ToR unpairing" left by the nd_manage_tor test is finalised on
+    # the devices. ND otherwise refuses the delete with "Please perform Recalculate and
+    # Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the
+    # fabric" (seen blocking the iBGP -> eBGP re-home of vxlan_leaf_3 / vxlan_leaf_4).
+    # Issues the proven ND 4.x REST idiom (configSave then switchActions/deploy of the
+    # leaving switches) the read-only heal below also uses; best-effort, a fabric with
+    # nothing pending is a no-op. Set false to delete without the pre-flush. Tunable via
+    # -e or the ND_SWITCH_PREDELETE_DEPLOY environment.
+    nd_switch_predelete_deploy: "{{ lookup('env', 'ND_SWITCH_PREDELETE_DEPLOY') | default(true, true) }}"
+    # Bounded wait-and-retry for the ONBOARD (add) step. A switch that is still
+    # (re)booting, or that ND has not finished rediscovering after a reset/rehome
+    # (iBGP -> eBGP), makes ND return a discovery response with NO serial, which the
+    # add would otherwise fail on immediately ("discovery response missing serial
+    # number"). Instead of stopping the round, re-attempt the add up to
+    # nd_switch_onboard_retries cycles, waiting nd_switch_onboard_delay seconds between
+    # cycles, so a late-arriving switch becomes reachable and is then added, role-
+    # corrected and deployed normally. Tunable via -e or the ND_SWITCH_ONBOARD_RETRIES
+    # / ND_SWITCH_ONBOARD_DELAY environment for a slower lab.
+    nd_switch_onboard_retries: "{{ lookup('env', 'ND_SWITCH_ONBOARD_RETRIES') | default(5, true) }}"
+    nd_switch_onboard_delay: "{{ lookup('env', 'ND_SWITCH_ONBOARD_DELAY') | default(120, true) }}"
+    # Before the FIRST add attempt, wait this long so a just-reset/just-removed switch
+    # (iBGP -> eBGP) can finish booting and present a serial to ND. Without it the retry
+    # loop starts hammering a switch from t=0 while it is still coming up (ND returns a
+    # discovery response with no serial), burning retries before the switch is ready and
+    # tripping the enforced restore. Fires once, only when there are switches to add; 0
+    # disables it. Tunable via -e or the ND_SWITCH_ONBOARD_INITIAL_WAIT environment.
+    nd_switch_onboard_initial_wait: "{{ lookup('env', 'ND_SWITCH_ONBOARD_INITIAL_WAIT') | default(480, true) }}"
+    # PRE-ONBOARD DISCOVERY RECOVERY. A switch the destructive suite just deleted is still
+    # rebooting, so ND returns a discovery response with NO serial for its seed IP and the add
+    # loop below would fail identically on every retry (build #96: leaf 192.0.2.195 could not
+    # be restored -> NDP_SWITCH_RESTORE_FAILED blocked the eBGP round). Before the add, actively
+    # RE-TRIGGER ND shallow discovery for each missing seed and wait until it presents its serial,
+    # so the add finds an identity instead of hammering an empty discovery. Best-effort: a seed
+    # that never re-identifies falls through to the add retry loop unchanged. Set false to skip.
+    nd_switch_rediscover_enabled: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_ENABLED') | default(true, true) }}"
+    # SNMPv3 auth protocols tried when re-triggering discovery (the lab default is md5; sha is the
+    # documented fallback tools/nd_switch_discovery_diagnostic.py also tries). The identity poll
+    # uses the first entry.
+    nd_switch_rediscover_protocols: [md5, sha]
+    # Bounded identity poll after the re-trigger: retries x delay seconds (8 x 20s = up to ~2.5
+    # min) for each missing seed to present its serial, under the caller's ND_SWITCH_SYNC_TIMEOUT
+    # wall-clock guard. Exits as soon as the serial is back; a seed that never re-identifies just
+    # falls through to the add loop.
+    nd_switch_rediscover_retries: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_RETRIES') | default(8, true) }}"
+    nd_switch_rediscover_delay: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_DELAY') | default(20, true) }}"
+    # ND's switchActions/remove endpoint accepts force=true to bypass its own soft block on a
+    # switch with "pending operations" (the "Failed to delete the switch... Please check Anomalies
+    # for possible reasons." refusal seen on an otherwise-healthy switch); the cisco.nd modules never
+    # set it. Opt-in only (default false, and then nothing below changes): when a switch is still
+    # present after the normal removal (whose own failure is then ignored), retry it with a raw
+    # cisco.nd.nd_rest force=true call before the wait task gives up.
+    nd_switch_rehome_force_delete: false
 
   tasks:
     - name: Locate the canonical roster file across both layouts
@@ -471,7 +527,70 @@
             loop_var: _mv
             label: "{{ _mv.name | default(_mv.serial) }}: {{ _mv.from_fabric }} -> {{ _mv.fabric }}"
 
-        # No ignore_errors: a switch that cannot leave its fabric must stop the move.
+        # ND holds a PENDING "Leaf-ToR unpairing" config change (left by the nd_manage_tor
+        # integration test) that BLOCKS the leaf delete: ND answers the removal with
+        # "Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before
+        # deleting the leaf switch from the fabric". The vPC unpair above is not enough -
+        # that pending unpair has to be DEPLOYED to the devices first. So Recalculate
+        # (configSave) then Deploy (switchActions/deploy) the leaving switches on each
+        # source fabric, the SAME proven ND 4.x REST idiom the read-only heal below uses.
+        # Best-effort (failed_when: false): a fabric with nothing pending is a no-op and
+        # the removal + force-delete fallback stay the authority. Gated by
+        # nd_switch_predelete_deploy.
+        - name: Recalculate each source fabric (config save) to finalise a pending Leaf-ToR unpairing before delete
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
+            content: {}
+          loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_predelete_save
+          failed_when: false
+          when: nd_switch_predelete_deploy | bool
+
+        - name: Deploy the leaving switches (switchActions/deploy) so ND completes the Leaf-ToR unpairing before delete
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
+            content:
+              switchIds: >-
+                {{ nd_rehome_moves
+                   | selectattr('from_fabric', 'equalto', _rf)
+                   | map(attribute='serial') | list }}
+          loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_predelete_deploy
+          failed_when: false
+          when: nd_switch_predelete_deploy | bool
+
+        - name: Give ND a moment to finish the pre-delete deploy before removing the switches
+          ansible.builtin.wait_for:
+            timeout: "{{ nd_switch_settle_seconds | int }}"
+          delegate_to: localhost
+          run_once: true
+          when:
+            - nd_switch_predelete_deploy | bool
+            - (nd_switch_settle_seconds | int) > 0
+
+        - name: Report the pre-delete Recalculate & Deploy
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_PREDELETE_DEPLOY Recalculate & Deploy issued on
+              {{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}
+              for switches {{ nd_rehome_moves | map(attribute='serial') | list }}
+              to finalise any pending Leaf-ToR unpairing before removal.
+          when: nd_switch_predelete_deploy | bool
+
+        # A failed removal no longer stops the move. With the opt-in force-delete fallback the error
+        # is ignored here so that fallback gets a chance; the best-effort wait task further down then
+        # falls through to the onboard step regardless. ND often reports a delete as failed when the
+        # switch has in fact already left, so gating the eBGP add on a confirmed removal would wrongly
+        # block switches that are already gone (and the other switches that did leave) - instead we
+        # attempt the add and let the onboard retries + enforced confirmation gate be the arbiter.
         - name: Remove each switch from the fabric it is leaving
           cisco.nd.nd_manage_switches:
             fabric: "{{ _rm.key }}"
@@ -482,6 +601,7 @@
             loop_var: _rm
             label: "{{ _rm.key }} ({{ _rm.value | length }} switch(es))"
           register: nd_rehome_removed
+          ignore_errors: "{{ nd_switch_rehome_force_delete | bool }}"
 
         - name: Report the scoped switch removal result
           ansible.builtin.debug:
@@ -502,6 +622,93 @@
             loop_var: _removal
             label: "{{ _removal._rm.key }}"
 
+        # Everything for the opt-in force-delete fallback (nd_switch_rehome_force_delete, default false)
+        # lives in this block and is skipped entirely while the flag is off. ND's switchActions/remove
+        # endpoint accepts force=true specifically to bypass the "pending operations"/anomaly soft
+        # block the normal module call cannot express (the cisco.nd collection never sets it). The wait
+        # task below stays the authority on whether the move actually succeeded.
+        - name: Force-remove the switches the normal call could not (opt-in fallback)
+          when: nd_switch_rehome_force_delete | bool
+          block:
+            # The bulk delete can leave a switch behind even when the call itself reported success
+            # (a mixed-result 207), so re-check ground truth instead of trusting the result.
+            - name: Re-check which switches are still present after the normal removal attempt
+              cisco.nd.nd_manage_switches:
+                fabric: "{{ _rm.key }}"
+                state: gathered
+              loop: "{{ nd_rehome_removals | dict2items }}"
+              loop_control:
+                loop_var: _rm
+                label: "{{ _rm.key }}"
+              register: nd_rehome_still_present
+              failed_when: false
+
+            - name: Identify the roster switches the normal removal left behind
+              ansible.builtin.set_fact:
+                nd_rehome_force_needed: >-
+                  {{ (nd_rehome_force_needed | default([])) +
+                     (nd_rehome_moves
+                       | selectattr('from_fabric', 'equalto', _sp._rm.key)
+                       | selectattr('seed_ip', 'in', (_sp.gathered | default([], true)) | map(attribute='seed_ip') | list)
+                       | list) }}
+              loop: "{{ nd_rehome_still_present.results }}"
+              loop_control:
+                loop_var: _sp
+                label: "{{ _sp._rm.key }}"
+
+            - name: Force-remove only the switches that are still present
+              when: (nd_rehome_force_needed | default([])) | length > 0
+              block:
+                - name: Report the switches about to be force-removed
+                  ansible.builtin.debug:
+                    msg: >-
+                      NDP_SWITCH_REHOME_FORCE_RETRY {{ nd_rehome_force_needed | map(attribute='serial') | list }}
+                      still present after the normal removal; retrying with switchActions/remove?force=true.
+
+                - name: Group the still-present switches by the fabric they are leaving
+                  ansible.builtin.set_fact:
+                    nd_rehome_force_by_fabric: >-
+                      {{ (nd_rehome_force_by_fabric | default({})) | combine({
+                           _fs.from_fabric: ((nd_rehome_force_by_fabric | default({})).get(_fs.from_fabric, []) + [_fs.serial])
+                         }) }}
+                  loop: "{{ nd_rehome_force_needed }}"
+                  loop_control:
+                    loop_var: _fs
+                    label: "{{ _fs.serial }}"
+
+                # nd_rest raises on a 207 Multi-Status after ND has already run the request, so a failure here
+                # proves nothing: the wait task below verifies the real outcome.
+                - name: POST switchActions/remove with force=true for the switches still present
+                  cisco.nd.nd_rest:
+                    method: post
+                    path: "/api/v1/manage/fabrics/{{ _ff.key }}/switchActions/remove?force=true"
+                    content:
+                      switchIds: "{{ _ff.value }}"
+                  loop: "{{ nd_rehome_force_by_fabric | dict2items }}"
+                  loop_control:
+                    loop_var: _ff
+                    label: "{{ _ff.key }} ({{ _ff.value | length }} switch(es))"
+                  register: nd_rehome_force_result
+                  failed_when: false
+
+                - name: Report the force-removal result
+                  ansible.builtin.debug:
+                    msg: >-
+                      NDP_SWITCH_REHOME_FORCE_DONE fabric={{ _fres._ff.key }}
+                      switch_ids={{ _fres._ff.value }}
+                      status={{ _fres.status | default('n/a') }}
+                      message={{ _fres.msg | default('') }}
+                  loop: "{{ nd_rehome_force_result.results }}"
+                  loop_control:
+                    loop_var: _fres
+                    label: "{{ _fres._ff.key }}"
+
+        # BEST-EFFORT wait (never fatal): give ND up to nd_switch_rehome_retries x
+        # nd_switch_rehome_delay seconds to report each moved switch gone, then proceed to the
+        # onboard step whether or not every switch was confirmed gone. A switch that is slow to
+        # leave (or that ND's gather is simply lagging on) must NOT block adding the switches that
+        # did leave to the eBGP fabric; a switch that genuinely never leaves is caught by the
+        # onboard add retries and the enforced confirmation gate below, not here.
         - name: Wait until ND reports the moved switches gone from the fabric they left
           cisco.nd.nd_manage_switches:
             fabric: "{{ _rm.key }}"
@@ -517,6 +724,7 @@
              | length) == 0
           retries: "{{ nd_switch_rehome_retries | int }}"
           delay: "{{ nd_switch_rehome_delay | int }}"
+          ignore_errors: true
 
         - name: Report the completed move
           ansible.builtin.debug:
@@ -583,6 +791,83 @@
             label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
           no_log: true
 
+        # PRE-ONBOARD DISCOVERY RECOVERY (before the add loop). RE-TRIGGER ND shallow discovery
+        # for each missing seed so a switch still rebooting after the destructive suite's
+        # delete-all re-presents its serial, instead of the add loop hammering an empty
+        # discovery (build #96: leaf 192.0.2.195). First a one-shot wake on every SNMPv3 auth
+        # protocol (mirroring tools/nd_switch_discovery_diagnostic.py), then a bounded poll on the
+        # primary protocol until the serial is back. Both steps are best-effort (failed_when:
+        # false): a seed that never re-identifies falls through to the add retry loop unchanged.
+        - name: Re-trigger ND shallow discovery for every missing seed IP (wake ND before the add)
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rd.0.fabric }}/actions/shallowDiscovery"
+            content:
+              seedIpCollection: ["{{ _rd.0.seed_ip }}"]
+              maxHop: 0
+              platformType: nx-os
+              snmpV3AuthProtocol: "{{ _rd.1 }}"
+              username: "{{ nd_switch_username }}"
+              password: "{{ nd_switch_password }}"
+          loop: "{{ nd_missing_switches | product(nd_switch_rediscover_protocols) | list }}"
+          loop_control:
+            loop_var: _rd
+            label: "{{ _rd.0.name | default(_rd.0.serial) }} ({{ _rd.0.seed_ip }}, {{ _rd.1 }})"
+          register: nd_rediscover_fire
+          failed_when: false
+          changed_when: false
+          no_log: true
+          when:
+            - nd_switch_rediscover_enabled | bool
+
+        - name: Wait until each missing seed presents its serial to ND (identity poll)
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rd.fabric }}/actions/shallowDiscovery"
+            content:
+              seedIpCollection: ["{{ _rd.seed_ip }}"]
+              maxHop: 0
+              platformType: nx-os
+              snmpV3AuthProtocol: "{{ nd_switch_rediscover_protocols | first }}"
+              username: "{{ nd_switch_username }}"
+              password: "{{ nd_switch_password }}"
+          register: nd_rediscover_wait
+          failed_when: false
+          changed_when: false
+          no_log: true
+          until: >-
+            _rd.serial in (((nd_rediscover_wait.current | default({})).switches | default([]))
+              | selectattr('serialNumber', 'defined') | map(attribute='serialNumber') | list)
+          retries: "{{ nd_switch_rediscover_retries | int }}"
+          delay: "{{ nd_switch_rediscover_delay | int }}"
+          loop: "{{ nd_missing_switches }}"
+          loop_control:
+            loop_var: _rd
+            label: "{{ _rd.name | default(_rd.serial) }} ({{ _rd.seed_ip }})"
+          when:
+            - nd_switch_rediscover_enabled | bool
+
+        - name: Report the pre-onboard discovery re-trigger
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_REDISCOVER re-triggered ND shallow discovery for seeds
+              {{ nd_missing_switches | map(attribute='seed_ip') | list }}
+              (protocols={{ nd_switch_rediscover_protocols }}); the add + confirmation gate below verify identity.
+          when:
+            - nd_switch_rediscover_enabled | bool
+
+        # Give a just-reset/just-removed switch time to finish booting and present a serial
+        # to ND before the first add attempt, so the retry loop below polls a switch that is
+        # actually coming up instead of hammering it from t=0 (and exhausting its retries
+        # before the late switch is reachable). Fires once; 0 disables the wait.
+        - name: Wait for late/rebooting switches to settle before the first add attempt
+          ansible.builtin.wait_for:
+            timeout: "{{ nd_switch_onboard_initial_wait | int }}"
+          delegate_to: localhost
+          run_once: true
+          when:
+            - (nd_switch_onboard_initial_wait | int) > 0
+
         # One call per fabric runs the wipe-and-reload of every switch in parallel; no ignore_errors on purpose (enforced restore).
         - name: Add each fabric's missing switches in one call, then recalculate and deploy
           cisco.nd.nd_manage_switches:
@@ -598,6 +883,14 @@
             loop_var: _req
             label: "{{ _req.key }} ({{ _req.value | length }} switch(es))"
           register: nd_onboard_results
+          # A switch still (re)booting or not yet rediscovered after a reset/rehome makes
+          # ND return a discovery response with no serial, failing the add. Do not stop
+          # the round on that transient: re-attempt the add up to nd_switch_onboard_retries
+          # cycles, waiting nd_switch_onboard_delay seconds between cycles until the late
+          # switch is reachable and onboards. Each loop item retries independently.
+          until: nd_onboard_results is succeeded
+          retries: "{{ nd_switch_onboard_retries | int }}"
+          delay: "{{ nd_switch_onboard_delay | int }}"
           no_log: true
 
     # ENFORCED CONFIRMATION GATE. Runs on every apply run (even when the initial audit
@@ -944,19 +1237,29 @@
                  else 'NDP_SWITCH_ROLE_OK all present canonical switches hold their roster role' }}
           when: nd_switch_heal_roles | bool
 
-        - name: Correct role drift on present switches, then recalculate and deploy
-          cisco.nd.nd_manage_switches:
-            fabric: "{{ _sw.fabric }}"
-            state: merged
-            config_actions:
-              save: true
-              deploy: "{{ nd_switch_deploy | bool }}"
-              type: "{{ nd_switch_deploy_scope }}"
-            config:
-              - seed_ip: "{{ _sw.seed_ip }}"
-                role: "{{ _sw.expected }}"
-                username: "{{ nd_switch_username | default(switch_username) }}"
-                password: "{{ nd_switch_password | default(switch_password) }}"
+        # Correct the role via the switchActions/changeRoles REST endpoint directly.
+        # The nd_manage_switches module path (state: merged with a differing role) did
+        # NOT persist the change on rebuilt N9K-C9500v switches (build #93:
+        # NDP_SWITCH_ROLE_CONFIRM_FAIL even after ROLE_HEAL_DONE), and it was also gated
+        # on device creds being passed (so it could silently skip). The REST call uses
+        # the ND session (no device creds) and was live-verified to flip spine->leaf /
+        # spine->border instantly. Role is normalised to ND's API enum (edge_router ->
+        # edgeRouter). configSave + switchActions/deploy below commits it.
+        - name: Correct role drift via changeRoles (direct REST)
+          vars:
+            _role_api_map:
+              leaf: leaf
+              spine: spine
+              border: border
+              edge_router: edgeRouter
+              border_gateway: borderGateway
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _sw.fabric }}/switchActions/changeRoles"
+            content:
+              switchRoles:
+                - switchId: "{{ _sw.serial }}"
+                  role: "{{ _role_api_map[(_sw.expected | string | lower | replace(' ', '_'))] | default(_sw.expected) }}"
           loop: "{{ nd_role_drift | default([]) }}"
           loop_control:
             loop_var: _sw
@@ -967,8 +1270,40 @@
           when:
             - nd_switch_heal_roles | bool
             - (nd_role_drift | default([])) | length > 0
-            - (nd_switch_username | default(switch_username | default(''))) | string | length > 0
-            - (nd_switch_password | default(switch_password | default(''))) | string | length > 0
+
+        - name: Config-save each fabric with role drift (recalculate intent)
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
+            content: {}
+          loop: "{{ (nd_role_drift | default([])) | map(attribute='fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_role_save
+          failed_when: false
+          when:
+            - nd_switch_heal_roles | bool
+            - (nd_role_drift | default([])) | length > 0
+
+        - name: Deploy the role-corrected switches (switchActions/deploy) so the change takes
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
+            content:
+              switchIds: >-
+                {{ (nd_role_drift | default([]))
+                   | selectattr('fabric', 'equalto', _rf)
+                   | map(attribute='serial') | list }}
+          loop: "{{ (nd_role_drift | default([])) | map(attribute='fabric') | unique | list }}"
+          loop_control:
+            loop_var: _rf
+            label: "{{ _rf }}"
+          register: nd_role_deploy
+          failed_when: false
+          when:
+            - nd_switch_heal_roles | bool
+            - (nd_role_drift | default([])) | length > 0
 
         - name: Report the role-drift heal actions issued
           ansible.builtin.debug:

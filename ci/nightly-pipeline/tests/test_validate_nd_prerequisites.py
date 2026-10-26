@@ -194,6 +194,9 @@ def test_integration_vpc_pair_expands_to_two_blocked_executions(registry):
     assert "edge_1 Ethernet1/5 <-> edge_2 Ethernet1/6" in external_reason
     assert "edge_1 Ethernet1/7 <-> edge_2 Ethernet1/8" in external_reason
     assert "never repurpose edge_1 Ethernet1/2 or Ethernet1/3" in external_reason
+    # Peering switches are N9K-C9300v (virtual fabric peering unsupported); reasons must name 9300v/physical, not the retired C9500v question.
+    assert "C9300v" in advanced_reason and "C9300v" in external_reason
+    assert "C9500v" not in advanced_reason and "C9500v" not in external_reason
 
 
 def test_selected_pending_profile_is_an_execution_blocker(registry):
@@ -289,8 +292,8 @@ def test_interface_profiles_declare_typed_checks_and_reversible_parents(registry
         "integration.nd_interface_ethernet_access": {f"Ethernet1/{port}" for port in range(41, 51)},
         "integration.nd_interface_ethernet_trunk_host": {f"Ethernet1/{port}" for port in range(41, 49)},
         "integration.nd_interface_port_channel_access": {f"Ethernet1/{port}" for port in range(10, 14)},
-        "integration.nd_interface_port_channel_trunk_host": {f"Ethernet1/{port}" for port in range(10, 14)},
-        "integration.nd_interface_port_channel_routed": {f"Ethernet1/{port}" for port in range(10, 14)},
+        "integration.nd_interface_port_channel_trunk_host": {f"Ethernet1/{port}" for port in range(14, 18)},
+        "integration.nd_interface_port_channel_routed": {f"Ethernet1/{port}" for port in range(18, 22)},
     }.items():
         resource = registry["profiles"][profile_id]["resources"][0]
         assert resource["kind"] == "verify_free_interfaces"
@@ -432,12 +435,14 @@ def test_jenkins_runs_vpc_pairs_immediately_after_policy_groups():
     assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
 
 
-def test_jenkins_exposes_only_debug_and_git_branch_parameters():
+def test_jenkins_exposes_only_supported_job_parameters():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    block = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S).group(1)
-    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == ["DEBUG", "ND_GIT_BRANCH"]
-    # Everything else is a fixed constant of the script, so nothing may read another job parameter.
-    assert re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text) == ["ND_GIT_BRANCH"]
+    match = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S)
+    assert match is not None
+    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", match.group(1)) == [
+        "DEBUG", "ND_GIT_BRANCH", "WEBEX_CUSTOM_MESSAGE",
+    ]
+    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == {"ND_GIT_BRANCH", "WEBEX_CUSTOM_MESSAGE"}
     for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC", "ND_SUBIF_ETHERNET_PARENT", "ND_INTERFACE_TEST_SWITCH_IP"):
         assert removed not in jenkins_text, removed
 
@@ -449,6 +454,30 @@ def test_jenkins_always_runs_nd_vpc_pair_and_never_skips_it():
     assert "NDP_MODULE_SKIPPED" not in standalone
     assert "running the module anyway" in standalone
     assert '"${TARGET_PLAYBOOK}"' in standalone
+    assert 'VPC_PRECLEAN_PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_vpc_pair_preclean.yaml"' in standalone
+    assert standalone.index('ansible-playbook -i "${INVENTORY_FILE}" "${VPC_PRECLEAN_PLAYBOOK}"') < standalone.index(
+        'ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}"'
+    )
+    assert "VPC_PRECLEAN_EOF" not in standalone
+
+
+def test_vpc_pair_preclean_playbook_is_staged_and_best_effort():
+    preclean_path = ROOT / "consul/nd_vpc_pair_preclean.yaml"
+    preclean = yaml.safe_load(preclean_path.read_text())[0]
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    local_setup = (ROOT / "setup_local.sh").read_text()
+    local_runner = (ROOT / "run_all_integ.sh").read_text()
+
+    assert preclean["hosts"] == "nd_controller"
+    assert preclean["tasks"][0]["cisco.nd.nd_manage_vpc_pair"]["state"] == "deleted"
+    assert preclean["tasks"][0]["failed_when"] is False
+    assert "NDP_VPC_PRECLEAN_" in preclean["tasks"][1]["ansible.builtin.debug"]["msg"]
+    assert "def CONSUL_VPC_FILES = ['nd_vpc_pair_preclean.yaml']" in jenkins_text
+    assert "CONSUL_VPC_FILES + CONSUL_PREREQUISITE_FILES" in jenkins_text
+    assert '"$CONSUL_SRC/nd_vpc_pair_preclean.yaml"' in local_setup
+    assert local_runner.index('ansible-playbook -i "$INVENTORY" "$VPC_PRECLEAN_PLAYBOOK"') < local_runner.index(
+        'ansible-playbook ${VERBOSITY} -i "$INVENTORY" "$RUN_PLAYBOOK"'
+    )
 
 
 @pytest.mark.parametrize("links, expected", [
@@ -554,6 +583,84 @@ def test_vpc_interface_targets_use_the_runner_formed_physical_pair(registry):
                     assert (endpoint["switch_ref"], endpoint["interface"]) in link_ports
 
 
+@pytest.mark.parametrize("module", [
+    "nd_manage_vpc_pair", "nd_interface_vpc_access", "nd_interface_vpc_trunk_host",
+])
+def test_smoke_vpc_uses_cabled_physical_pair_and_deploys(registry, module):
+    profile = registry["profiles"][f"smoke.{module}"]
+    pair, = profile["vpc_pairs"]
+    assert pair == registry["profiles"]["integration.nd_interface_vpc_access"]["vpc_pairs"][0]
+    ports = {(link["switch_ref"], port) for link in profile["links"] for port in link["interfaces"]}
+    assert {("vxlan_leaf_1", "Ethernet1/2"), ("vxlan_leaf_2", "Ethernet1/1")} <= ports
+    play = yaml.safe_load((ROOT / f"playbooks/{module}.yaml").read_text())[0]
+    create = next(task for task in play["tasks"]
+                  if task.get("cisco.nd.nd_manage_vpc_pair", {}).get("state") == "merged")
+    config = create["cisco.nd.nd_manage_vpc_pair"]
+    assert config["config"][0]["use_virtual_peer_link"] is False
+    assert config["config_actions"] == {"save": True, "deploy": True, "type": "switch"}
+    if module == "nd_manage_vpc_pair":
+        return
+    gate = next(task for task in play["tasks"] if task.get("register") == "nd_vpc_device_convergence")
+    interface = next(task for task in play["tasks"] if task.get(f"cisco.nd.{module}", {}).get("state") == "merged")
+    assert play["tasks"].index(create) < play["tasks"].index(gate) < play["tasks"].index(interface)
+    assert gate["retries"] == 24 and gate["delay"] == 15
+    from jinja2 import Environment, StrictUndefined
+
+    environment = Environment(undefined=StrictUndefined)
+    expression = environment.compile_expression(gate["until"][1])
+    for rows, expected in [
+        ([{"switchId": "peer1", "additionalData": {"configSyncStatus": "inSync"}},
+          {"switchId": "peer2", "additionalData": {"configSyncStatus": "inSync"}}], True),
+        ([{"switchId": "peer1", "additionalData": {"configSyncStatus": "inSync"}}] * 2, False),
+        ([{"switchId": "peer1", "additionalData": {"configSyncStatus": "inSync"}},
+          {"switchId": "peer2", "additionalData": {"configSyncStatus": "outOfSync"}}], False),
+        ([{"switchId": "peer1"}, {"switchId": "peer2"}], False),
+        ([], False),
+    ]:
+        assert expression(nd_vpc_device_convergence={"current": {"switches": rows}},
+                          vpc_peer1_switch_id="peer1", vpc_peer2_switch_id="peer2") is expected
+    success = environment.compile_expression(gate["until"][0])
+    assert not success(nd_vpc_device_convergence={"failed": True})
+
+
+@pytest.mark.parametrize("response_kind, expected", [
+    ("ready", True), ("missing", False), ("out_of_sync", False),
+    ("duplicate", False), ("no_status", False), ("empty", False),
+])
+def test_vpc_interface_runner_waits_for_every_peer(response_kind, expected):
+    from jinja2 import Environment, StrictUndefined
+
+    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    setup = next(task for task in runner["tasks"] if task["name"].endswith("standing physical vPC pair for the vPC interface target"))
+    gate = setup["block"][-1]
+    assert gate["register"] == "_ndp_vpcif_device_convergence"
+    assert "when" not in gate
+    assert gate["retries"] == 24 and gate["delay"] == 15
+    creates = [task["cisco.nd.nd_manage_vpc_pair"] for task in setup["block"]
+               if task.get("cisco.nd.nd_manage_vpc_pair", {}).get("state") == "merged"]
+    assert len(creates) == 2
+    assert all(task["config_actions"] == {"save": True, "deploy": True, "type": "switch"} for task in creates)
+    assert all(task["config"][0]["use_virtual_peer_link"] is False for task in creates)
+    peers = ["peer1", "peer2", "peer3", "peer4"]
+    rows = [{"switchId": serial, "additionalData": {"configSyncStatus": "inSync"}} for serial in peers]
+    if response_kind == "missing":
+        rows.pop()
+    elif response_kind == "out_of_sync":
+        rows[-1]["additionalData"]["configSyncStatus"] = "outOfSync"
+    elif response_kind == "duplicate":
+        rows[-1] = rows[0]
+    elif response_kind == "no_status":
+        rows[-1].pop("additionalData")
+    elif response_kind == "empty":
+        rows = []
+    expression = Environment(undefined=StrictUndefined).compile_expression(gate["until"][1])
+    assert expression(
+        _ndp_vpcif_device_convergence={"current": {"switches": rows}},
+        ansible_sno_1=peers[0], ansible_sno_2=peers[1],
+        _ndp_vpcif2_sno_1=peers[2], _ndp_vpcif2_sno_2=peers[3],
+    ) is expected
+
+
 def test_effective_module_profile_coverage_reports_all_missing_profiles_once():
     profiles = {"integration.present": {}}
     assert validate_effective_module_profile_coverage(["present"], profiles) == []
@@ -597,7 +704,7 @@ def test_jenkins_runs_profile_coverage_gate_before_the_module_loop():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
     stale_output_cleanup = "for target in ${INTEGRATION_LIST} ${STANDALONE_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do"
     coverage_call = 'python "${PROFILE_VALIDATOR}" coverage'
-    module_loop = "for m in ${INTEGRATION_LIST}; do"
+    module_loop = "for m in ${ORDERED_INTEGRATION_LIST}; do"
     assert '"NDP_EFFECTIVE_MODULES=${profileCoverageForShell}"' in jenkins_text
     assert coverage_call in jenkins_text
     assert (
@@ -664,6 +771,323 @@ def test_runner_maps_and_validates_the_numbered_link_and_reduced_tor_topologies(
     assert "validate the reduced ToR roster" in runner_text
     for removed in ("ND_TOR_FABRIC", "ND_TOR_SWITCH_SERIAL", "ND_VPC_TOR_PEER_SERIAL", "ND_TOR2_SWITCH_SERIAL", "test_tor_fabric_name"):
         assert removed not in runner_text
+
+
+def test_runner_cleanup_file_discovery_excludes_deletion_test_scenarios():
+    """Deletion assertions assume prior creation and must not run as generic cleanup."""
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    tasks = play["tasks"]
+    probe = next(
+        t for t in tasks
+        if t["name"] == "[{{ test_module }}] discover optional setup/cleanup task files (names vary)"
+    )
+    assert probe["loop"] == [
+        "setup.yaml", "setup.yml", "prepare.yaml", "prepare.yml",
+        "cleanup.yaml", "cleanup.yml", "teardown.yaml", "teardown.yml",
+    ]
+
+    resolve = next(
+        t for t in tasks
+        if t["name"] == "[{{ test_module }}] resolve first-matching setup + cleanup files"
+    )
+    expr = resolve["ansible.builtin.set_fact"]["_ndp_cleanup_file"]
+
+    def resolved_cleanup_file(existing_names):
+        results = [{"stat": {"exists": name in existing_names}, "item": name} for name in probe["loop"]]
+        env = NativeEnvironment()
+        env.tests["match"] = lambda value, pattern: re.match(pattern, value) is not None
+        return env.from_string(expr).render(_ndp_lifecycle_probe={"results": results})
+
+    assert resolved_cleanup_file(["setup.yaml", "deleted.yaml"]) == ""
+    assert resolved_cleanup_file(["prepare.yml", "deleted.yml"]) == ""
+    assert resolved_cleanup_file(["setup.yaml", "cleanup.yaml", "deleted.yaml"]) == "cleanup.yaml"
+    assert resolved_cleanup_file(["teardown.yml", "deleted.yaml"]) == "teardown.yml"
+    assert resolved_cleanup_file(["setup.yaml"]) == ""
+
+
+def test_subinterface_cleanup_is_scoped_and_forced_even_without_created_parents():
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    arm = next(task for task in play["tasks"] if "arm cleanup for the verified-empty" in task.get("name", ""))
+    assert play["force_handlers"] is True
+    assert arm["changed_when"] is True
+    assert arm["notify"] == "Restore prerequisite interface changes"
+    assert "selectattr('expected_state', 'equalto', 'absent')" in arm["vars"]["_ndp_subinterface_namespace"]
+    assert "_ndp_prerequisite_restore_operations" not in str(arm["when"])
+    assert "not ansible_check_mode" in arm["when"]
+    restore = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_restore.yaml").read_text())
+    for target, step in zip(("managed", "unmanaged"), restore[1:3]):
+        payload = step[f"cisco.nd.nd_interface_subinterface_{target}"]
+        assert payload["state"] == "deleted"
+        assert payload["config_actions"] == {"deploy": True}
+        assert "_ndp_subinterface_cleanup" in step["loop"]
+        assert step["ignore_errors"] is True
+        assert step["register"] == f"_ndp_{target}_subinterface_cleanup"
+        assert "changed_when" not in step
+    assert restore[3]["ansible.builtin.include_tasks"] == "restore_interface_operation.yaml"
+    assert restore[4]["ansible.builtin.assert"]["that"] == [
+        "(_ndp_managed_subinterface_cleanup | default({})) is not failed",
+        "(_ndp_unmanaged_subinterface_cleanup | default({})) is not failed",
+    ]
+
+
+@pytest.mark.parametrize("owner", ["runner", "wrapper"])
+@pytest.mark.parametrize("mode, apply, audit, check, allowed", [
+    ("live", True, False, False, True),
+    ("live", True, True, False, False),
+    ("live", False, False, False, False),
+    ("fixture", True, False, False, False),
+    ("live", True, False, True, False),
+])
+def test_mutation_guards_block_readonly_modes(tmp_path, owner, mode, apply, audit, check, allowed):
+    executable = pathlib.Path(sys.executable).with_name("ansible-playbook")
+    if not executable.exists():
+        pytest.skip("ansible-playbook is required for offline guard checks")
+    if owner == "runner":
+        tasks = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]["pre_tasks"]
+        guard = next(task for task in tasks if "release reserved port-channel members" in task.get("name", ""))
+    else:
+        tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+        guard = next(task for task in tasks if task.get("ansible.builtin.include_tasks") == "nd_prerequisite_reconcile.yaml")
+    task = {"ansible.builtin.fail": {"msg": "MUTATION_REACHED"}, "when": guard["when"]}
+    play = [{"hosts": "localhost", "gather_facts": False, "vars": {
+        "test_module": "nd_interface_port_channel_access", "nd_prerequisite_enable": True,
+        "nd_prerequisite_mode": mode, "nd_prerequisite_apply": apply, "nd_prerequisite_only": audit,
+        "_ndp_result": {"operations": [{}]},
+    }, "tasks": [task]}]
+    script = tmp_path / "guards.yaml"
+    script.write_text(yaml.safe_dump(play))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_HOME=str(tmp_path / "home"),
+                       ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"), ANSIBLE_STDOUT_CALLBACK="default")
+    environment.pop("ANSIBLE_CALLBACKS_ENABLED", None)
+    result = subprocess.run([str(executable), "-i", "localhost,", "-c", "local", str(script)] + (["--check"] if check else []),
+                            capture_output=True, text=True, env=environment, timeout=30)
+    assert result.returncode == (2 if allowed else 0), result.stdout + result.stderr
+    assert ('"msg": "MUTATION_REACHED"' in result.stdout) == allowed
+
+
+@pytest.mark.parametrize("converged", [True, False])
+def test_verified_marker_is_published_only_after_convergence(tmp_path, converged):
+    executable = pathlib.Path(sys.executable).with_name("ansible-playbook")
+    if not executable.exists():
+        pytest.skip("ansible-playbook is required for offline marker checks")
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    prefixes = ("Invalidate a previous", "Confirm reconciled prerequisites", "Publish verified",
+                "Ensure the verified prerequisite marker", "Record the verified prerequisite runtime marker")
+    selected = [task for task in tasks if task["name"].startswith(prefixes)]
+    assert len(selected) == 5
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    marker = runtime / "integration.test.yaml"
+    marker.write_text("stale: true\n")
+    remaining = [] if converged else [{"operation": "ensure_routed_parent"}]
+    play = [{"hosts": "localhost", "gather_facts": False, "vars": {
+        "ansible_python_interpreter": sys.executable,
+        "nd_prerequisite_mode": "live", "nd_prerequisite_apply": True,
+        "nd_prerequisite_marker_dir": str(runtime), "_ndp_execution_id": "integration.test",
+        "_ndp_result": {"operations": [{"operation": "ensure_routed_parent"}], "runtime_vars": {"verified": True}},
+        "_ndp_reconciled_plan": {"stdout": json.dumps({"operations": remaining})},
+    }, "tasks": selected}]
+    script = tmp_path / "markers.yaml"
+    script.write_text(yaml.safe_dump(play))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_HOME=str(tmp_path / "home"),
+                       ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"), ANSIBLE_STDOUT_CALLBACK="default")
+    environment.pop("ANSIBLE_CALLBACKS_ENABLED", None)
+    result = subprocess.run([str(executable), "-i", "localhost,", "-c", "local", str(script)],
+                            capture_output=True, text=True, env=environment, timeout=30)
+    assert result.returncode == (0 if converged else 2), result.stdout + result.stderr
+    assert marker.exists() == converged
+    if converged:
+        assert yaml.safe_load(marker.read_text()) == {"verified": True}
+
+
+def test_best_effort_preclean_does_not_suppress_the_suite_failure(tmp_path):
+    executable = pathlib.Path(sys.executable).with_name("ansible-playbook")
+    if not executable.exists():
+        pytest.skip("ansible-playbook is required for offline lifecycle checks")
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    preclean = next(task for task in play["tasks"] if "SETUP - pre-clean stale objects" in task.get("name", ""))
+    suite = next(task for task in play["tasks"] if "RUN full integration suite" in task.get("name", ""))
+    target = next(task for task in suite["block"] if "include collection target" in task.get("name", ""))
+    cleanup = next(task for task in suite["always"] if "CLEANUP - post-clean (required)" in task.get("name", ""))
+    assert "apply" not in cleanup["ansible.builtin.include_role"]
+    assert "ignore_errors" not in cleanup
+    role = tmp_path / "roles/test_target/tasks"
+    role.mkdir(parents=True)
+    (role / "cleanup.yaml").write_text(yaml.safe_dump([{"ansible.builtin.fail": {"msg": "MOCK_PRECLEAN_FAILURE"}}]))
+    (role / "main.yaml").write_text(yaml.safe_dump([{"ansible.builtin.fail": {"msg": "MOCK_SUITE_FAILURE"}}]))
+    script = tmp_path / "lifecycle.yaml"
+    script.write_text(yaml.safe_dump([{"hosts": "localhost", "gather_facts": False,
+        "vars": {"test_module": "test_target", "_ndp_cleanup_file": "cleanup.yaml"},
+        "tasks": [preclean, target]}]))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_HOME=str(tmp_path / "home"),
+                       ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"), ANSIBLE_STDOUT_CALLBACK="default")
+    environment.pop("ANSIBLE_CALLBACKS_ENABLED", None)
+    result = subprocess.run([str(executable), "-i", "localhost,", "-c", "local", str(script)],
+                            capture_output=True, text=True, env=environment, timeout=30)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "MOCK_PRECLEAN_FAILURE" in result.stdout
+    assert "MOCK_SUITE_FAILURE" in result.stdout
+    assert "ignored=1" in result.stdout
+
+
+def test_existing_link_refresh_is_bounded_and_gated():
+    directory = ROOT / "playbooks/nd_prerequisite"
+    wrapper = yaml.safe_load((directory / "nd_prerequisite_wrapper.yaml").read_text())
+    refresh = next(task for task in wrapper if task.get("ansible.builtin.include_tasks") == "refresh_existing_link.yaml")
+    assert refresh["loop"] == [0, 1, 2]
+    assert refresh["when"][:4] == [
+        "nd_prerequisite_mode | default('fixture') == 'live'",
+        "nd_prerequisite_apply | default(false) | bool",
+        "not (nd_prerequisite_only | default(false) | bool)",
+        "not ansible_check_mode",
+    ]
+    assert wrapper.index(refresh) < next(index for index, task in enumerate(wrapper) if task.get("ansible.builtin.meta") == "end_play")
+    recovery = yaml.safe_load((directory / "refresh_existing_link.yaml").read_text())[0]
+    assert recovery["when"][0] == "_ndp_plan.rc == 3"
+    assert "required existing link is (absent|not healthy)" in recovery["when"][1]
+    steps = recovery["block"]
+    writes = [task for task in steps if task.get("cisco.nd.nd_rest", {}).get("method") == "post"]
+    assert len(writes) == 1
+    rediscovery = writes[0]
+    assert rediscovery["cisco.nd.nd_rest"]["path"].endswith("/switchActions/rediscover")
+    assert rediscovery["when"] == ["_ndp_link_refresh_attempt == 0", "_ndp_refresh_matches | length == 1"]
+    assert "fabricManagementIp" in rediscovery["vars"]["_ndp_refresh_matches"]
+    assert "_ndp_refresh_expected.serial" in rediscovery["vars"]["_ndp_refresh_matches"]
+    assert steps[-3]["ansible.builtin.include_tasks"] == "nd_prerequisite_capture.yaml"
+    assert steps[-2]["register"] == "_ndp_refresh_plan"
+    assert steps[-2]["failed_when"] == "_ndp_refresh_plan.rc not in [0, 3]"
+    assert steps[-1]["ansible.builtin.set_fact"]["_ndp_plan"] == "{{ _ndp_refresh_plan }}"
+    assert "nd_prerequisite/refresh_existing_link.yaml" in (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_existing_link_refresh_executes_offline_with_mocked_controller(tmp_path, registry, recovers):
+    import shutil
+
+    executable = pathlib.Path(sys.executable).with_name("ansible-playbook")
+    if not executable.exists():
+        pytest.skip("ansible-playbook is required for the offline execution check")
+    helper = ROOT / "playbooks/nd_prerequisite/refresh_existing_link.yaml"
+    shutil.copyfile(helper, tmp_path / helper.name)
+    modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    modules.mkdir(parents=True)
+    (modules / "nd_rest.py").write_text('''from ansible.module_utils.basic import AnsibleModule
+module = AnsibleModule(argument_spec={"path": {"required": True}, "method": {}, "content": {"type": "dict"}})
+module.exit_json(changed=module.params["method"] == "post", current={"switches": [
+    {"switchId": "SERIAL00001", "fabricManagementIp": "192.0.2.195"},
+    {"switchId": "SERIAL00005", "fabricManagementIp": "192.0.2.89"}
+]})
+''')
+    recovery = yaml.safe_load((tmp_path / helper.name).read_text())
+    recovery[0]["block"] = [task for task in recovery[0]["block"] if "ansible.builtin.pause" not in task]
+    (tmp_path / helper.name).write_text(yaml.safe_dump(recovery))
+    capture = [
+        {"ansible.builtin.set_fact": {"capture_count": "{{ capture_count | int + 1 }}"}},
+        {"ansible.builtin.copy": {
+            "dest": str(tmp_path / "state"),
+            "content": "{{ 'ready' if (recovers and capture_count | int >= 2) else 'down' }}",
+        }},
+    ]
+    (tmp_path / "nd_prerequisite_capture.yaml").write_text(yaml.safe_dump(capture))
+    planner = (
+        "import pathlib,sys; ready=pathlib.Path(sys.argv[1]).read_text() == 'ready'; "
+        "print('{}'); print('' if ready else 'required existing link is not healthy in ND: test', file=sys.stderr); "
+        "sys.exit(0 if ready else 3)"
+    )
+    wrapper = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    refresh = next(task for task in wrapper if task.get("ansible.builtin.include_tasks") == helper.name)
+    play = [{
+        "hosts": "localhost", "gather_facts": False,
+        "vars": {
+            "ansible_python_interpreter": sys.executable,
+            "nd_prerequisite_mode": "live", "nd_prerequisite_apply": True,
+            "_ndp_registry": registry,
+            "_ndp_profile": registry["profiles"]["integration.nd_interface_subinterface_managed"],
+            "_ndp_plan": {"rc": 3, "stderr": "required existing link is absent in ND: test"},
+            "_ndp_argv": [sys.executable, "-c", planner, str(tmp_path / "state")],
+            "capture_count": 0, "recovers": recovers,
+        },
+        "tasks": [refresh, {"ansible.builtin.assert": {"that": [
+            "capture_count | int == " + ("2" if recovers else "3"),
+            "_ndp_plan.rc == " + ("0" if recovers else "3"),
+        ]}}],
+    }]
+    (tmp_path / "check.yaml").write_text(yaml.safe_dump(play))
+    (tmp_path / "ansible.cfg").write_text("[defaults]\nretry_files_enabled = false\n")
+    result = subprocess.run(
+        [str(executable), "-i", "localhost,", "-c", "local", str(tmp_path / "check.yaml")],
+        cwd=tmp_path, capture_output=True, text=True, timeout=90,
+        env={**os.environ, "ANSIBLE_CONFIG": str(tmp_path / "ansible.cfg"), "ANSIBLE_COLLECTIONS_PATH": str(tmp_path / "collections"),
+             "ANSIBLE_LOCAL_TEMP": str(tmp_path / "ansible-local"), "ANSIBLE_REMOTE_TEMP": str(tmp_path / "ansible-remote")},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("target, cleanup_fails", [("managed", False), ("unmanaged", False), ("managed", True)])
+def test_subinterface_cleanup_executes_after_target_failure(tmp_path, registry, target, cleanup_fails):
+    executable = pathlib.Path(sys.executable).with_name("ansible-playbook")
+    if not executable.exists():
+        pytest.skip("ansible-playbook is required for the offline execution check")
+    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    arm = next(task for task in runner["tasks"] if "arm cleanup for the verified-empty" in task.get("name", ""))
+    test_module = f"nd_interface_subinterface_{target}"
+    profile = registry["profiles"][f"integration.{test_module}"]
+    namespace = next(resource for resource in profile["resources"] if resource["kind"] == "verify_logical_interface_namespace")
+    modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    modules.mkdir(parents=True)
+    transport = f'''import json
+from ansible.module_utils.basic import AnsibleModule
+module = AnsibleModule(argument_spec={{"fabric_name": {{}}, "config": {{"type": "list", "elements": "dict"}}, "config_actions": {{"type": "dict"}}, "state": {{}}}})
+with open({str(tmp_path / "deletions.jsonl")!r}, "a") as stream:
+    stream.write(json.dumps(module.params) + "\\n")
+if {cleanup_fails!r}:
+    module.fail_json(msg="MOCK_DELETE_FAILURE")
+module.exit_json(changed=False)
+'''
+    for variant in ("managed", "unmanaged"):
+        (modules / f"nd_interface_subinterface_{variant}.py").write_text(transport)
+    restore = ROOT / "playbooks/nd_prerequisite/nd_prerequisite_restore.yaml"
+    (tmp_path / restore.name).write_text(restore.read_text())
+    (tmp_path / "restore_interface_operation.yaml").write_text(yaml.safe_dump([
+        {"ansible.builtin.copy": {"dest": str(tmp_path / "parent-restored"), "content": "restored"}},
+    ]))
+    playbook = [{
+        "hosts": "localhost", "gather_facts": False, "force_handlers": True,
+        "vars": {
+            "ansible_python_interpreter": sys.executable, "test_module": test_module,
+            "nd_prerequisite_enable": True, "nd_prerequisite_mode": "live", "nd_prerequisite_apply": True,
+            "_ndp_registry": registry, "_ndp_profile": profile, "_ndp_result": {},
+            "_ndp_restore_file": str(tmp_path / "journal.yaml"), "_ndp_state_dir": str(tmp_path),
+            "_ndp_prerequisite_restore_operations": [{"action": "mock", "interface": "Ethernet1/1"}] if cleanup_fails else [],
+        },
+        "tasks": [arm, {"ansible.builtin.fail": {"msg": "MOCK_TARGET_FAILURE"}}],
+        "handlers": [{"name": "Restore prerequisite interface changes", "ansible.builtin.include_tasks": restore.name}],
+    }]
+    (tmp_path / "check.yaml").write_text(yaml.safe_dump(playbook))
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    result = subprocess.run(
+        [str(executable), "-i", "localhost,", "-c", "local", str(tmp_path / "check.yaml")],
+        cwd=tmp_path, capture_output=True, text=True, timeout=90,
+        env={**os.environ, "ANSIBLE_CONFIG": str(tmp_path / "ansible.cfg"),
+             "ANSIBLE_COLLECTIONS_PATH": str(tmp_path / "collections"),
+             "ANSIBLE_LOCAL_TEMP": str(tmp_path / "ansible-local"), "ANSIBLE_REMOTE_TEMP": str(tmp_path / "ansible-remote")},
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "MOCK_TARGET_FAILURE" in result.stdout
+    deletions = [json.loads(line) for line in (tmp_path / "deletions.jsonl").read_text().splitlines()]
+    assert [payload["config"][0]["interface_name"] for payload in deletions] == namespace["interfaces"]
+    assert all(payload["state"] == "deleted" and payload["config"][0]["switch_ip"] == "192.0.2.195" for payload in deletions)
+    assert all(payload["fabric_name"] == registry["lab"]["fabrics"]["advanced"]["name"] for payload in deletions)
+    assert (tmp_path / "parent-restored").exists() == cleanup_fails
+    if cleanup_fails:
+        assert "MOCK_DELETE_FAILURE" in result.stdout
+        assert "Subinterface cleanup failed; parent restoration was attempted" in result.stdout
 
 
 def test_jenkins_derives_every_switch_alias_from_canonical_names(registry):
@@ -734,44 +1158,33 @@ def test_l3out_runner_verifies_required_vrfs_before_running_role():
     assert "ignore_errors so an already-present VRF" not in runner_text
 
 
-def test_nd42_contract_workarounds_cover_acl_and_ibgp():
+def test_upstream_acl_and_ibgp_test_contracts_are_not_rewritten():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    for removed in (
+        'ipv6_acl_wire.type == "ipv6"',
+        "item8: nd_manage_acl IPv6 wire type ipv4->ipv6",
+        's/bgp_asn: "65001\\\\.55"/bgp_asn: "65001"/g',
+        "item9: nd_manage_fabric iBGP asdot->asplain",
+        "s/route_reflector_count: 4/route_reflector_count: 2/g",
+        "item10: nd_manage_fabric iBGP route-reflector count 4->2",
+    ):
+        assert removed not in jenkins_text
 
-    # ND 4.2.1 returns IPv6 ACLs with the ipv6 wire type and rejects the
-    # upstream iBGP fixtures' asdot ASN and four-RR switchless combination.
-    assert 'ipv6_acl_wire.type == "ipv6"' in jenkins_text
-    assert "item8: nd_manage_acl IPv6 wire type ipv4->ipv6" in jenkins_text
-    assert 's/bgp_asn: "65001\\\\.55"/bgp_asn: "65001"/g' in jenkins_text
-    assert "item9: nd_manage_fabric iBGP asdot->asplain" in jenkins_text
-    assert "s/route_reflector_count: 4/route_reflector_count: 2/g" in jenkins_text
-    assert "item10: nd_manage_fabric iBGP route-reflector count 4->2" in jenkins_text
 
-
-def test_nd42_runtime_patches_cover_empty_rest_network_and_vrf_contracts():
+def test_upstream_rest_network_and_vrf_implementations_are_not_patched():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-
-    # Build 42 showed three controller/module contract defects: empty REST
-    # responses raised in nd_rest, write-only network fields were falsely
-    # compared, and VRF BGP key type 3 was sent instead of ND's string enum.
-    assert 'ND_REST_MODULE="${COLLECTIONS_DIRECTORY}/plugins/modules/nd_rest.py"' in jenkins_text
-    assert "item11 nd_rest empty-body handling" in jenkins_text
-    assert 'NETWORK_VALIDATE="${COLLECTIONS_DIRECTORY}/plugins/action/tests/integration/_nd_network_validate.py"' in jenkins_text
-    assert "item12 network omitted-field handling" in jenkins_text
-    assert 'VRFS_ORCHESTRATOR="${COLLECTIONS_DIRECTORY}/plugins/module_utils/orchestrators/vrfs.py"' in jenkins_text
-    assert "item13 VRF BGP key-type wire enum" in jenkins_text
-    assert 'fabric_data[\\"bgpPasswordKeyType\\"] = {3: \\"3des\\"' in jenkins_text
+    for removed in (
+        "ND_REST_MODULE=", "item11 nd_rest empty-body handling",
+        "NETWORK_VALIDATE=", "item12 network omitted-field handling",
+        "VRFS_ORCHESTRATOR=", "item13 VRF BGP key-type wire enum",
+    ):
+        assert removed not in jenkins_text
 
 
-def test_nd42_policy_contract_patches_accept_only_known_noop_cases():
+def test_upstream_policy_noop_assertions_are_not_patched_out():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-
-    # The retained switch may already have the requested command.  The repeat
-    # delete accepts the known ND no-op response, while the policy-group
-    # force-create baseline avoids requesting that duplicate deployment.
-    assert "item14 policy repeat-delete no-op" in jenkins_text
-    assert "No Commands to execute" in jenkins_text
-    assert "item15 policy-group baseline no deploy" in jenkins_text
-    assert "POLICY_GROUP_SPECIAL_TEST" in jenkins_text
+    for removed in ("item14 policy repeat-delete no-op", "item15 policy-group baseline no deploy", "POLICY_GROUP_SPECIAL_TEST"):
+        assert removed not in jenkins_text
 
 
 def test_local_runner_l3out_projection_uses_border_and_external_edge():
@@ -798,8 +1211,8 @@ def test_webex_results_table_uses_markdown_and_separate_artifact_links():
     assert "**Artifact links:**" in jenkins_text
     assert "def formatArtifactLinks(rawArtifacts)" in jenkins_text
     assert "def formatSkippedTestLinks(rawSkipFiles)" in jenkins_text
-    assert "def calculateTotalDuration(rawSummary)" in jenkins_text
-    assert "Total module duration:" in jenkins_text
+    assert "def calculateRunDuration(long startTimeMillis, long endTimeMillis)" in jenkins_text
+    assert "Total run duration:" in jenkins_text
     assert "buildWebexAdaptiveCard" not in jenkins_text
     assert '\"attachments\"' not in jenkins_text
 
@@ -813,7 +1226,8 @@ def test_switch_credentials_are_separate_and_runtime_bound():
     # Controller credentials must not be silently reused for switch onboarding;
     # both the module runner and membership guard read a separately bound Jenkins
     # username/password credential at execution time.
-    assert "credentialsId: 'ANSIBLE_NXOS_SWITCH_CREDENTIALS'" in jenkins_text
+    assert "SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'" in jenkins_text
+    assert "credentialsId: SWITCH_CREDENTIALS_ID" in jenkins_text
     assert "usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME'" in jenkins_text
     assert "passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD'" in jenkins_text
     assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME')" in runner_text
@@ -840,14 +1254,65 @@ def test_switch_adds_wipe_the_switch_except_on_external_fabrics():
     assert adds[0]["loop"] == "{{ nd_add_requests | dict2items }}"
     assert adds[0]["cisco.nd.nd_manage_switches"]["config"] == "{{ _req.value }}"
     assert 'preserve_config: "{{ nd_switch_preserve_config | bool }}"' not in text
-    # Role correction touches a switch that is already a member, so the module derives a valid value per fabric type.
+    # Role correction is a direct changeRoles REST call (the nd_manage_switches module did not persist the role on
+    # rebuilt 9500v switches, build #93), so it carries only switchRoles and can never leak a preserve_config.
     confirm = next(task for task in play["tasks"] if task.get("name", "").startswith("Confirm the full canonical roster"))
     role_heal = next(task for task in confirm["block"] if task.get("name", "").startswith("Correct role drift"))
-    assert "preserve_config" not in role_heal["cisco.nd.nd_manage_switches"]["config"][0]
+    assert role_heal["cisco.nd.nd_rest"]["path"].endswith("/switchActions/changeRoles")
+    assert "preserve_config" not in role_heal["cisco.nd.nd_rest"]["content"]["switchRoles"][0]
     for name in ("apply_ensure_switch_membership.yaml", "apply_membership_move.yaml"):
         prerequisite = (ROOT / "playbooks/nd_prerequisite" / name).read_text()
         assert "not in ['', 'external', 'externalconnectivity']" in prerequisite
         assert "preserve_config: true" not in prerequisite
+
+
+def test_switch_restore_retriggers_discovery_before_the_add():
+    # A switch the destructive suite just deleted is still rebooting, so ND returns an empty
+    # discovery (no serial) and the add would fail identically on every retry (build #96: leaf
+    # 192.0.2.195 blocked the eBGP round). Before the add, actively re-trigger ND shallow
+    # discovery for each missing seed and poll until it presents its serial.
+    play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    assert play["vars"]["nd_switch_rediscover_protocols"] == ["md5", "sha"]
+    onboard = next(task for task in play["tasks"] if task.get("name", "").startswith("Onboard the missing switches"))
+    block = onboard["block"]
+    names = [task.get("name", "") for task in block]
+    fire = next(task for task in block if task.get("name", "").startswith("Re-trigger ND shallow discovery"))
+    wait = next(task for task in block if task.get("name", "").startswith("Wait until each missing seed presents its serial"))
+    add_index = next(index for index, name in enumerate(names) if name.startswith("Add each fabric's missing switches"))
+    # Both discovery steps run BEFORE the add, and both are best-effort so they never block the restore.
+    assert names.index(fire["name"]) < add_index
+    assert names.index(wait["name"]) < add_index
+    for task in (fire, wait):
+        assert task["cisco.nd.nd_rest"]["method"] == "post"
+        assert task["cisco.nd.nd_rest"]["path"].endswith("/actions/shallowDiscovery")
+        assert task["cisco.nd.nd_rest"]["content"]["seedIpCollection"] == ["{{ _rd.seed_ip }}"] or \
+            task["cisco.nd.nd_rest"]["content"]["seedIpCollection"] == ["{{ _rd.0.seed_ip }}"]
+        assert task["failed_when"] is False
+        assert task["when"] == ["nd_switch_rediscover_enabled | bool"]
+    # The wake fans out over every SNMPv3 auth protocol; the identity poll bounds its retries.
+    assert "product(nd_switch_rediscover_protocols)" in fire["loop"]
+    assert wait["loop"] == "{{ nd_missing_switches }}"
+    assert "serialNumber" in wait["until"] and "nd_rediscover_wait" in wait["until"]
+    assert wait["retries"] == "{{ nd_switch_rediscover_retries | int }}"
+
+
+def test_no_cisco_nd_patches_are_wired_pure_develop():
+    # Pure-develop run (2026-10-22): every cisco.nd patch was removed so the freshly cloned
+    # collection runs exactly as upstream 'develop' - no serial (git apply) patch, no
+    # cleanup-scope patch, no port-channel teardown patch, and nothing uses `git apply`.
+    jenkins = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    assert "def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml']" in jenkins
+    for removed in (
+        "CONSUL_SERIAL_PATCH_FILES",
+        "ND_SERIAL_PATCH_READY",
+        "patch_nd_switch_expected_serial.py",
+        "nd_switch_expected_serial.patch",
+        "patch_nd_manage_switches_cleanup_scope.py",
+        "patch_nd_port_channel_teardown.py",
+    ):
+        assert removed not in jenkins
+    # No git-apply anywhere in the run.
+    assert "git apply" not in jenkins
 
 
 @pytest.mark.parametrize("environment_value, expected", [("", "inventory"), ("bound", "bound")])
@@ -870,9 +1335,12 @@ def test_switch_removal_runtime_patch_is_narrow_and_idempotent(tmp_path):
     assert updated == source.replace('"switchIds", "links")', '"switchIds", "links", "items")')
     assert ensure_switch_removal_status_handling(tmp_path) is False
     assert target.read_text() == updated
+    # Pure-develop run requested (2026-10-21): the switch-removal MODULE patch is intentionally NOT
+    # wired into the pipeline, so the cloned cisco.nd plugins/ stay upstream 'develop'. The patch
+    # function above stays validated (narrow + idempotent) in case it is ever re-enabled.
     jenkins = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    assert "def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'patch_nd_switch_removal.py']" in jenkins
-    assert 'python "${COLLECTIONS_DIRECTORY}/patch_nd_switch_removal.py" --collection-root "${COLLECTIONS_DIRECTORY}"' in jenkins
+    assert "def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml']" in jenkins
+    assert 'python "${COLLECTIONS_DIRECTORY}/patch_nd_switch_removal.py" --collection-root "${COLLECTIONS_DIRECTORY}"' not in jenkins
 
 
 def test_switch_removal_runtime_patch_rejects_unknown_layout_without_writing(tmp_path):
@@ -1163,6 +1631,28 @@ def test_border_and_external_edge_counts_match_canonical_lab(registry):
     assert external["desired_roles"] == ["edge_router", "edge_router"]
 
 
+def test_external_fabric_smoke_is_disposable_idempotent_and_always_cleans_up():
+    path = ROOT / "playbooks/nd_manage_fabric_external.yaml"
+    play = yaml.safe_load(path.read_text())[0]
+    assert play["vars"]["nd_ext_fabric_name"] == "ANSIBLE_NIGHTLY_EXTERNAL"
+    assert play["vars"]["nd_prerequisite"]["switch_count"] == 0
+    management = play["vars"]["nd_ext_management"]
+    assert management["day0_bootstrap"] is False
+    assert management["local_dhcp_server"] is False
+    assert management["scheduled_backup"] is False
+    assert management["scheduled_backup_time"] == "00:00"
+    assert all(management[field] for field in ("dhcp_start_address", "dhcp_end_address", "management_gateway"))
+    lifecycle = next(task for task in play["tasks"] if "block" in task)
+    module = "cisco.nd.nd_manage_fabric_external"
+    assert [task[module]["state"] for task in lifecycle["block"] if module in task] == ["deleted", "merged", "merged"]
+    repeat = next(task for task in lifecycle["block"] if task.get("register") == "nd_ext_repeat")
+    assert repeat[module]["config"][0]["fabric_name"] == "{{ nd_ext_fabric_name }}"
+    assert lifecycle["always"][0]["ansible.builtin.assert"]["that"][0] == "nd_ext_fabric_name is match('^ANSIBLE_NIGHTLY_')"
+    assert lifecycle["always"][-1][module]["state"] == "deleted"
+    assert not any(task.get("ignore_errors") for task in lifecycle["block"] + lifecycle["always"])
+    assert validate_fabric_delete_guards([path]) == []
+
+
 def test_fabric_delete_guard_rejects_retained_and_unguarded_delete(tmp_path):
     retained = tmp_path / "retained.yaml"
     retained.write_text("""---
@@ -1309,21 +1799,29 @@ def test_runtime_markers_and_bidirectional_playbook_coverage(registry, tmp_path)
     assert "smoke.nd_manage_prefix_list: smoke profile has no playbook" in errors
 
 
-def test_checkpoint_includes_jenkins_and_design_docs(tmp_path):
+@pytest.mark.parametrize("include_docs", [True, False])
+def test_checkpoint_includes_source_files_and_optional_docs(tmp_path, include_docs):
+    checkpoint_root = tmp_path / "source"
+    sources = {"Jenkinsfile_nd_jenkins_script": "pipeline {}", "tests/example.py": "VALUE = 1\n"}
+    if include_docs:
+        sources["docs/superpowers/example.md"] = "Synthetic checkpoint fixture\n"
+    for relative, content in sources.items():
+        source = checkpoint_root / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(content)
     private = tmp_path / "private"
     private.mkdir(mode=0o755)
     output = private / "checkpoint.json"
-    write_checkpoint(ROOT, "task-1", output)
+    write_checkpoint(checkpoint_root, "task-1", output)
     report = json.loads(output.read_text())
-    assert "Jenkinsfile_nd_jenkins_script" in report["files"]
-    assert any(path.startswith("docs/superpowers/") for path in report["files"])
+    assert set(report["files"]) == set(sources)
     assert private.stat().st_mode & 0o777 == 0o700
     assert output.stat().st_mode & 0o777 == 0o600
 
     link = tmp_path / "linked"
     link.symlink_to(private, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
-        write_checkpoint(ROOT, "task-1", link / "other.json")
+        write_checkpoint(checkpoint_root, "task-1", link / "other.json")
     nested = link / "nested" / "checkpoint.json"
     with pytest.raises(ValueError, match="symlink"):
-        write_checkpoint(ROOT, "task-1", nested)
+        write_checkpoint(checkpoint_root, "task-1", nested)

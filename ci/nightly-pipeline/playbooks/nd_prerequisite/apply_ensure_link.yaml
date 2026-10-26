@@ -37,9 +37,11 @@
 # Self-heal: when the requested endpoints have no discovered ethisl adjacency yet and
 # `nd_link_admin_up` is true (default), BOTH endpoint interfaces are admin-upped
 # (no-shutdown, idempotent) via admin_up_interface.yaml and the links are re-probed before
-# the hard physical-adjacency assert -- this recovers an accidentally-shut port without
-# operator intervention. A genuinely un-cabled pair still fails with the exact cabling
-# instruction.
+# the physical-adjacency check -- this recovers an accidentally-shut port without operator
+# intervention. A genuinely un-cabled pair does NOT abort the test by default: when
+# `nd_link_continue_on_missing` is true (default) the missing prerequisite is reported as
+# NDP_LINK_PREREQ_UNMET, this one IFC is left unprovisioned, and the suite proceeds. Set
+# `nd_link_continue_on_missing=false` to restore the old hard-fail-with-cabling-instruction.
 #
 # Idempotent: only act when NO logical link of the requested template already spans the
 # two endpoints. A bare discovered ethisl link is NOT treated as satisfying the template.
@@ -179,10 +181,17 @@
               admin_up_interface self-heal could not run (helper missing or API error);
               falling back to the physical-adjacency assert below.
 
-    - name: "ensure_link require the underlying physical link to be cabled/discovered first"
+    - name: "ensure_link evaluate whether the physical prerequisite is satisfied"
+      ansible.builtin.set_fact:
+        _ndp_prereq_satisfied: >-
+          {{ (_ndp_phys_exists | bool)
+             or (not (_ndp_operation.requires_physical | default(true) | bool)) }}
+      run_once: true
+
+    - name: "ensure_link HARD-FAIL on missing physical link (only when nd_link_continue_on_missing=false)"
       ansible.builtin.assert:
         that:
-          - _ndp_phys_exists | bool
+          - _ndp_prereq_satisfied | bool
         fail_msg: >-
           PHYSICAL CONNECTIVITY MISSING (an admin-up of both endpoints was attempted first):
           no discovered (ethisl) link exists between
@@ -198,12 +207,34 @@
         success_msg: >-
           Physical adjacency between {{ _ndp_operation.src.switch_name }} and
           {{ _ndp_operation.dst.switch_name }} is present.
-      when: _ndp_operation.requires_physical | default(true) | bool
+      when:
+        - _ndp_operation.requires_physical | default(true) | bool
+        - not (nd_link_continue_on_missing | default(true) | bool)
+      run_once: true
+
+    - name: "ensure_link WARN and CONTINUE on missing physical link (admin-up already attempted; nd_link_continue_on_missing=true)"
+      ansible.builtin.debug:
+        msg: >-
+          NDP_LINK_PREREQ_UNMET (continuing, not failing): after an admin-up of both endpoints,
+          no discovered (ethisl) link exists between
+          {{ _ndp_operation.src.switch_name }} ({{ _ndp_operation.src.serial }})/{{ _ndp_operation.src.interface }} in
+          {{ _ndp_operation.src.fabric_name }} and
+          {{ _ndp_operation.dst.switch_name }} ({{ _ndp_operation.dst.serial }})/{{ _ndp_operation.dst.interface }} in
+          {{ _ndp_operation.dst.fabric_name }}. The {{ _ndp_operation.template }} IFC is left unprovisioned and the
+          test proceeds. Cable {{ _ndp_operation.src.switch_name }}/{{ _ndp_operation.src.interface }} to
+          {{ _ndp_operation.dst.switch_name }}/{{ _ndp_operation.dst.interface }} to enable it. Set
+          nd_link_continue_on_missing=false to make this a hard failure instead.
+      when:
+        - _ndp_operation.requires_physical | default(true) | bool
+        - not (_ndp_prereq_satisfied | bool)
+        - nd_link_continue_on_missing | default(true) | bool
+      run_once: true
 
     - name: "ensure_link journal the planned {{ _ndp_operation.template }} link so the restore handler removes it again"
       when:
         - (_ndp_operation.provisioning | default('api')) == 'nd_manage_links'
         - _ndp_operation.config_only | default(false) | bool
+        - _ndp_prereq_satisfied | bool
       block:
         - name: "ensure_link append the planned link to the restore journal"
           ansible.builtin.set_fact:
@@ -239,7 +270,9 @@
           check_mode: false
 
     - name: "ensure_link {{ _ndp_operation.template }} via cisco.nd.nd_manage_links ({{ _ndp_operation.policy_type | default('n/a') }})"
-      when: (_ndp_operation.provisioning | default('api')) == 'nd_manage_links'
+      when:
+        - (_ndp_operation.provisioning | default('api')) == 'nd_manage_links'
+        - _ndp_prereq_satisfied | bool
       block:
         - name: "ensure_link merge the {{ _ndp_operation.policy_type | default('n/a') }} link"
           cisco.nd.nd_manage_links:
@@ -286,10 +319,14 @@
           'Input from l3out' / ReadOnly and is populated by the owning module's
           L3Out/VRF-Lite workflow). The physical prerequisite is satisfied; no raw link
           POST is issued for this template.
-      when: (_ndp_operation.provisioning | default('api')) == 'module_managed'
+      when:
+        - (_ndp_operation.provisioning | default('api')) == 'module_managed'
+        - _ndp_prereq_satisfied | bool
 
     - name: "ensure_link create {{ _ndp_operation.template }} via the native lan-fabric links API"
-      when: (_ndp_operation.provisioning | default('api')) == 'api'
+      when:
+        - (_ndp_operation.provisioning | default('api')) == 'api'
+        - _ndp_prereq_satisfied | bool
       block:
         - name: "ensure_link POST native lan-fabric links create"
           cisco.nd.nd_rest:

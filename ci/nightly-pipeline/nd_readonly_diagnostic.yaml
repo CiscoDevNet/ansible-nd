@@ -43,14 +43,17 @@
       - SERIAL00006   # external_edge_2 192.0.2.90  edge_router
   tasks:
     # ---- [1] Proven, non-destructive: gather the live inventory per fabric ----
-    - name: "[1] Gather live switch inventory per fabric (read-only)"
-      cisco.nd.nd_manage_switches:
-        fabric: "{{ item }}"
-        state: gathered
+    # nd_manage_switches does not exist in cisco.nd <= 1.5.x; use the same read-only
+    # REST gather the nightly capture uses (GET .../switches -> current.switches[]).
+    - name: "[1] Gather live switch inventory per fabric (read-only; nd_rest GET switches)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ item }}/switches"
       loop: "{{ fabrics_to_check }}"
       register: gathered_sw
+      check_mode: false
 
-    - name: "[1] Full gathered inventory (inspect 'role' / 'mode' / 'serial' fields)"
+    - name: "[1] Full gathered inventory (inspect 'switchRole' / 'additionalData.intendedSystemMode' / 'switchId')"
       ansible.builtin.debug:
         var: gathered_sw.results
 
@@ -88,21 +91,229 @@
           - "Role drift (external_edge_1)-> [5] switch_role for SERIAL00005 must be edgeRouter in External_Connectivity_Fabric (asserted below)."
           - "Focus serials to grep in the output above: {{ focus_serials | join(', ') }}"
 
-    # ---- [5] Explicit gate: external_edge_1 role must be edgeRouter (l3out blocker) ----
-    - name: "[5] Focus switch roles (serial -> switch_role, from live [1] gather)"
+    # ---- [6] READ-ONLY per-interface inventory + live policy (focus switches) ----
+    # Uses the SAME proven endpoint nd_prerequisite_capture.yaml uses for port-channel
+    # membership checks:  GET .../lan-fabric/rest/interface/detail?serialNumber=<SN>.
+    # Makes NO changes. Two things it answers for the "available port pool" question:
+    #   (a) which physical Ethernet ports actually EXIST on each switch  -> [6b]
+    #       (so we know which currently-unmanaged ports can be added to the allowlist), and
+    #   (b) the LIVE policy on every port                                -> [6c]
+    #       (read 'policy' / 'adminStatus' / 'operStatus'; a port is "free/available" when
+    #       its policy is the ND-default int_trunk_host, it has no link, and it is not a
+    #       port-channel member -- the same thing verify_free_interfaces enforces).
+    # Runs BEFORE the [5] edge_1 role assert so a role-drift failure cannot skip the probe.
+    - name: "[6a] Gather full interface detail per focus switch (read-only)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface/detail?serialNumber={{ _ndp_focus_serial }}"
+      loop: "{{ focus_serials }}"
+      loop_control:
+        loop_var: _ndp_focus_serial
+      register: iface_detail
+      ignore_errors: true
+      check_mode: false
+
+    - name: "[6b] Ethernet ports PRESENT per focus switch (existence / free-candidate map)"
       vars:
-        _all_switches: "{{ gathered_sw.results | map(attribute='after', default=[]) | flatten }}"
+        _cur: "{{ _ndp_if.current | default([]) }}"
+        _data: "{{ _cur if (_cur is not mapping) else (_cur.DATA | default(_cur.interfaces | default([]))) }}"
       ansible.builtin.debug:
-        msg: "{{ _all_switches | selectattr('serial_number', 'in', focus_serials) | items2dict(key_name='serial_number', value_name='switch_role') }}"
+        msg:
+          serial: "{{ _ndp_if._ndp_focus_serial }}"
+          ethernet_present: "{{ _data | selectattr('ifName', 'defined') | map(attribute='ifName') | select('match', '^Ethernet[0-9]') | list | sort }}"
+      loop: "{{ iface_detail.results | default([]) }}"
+      loop_control:
+        loop_var: _ndp_if
+        label: "{{ _ndp_if._ndp_focus_serial }}"
+
+    - name: "[6c] FULL interface detail per focus switch (read 'policy' / 'adminStatus' / 'operStatus' / PC membership)"
+      ansible.builtin.debug:
+        var: iface_detail.results
+
+    - name: "[6d] leaf_1 (SERIAL00001) candidate-port free-state Eth1/10-30 (compact; paste THIS block for Path A)"
+      vars:
+        _leaf1: "{{ iface_detail.results | selectattr('_ndp_focus_serial', 'equalto', 'SERIAL00001') | list }}"
+        _cur: "{{ (_leaf1[0].current | default([])) if (_leaf1 | length > 0) else [] }}"
+        _data: "{{ _cur if (_cur is not mapping) else (_cur.DATA | default(_cur.interfaces | default([]))) }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ _p.ifName }}
+          mode={{ _p.mode | default('?') }}
+          policy={{ _p.policy | default(_p.underlayPoliciesStr | default('')) }}
+          admin={{ _p.adminStatusStr | default(_p.adminStatus | default('?')) }}
+          oper={{ _p.operStatusStr | default('?') }}
+          channelId={{ _p.channelId | default('?') }}
+          connectedTo={{ _p.connectedToStr | default('') }}
+      loop: "{{ _data | selectattr('ifName', 'defined') | selectattr('ifName', 'match', '^Ethernet1/(1[0-9]|2[0-9]|30)$') | list }}"
+      loop_control:
+        loop_var: _p
+        label: "{{ _p.ifName }}"
+
+    # ---- [6e] READ-ONLY DCI-link presence: leaf_1 Eth1/1 <-> edge_1 Eth1/1 ----
+    # Answers "is the subinterface_managed/_unmanaged DCI link available in ND's state?".
+    # Mirrors the subinterface prerequisite gate (_assert_existing_link_port): it passes iff
+    # some captured link joins leaf_1 (SERIAL00001) Ethernet1/1 to edge_1 (SERIAL00005)
+    # Ethernet1/1. The capture feeds that gate from the SAME two endpoints queried below:
+    # control/links (-> physical_links) and manage/links (-> links), both on VXLAN_EVPN_Fabric.
+    # A discovered ethisl cable shows ONLY in control/links; manage/links reports zero for it
+    # (see apply_ensure_link.yaml). So if control/links is unreadable (404 on an ND that does not
+    # serve the /appcenter path) we report UNVERIFIABLE, never ABSENT -- the gate would be equally
+    # blind, which is a path bug, not a lab-cabling fault.
+    - name: "[6e] Query physical link inventory for VXLAN_EVPN_Fabric (read-only; feeds physical_links)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric=VXLAN_EVPN_Fabric"
+      register: dci_ctrl_links
+      ignore_errors: true
+      check_mode: false
+
+    - name: "[6e] Cross-check discovered links from the edge fabric too (a leaf<->edge adjacency can list under External_Connectivity_Fabric; diagnostic only)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric=External_Connectivity_Fabric"
+      register: dci_ctrl_links_edge
+      ignore_errors: true
+      check_mode: false
+
+    - name: "[6e] Query declared inter-fabric links for VXLAN_EVPN_Fabric (read-only; feeds links)"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/links?fabricName=VXLAN_EVPN_Fabric"
+      register: dci_mng_links
+      ignore_errors: true
+      check_mode: false
+
+    - name: "[6e] Normalize all link queries and record readability (read-only)"
+      vars:
+        _cc: "{{ dci_ctrl_links.current | default([]) }}"
+        _ce: "{{ dci_ctrl_links_edge.current | default([]) }}"
+        _mc: "{{ dci_mng_links.current | default({}) }}"
+      ansible.builtin.set_fact:
+        _ndp_ctrl_links: "{{ _cc if (_cc is not mapping) else (_cc.DATA | default(_cc.links | default([]))) }}"
+        _ndp_ctrl_links_edge: "{{ _ce if (_ce is not mapping) else (_ce.DATA | default(_ce.links | default([]))) }}"
+        _ndp_mng_links: "{{ (_mc.links | default([])) if (_mc is mapping) else (_mc | default([])) }}"
+        # A query that erred (404/500) is UNREADABLE, not 'empty': never conclude the cable is absent from an unreadable source.
+        _ndp_ctrl_ok: "{{ not (dci_ctrl_links.failed | default(false)) }}"
+        _ndp_ctrl_edge_ok: "{{ not (dci_ctrl_links_edge.failed | default(false)) }}"
+        _ndp_dci_matched: []
+        _ndp_dci_touching: []
+        _ndp_dci_matched_edge: []
+
+    - name: "[6e] Compare every captured link endpoint against leaf_1 Eth1/1 <-> edge_1 Eth1/1 (gate's VXLAN_EVPN_Fabric view)"
+      vars:
+        _leaf_tok: "9xpi7pqepqz|ethernet1/1"
+        _edge_tok: "905j4muzqdl|ethernet1/1"
+        # endpoint field names mirror orchestrator _link_endpoints (src/dst + sw1/sw2, with the serialNumber/interfaceName alternates).
+        _s1: "{{ (item.srcSwitchId | default('')) or (item['sw1-info'] | default({})).get('sw-serial-number', '') or (item['sw1-info'] | default({})).get('serialNumber', '') }}"
+        _i1: "{{ (item.srcInterfaceName | default('')) or (item['sw1-info'] | default({})).get('if-name', '') or (item['sw1-info'] | default({})).get('interfaceName', '') }}"
+        _s2: "{{ (item.dstSwitchId | default('')) or (item['sw2-info'] | default({})).get('sw-serial-number', '') or (item['sw2-info'] | default({})).get('serialNumber', '') }}"
+        _i2: "{{ (item.dstInterfaceName | default('')) or (item['sw2-info'] | default({})).get('if-name', '') or (item['sw2-info'] | default({})).get('interfaceName', '') }}"
+        _end1: "{{ (_s1 ~ '|' ~ _i1) | lower }}"
+        _end2: "{{ (_s2 ~ '|' ~ _i2) | lower }}"
+        _is_match: "{{ (_end1 == _leaf_tok and _end2 == _edge_tok) or (_end1 == _edge_tok and _end2 == _leaf_tok) }}"
+        _is_touch: "{{ (_leaf_tok in [_end1, _end2]) or (_edge_tok in [_end1, _end2]) }}"
+      ansible.builtin.set_fact:
+        _ndp_dci_matched: "{{ _ndp_dci_matched + ([[_end1, _end2]] if _is_match else []) }}"
+        _ndp_dci_touching: "{{ _ndp_dci_touching + ([[_end1, _end2]] if _is_touch else []) }}"
+      loop: "{{ (_ndp_ctrl_links | default([])) + (_ndp_mng_links | default([])) }}"
+      loop_control:
+        label: "{{ item.srcSwitchId | default((item['sw1-info'] | default({})).get('sw-serial-number', '?')) }}"
+      when: item is mapping
+
+    - name: "[6e] Cross-check the edge fabric's discovered links for the same adjacency (diagnostic only; NOT part of the gate verdict)"
+      vars:
+        _leaf_tok: "9xpi7pqepqz|ethernet1/1"
+        _edge_tok: "905j4muzqdl|ethernet1/1"
+        _s1: "{{ (item.srcSwitchId | default('')) or (item['sw1-info'] | default({})).get('sw-serial-number', '') or (item['sw1-info'] | default({})).get('serialNumber', '') }}"
+        _i1: "{{ (item.srcInterfaceName | default('')) or (item['sw1-info'] | default({})).get('if-name', '') or (item['sw1-info'] | default({})).get('interfaceName', '') }}"
+        _s2: "{{ (item.dstSwitchId | default('')) or (item['sw2-info'] | default({})).get('sw-serial-number', '') or (item['sw2-info'] | default({})).get('serialNumber', '') }}"
+        _i2: "{{ (item.dstInterfaceName | default('')) or (item['sw2-info'] | default({})).get('if-name', '') or (item['sw2-info'] | default({})).get('interfaceName', '') }}"
+        _end1: "{{ (_s1 ~ '|' ~ _i1) | lower }}"
+        _end2: "{{ (_s2 ~ '|' ~ _i2) | lower }}"
+        _is_match: "{{ (_end1 == _leaf_tok and _end2 == _edge_tok) or (_end1 == _edge_tok and _end2 == _leaf_tok) }}"
+      ansible.builtin.set_fact:
+        _ndp_dci_matched_edge: "{{ _ndp_dci_matched_edge + ([[_end1, _end2]] if _is_match else []) }}"
+      loop: "{{ _ndp_ctrl_links_edge | default([]) }}"
+      loop_control:
+        label: "{{ item.srcSwitchId | default((item['sw1-info'] | default({})).get('sw-serial-number', '?')) }}"
+      when: item is mapping
+
+    - name: "[6e] VERDICT: is the leaf_1 Eth1/1 <-> edge_1 Eth1/1 DCI link present in ND?"
+      ansible.builtin.debug:
+        msg:
+          verdict: >-
+            {{ 'NDP_DCI_LINK_PRESENT' if (_ndp_dci_matched | length) > 0
+               else ('NDP_DCI_LINK_UNVERIFIABLE' if (not _ndp_ctrl_ok) else 'NDP_DCI_LINK_ABSENT') }}
+          checked: "leaf_1 SERIAL00001 Ethernet1/1 <-> edge_1 SERIAL00005 Ethernet1/1 (VXLAN_EVPN_Fabric view = the gate's view)"
+          control_links_readable: "{{ _ndp_ctrl_ok }}"
+          control_links_status: "{{ dci_ctrl_links.status | default('n/a') }}"
+          control_links_error: "{{ (dci_ctrl_links.msg | default('')) | truncate(160) }}"
+          control_links_count: "{{ _ndp_ctrl_links | length }}"
+          manage_links_count: "{{ _ndp_mng_links | length }}"
+          matched_endpoint_pairs: "{{ _ndp_dci_matched }}"
+          links_touching_either_end: "{{ _ndp_dci_touching }}"
+          edge_fabric_control_readable: "{{ _ndp_ctrl_edge_ok }}"
+          edge_fabric_matched_pairs: "{{ _ndp_dci_matched_edge }}"
+          meaning: >-
+            PRESENT => ND holds the leaf_1<->edge_1 adjacency the subinterface gate reads (physical_links/links on
+            VXLAN_EVPN_Fabric); nd_interface_subinterface_managed/_unmanaged will NOT skip on the existing-link check.
+            ABSENT => control/links WAS readable on VXLAN_EVPN_Fabric and still no leaf_1 Eth1/1 <-> edge_1 Eth1/1
+            match -> genuine lab substrate. Fix order: (1) admin-up BOTH ends (leaf_1 Eth1/1 and edge_1 Eth1/1) and
+            Recalculate & Deploy so ND rediscovers the ethisl cable; (2) if still absent, confirm leaf_1 AND edge_1
+            are onboarded in ND -- a deboarded switch drops the adjacency; (3) only then recable in CML. If
+            edge_fabric_matched_pairs is non-empty while this says ABSENT, the capture reads only the leaf fabric,
+            so the cable exists but the gate cannot see it (capture-scoping, not lab).
+            UNVERIFIABLE => control/links on VXLAN_EVPN_Fabric errored/404 (see control_links_status/error). A
+            discovered ethisl cable is invisible via manage/links alone, so the GATE is also blind here -> this is the
+            /appcenter control/links path not being served on this ND, not a cabling fault; fix the capture's link
+            endpoint for ND 4.x before blaming the lab.
+
+    # ---- [6f] READ-ONLY port-channel-member verdict for the reserved pools on leaf_1 ----
+    # Answers "is the reserved port_channel_trunk_host/_routed member still claimed as a
+    # port-channel member on ND (not free)?". Mirrors verify_free_interfaces' not_port_channel_member
+    # constraint: a port is a stuck member when interface/detail reports channelId != -1 (bundled
+    # into a Port-channel). Pre-clean C1 deletes Port-channel501/502/503 on leaf_1 BEFORE the gate
+    # (run_integration_module.yaml L265) to release them once; after that per-module cleanup keeps them free.
+    - name: "[6f] VERDICT: are leaf_1 (SERIAL00001) reserved pool ports free of port-channel membership?"
+      vars:
+        _leaf1: "{{ iface_detail.results | default([]) | selectattr('_ndp_focus_serial', 'equalto', 'SERIAL00001') | list }}"
+        _cur: "{{ (_leaf1[0].current | default([])) if (_leaf1 | length > 0) else [] }}"
+        _data: "{{ _cur if (_cur is not mapping) else (_cur.DATA | default(_cur.interfaces | default([]))) }}"
+        _pool: "{{ _data | selectattr('ifName', 'defined') | selectattr('ifName', 'match', '^Ethernet1/(1[0-9]|2[0-1])$') | list }}"
+        # no interface rows for leaf_1 => interface/detail probe returned nothing (e.g. /appcenter 404 on ND 4.x); can't judge.
+        _have_data: "{{ (_data | length) > 0 }}"
+        # stuck = still bundled: channelId present, non-null, and not one of the "no member" sentinels.
+        _stuck: "{{ _pool | selectattr('channelId', 'defined') | rejectattr('channelId', 'none') | rejectattr('channelId', 'equalto', -1) | rejectattr('channelId', 'equalto', '-1') | rejectattr('channelId', 'equalto', 0) | rejectattr('channelId', 'equalto', '') | map(attribute='ifName') | list | sort }}"
+        _free: "{{ _pool | map(attribute='ifName') | list | difference(_stuck) | sort }}"
+      ansible.builtin.debug:
+        msg:
+          verdict: "{{ 'NDP_PC_MEMBERS_UNKNOWN' if not _have_data else ('NDP_PC_MEMBERS_FREE' if (_stuck | length) == 0 else 'NDP_PC_MEMBERS_STUCK') }}"
+          checked: "leaf_1 SERIAL00001 Ethernet1/10-21 (access 10-13, trunk_host 14-17, routed 18-21)"
+          interface_rows_seen: "{{ _data | length }}"
+          still_port_channel_members: "{{ _stuck }}"
+          free_ports: "{{ _free }}"
+          meaning: >-
+            UNKNOWN => [6a] interface/detail returned no rows (likely the /appcenter path 404s on ND 4.x);
+            re-check [6a] output -- if it 404'd, the per-switch detail must come from the /api endpoint instead.
+            STUCK ports carry channelId != -1 (still bundled into a Port-channel), so
+            verify_free_interfaces SKIPs that target ("reserved interface is a port-channel member").
+            Pre-clean C1 releases them before the gate; FREE ports (channelId == -1) pass the gate.
+
+    # ---- [5] Explicit gate: external_edge_1 role must be edgeRouter (l3out blocker) ----
+    - name: "[5] Focus switch roles (serial -> switchRole, from live [1] gather)"
+      vars:
+        _all_switches: "{{ gathered_sw.results | map(attribute='current', default={}) | map(attribute='switches', default=[]) | flatten }}"
+      ansible.builtin.debug:
+        msg: "{{ _all_switches | selectattr('switchId', 'in', focus_serials) | items2dict(key_name='switchId', value_name='switchRole') }}"
 
     - name: "[5] ASSERT external_edge_1 (SERIAL00005) role == edgeRouter"
       vars:
-        _all_switches: "{{ gathered_sw.results | map(attribute='after', default=[]) | flatten }}"
-        _edge1: "{{ _all_switches | selectattr('serial_number', 'equalto', 'SERIAL00005') | list }}"
-        _edge1_role: "{{ _edge1[0].switch_role if (_edge1 | length > 0) else 'NOT_FOUND' }}"
+        _all_switches: "{{ gathered_sw.results | map(attribute='current', default={}) | map(attribute='switches', default=[]) | flatten }}"
+        _edge1: "{{ _all_switches | selectattr('switchId', 'equalto', 'SERIAL00005') | list }}"
+        _edge1_role: "{{ _edge1[0].switchRole if (_edge1 | length > 0) else 'NOT_FOUND' }}"
       ansible.builtin.assert:
         that:
           - "_edge1 | length > 0"
           - "_edge1_role == 'edgeRouter'"
-        success_msg: "NDP_ROLE_CHECK_OK: external_edge_1 (SERIAL00005) switch_role=edgeRouter in External_Connectivity_Fabric."
-        fail_msg: "NDP_ROLE_CHECK_FAIL: external_edge_1 (SERIAL00005) switch_role={{ _edge1_role }} (expected edgeRouter). Fix on ND: set role -> Edge Router in External_Connectivity_Fabric, then Recalculate & Deploy."
+        success_msg: "NDP_ROLE_CHECK_OK: external_edge_1 (SERIAL00005) switchRole=edgeRouter in External_Connectivity_Fabric."
+        fail_msg: "NDP_ROLE_CHECK_FAIL: external_edge_1 (SERIAL00005) switchRole={{ _edge1_role }} (expected edgeRouter). Fix on ND: set role -> Edge Router in External_Connectivity_Fabric, then Recalculate & Deploy."

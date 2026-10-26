@@ -26,7 +26,14 @@ interfaces:
     Ethernet1/11: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
     Ethernet1/12: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
     Ethernet1/13: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
-    Ethernet1/20: {admin_state: true, operational_state: up}
+    Ethernet1/14: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/15: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/16: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/17: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/18: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/19: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/20: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
+    Ethernet1/21: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
     Ethernet1/31: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
     Ethernet1/32: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}
     Ethernet1/33: {exists: true, configured: false, policy: "", policy_type: "", nv_pairs: {}, port_channel_member: false, admin_state: false, operational_state: null}

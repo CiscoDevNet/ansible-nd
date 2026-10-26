@@ -72,6 +72,7 @@ def interface_state_for_profile(registry, valid_state, profile_id):
                     "dstSwitchId": peer["serial"],
                     "dstInterfaceName": resource["existing_link"]["peer_interface"],
                     "linkType": "ethisl",
+                    "linkPresent": True,
                 }
                 if cable not in state["physical_links"]:
                     state["physical_links"].append(cable)
@@ -247,6 +248,19 @@ def test_permitted_switch_profile_can_reconcile_role_drift(registry, valid_state
         "current_role": "leaf",
         "desired_role": "spine",
     }]
+
+
+def test_permitted_switch_profile_refuses_in_place_spine_border_role_change(registry, valid_state):
+    switch_registry = confirm(registry, "integration.nd_manage_switches")
+    resolved = resolve_execution(switch_registry, "integration.nd_manage_switches")
+    spine_to_border = copy.deepcopy(valid_state)
+    spine_to_border["switches"]["vxlan_border_1"]["role"] = "spine"
+    with pytest.raises(OrchestrationError, match="forbids an in-place spine->border"):
+        plan_topology_delta(switch_registry, resolved, spine_to_border)
+    border_to_spine = copy.deepcopy(valid_state)
+    border_to_spine["switches"]["vxlan_spine_1"]["role"] = "border"
+    with pytest.raises(OrchestrationError, match="forbids an in-place border->spine"):
+        plan_topology_delta(switch_registry, resolved, border_to_spine)
 
 
 def test_non_topology_prerequisites_remain_available(registry, valid_state):
@@ -458,6 +472,7 @@ def test_subinterface_parent_must_ride_the_declared_existing_link(registry, vali
     legacy = copy.deepcopy(state)
     legacy["physical_links"] = [{
         "link-type": "ethisl",
+        "is-present": True,
         "sw1-info": {"sw-serial-number": "SERIAL00001", "if-name": "Ethernet1/1"},
         "sw2-info": {"sw-serial-number": "SERIAL00005", "if-name": "Ethernet1/1"},
     }]
@@ -489,6 +504,40 @@ def test_subinterface_parent_must_ride_the_declared_existing_link(registry, vali
     parent["existing_link"] = {"peer_switch_ref": "vxlan_leaf_2", "peer_interface": "Ethernet1/1"}
     with pytest.raises(OrchestrationError, match="existing link must join two"):
         plan_topology_delta(underlay, resolve_execution(underlay, profile_id), state)
+
+
+@pytest.mark.parametrize("target", ["managed", "unmanaged"])
+@pytest.mark.parametrize("condition, expected", [
+    ({"is-present": False}, "not present"),
+    ({"linkPresent": None}, "unverified"),
+    ({"is-planned": True}, "planned link"),
+    ({"sw2-info": {"if-op-status": "Down", "if-op-reason": "BPDUGuard errDisable"}}, "BPDUGuard errDisable"),
+    ({"sw1-info": {"if-admin-status": "Down"}}, "if-admin-status=Down"),
+])
+def test_subinterface_existing_link_requires_health_evidence(registry, valid_state, target, condition, expected):
+    profile_id = f"integration.nd_interface_subinterface_{target}"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    state["physical_links"] = [state["physical_links"][-1]]
+    state["physical_links"][0].update(condition)
+    with pytest.raises(UnavailableError, match=expected):
+        plan_topology_delta(confirmed, resolved, state)
+
+
+def test_subinterface_rejects_old_serial_and_accepts_fresh_healthy_record(registry, valid_state):
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    state["physical_links"] = [state["physical_links"][-1]]
+    cable = state["physical_links"][0]
+    cable["srcSwitchId"] = "STALE000008"
+    with pytest.raises(UnavailableError, match="required existing link is absent"):
+        plan_topology_delta(confirmed, resolved, state)
+    cable["srcSwitchId"] = "SERIAL00001"
+    cable["linkUuid"] = "NEW-DISCOVERY-UUID"
+    assert plan_topology_delta(confirmed, resolved, state)[0]["operation"] == "ensure_routed_parent"
 
 
 def test_links_profile_verifies_free_ports_on_both_switches(registry, valid_state):
@@ -748,8 +797,30 @@ def test_delta_creates_only_namespaced_disposable_fabric(registry, valid_state):
         )
 
 
+@pytest.mark.parametrize("profile_id", [
+    "smoke.nd_manage_vpc_pair", "smoke.nd_interface_vpc_access", "smoke.nd_interface_vpc_trunk_host",
+])
+def test_smoke_vpc_requires_physical_cable_without_virtual_creation(registry, valid_state, profile_id):
+    from nd_prerequisite_orchestrator import UnavailableError
+
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = copy.deepcopy(valid_state)
+    state["vpc_pairs"] = []
+    operations = plan_topology_delta(confirmed, resolved, state)
+    assert not any(operation["operation"] == "ensure_virtual_vpc" for operation in operations)
+    state["links"] = []
+    state["physical_links"] = []
+    with pytest.raises(UnavailableError, match="required physical vPC peer-link is missing"):
+        plan_topology_delta(confirmed, resolved, state)
+
+
 def test_delta_enforces_link_allowlist_virtual_vpc_and_resources(registry, valid_state):
     confirmed = confirm(registry, "smoke.nd_interface_vpc_access")
+    confirmed["profiles"]["smoke.nd_interface_vpc_access"]["vpc_pairs"] = [{
+        "fabric_ref": "advanced", "peer_refs": ["vxlan_leaf_1", "vxlan_leaf_2"],
+        "state": "present", "mode": "virtual", "physical_peer_links": [],
+    }]
     state = copy.deepcopy(valid_state)
     state["interfaces"]["vxlan_leaf_1"]["Ethernet1/3"]["admin_state"] = False
     state["vpc_pairs"] = []

@@ -12,7 +12,8 @@
 #   Every integration target (tests/integration/targets/<module>) is a role
 #   whose tasks/main.yaml discovers tests/<testcase>.yaml. With testcase='*' it
 #   runs the entire suite for that module; each test file self-cleans via the
-#   target's tasks/cleanup.yaml. A pre-clean and an always-cleanup keep the
+#   target's tasks/cleanup.yaml (or, for every interface target, its final
+#   tasks/deleted.yaml state). A pre-clean and an always-cleanup keep the
 #   fabric baseline clean regardless of pass/fail.
 #
 # PREREQUISITES
@@ -248,6 +249,66 @@
           - not (nd_prerequisite_only | default(false) | bool) or (nd_prerequisite_enable | default(false) | bool)
         fail_msg: "nd_prerequisite_only requires nd_prerequisite_enable=true."
 
+    # =====================================================================
+    # NDP_PC_UNBUNDLE  (per-module pre-gate port-channel member self-heal)
+    # The three nd_interface_port_channel_* targets share one member pool --
+    # Ethernet1/10-13 on vxlan_leaf_1 (ansible_switch1) -- and each creates
+    # port-channel501/502/503. A target or build that crashed mid-run can leave a
+    # stale port-channel50x still holding a member (e.g. Ethernet1/12); the
+    # read-only verify_free_interfaces gate below then SKIPs the module ("reserved
+    # interface is a port-channel member") without ever remediating it. Release the
+    # members here, right before that gate, by deleting any leftover test
+    # port-channel50x on the member switch, then Recalculate & Deploy. Best-effort:
+    # every step tolerates failure, so a stuck port-channel can never block the run.
+    # Mirrors playbooks/nd_ensure_pc_members_free.yaml (the cross-build pre-flight);
+    # the port-channel teardown patch covers the within-build orphan.
+    - name: "[{{ test_module }}] release reserved port-channel members before the gate"
+      vars:
+        _ndp_pc_delete_config:
+          - {switch_ip: "{{ ansible_switch1 }}", interface_name: port-channel501}
+          - {switch_ip: "{{ ansible_switch1 }}", interface_name: port-channel502}
+          - {switch_ip: "{{ ansible_switch1 }}", interface_name: port-channel503}
+      when:
+        - nd_prerequisite_enable | default(false) | bool
+        - test_module in ['nd_interface_port_channel_access', 'nd_interface_port_channel_trunk_host', 'nd_interface_port_channel_routed']
+        - nd_prerequisite_mode | default('fixture') == 'live'
+        - nd_prerequisite_apply | default(false) | bool
+        - not (nd_prerequisite_only | default(false) | bool)
+        - not ansible_check_mode
+      block:
+        - name: "[{{ test_module }}] delete any stale test port-channel on {{ ansible_switch1 }} (frees Ethernet1/10-13)"
+          cisco.nd.nd_interface_port_channel_access:
+            output_level: info
+            fabric_name: "{{ ansible_it_fabric }}"
+            config: "{{ _ndp_pc_delete_config }}"
+            state: deleted
+          register: _ndp_pc_unbundle_delete
+          failed_when: false
+
+        - name: "[{{ test_module }}] Recalculate the fabric so the unbundle is pushed"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/actions/configSave"
+          register: _ndp_pc_unbundle_configsave
+          failed_when: false
+          when: _ndp_pc_unbundle_delete is changed
+
+        - name: "[{{ test_module }}] Deploy the fabric so the freed members take effect"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/actions/deploy?forceShowRun=true"
+          register: _ndp_pc_unbundle_deploy
+          failed_when: false
+          when: _ndp_pc_unbundle_delete is changed
+
+        - name: "[{{ test_module }}] report the port-channel unbundle self-heal"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PC_UNBUNDLE [{{ test_module }}] switch={{ ansible_switch1 }}
+              freed={{ _ndp_pc_unbundle_delete is changed }}
+              configSave={{ _ndp_pc_unbundle_configsave.status | default('skipped') }}
+              deploy={{ _ndp_pc_unbundle_deploy.status | default('skipped') }}
+
     - name: "[{{ test_module }}] prepare and verify declared prerequisites"
       when: nd_prerequisite_enable | default(false) | bool
       block:
@@ -322,10 +383,32 @@
     # aborts the play before RUN). Stat-guard the pre/post clean. stat runs on
     # localhost because the play host `nd` is a network device with no local FS.
     #
-    # Lifecycle file NAMES VARY across targets (setup.yaml/prepare.yaml,
-    # cleanup.yaml/teardown.yaml). Probe a candidate list and resolve the FIRST
-    # match per phase so setup -> main -> cleanup is honored uniformly.
+    # Lifecycle file names vary: setup/prepare and cleanup/teardown.
+    # Deletion test scenarios are not idempotent lifecycle cleanup routines.
     # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] arm cleanup for the verified-empty subinterface namespace"
+      ansible.builtin.set_fact:
+        _ndp_subinterface_cleanup:
+          fabric: "{{ _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_subinterface_namespace.switch_ref].baseline_fabric_ref].name }}"
+          switch_ip: "{{ _ndp_registry.lab.switches[_ndp_subinterface_namespace.switch_ref].seed_ip }}"
+          interfaces: "{{ _ndp_subinterface_namespace.interfaces }}"
+      vars:
+        _ndp_subinterface_namespace: >-
+          {{ _ndp_profile.resources
+             | selectattr('kind', 'equalto', 'verify_logical_interface_namespace')
+             | selectattr('interface_type', 'equalto', 'subinterface')
+             | selectattr('expected_state', 'equalto', 'absent') | first }}
+      changed_when: true
+      notify: Restore prerequisite interface changes
+      when:
+        - test_module in ['nd_interface_subinterface_managed', 'nd_interface_subinterface_unmanaged']
+        - nd_prerequisite_enable | default(false) | bool
+        - nd_prerequisite_mode | default('fixture') == 'live'
+        - nd_prerequisite_apply | default(false) | bool
+        - not (nd_prerequisite_only | default(false) | bool)
+        - not ansible_check_mode
+        - _ndp_result is defined
+
     - name: "[{{ test_module }}] discover optional setup/cleanup task files (names vary)"
       ansible.builtin.stat:
         path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/{{ item }}"
@@ -369,15 +452,16 @@
         - _ndp_setup_file | default('') | length > 0
 
     # -------------------------------------------------------------------------
-    # SETUP (nd_maintenance_mode only): the pre-clean below and the post-clean in the always section run the target's teardown.yaml
-    # ON ITS OWN, but that file reads nd_info, which only the target's main.yaml sets (live 2026-10-13: "'nd_info' is undefined" ended
-    # the play before the target started, and include_role does not pass ignore_errors on to the tasks it includes). Define the same
-    # fact here; main.yaml re-sets an identical value later.
-    - name: "[{{ test_module }}] SETUP - define nd_info for the stand-alone teardown"
+    # SETUP (all modules): the pre-clean below and the post-clean in the always section run the target's cleanup/teardown file
+    # ON ITS OWN, but several of those files read nd_info, which only the target's main.yaml sets (live 2026-10-13 nd_maintenance_mode;
+    # 2026-10-16 nd_manage_prefix_list + nd_manage_community_list: "'nd_info' is undefined" ended the play before the target started,
+    # and include_role does not pass ignore_errors on to the tasks it includes). Define the fact for EVERY module here; main.yaml
+    # re-sets an identical value later.
+    - name: "[{{ test_module }}] SETUP - define nd_info for the stand-alone pre-clean/teardown"
       ansible.builtin.set_fact:
         nd_info:
           output_level: '{{ api_key_output_level | default("debug") }}'
-      when: test_module == 'nd_maintenance_mode' and not (nd_prerequisite_only | default(false) | bool)
+      when: not (nd_prerequisite_only | default(false) | bool)
 
     # -------------------------------------------------------------------------
     # SETUP: best-effort pre-clean of stale objects for this module, so a prior
@@ -387,6 +471,8 @@
       ansible.builtin.include_role:
         name: "{{ test_module }}"
         tasks_from: "{{ _ndp_cleanup_file }}"
+        apply:
+          ignore_errors: true
       ignore_errors: true
       when:
         - not (nd_prerequisite_only | default(false) | bool)
@@ -844,6 +930,26 @@
             fail_msg: >-
               The physical vPC pair {{ _ndp_vpcif2_sno_1 }}/{{ _ndp_vpcif2_sno_2 }} does not exist in {{ ansible_it_fabric }} after
               the runner formed it; the vPC interface target's multi-pair scenario needs it as its second pair.
+
+        - name: "[{{ test_module }}] SETUP - wait for all four vPC peers to be inSync before interface tests"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
+          register: _ndp_vpcif_device_convergence
+          retries: 24
+          delay: 15
+          until:
+            - not (_ndp_vpcif_device_convergence.failed | default(false))
+            - >-
+              (_ndp_vpcif_device_convergence.current.switches | default([])
+               | selectattr('switchId', 'defined')
+               | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2, _ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+               | selectattr('additionalData', 'defined')
+               | selectattr('additionalData.configSyncStatus', 'defined')
+               | selectattr('additionalData.configSyncStatus', 'equalto', 'inSync')
+               | map(attribute='switchId') | unique | list | sort)
+              == ([ansible_sno_1, ansible_sno_2, _ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2] | unique | list | sort)
+          no_log: true
 
     # -------------------------------------------------------------------------
     # SETUP (nd_resource_manager only): the target forms a PHYSICAL vPC pair itself (ND 4.3 rejects a virtual

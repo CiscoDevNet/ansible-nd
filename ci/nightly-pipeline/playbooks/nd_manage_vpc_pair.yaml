@@ -27,14 +27,15 @@
         state: gathered
       register: nd_vpc_pairs
 
-    - name: Create a vPC pair (virtual peer-link)
+    - name: Create a vPC pair (physical peer-link)
       cisco.nd.nd_manage_vpc_pair:
         fabric_name: "{{ nd_fabric_name }}"
         state: merged
+        config_actions: {save: true, deploy: true, type: switch}
         config:
           - peer1_switch_id: "{{ peer1_switch_id }}"
             peer2_switch_id: "{{ peer2_switch_id }}"
-            use_virtual_peer_link: true
+            use_virtual_peer_link: false
       when:
         - peer1_switch_id is defined
         - peer2_switch_id is defined

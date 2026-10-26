@@ -8,12 +8,52 @@
       prerequisite interface change(s) from {{ _ndp_restore_file }}.
   run_once: true
 
+- name: Delete managed test subinterfaces without deletion-test assertions
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: "{{ _ndp_subinterface_cleanup.fabric }}"
+    config:
+      - switch_ip: "{{ _ndp_subinterface_cleanup.switch_ip }}"
+        interface_name: "{{ _ndp_cleanup_interface }}"
+    config_actions: {deploy: true}
+    state: deleted
+  loop: "{{ (_ndp_subinterface_cleanup | default({})).interfaces | default([]) }}"
+  loop_control:
+    loop_var: _ndp_cleanup_interface
+  register: _ndp_managed_subinterface_cleanup
+  ignore_errors: true
+  run_once: true
+  when: test_module | default('') == 'nd_interface_subinterface_managed'
+
+- name: Delete unmanaged test subinterfaces without deletion-test assertions
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    fabric_name: "{{ _ndp_subinterface_cleanup.fabric }}"
+    config:
+      - switch_ip: "{{ _ndp_subinterface_cleanup.switch_ip }}"
+        interface_name: "{{ _ndp_cleanup_interface }}"
+    config_actions: {deploy: true}
+    state: deleted
+  loop: "{{ (_ndp_subinterface_cleanup | default({})).interfaces | default([]) }}"
+  loop_control:
+    loop_var: _ndp_cleanup_interface
+  register: _ndp_unmanaged_subinterface_cleanup
+  ignore_errors: true
+  run_once: true
+  when: test_module | default('') == 'nd_interface_subinterface_unmanaged'
+
 - name: Restore prerequisite interface changes in reverse order
   ansible.builtin.include_tasks: restore_interface_operation.yaml
   loop: "{{ _ndp_prerequisite_restore_operations | default([]) | reverse | list }}"
   loop_control:
     loop_var: _ndp_restore_operation
     label: "{{ _ndp_restore_operation.action }} {{ _ndp_restore_operation.interface }}"
+  run_once: true
+
+- name: Report subinterface cleanup failures after attempting parent restoration
+  ansible.builtin.assert:
+    that:
+      - (_ndp_managed_subinterface_cleanup | default({})) is not failed
+      - (_ndp_unmanaged_subinterface_cleanup | default({})) is not failed
+    fail_msg: Subinterface cleanup failed; parent restoration was attempted. Inspect the deletion results above.
   run_once: true
 
 - name: Record successful prerequisite interface restore

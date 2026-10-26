@@ -57,6 +57,16 @@
     fail_msg: "Unknown prerequisite profile: {{ _ndp_execution_id }}"
   run_once: true
 
+- name: Invalidate a previous verified prerequisite runtime marker
+  ansible.builtin.file:
+    path: "{{ nd_prerequisite_marker_dir | default(playbook_dir ~ '/nd_prerequisite/.runtime') }}/{{ _ndp_execution_id }}.yaml"
+    state: absent
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+
 - name: Capture the current prerequisite state before planning
   ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
 
@@ -87,6 +97,19 @@
   failed_when:
     - not (nd_prerequisite_only | default(false) | bool)
     - _ndp_plan.rc not in [0, 3]
+
+- name: Refresh declared existing-link discovery before deciding to skip
+  ansible.builtin.include_tasks: refresh_existing_link.yaml
+  loop: [0, 1, 2]
+  loop_control:
+    loop_var: _ndp_link_refresh_attempt
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+    - nd_prerequisite_link_refresh | default(true) | bool
+    - _ndp_profile.resources | selectattr('existing_link', 'defined') | list | length > 0
 
 # Planner exit code 3 = the lab lacks a declared port/link/vPC substrate. That is a lab limitation,
 # not a regression: report it under a greppable marker and end the play before any mutation.
@@ -168,7 +191,11 @@
 - name: Require live reconciliation when prerequisites are not met
   ansible.builtin.assert:
     that:
-      - _ndp_result.operations | length == 0 or (nd_prerequisite_mode | default('fixture') == 'live' and nd_prerequisite_apply | default(false) | bool) or (nd_prerequisite_only | default(false) | bool)
+      - >-
+        _ndp_result.operations | length == 0
+        or (nd_prerequisite_mode | default('fixture') == 'live'
+            and nd_prerequisite_apply | default(false) | bool and not ansible_check_mode)
+        or (nd_prerequisite_only | default(false) | bool)
     fail_msg: >-
       {{ _ndp_execution_id }} has unmet prerequisites. Refusing to publish a
       prepared marker or run its module test until live reconciliation is enabled.
@@ -180,6 +207,8 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - nd_prerequisite_apply | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
     - _ndp_result.operations | length > 0
 
 - name: Wait for reconciled ND prerequisites to converge
@@ -187,6 +216,8 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - nd_prerequisite_apply | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
     - _ndp_result.operations | length > 0
 
 - name: Recapture live state after prerequisite reconciliation
@@ -194,6 +225,43 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - nd_prerequisite_apply | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+    - _ndp_result.operations | length > 0
+
+- name: Replan prerequisites from the reconciled live state
+  ansible.builtin.command:
+    argv: "{{ _ndp_argv }}"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  check_mode: false
+  register: _ndp_reconciled_plan
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
+    - _ndp_result.operations | length > 0
+
+- name: Confirm reconciled prerequisites have no remaining topology delta
+  ansible.builtin.assert:
+    that:
+      # verify_resource / ensure_interface and the typed verify operations are
+      # non-mutating checks that intentionally remain in every replan.
+      # ensure_link is mutating but self-verifying: apply_ensure_link.yaml is GET-first
+      # (skips when the link already exists) and asserts the create was accepted, so a
+      # failed create already fails the run before this gate. Its post-create GET shape
+      # is controller-version-dependent, so it is trusted to that apply-time assert
+      # rather than re-verified by this offline replan.
+      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'ensure_interface', 'ensure_link', 'verify_free_interfaces', 'verify_logical_interface_namespace']) | list | length == 0
+    fail_msg: "ND prerequisite reconciliation completed with remaining topology operations; refusing to run {{ _ndp_execution_id }}."
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - nd_prerequisite_apply | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - not ansible_check_mode
     - _ndp_result.operations | length > 0
 
 - name: Publish verified ND prerequisite runtime variables as facts
@@ -222,34 +290,3 @@
   delegate_to: localhost
   run_once: true
   when: not (nd_prerequisite_only | default(false) | bool)
-
-- name: Replan prerequisites from the reconciled live state
-  ansible.builtin.command:
-    argv: "{{ _ndp_argv }}"
-  delegate_to: localhost
-  run_once: true
-  changed_when: false
-  check_mode: false
-  register: _ndp_reconciled_plan
-  when:
-    - nd_prerequisite_mode | default('fixture') == 'live'
-    - nd_prerequisite_apply | default(false) | bool
-    - _ndp_result.operations | length > 0
-
-- name: Confirm reconciled prerequisites have no remaining topology delta
-  ansible.builtin.assert:
-    that:
-      # verify_resource / ensure_interface and the typed verify operations are
-      # non-mutating checks that intentionally remain in every replan.
-      # ensure_link is mutating but self-verifying: apply_ensure_link.yaml is GET-first
-      # (skips when the link already exists) and asserts the create was accepted, so a
-      # failed create already fails the run before this gate. Its post-create GET shape
-      # is controller-version-dependent, so it is trusted to that apply-time assert
-      # rather than re-verified by this offline replan.
-      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'ensure_interface', 'ensure_link', 'verify_free_interfaces', 'verify_logical_interface_namespace']) | list | length == 0
-    fail_msg: "ND prerequisite reconciliation completed with remaining topology operations; refusing to run {{ _ndp_execution_id }}."
-  run_once: true
-  when:
-    - nd_prerequisite_mode | default('fixture') == 'live'
-    - nd_prerequisite_apply | default(false) | bool
-    - _ndp_result.operations | length > 0

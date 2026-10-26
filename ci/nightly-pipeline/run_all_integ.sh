@@ -72,7 +72,7 @@
 # =============================================================================
 set -uo pipefail
 
-COLLECTION_ROOT="${ND_COLLECTION_ROOT:-/Users/sivakasi/ansible/collections/ansible_collections/cisco/nd}"
+COLLECTION_ROOT="${ND_COLLECTION_ROOT:-/home/runner/ansible/collections/ansible_collections/cisco/nd}"
 RUNNER="run_integration_module.yaml"
 INVENTORY="${ND_INVENTORY:-inventory.yaml}"
 
@@ -255,8 +255,12 @@ module_extra_vars() {
       # Parents must PRE-EXIST (setup never creates them): routed Eth1/1 (the existing leaf_1<->external_edge_1
       # cable; Eth1/2-1/3 are underlay, never use them) + Port-channel10. The nightly gets both from the prerequisite lifecycle.
       printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_ethernet_parent=Ethernet1/1 -e nd_test_port_channel_parent=Port-channel10" ;;
-    nd_interface_port_channel_access|nd_interface_port_channel_trunk_host|nd_interface_port_channel_routed)
+    nd_interface_port_channel_access)
       printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_pc_member_a=Ethernet1/10 -e nd_test_pc_member_b=Ethernet1/11 -e nd_test_pc_member_c=Ethernet1/12 -e nd_test_pc_member_d=Ethernet1/13" ;;
+    nd_interface_port_channel_trunk_host)
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_pc_member_a=Ethernet1/14 -e nd_test_pc_member_b=Ethernet1/15 -e nd_test_pc_member_c=Ethernet1/16 -e nd_test_pc_member_d=Ethernet1/17" ;;
+    nd_interface_port_channel_routed)
+      printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195} -e nd_test_pc_member_a=Ethernet1/18 -e nd_test_pc_member_b=Ethernet1/19 -e nd_test_pc_member_c=Ethernet1/20 -e nd_test_pc_member_d=Ethernet1/21" ;;
     nd_interface_*)
       printf '%s' "-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=${ND_INTERFACE_TEST_SWITCH_IP:-192.0.2.195}" ;;
     *) printf '%s' "" ;;
@@ -436,6 +440,16 @@ for m in "${MODULES[@]}"; do
   fi
 
   start=$(date +%s)
+  if [ "$m" = "nd_vpc_pair" ]; then
+    VPC_PRECLEAN_PLAYBOOK="$COLLECTION_ROOT/nd_vpc_pair_preclean.yaml"
+    echo "Running best-effort vPC pair pre-clean before $m"
+    $cap ansible-playbook -i "$INVENTORY" "$VPC_PRECLEAN_PLAYBOOK" \
+        ${EXTRA_VARS_FILE_ARGS[@]+"${EXTRA_VARS_FILE_ARGS[@]}"} \
+        -e "preclean_fabric=${FABRIC_NAME}" \
+        -e "preclean_s1=${VPC_PAIR_SWITCH1_SERIAL}" \
+        -e "preclean_s2=${VPC_PAIR_SWITCH2_SERIAL}" \
+        2>&1 | tee -a "$log" || true
+  fi
   # $cap, $VERBOSITY and $MOD_XTRA are intentionally left unquoted (word-split into args).
   $cap ansible-playbook ${VERBOSITY} -i "$INVENTORY" "$RUN_PLAYBOOK" \
       ${EXTRA_VARS_FILE_ARGS[@]+"${EXTRA_VARS_FILE_ARGS[@]}"} \

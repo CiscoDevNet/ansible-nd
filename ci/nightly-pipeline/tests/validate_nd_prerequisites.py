@@ -87,6 +87,9 @@ CANONICAL_INTERFACE_ALLOWLIST = {
         "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
         "Ethernet1/5", "Ethernet1/6", "Ethernet1/7", "Ethernet1/8", "Ethernet1/9",
         "Ethernet1/10", "Ethernet1/11", "Ethernet1/12", "Ethernet1/13",
+        # De-conflicted port-channel member pools: trunk_host=Eth1/14-17, routed=Eth1/18-21.
+        "Ethernet1/14", "Ethernet1/15", "Ethernet1/16", "Ethernet1/17",
+        "Ethernet1/18", "Ethernet1/19", "Ethernet1/20", "Ethernet1/21",
         "Ethernet1/31", "Ethernet1/32", "Ethernet1/33", "Ethernet1/34",
         "Ethernet1/35", "Ethernet1/41", "Ethernet1/42", "Ethernet1/43",
         "Ethernet1/44", "Ethernet1/45", "Ethernet1/46", "Ethernet1/47",
@@ -108,8 +111,11 @@ CANONICAL_INTERFACE_ALLOWLIST = {
         "Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4",
         "Ethernet1/5", "Ethernet1/6", "Ethernet1/7", "Ethernet1/8", "Ethernet1/9", "Ethernet1/10",
     ],
-    "external_edge_1": ["Ethernet1/2", "Ethernet1/3", "Ethernet1/4"],
-    "external_edge_2": [],
+    # Eth1/1 = subinterface parent's inter-fabric cable to vxlan_leaf_1 (kept admin-up so ND discovers the adjacency
+    # the read-only existing_link gate verifies); Eth1/2-1/4 are the l3out DCI links;
+    # Eth1/5+Eth1/7 (<-> edge_2 Eth1/6+Eth1/8) are the external vPC peer-link ports kept admin-up for ever-available external vPC.
+    "external_edge_1": ["Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "Ethernet1/4", "Ethernet1/5", "Ethernet1/7"],
+    "external_edge_2": ["Ethernet1/6", "Ethernet1/8"],
 }
 
 LOGICAL_INTERFACE_PATTERNS = {

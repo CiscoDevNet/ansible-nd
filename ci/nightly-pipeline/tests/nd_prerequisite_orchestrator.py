@@ -361,6 +361,27 @@ def _port_link_peers(current_state, serial, interface):
     return peers
 
 
+def _existing_link_health_problem(link):
+    if _link_is_planned(link):
+        return "planned link does not prove physical adjacency"
+    for side in ("sw1-info", "sw2-info"):
+        endpoint = link.get(side, {})
+        if not isinstance(endpoint, dict):
+            return "invalid endpoint health data"
+        for field in ("if-admin-status", "if-op-status"):
+            value = str(endpoint.get(field) or "").strip()
+            if value and value.lower() != "up":
+                return f"{endpoint.get('sw-serial-number', side)}/{endpoint.get('if-name', '')}: {field}={value}; {endpoint.get('if-op-reason') or 'reason unknown'}"
+        reason = str(endpoint.get("if-op-reason") or "").strip()
+        if reason.lower() not in {"", "none", "up"}:
+            return f"{endpoint.get('sw-serial-number', side)}: {reason}"
+    if link.get("linkPresent") is False or link.get("is-present") is False:
+        return "ND reports the link as not present"
+    if link.get("linkPresent") is not True and link.get("is-present") is not True:
+        return "ND link presence is unverified"
+    return ""
+
+
 def _assert_existing_link_port(registry, current_state, switch_ref, interface, existing_link):
     """The port must carry exactly the declared inter-fabric cable and no underlay link."""
     switches = registry["lab"]["switches"]
@@ -379,6 +400,24 @@ def _assert_existing_link_port(registry, current_state, switch_ref, interface, e
     if peers - {wanted}:
         raise UnavailableError(
             f"reserved interface carries another link besides {peer_ref}/{peer_interface}: {switch_ref}/{interface}"
+        )
+    endpoints = {wanted, (switches[switch_ref]["serial"].lower(), str(interface).lower())}
+    matches = []
+    for source in ("physical_links", "links"):
+        matches = [
+            link for link in current_state.get(source, [])
+            if isinstance(link, dict)
+            and {(serial.lower(), port.lower()) for serial, port in _link_endpoints(link)} == endpoints
+        ]
+        if matches:
+            break
+    problems = [_existing_link_health_problem(link) for link in matches]
+    if not problems or all(problems):
+        detail = "; ".join(dict.fromkeys(problems)) or "endpoint identity is unverified"
+        raise UnavailableError(
+            f"required existing link is not healthy in ND: {switch_ref}/{interface} <-> "
+            f"{peer_ref}/{peer_interface}: {detail}. Check both ports and refresh discovery; "
+            "do not bypass BPDU Guard or substitute stale serials."
         )
 
 
@@ -576,13 +615,22 @@ def plan_topology_delta(registry, resolved_execution, current_state):
                     f"{profile['profile_id']} is verify-only for switch topology; "
                     f"refusing role change for {switch_ref}"
                 )
+            current_role = current.get("role")
+            desired_role = member["desired_role"]
+            # ND rejects an in-place spine<->border changeRoles with HTTP 500; re-onboard with the target role instead.
+            if {current_role, desired_role} == {"spine", "border"}:
+                raise OrchestrationError(
+                    f"ND forbids an in-place {current_role}->{desired_role} role change for "
+                    f"{switch_ref} ({registry_switch['serial']}); re-onboard it as {desired_role} "
+                    f"(remove + re-add) instead of changing the role in place"
+                )
             operations.append({
                 "operation": "change_role",
                 "switch_ref": switch_ref,
                 "serial": registry_switch["serial"],
                 "fabric_ref": desired_fabric,
-                "current_role": current.get("role"),
-                "desired_role": member["desired_role"],
+                "current_role": current_role,
+                "desired_role": desired_role,
             })
 
     for link in profile.get("links", []):

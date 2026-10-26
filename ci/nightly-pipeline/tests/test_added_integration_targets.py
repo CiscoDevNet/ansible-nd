@@ -138,7 +138,7 @@ def test_routed_port_channel_profile_reserves_leaf1_members_and_its_own_namespac
     assert [member["ref"] for member in profile["switches"]["members"]] == ["vxlan_leaf_1"]
     free, port_channels, subinterfaces = profile["resources"]
     assert free["kind"] == "verify_free_interfaces"
-    assert free["interfaces"] == [f"Ethernet1/{port}" for port in range(10, 14)]
+    assert free["interfaces"] == [f"Ethernet1/{port}" for port in range(18, 22)]
     assert set(free["constraints"]) == {"exists", "not_port_channel_member", "not_fabric_link"}
     assert (port_channels["kind"], port_channels["interface_type"]) == ("verify_logical_interface_namespace", "port_channel")
     assert port_channels["interfaces"] == [f"Port-channel{number}" for number in range(520, 524)]
@@ -146,8 +146,8 @@ def test_routed_port_channel_profile_reserves_leaf1_members_and_its_own_namespac
     assert all(item["expected_state"] == "absent" and item["requirement_status"] == "ready" for item in (port_channels, subinterfaces))
     assert profile["runtime_vars"] == {
         "nd_test_fabric_name": FABRIC, "nd_test_switch_ip": "192.0.2.195",
-        "nd_test_pc_member_a": "Ethernet1/10", "nd_test_pc_member_b": "Ethernet1/11",
-        "nd_test_pc_member_c": "Ethernet1/12", "nd_test_pc_member_d": "Ethernet1/13",
+        "nd_test_pc_member_a": "Ethernet1/18", "nd_test_pc_member_b": "Ethernet1/19",
+        "nd_test_pc_member_c": "Ethernet1/20", "nd_test_pc_member_d": "Ethernet1/21",
     }
 
 
@@ -164,6 +164,29 @@ def test_routed_port_channel_ids_do_not_collide_with_the_other_port_channel_targ
         assert routed.isdisjoint(namespaces(other)), other
     # The subinterface targets use Port-channel10 as their routed parent.
     assert "port-channel10" not in routed
+
+
+def test_the_three_port_channel_targets_reserve_disjoint_member_pools(registry):
+    # Option A de-confliction: each port-channel target owns its own 4-port pool on vxlan_leaf_1, so a member left
+    # stuck by one target's failed teardown cannot starve the free-interface gate of the next target.
+    allowlist = set(registry["lab"]["interface_allowlist"]["vxlan_leaf_1"])
+    pools = {}
+    for module, expected in (
+        ("nd_interface_port_channel_access", [f"Ethernet1/{port}" for port in range(10, 14)]),
+        ("nd_interface_port_channel_trunk_host", [f"Ethernet1/{port}" for port in range(14, 18)]),
+        ("nd_interface_port_channel_routed", [f"Ethernet1/{port}" for port in range(18, 22)]),
+    ):
+        profile = registry["profiles"][f"integration.{module}"]
+        free = profile["resources"][0]
+        assert free["kind"] == "verify_free_interfaces"
+        assert free["interfaces"] == expected, module
+        assert [profile["runtime_vars"][f"nd_test_pc_member_{letter}"] for letter in "abcd"] == expected, module
+        assert set(expected) <= allowlist, module
+        pools[module] = set(expected)
+    modules = list(pools)
+    for index, left in enumerate(modules):
+        for right in modules[index + 1:]:
+            assert pools[left].isdisjoint(pools[right]), (left, right)
 
 
 def test_local_user_profile_is_controller_level_without_fabric_or_switch(registry):
@@ -235,12 +258,17 @@ def test_jenkins_wires_every_new_module_in_a_safe_order():
     assert all(effective.index(module) < min(destructive) for module in NEW_MODULES)
 
 
-def test_jenkins_gives_the_routed_port_channel_target_the_member_ports():
+def test_jenkins_gives_each_port_channel_target_its_own_disjoint_member_ports():
     text = JENKINS_PATH.read_text(encoding="utf-8")
-    assert "nd_interface_port_channel_access|nd_interface_port_channel_trunk_host|nd_interface_port_channel_routed)" in text
-    case = text.split("nd_interface_port_channel_access|nd_interface_port_channel_trunk_host|nd_interface_port_channel_routed)", 1)[1].split(";;", 1)[0]
-    for index, port in enumerate("abcd"):
-        assert f"-e nd_test_pc_member_{port}=Ethernet1/{10 + index}" in case
+    for module, base in (
+        ("nd_interface_port_channel_access", 10),
+        ("nd_interface_port_channel_trunk_host", 14),
+        ("nd_interface_port_channel_routed", 18),
+    ):
+        assert f"{module})" in text, module
+        case = text.split(f"{module})", 1)[1].split(";;", 1)[0]
+        for index, port in enumerate("abcd"):
+            assert f"-e nd_test_pc_member_{port}=Ethernet1/{base + index}" in case, module
     # The optional IOS-XE scenario of the routed target stays off: nothing may ever supply nd_test_xe_switch_ip.
     for source in (text, RUNNER_PATH.read_text(encoding="utf-8"), (ROOT / "run_all_integ.sh").read_text(encoding="utf-8")):
         assert re.search(r"nd_test_xe_switch_ip\s*[=:]", source) is None
@@ -250,7 +278,15 @@ def test_the_manual_runner_script_mirrors_the_nightly():
     script = (ROOT / "run_all_integ.sh").read_text(encoding="utf-8")
     for module in NEW_MODULES:
         assert re.search(rf"^\s+{module}$", script, re.M), module
-    assert "nd_interface_port_channel_access|nd_interface_port_channel_trunk_host|nd_interface_port_channel_routed)" in script
+    for module, base in (
+        ("nd_interface_port_channel_access", 10),
+        ("nd_interface_port_channel_trunk_host", 14),
+        ("nd_interface_port_channel_routed", 18),
+    ):
+        assert f"{module})" in script, module
+        case = script.split(f"{module})", 1)[1].split(";;", 1)[0]
+        for index, port in enumerate("abcd"):
+            assert f"-e nd_test_pc_member_{port}=Ethernet1/{base + index}" in case, module
 
 
 def test_the_runner_runs_the_upstream_target_for_every_new_module():
@@ -456,15 +492,17 @@ def test_the_restore_report_requires_normal_system_and_intended_modes(modes, int
 
 
 def test_the_maintenance_teardown_gets_its_nd_info_before_it_runs_stand_alone():
-    """Live 2026-10-13: the pre-clean runs teardown.yaml alone, which reads nd_info (set only by the target's main.yaml)."""
+    """Live 2026-10-13/16: the stand-alone pre-clean/teardown reads nd_info, so the runner now defines it for EVERY
+    module (nd_maintenance_mode, nd_manage_prefix_list, nd_manage_community_list ...) before that step, skipping only
+    prerequisite-only runs."""
     names = [str(item.get("name", "")) for item in runner_play()["tasks"]]
-    define = next(index for index, name in enumerate(names) if "SETUP - define nd_info for the stand-alone teardown" in name)
+    define = next(index for index, name in enumerate(names) if "SETUP - define nd_info for the stand-alone pre-clean/teardown" in name)
     pre_clean = next(index for index, name in enumerate(names) if "SETUP - pre-clean stale objects" in name)
     assert define < pre_clean
-    step = task("SETUP - define nd_info for the stand-alone teardown")
+    step = task("SETUP - define nd_info for the stand-alone pre-clean/teardown")
     assert step["ansible.builtin.set_fact"]["nd_info"] == {"output_level": '{{ api_key_output_level | default("debug") }}'}
     assert runs(step, {"test_module": "nd_maintenance_mode", "nd_prerequisite_only": False})
-    assert not runs(step, {"test_module": "nd_manage_tor", "nd_prerequisite_only": False})
+    assert runs(step, {"test_module": "nd_manage_tor", "nd_prerequisite_only": False})
     assert not runs(step, {"test_module": "nd_maintenance_mode", "nd_prerequisite_only": True})
 
 
