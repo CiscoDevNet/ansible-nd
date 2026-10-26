@@ -32,6 +32,10 @@ nd4x_policy_group_check_mode_queries:
       /api/v1/manage/fabrics/{{ test_fabric_name
       }}/policySummary?filter=policyId:*POLICY-GROUP-*
     expected_status: 200
+    pagination:
+      page_size: 100
+      collection_key: policies
+      max_pages: 1000
     unordered_paths: [/policies]
     ignore_keys:
       - operData

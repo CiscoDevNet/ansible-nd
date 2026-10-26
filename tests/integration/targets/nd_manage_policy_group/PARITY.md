@@ -164,7 +164,8 @@ The failed runs below share one module/REST handling issue: ND returns HTTP
 207 with only `No Commands to execute`/`notExecuted` results for an already
 synchronized deployment or cleanup request, and the module reports that
 successful no-op as `failed: true`. This is recorded once here rather than
-repeated for every scenario.
+repeated for every scenario. The shared issue is already tracked in
+[issue #601](https://github.com/CiscoDevNet/ansible-nd/issues/601).
 
 ### Live scenario results
 
