@@ -12,7 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation i
     MutationResourceOutcome,
     MutationResult,
 )
-from ansible_collections.cisco.nd.tests.unit.module_utils.state_reconciliation_helpers import PlanModel
+from ansible_collections.cisco.nd.tests.unit.module_utils.state_reconciliation_helpers import CountedIdentifier, PlanModel
 
 
 def checkpoint():
@@ -112,3 +112,15 @@ def test_homogeneous_compatibility_and_protocol_uncertainty():
     assert journal.changed and journal.may_have_changed and journal.has_unknown
     assert cp.unknown_identifiers == ()
     assert "Malformed neighbor" in cp.error
+
+
+@pytest.mark.parametrize("size", [100, 400])
+def test_bulk_correlation_uses_bounded_identifier_comparisons(size):
+    identifiers = tuple(CountedIdentifier(f"switch-{index}") for index in range(size))
+    cp = MutationJournal().open(phase="create", effects=(MutationEffect(MutationOperation.CREATE, key, None, None) for key in identifiers))
+    response = MutationResult(tuple(MutationResourceOutcome(str(key), MutationOutcome.SUCCEEDED) for key in reversed(identifiers)))
+    CountedIdentifier.comparisons = 0
+    cp.resolve_resources(response)
+    assert CountedIdentifier.comparisons <= size * 5
+    assert cp.outcome is MutationOutcome.SUCCEEDED
+    assert tuple(item.identifier for item in cp.resource_outcomes) == identifiers

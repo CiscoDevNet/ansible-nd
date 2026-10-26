@@ -12,6 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlanner
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation import (
     MutationCheckpoint,
@@ -321,3 +322,90 @@ def test_later_transport_exception_does_not_reuse_stale_success_evidence():
     assert output["changed"] and output["failed"]
     assert "after" not in output and "diff" not in output
     assert output["unknown_identifiers"] == ["b"]
+
+
+@pytest.mark.parametrize("size", [20, 80])
+@pytest.mark.parametrize("terminal", ["success", "failed", "unknown"])
+def test_singular_execution_projects_output_once_and_applies_effects_immediately(monkeypatch, size, terminal):
+    keys = [f"item-{index}" for index in range(size)]
+    rows = [{"name": key} for key in keys]
+    responses = [result((key, "succeeded")) for key in keys]
+    if terminal == "failed":
+        responses[-2] = result((keys[-2], "failed"))
+    elif terminal == "unknown":
+        responses[-2] = RuntimeError("delivery uncertain")
+    sm = machine(state="deleted", rows=rows, desired=rows, responses=responses)
+    counts = {"projections": 0, "serialized_models": 0}
+    project = NDStateMachine._update_output_from_journal
+    serialize = NDConfigCollection.to_ansible_config
+    delete = OutcomeOrchestrator.delete
+
+    def counted_project(self):
+        counts["projections"] += 1
+        return project(self)
+
+    def counted_serialize(self, **kwargs):
+        counts["serialized_models"] += len(self)
+        return serialize(self, **kwargs)
+
+    def checked_delete(self, item, **kwargs):
+        # Earlier effects must already be applied when the next request starts.
+        attempted = len(self._calls)
+        assert not set(keys[:attempted]).intersection(sm.confirmed.keys())
+        return delete(self, item, **kwargs)
+
+    monkeypatch.setattr(NDStateMachine, "_update_output_from_journal", counted_project)
+    monkeypatch.setattr(NDConfigCollection, "to_ansible_config", counted_serialize)
+    monkeypatch.setattr(OutcomeOrchestrator, "delete", checked_delete)
+    if terminal == "success":
+        sm.manage_state()
+    else:
+        with pytest.raises(NDStateMachineError):
+            sm.manage_state()
+    assert counts["projections"] == 1
+    assert counts["serialized_models"] <= size * 2
+    output = sm.output.format()
+    assert output["changed"]
+    assert output["failed"] is (terminal != "success")
+    if terminal == "success":
+        assert output["after"] == []
+    else:
+        assert sm.confirmed.keys() == keys[-2:]
+        assert output["planned_operations"][-1]["outcome"] == "not_attempted"
+        assert len(sm.model_orchestrator._calls) == size - 1
+        if terminal == "unknown":
+            assert "after" not in output and "diff" not in output
+        else:
+            assert [item["name"] for item in output["after"]] == keys[-2:]
+
+
+def test_finalization_failure_preserves_the_original_mutation_error(monkeypatch):
+    sm = machine(state="deleted", rows=({"name": "a"}, {"name": "b"}), responses=(result(("a", "succeeded")), RuntimeError("original delivery failure")))
+
+    def rejected_projection(self):
+        raise ValueError("output projection failure")
+
+    monkeypatch.setattr(NDStateMachine, "_update_output_from_journal", rejected_projection)
+    with pytest.raises(NDStateMachineError, match="original delivery failure.*output projection failure") as caught:
+        sm.manage_state()
+    assert "original delivery failure" in str(caught.value.__cause__)
+    captured = {}
+
+    class StopFail(Exception):
+        pass
+
+    def fail_json(**kwargs):
+        captured.update(kwargs)
+        raise StopFail
+
+    sm.module.fail_json = fail_json
+    with pytest.raises(StopFail):
+        fail_from_exception(sm.module, logging.getLogger("test"), sm, caught.value)
+    assert captured["changed"] and captured["failed"]
+    assert not captured["reconciliation_complete"]
+    assert captured["may_have_changed"]
+    assert captured["unknown_identifiers"] == ["b"]
+    assert captured["after_status"] == "unknown"
+    assert "after" not in captured and "diff" not in captured
+    assert "original delivery failure" in captured["msg"]
+    assert "output projection failure" in captured["msg"]

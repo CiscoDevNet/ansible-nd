@@ -260,33 +260,56 @@ class NDStateMachine:
                 self.model_orchestrator.preflight(list(deepcopy(self.plan.proposed)))
             self.model_orchestrator.preflight_delete(list(deepcopy(self.plan.deletes)))
         except Exception as error:
-            self._update_output_from_journal()
+            self._finalize_outcome_failure(error)
             self.output.assign(failed=True)
             raise NDStateMachineError(f"Planning/preflight failed: {error}") from error
 
-        self._update_output_from_journal()
         if self.check_mode:
+            self._update_output_from_journal()
             self.output.set_changed(self.plan.changed)
             self.output.set_after_state(self.planned, status="planned")
             self._assign_snapshot_diff(self.planned)
             return
 
-        # TODO: Merge this opt-in bridge into PR #525's unified executor.
-        for item in self.plan.updates:
-            self._execute_outcome_request(MutationOperation.UPDATE, (item,), self.model_orchestrator.update, item)
-        if self.plan.creates:
-            if self.supports_bulk_create:
-                self._execute_outcome_request(MutationOperation.CREATE, self.plan.creates, self.model_orchestrator.create_bulk, list(self.plan.creates))
-            else:
-                for item in self.plan.creates:
-                    self._execute_outcome_request(MutationOperation.CREATE, (item,), self.model_orchestrator.create, item)
-        if self.plan.deletes:
-            if self.supports_bulk_delete:
-                self._execute_outcome_request(MutationOperation.DELETE, self.plan.deletes, self.model_orchestrator.delete_bulk, list(self.plan.deletes))
-            else:
-                for item in self.plan.deletes:
-                    self._execute_outcome_request(MutationOperation.DELETE, (item,), self.model_orchestrator.delete, item)
+        try:
+            # TODO: Merge this opt-in bridge into PR #525's unified executor.
+            for item in self.plan.updates:
+                self._execute_outcome_request(MutationOperation.UPDATE, (item,), self.model_orchestrator.update, item)
+            if self.plan.creates:
+                if self.supports_bulk_create:
+                    self._execute_outcome_request(MutationOperation.CREATE, self.plan.creates, self.model_orchestrator.create_bulk, list(self.plan.creates))
+                else:
+                    for item in self.plan.creates:
+                        self._execute_outcome_request(MutationOperation.CREATE, (item,), self.model_orchestrator.create, item)
+            if self.plan.deletes:
+                if self.supports_bulk_delete:
+                    self._execute_outcome_request(MutationOperation.DELETE, self.plan.deletes, self.model_orchestrator.delete_bulk, list(self.plan.deletes))
+                else:
+                    for item in self.plan.deletes:
+                        self._execute_outcome_request(MutationOperation.DELETE, (item,), self.model_orchestrator.delete, item)
+        except Exception as error:
+            self._finalize_outcome_failure(error)
+            raise
+        # Effects advance per request; public output is materialized only at exit.
         self._update_output_from_journal()
+
+    def _finalize_outcome_failure(self, error: Exception) -> None:
+        """Publish partial evidence without hiding an earlier execution failure."""
+        try:
+            self._update_output_from_journal()
+        except Exception as output_error:
+            # The complete projection is unavailable. Preserve proven change,
+            # but do not let initialized output advertise a safe final snapshot.
+            self.output.set_changed(self.journal.changed)
+            self.output.mark_after_unknown()
+            self.output.assign(
+                failed=True,
+                reconciliation_complete=False,
+                may_have_changed=self.journal.may_have_changed,
+                unknown_identifiers=list(self.journal.unknown_identifiers),
+                mutation_errors=[str(error), f"Failed to finalize mutation output: {output_error}"],
+            )
+            raise NDStateMachineError(f"{error}; Failed to finalize mutation output: {output_error}") from error
 
     def _execute_outcome_request(self, operation: MutationOperation, items, method, *args) -> None:
         """Reconcile resource evidence before propagating task failure."""
@@ -315,7 +338,6 @@ class NDStateMachine:
             request_transport.max_attempts = previous_max_attempts
 
         self._apply_confirmed_effects(checkpoint)
-        self._update_output_from_journal()
         if checkpoint.outcome is not MutationOutcome.SUCCEEDED:
             raise NDStateMachineError(f"{operation.value} failed: {checkpoint.error or checkpoint.outcome.value}")
 

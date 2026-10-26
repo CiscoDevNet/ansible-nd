@@ -23,3 +23,14 @@ class PlanModel(NDBaseModel):
 
 def collection(*items):
     return NDConfigCollection(PlanModel, list(items))
+
+
+class CountedIdentifier(str):
+    """Count equality work without relying on machine-dependent timings."""
+
+    comparisons: ClassVar[int] = 0
+    __hash__ = str.__hash__
+
+    def __eq__(self, other):
+        type(self).comparisons += 1
+        return super().__eq__(other)

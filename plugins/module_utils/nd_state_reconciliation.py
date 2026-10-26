@@ -150,10 +150,11 @@ class MutationCheckpoint:
         if self.outcome is not MutationOutcome.NOT_ATTEMPTED:
             raise ValueError(f"Checkpoint {self.sequence_number} is already resolved as {self.outcome.value}")
         expected = self.affected_identifiers
+        expected_keys = set(expected)
         errors = list(result.protocol_errors)
         grouped: dict[Any, list[MutationResourceOutcome]] = {}
         for item in result.outcomes:
-            if item.identifier not in expected:
+            if item.identifier not in expected_keys:
                 errors.append(f"Unexpected outcome identifier {item.identifier!r}")
                 continue
             grouped.setdefault(item.identifier, []).append(item)
