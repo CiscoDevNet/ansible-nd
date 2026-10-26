@@ -17,6 +17,7 @@ from a list of `(interface_name, switch_id)` pairs.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
@@ -25,6 +26,67 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 
 
 RETAIN_AUTO_NEGOTIATION_CONFIG = "negotiate auto"
+ROUTED_SIBLING_RESET_FIELDS = frozenset({"ip", "prefix", "routingTag", "ipRedirects", "pimSparse", "vrfInterface"})
+
+
+def has_typed_routed_sibling_residue(config_data: dict) -> bool:
+    """Select a corrective PUT for known routed echoes on a current NX trunk.
+
+    These fields are never evidence of an already-default interface. ND may
+    retain them after normalize even though the current policy is trunkHost.
+    Unknown fields/containers and unqualified value forms grant no exception.
+    Nullable routed schema fields and an empty routing tag still select a
+    correction; they are not dropped or treated as successful reset evidence.
+    """
+    if (not isinstance(config_data, dict) or set(config_data) != {"mode", "networkOS"}
+            or config_data.get("mode") != "trunk"):
+        return False
+    network = config_data.get("networkOS")
+    if (not isinstance(network, dict) or set(network) != {"networkOSType", "policy"}
+            or network.get("networkOSType") != "nx-os"):
+        return False
+    policy = network.get("policy")
+    if not isinstance(policy, dict) or policy.get("policyType") != "trunkHost":
+        return False
+    residue = set(policy) & ROUTED_SIBLING_RESET_FIELDS
+    if not residue:
+        return False
+    known = {field.alias or name for name, field in EthernetTrunkHostPolicyModel.model_fields.items()}
+    known.update(InterfaceDefaultPolicyModel().model_dump(by_alias=True))
+    if set(policy) - known - ROUTED_SIBLING_RESET_FIELDS - {"ptp"}:
+        return False
+    if "ip" in residue and policy["ip"] is not None:
+        address = policy["ip"]
+        if not isinstance(address, str):
+            return False
+        try:
+            if str(ipaddress.IPv4Address(address)) != address:
+                return False
+        except ipaddress.AddressValueError:
+            return False
+    for field, minimum, maximum in (("prefix", 1, 31), ("routingTag", 0, 4294967295)):
+        if field not in residue:
+            continue
+        value = policy[field]
+        if value is None or field == "routingTag" and value == "":
+            continue
+        if type(value) is int:
+            number = value
+        elif isinstance(value, str) and len(value) <= 10 and value.isascii() and value.isdecimal():
+            number = int(value)
+            if str(number) != value:
+                return False
+        else:
+            return False
+        if not minimum <= number <= maximum:
+            return False
+    # A BGW routed default-VRF interface can retain this exact sibling echo
+    # after normalize. It must select replacement, never count as reset.
+    # No nondefault, null, empty or differently typed VRF value is qualified.
+    if "vrfInterface" in residue and policy["vrfInterface"] != "default":
+        return False
+    return all(policy[field] is None or type(policy[field]) is bool or isinstance(policy[field], str) and policy[field] in {"false", "true"}
+               for field in residue & {"ipRedirects", "pimSparse"})
 
 
 def has_retained_reset_auto_negotiation(config_data: dict) -> bool:

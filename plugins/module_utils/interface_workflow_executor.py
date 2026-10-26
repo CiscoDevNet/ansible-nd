@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from time import monotonic, sleep
 from typing import Any, Callable, Iterable
@@ -127,10 +128,14 @@ class InterfaceWorkflowExecutor:
         snapshot: InterfaceStateSnapshot,
         deploy: bool = False,
         verify: bool = False,
+        member_batching: str = "disabled",
     ) -> None:
         self.snapshot = snapshot
         self.deploy = deploy
         self.verify = verify
+        if member_batching not in {"disabled", "switch_policy", "experimental_policy", "experimental_mixed"}:
+            raise ValueError("Unknown member batching mode")
+        self.member_batching = member_batching
         self._items: list[InterfaceExecutionItem] = []
         self._item_by_key: dict[tuple[int, str, Any], InterfaceExecutionItem] = {}
         self._errors: list[str] = []
@@ -145,6 +150,17 @@ class InterfaceWorkflowExecutor:
         self._sequence = 0
         self._preparation_verification_sequences: dict[tuple[int, str, str, str], int] = {}
         self._member_refresh_sequences: dict[tuple[int, str, str, str], int] = {}
+        self._reset_preview_sources: tuple[NDBaseInterfaceOrchestrator, ...] = ()
+
+    def _refresh_boundary(self):
+        """Share one fresh switch observation across a dependency phase."""
+        boundary = getattr(self.snapshot, "refresh_boundary", None)
+        return boundary() if callable(boundary) else nullcontext()
+
+    def _invalidate_topology_evidence(self) -> None:
+        invalidate = getattr(self.snapshot, "invalidate_topology_evidence", None)
+        if callable(invalidate):
+            invalidate()
 
     @staticmethod
     def _all_orchestrators(
@@ -419,9 +435,17 @@ class InterfaceWorkflowExecutor:
         create_targets = {item.target for item in items if item.action == "create"}
         pending_before = set(orchestrator.pending_deploys) if create_targets else set()
         try:
-            operation()
+            try:
+                operation()
+            finally:
+                if getattr(orchestrator.rest_send, "mutation_attempt_count", 0) > attempts_before:
+                    for source in self._reset_preview_sources:
+                        invalidate = getattr(source, "invalidate_reset_negotiation_previews", None)
+                        if callable(invalidate):
+                            invalidate()
         except Exception as exc:  # pylint: disable=broad-except
             error = f"{context}: {exc}"
+            self._invalidate_topology_evidence()
             response, result = self._fresh_mutation_result(orchestrator.rest_send, markers)
             if response.get("RETURN_CODE") == 207 and exact_207_classifier is not None:
                 accepted, _exact = exact_207_classifier()
@@ -447,10 +471,12 @@ class InterfaceWorkflowExecutor:
                 item.status = "succeeded" if item.target in accepted else "failed"
                 item.message = None if item.target in accepted else error
             if not exact or any(item.status != "succeeded" for item in items):
+                self._invalidate_topology_evidence()
                 self._errors.append(error)
                 return False
             return True
         if not self._apply_success_response(items, response, result, error):
+            self._invalidate_topology_evidence()
             self._errors.append(error)
             return False
         return True
@@ -731,7 +757,9 @@ class InterfaceWorkflowExecutor:
             str,
         ]
         pending: list[batch_type] = []
+        pending_keys: set[tuple[str, str]] | None = set()
         completed_batches: list[list[batch_type]] = []
+        member_batches: dict[tuple[str, str], list[batch_type]] = defaultdict(list)
         singular: list[tuple[InterfaceResourcePlan, NDBaseModel, InterfaceExecutionItem, NDBaseModel | None]] = []
 
         def execute_batch(batch: list[batch_type]) -> bool:
@@ -745,6 +773,21 @@ class InterfaceWorkflowExecutor:
                 )
             source = batch[0][0].orchestrator
             items = [entry[2] for entry in batch]
+            if batch[0][5] == "member":
+                requested = {(item.switch_id.casefold(), item.interface_name.casefold()): (item.switch_id, item.interface_name) for item in items}
+                def classify_members():
+                    accepted, exact = source._bulk_modify_classify_result_pairs(requested)
+                    return {(requested[key][1], requested[key][0]) for key in accepted}, exact
+                return self._call_items(
+                    source, items,
+                    lambda: source.modify_bulk_members_prepared(
+                        [entry[3] for entry in batch],
+                        payload_orchestrators=[entry[0].orchestrator for entry in batch],
+                        payload_models=[entry[1] for entry in batch],
+                        grouping_mode=self.member_batching,
+                    ),
+                    "Qualified member bulk update failed", exact_207_classifier=classify_members,
+                )
             try:
                 # A preceding batch dirties each touched switch's shared
                 # snapshot. Revalidate every touched switch before another
@@ -791,33 +834,58 @@ class InterfaceWorkflowExecutor:
                 item = self._item(resource, "update", model)
                 previous = resource.before.get(model.get_identifier_value()) if hasattr(resource.before, "get") else None
                 try:
-                    prepare = getattr(resource.orchestrator, "prepare_bulk_description_update", None)
-                    payload = prepare(model, previous) if callable(prepare) else None
-                    mode = "description"
+                    prepare_member = getattr(resource.orchestrator, "prepare_bulk_member_update", None)
+                    payload = prepare_member(model) if self.member_batching != "disabled" and callable(prepare_member) else None
+                    mode = "member"
                     if payload is None:
-                        prepare_full = getattr(resource.orchestrator, "prepare_bulk_full_update", None)
-                        payload = prepare_full(model, previous) if callable(prepare_full) else None
-                        mode = "full"
+                        prepare = getattr(resource.orchestrator, "prepare_bulk_description_update", None)
+                        payload = prepare(model, previous) if callable(prepare) else None
+                        mode = "description"
+                        if payload is None:
+                            prepare_full = getattr(resource.orchestrator, "prepare_bulk_full_update", None)
+                            payload = prepare_full(model, previous) if callable(prepare_full) else None
+                            mode = "full"
                 except Exception as exc:  # pylint: disable=broad-except
                     item.status = "failed"
                     item.message = f"Bulk interface update preflight failed: {exc}"
                     self._errors.append(item.message)
                     return False
                 if payload is not None:
+                    if mode == "member":
+                        policy_type = payload["configData"]["networkOS"]["policy"]["policyType"]
+                        key = (item.switch_id, policy_type) if self.member_batching == "switch_policy" else (
+                            ("", policy_type) if self.member_batching == "experimental_policy" else ("", ""))
+                        member_batches[key].append((resource, model, item, payload, previous, mode))
+                        continue
                     # Preserve dependency layers, split repeated exact
                     # identities, and respect ND's documented 10,000-item
                     # request limit.
-                    if len(pending) >= 10000 or any(
-                        entry[2].switch_id == item.switch_id and entry[2].interface_name.casefold() == item.interface_name.casefold() for entry in pending
+                    # Plain wire identities have safe hash/equality behavior.
+                    # Other caller values retain the original lazy comparisons.
+                    key = (item.switch_id, item.interface_name.casefold()) if (
+                        type(item.switch_id) is str and type(item.interface_name) is str
+                    ) else None
+                    if len(pending) >= 10000 or (
+                        key in pending_keys if key is not None and pending_keys is not None else any(
+                            entry[2].switch_id == item.switch_id and entry[2].interface_name.casefold() == item.interface_name.casefold()
+                            for entry in pending
+                        )
                     ):
                         completed_batches.append(pending)
                         pending = []
+                        pending_keys = set()
                     pending.append((resource, model, item, payload, previous, mode))
+                    if key is None:
+                        pending_keys = None
+                    elif pending_keys is not None:
+                        pending_keys.add(key)
                     continue
                 singular.append((resource, model, item, previous))
 
         if pending:
             completed_batches.append(pending)
+        for rows in member_batches.values():
+            completed_batches.extend(rows[start:start + 10000] for start in range(0, len(rows), 10000))
         for batch in completed_batches:
             if not execute_batch(batch):
                 return False
@@ -1009,25 +1077,8 @@ class InterfaceWorkflowExecutor:
                     return False
             elif action == "update":
                 refresh_operations = [operation for operation in layer if operation.refresh_before]
-                if refresh_operations:
-                    selected_by_resource: dict[int, list[NDBaseModel]] = defaultdict(list)
-                    for operation in refresh_operations:
-                        selected_by_resource[operation.resource_index].append(operation.model)
-                    for resource in plan.resources:
-                        models = selected_by_resource.get(resource.resource_index, [])
-                        if not models:
-                            continue
-                        if not isinstance(resource.orchestrator, EthernetBaseOrchestrator):
-                            self._errors.append(f"resources[{resource.resource_index}] scheduled a member refresh on an unsupported orchestrator.")
-                            return False
-                        try:
-                            resource.orchestrator.refresh_member_update_contexts(models)
-                            self._sequence += 1
-                            for model in models:
-                                self._member_refresh_sequences[self._scheduled_key(resource, "update", model)] = self._sequence
-                        except Exception as exc:  # pylint: disable=broad-except
-                            self._errors.append(f"resources[{resource.resource_index}] member state refresh after parent mutation failed: {exc}")
-                            return False
+                if refresh_operations and not self._refresh_scheduled_members(plan, refresh_operations):
+                    return False
                 if not self._execute_updates(plan, layer):
                     return False
             elif action == "create":
@@ -1041,6 +1092,29 @@ class InterfaceWorkflowExecutor:
                 return False
         return True
 
+    def _refresh_scheduled_members(self, plan: InterfaceWorkflowPlan, operations: Iterable[InterfaceWorkflowOperation]) -> bool:
+        """Observe the affected union once before all member-update families."""
+        selected_by_resource: dict[int, list[NDBaseModel]] = defaultdict(list)
+        for operation in operations:
+            selected_by_resource[operation.resource_index].append(operation.model)
+        with self._refresh_boundary():
+            for resource in plan.resources:
+                models = selected_by_resource.get(resource.resource_index, [])
+                if not models:
+                    continue
+                if not isinstance(resource.orchestrator, EthernetBaseOrchestrator):
+                    self._errors.append(f"resources[{resource.resource_index}] scheduled a member refresh on an unsupported orchestrator.")
+                    return False
+                try:
+                    resource.orchestrator.refresh_member_update_contexts(models)
+                    self._sequence += 1
+                    for model in models:
+                        self._member_refresh_sequences[self._scheduled_key(resource, "update", model)] = self._sequence
+                except Exception as exc:  # pylint: disable=broad-except
+                    self._errors.append(f"resources[{resource.resource_index}] member state refresh after parent mutation failed: {exc}")
+                    return False
+        return True
+
     def _execute_member_preparations(self, plan: InterfaceWorkflowPlan, operations: Iterable[InterfaceWorkflowOperation]) -> bool:
         """Stage guarded standalone host policies without normalization or deployment."""
         selected = {operation.key for operation in operations}
@@ -1049,22 +1123,29 @@ class InterfaceWorkflowExecutor:
         for preparation in plan.member_preparations:
             if preparation.key in selected:
                 groups[(preparation.resource_index, preparation.switch_id, preparation.to_policy_type)].append(preparation)
+        # Validate the complete phase before its first preparation write. All
+        # families can then share the same fresh switch/peer observation.
+        with self._refresh_boundary():
+            for preparations in groups.values():
+                resource = by_resource[preparations[0].resource_index]
+                orchestrator = resource.orchestrator
+                items = [self._preparation_items[preparation.key] for preparation in preparations]
+                try:
+                    orchestrator.refresh_new_member_preparation_contexts(
+                        [preparation.model for preparation in preparations],
+                        expected_records={(preparation.switch_id, preparation.interface_name.casefold()): preparation.current
+                                          for preparation in preparations},
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    message = f"resources[{resource.resource_index}] standalone member preparation preflight failed: {exc}"
+                    for item in items:
+                        item.status, item.message = "failed", message
+                    self._errors.append(message)
+                    return False
         for preparations in groups.values():
             resource = by_resource[preparations[0].resource_index]
             orchestrator = resource.orchestrator
             items = [self._preparation_items[preparation.key] for preparation in preparations]
-            try:
-                orchestrator.refresh_new_member_preparation_contexts(
-                    [preparation.model for preparation in preparations],
-                    expected_records={(preparation.switch_id, preparation.interface_name.casefold()): preparation.current
-                                      for preparation in preparations},
-                )
-            except Exception as exc:  # pylint: disable=broad-except
-                message = f"resources[{resource.resource_index}] standalone member preparation preflight failed: {exc}"
-                for item in items:
-                    item.status, item.message = "failed", message
-                self._errors.append(message)
-                return False
             if not self._call_items(
                 orchestrator,
                 items,
@@ -1082,19 +1163,20 @@ class InterfaceWorkflowExecutor:
         for preparation in plan.member_preparations:
             if preparation.parent_key in parent_keys:
                 groups[preparation.resource_index].append(preparation)
-        for resource_index, preparations in groups.items():
-            try:
-                if any(self._preparation_items[preparation.key].status != "succeeded" for preparation in preparations):
-                    raise RuntimeError("The required standalone preparation has no exact accepted write receipt.")
-                by_resource[resource_index].orchestrator.refresh_new_member_preparation_contexts(
-                    [preparation.model for preparation in preparations], require_prepared=True,
-                )
-            except Exception as exc:  # pylint: disable=broad-except
-                self._errors.append(f"resources[{resource_index}] prepared host intent verification before parent staging failed: {exc}")
-                return False
-            self._verified_preparations.update(preparation.key for preparation in preparations)
-            self._sequence += 1
-            self._preparation_verification_sequences.update((preparation.key, self._sequence) for preparation in preparations)
+        with self._refresh_boundary():
+            for resource_index, preparations in groups.items():
+                try:
+                    if any(self._preparation_items[preparation.key].status != "succeeded" for preparation in preparations):
+                        raise RuntimeError("The required standalone preparation has no exact accepted write receipt.")
+                    by_resource[resource_index].orchestrator.refresh_new_member_preparation_contexts(
+                        [preparation.model for preparation in preparations], require_prepared=True,
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    self._errors.append(f"resources[{resource_index}] prepared host intent verification before parent staging failed: {exc}")
+                    return False
+                self._verified_preparations.update(preparation.key for preparation in preparations)
+                self._sequence += 1
+                self._preparation_verification_sequences.update((preparation.key, self._sequence) for preparation in preparations)
         return True
 
     def _member_preparation_results(self, plan: InterfaceWorkflowPlan) -> tuple[dict[str, Any], ...]:
@@ -1435,11 +1517,13 @@ class InterfaceWorkflowExecutor:
             seen.add(id(rest_send))
             recorded_mutations = 0
             recorded_deployments = 0
-            for response, result in zip(rest_send.responses, rest_send.results):
-                method = str(response.get("METHOD") or "").upper()
+            outcomes = rest_send.iter_request_outcomes() if hasattr(rest_send, "iter_request_outcomes") else (
+                (str(response.get("METHOD") or "").upper(), str(response.get("REQUEST_PATH") or ""), result.get("changed") is True)
+                for response, result in zip(rest_send.responses, rest_send.results)
+            )
+            for method, path, changed in outcomes:
                 if method == "GET" or method.endswith(".GET"):
                     continue
-                path = str(response.get("REQUEST_PATH") or "")
                 if "interfaceActions/deploy" in path:
                     recorded_deployments += 1
                 elif "interfaceActions/preview" in path:
@@ -1447,7 +1531,7 @@ class InterfaceWorkflowExecutor:
                     continue
                 else:
                     recorded_mutations += 1
-                    mutation_changed = mutation_changed or result.get("changed") is True
+                    mutation_changed = mutation_changed or changed
             mutation_requests += max(recorded_mutations, getattr(rest_send, "mutation_attempt_count", 0))
             deploy_requests += max(recorded_deployments, getattr(rest_send, "deployment_attempt_count", 0))
         return mutation_requests, deploy_requests, mutation_changed
@@ -1499,6 +1583,7 @@ class InterfaceWorkflowExecutor:
         deployment_targets: Iterable[Target] = (),
     ) -> InterfaceWorkflowExecution:
         """Execute mutation and exact-target deployment phases, then reconcile intended state."""
+        self._reset_preview_sources = self._all_orchestrators(plan)
         self._build_items(plan)
         phases_ok = self._enable_writes_and_preflight(plan)
         execution_layers = getattr(plan, "execution_layers", ())

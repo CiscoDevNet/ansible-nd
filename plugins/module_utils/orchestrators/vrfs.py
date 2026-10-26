@@ -51,6 +51,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_da
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
     VrfType,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import BgpAuthenticationKeyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -677,9 +678,43 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
         return expression
 
+    @staticmethod
+    def _manage_api_vrf_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        """Translate public numeric key types only at the Manage wire boundary.
+
+        ND 4.3.1 rejects numeric3/7 here and requires3des/type7. Published
+        older VRF schemas disagree; no unverified version cutoff is inferred.
+        Keep model/config and legacy top-down template representations intact.
+        """
+        fabric_data = payload.get("fabricData")
+        if not isinstance(fabric_data, dict):
+            return payload
+        value = fabric_data.get("bgpPasswordKeyType")
+        if type(value) is not int or value not in (3, 7):
+            return payload
+        wire_value = (BgpAuthenticationKeyTypeEnum.THREE_DES.value if value == 3
+                      else BgpAuthenticationKeyTypeEnum.TYPE7.value)
+        return dict(payload, fabricData=dict(fabric_data, bgpPasswordKeyType=wire_value))
+
+    @staticmethod
+    def _normalize_manage_vrf_key_type(item: dict[str, Any]) -> dict[str, Any]:
+        """Canonicalize known read aliases; retain type6/unknown observations."""
+        fabric_data = item.get("fabricData")
+        if not isinstance(fabric_data, dict):
+            return item
+        value = fabric_data.get("bgpPasswordKeyType")
+        if value == BgpAuthenticationKeyTypeEnum.THREE_DES.value:
+            canonical = 3
+        elif value == BgpAuthenticationKeyTypeEnum.TYPE7.value:
+            canonical = 7
+        else:
+            return item
+        return dict(item, fabricData=dict(fabric_data, bgpPasswordKeyType=canonical))
+
     def _normalize_query_vrf_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
             return item
+        item = self._normalize_manage_vrf_key_type(item)
         if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
             return item
 
@@ -982,8 +1017,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
-            return self._mcfg_parent_vrf_payload(model_instance)
-        return model_instance.to_payload()
+            payload = self._mcfg_parent_vrf_payload(model_instance)
+        else:
+            payload = model_instance.to_payload()
+        return self._manage_api_vrf_payload(payload)
 
     # ── Create ────────────────────────────────────────────────────
 
