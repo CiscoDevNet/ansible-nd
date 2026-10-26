@@ -86,7 +86,16 @@ establish that this integration produces keyed per-resource `failureResults`
 with no effect for BOTH switch IDs, while the valid integration succeeds.
 No universally invalid integration name is assumed. Mixed and all-failure cases
 assert exact outcomes, confirmed successful effects, and failure independent of
-changed. Unexpected fixture behavior fails the test visibly.
+changed. The mixed result is retried before cleanup: the successful association
+must be retained, only the failed switch retried, and recovery followed by a
+no-op. Another case verifies that rejected onboarding in an override leaves the
+omitted association present and its deletion `not_attempted`. Correcting a
+request for a switch that never onboarded does not exercise association updates.
+Unexpected fixture behavior fails the test visibly.
+
+For a stopped-execution case, `ss_case.expect.planned_operations` optionally
+specifies the exact list of identifier/operation/outcome records. Attempted
+results and skipped planned operations are asserted separately.
 
 Cleanup is armed only after all guards pass. The always block uses deleted with
 only the two owned IDs; it never performs an empty override. Cleanup failures

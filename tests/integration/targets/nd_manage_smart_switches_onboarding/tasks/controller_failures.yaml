@@ -24,18 +24,111 @@
         created: "{{ [ss_a] }}"
         rejected: "{{ [ss_b] }}"
 
-- name: Reset only owned fixtures after mixed failure
+- name: Retry mixed input without reonboarding A
   ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
   vars:
     ss_case:
-      name: CONTROLLER reset confirmed successful association
+      name: CONTROLLER retry only the failed association
+      state: replaced
+      config:
+        - switch_id: "{{ ss_a }}"
+          integration_name: "{{ nd_test_smart_switches_integration_name }}"
+        - switch_id: "{{ ss_b }}"
+          integration_name: "{{ nd_test_smart_switches_rejection_integration_name }}"
+      expect:
+        changed: false
+        failed: true
+        before_ids: "{{ [ss_a] }}"
+        after_ids: "{{ [ss_a] }}"
+        rejected: "{{ [ss_b] }}"
+
+# B is still absent: correcting this request is onboarding, not an update.
+- name: Recover B while retaining the successful A association
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: CONTROLLER onboard only the previously failed switch
+      state: replaced
+      config: "{{ ss_both }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_a] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+        created: "{{ [ss_b] }}"
+
+- name: Repeat recovered input as a no-op
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: CONTROLLER recovered associations are idempotent
+      state: replaced
+      config: "{{ ss_both }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+
+- name: Reset only owned fixtures after recovery
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: CONTROLLER reset recovered associations
       state: deleted
       config: "{{ ss_delete_both }}"
       expect:
         changed: true
-        before_ids: "{{ [ss_a] }}"
+        before_ids: "{{ [ss_a, ss_b] }}"
         after_ids: []
-        deleted: "{{ [ss_a] }}"
+        deleted: "{{ [ss_a, ss_b] }}"
+
+- name: SETUP seed B before testing stopped override deletion
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: CONTROLLER seed the omitted association
+      state: replaced
+      config: "{{ ss_both[1:] }}"
+      expect:
+        changed: true
+        before_ids: []
+        after_ids: "{{ [ss_b] }}"
+        created: "{{ [ss_b] }}"
+
+- name: Failed override onboarding must not deboard omitted B
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: CONTROLLER preserve omitted association after onboarding failure
+      state: overridden
+      config:
+        - switch_id: "{{ ss_a }}"
+          integration_name: "{{ nd_test_smart_switches_rejection_integration_name }}"
+      expect:
+        changed: false
+        failed: true
+        before_ids: "{{ [ss_b] }}"
+        after_ids: "{{ [ss_b] }}"
+        rejected: "{{ [ss_a] }}"
+        planned_operations:
+          - identifier: "{{ ss_a }}"
+            operation: create
+            outcome: failed
+          - identifier: "{{ ss_b }}"
+            operation: delete
+            outcome: not_attempted
+
+- name: Reset owned B after the stopped override
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: CONTROLLER reset the preserved omitted association
+      state: deleted
+      config: "{{ ss_delete_both }}"
+      expect:
+        changed: true
+        before_ids: "{{ [ss_b] }}"
+        after_ids: []
+        deleted: "{{ [ss_b] }}"
 
 - name: Test controller all-resource failure from absent baseline
   ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"

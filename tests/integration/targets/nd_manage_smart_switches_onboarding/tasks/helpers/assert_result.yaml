@@ -35,6 +35,14 @@
       - item.switch_name == ss_fixture_inventory[item.switch_id].switch_name
   loop: "{{ ss_result.before + ss_result.after }}"
 
+- name: Validate exact planned outcomes for stopped execution
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ss_result.planned_operations | sort(case_sensitive=true, attribute='identifier'))
+        == (ss_case.expect.planned_operations | sort(case_sensitive=true, attribute='identifier'))
+  when: ss_case.expect.planned_operations is defined
+
 - name: Validate each exact resource outcome
   ansible.builtin.assert:
     that:

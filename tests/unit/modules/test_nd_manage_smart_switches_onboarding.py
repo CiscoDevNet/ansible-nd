@@ -514,3 +514,52 @@ def test_real_main_failure_handler_retains_partial_success_and_uncertainty(monke
         assert [item["switch_id"] for item in output["diff"]["after"]] == ["a"]
         assert output["action_results"][1]["messages"] == ["refused"]
         assert not output["may_have_changed"] and output["reconciliation_complete"]
+
+
+def test_partial_success_recovery_reconciles_only_the_remaining_absent_switch():
+    mixed = [{"switch_id": "a", "integration_name": "h"}, {"switch_id": "b", "integration_name": "reject"}]
+    initial = run_state("replaced", [row("a"), row("b")], mixed, [response({"successResults": [{"name": "a"}], "failureResults": [{"name": "b"}]}, 202)])
+    with pytest.raises(NDStateMachineError):
+        initial.manage_state()
+    assert initial.output.format()["changed"]
+
+    retry = run_state("replaced", [row("a", "h"), row("b")], mixed, [response({"failureResults": [{"name": "b"}]}, 202)])
+    with pytest.raises(NDStateMachineError):
+        retry.manage_state()
+    output = retry.output.format()
+    assert not output["changed"] and output["failed"]
+    assert [item["switch_id"] for item in output["after"]] == ["a"]
+    assert [item["identifier"] for item in output["action_results"]] == ["b"]
+    assert retry.model_orchestrator.rest_send.committed_payload["smartSwitchIntegrations"] == [
+        {"switchId": "b", "switchName": "leaf-b", "integrationName": "reject"}
+    ]
+
+    valid = [{"switch_id": key, "integration_name": "h"} for key in ("a", "b")]
+    recovered = run_state("replaced", [row("a", "h"), row("b")], valid, [response({"successResults": [{"name": "b"}]}, 202)])
+    recovered.manage_state()
+    output = recovered.output.format()
+    assert output["changed"] and not output["failed"]
+    assert [item["identifier"] for item in output["action_results"]] == ["b"]
+    assert [item["switch_id"] for item in output["after"]] == ["a", "b"]
+    repeated = run_state("replaced", [row(key, "h") for key in ("a", "b")], valid)
+    repeated.manage_state()
+    assert not repeated.output.format()["changed"]
+    assert repeated.output.format()["action_results"] == []
+    assert repeated.model_orchestrator.rest_send.mutation_attempt_count == 0
+
+
+def test_failed_override_onboarding_leaves_omitted_deboarding_unattempted():
+    sm = run_state(
+        "overridden", [row("a"), row("b", "h")], [{"switch_id": "a", "integration_name": "reject"}], [response({"failureResults": [{"name": "a"}]}, 202)]
+    )
+    with pytest.raises(NDStateMachineError):
+        sm.manage_state()
+    output = sm.output.format()
+    assert not output["changed"] and output["failed"]
+    assert [item["switch_id"] for item in output["after"]] == ["b"]
+    assert [item["identifier"] for item in output["action_results"]] == ["a"]
+    assert output["planned_operations"] == [
+        {"identifier": "a", "operation": "create", "outcome": "failed"},
+        {"identifier": "b", "operation": "delete", "outcome": "not_attempted"},
+    ]
+    assert sm.model_orchestrator.rest_send.mutation_attempt_count == 1

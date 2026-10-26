@@ -169,3 +169,39 @@ def test_inventory_wrapper_requires_a_successful_unambiguous_collection(status, 
     task = task_named("inventory_page.yaml", "Validate inventory response wrapper and metadata")
     with pytest.raises((AssertionError, AnsibleError)):
         assert_conditions(task, {"ss_page": {"status": status, "jsondata": {"switches": switches, "meta": meta}}})
+
+
+def test_optional_controller_cases_cover_recovery_without_reonboarding_successes():
+    tasks = yaml.safe_load((TARGET / "tasks" / "controller_failures.yaml").read_text())
+    variables = {
+        "ss_a": "a",
+        "ss_b": "b",
+        "ss_both": [{"switch_id": key, "integration_name": "valid"} for key in ("a", "b")],
+        "ss_delete_both": [{"switch_id": key} for key in ("a", "b")],
+        "nd_test_smart_switches_integration_name": "valid",
+        "nd_test_smart_switches_rejection_integration_name": "rejected",
+    }
+    cases = [render(task["vars"]["ss_case"], variables) for task in tasks if "ss_case" in task.get("vars", {})]
+    retry = [case for case in cases if case["state"] == "replaced" and case["expect"]["before_ids"] == ["a"] and case["expect"].get("failed")]
+    assert len(retry) == 1
+    assert retry[0]["expect"] == {"changed": False, "failed": True, "before_ids": ["a"], "after_ids": ["a"], "rejected": ["b"]}
+    recovered = [case for case in cases if case["state"] == "replaced" and case["expect"]["before_ids"] == ["a"] and not case["expect"].get("failed")]
+    assert len(recovered) == 1
+    assert recovered[0]["expect"]["created"] == ["b"]
+    assert recovered[0]["expect"]["after_ids"] == ["a", "b"]
+    stopped = next(case for case in cases if case["state"] == "overridden")
+    assert stopped["expect"]["before_ids"] == stopped["expect"]["after_ids"] == ["b"]
+    assert stopped["expect"]["planned_operations"] == [
+        {"identifier": "a", "operation": "create", "outcome": "failed"},
+        {"identifier": "b", "operation": "delete", "outcome": "not_attempted"},
+    ]
+
+
+def test_planned_operation_assertion_rejects_an_attempted_omitted_deletion():
+    task = task_named("assert_result.yaml", "Validate exact planned outcomes for stopped execution")
+    planned = [{"identifier": "a", "operation": "create", "outcome": "failed"}, {"identifier": "b", "operation": "delete", "outcome": "not_attempted"}]
+    variables = {"ss_case": {"expect": {"planned_operations": planned}}, "ss_result": {"planned_operations": list(reversed(planned))}}
+    assert_conditions(task, variables)
+    variables["ss_result"]["planned_operations"] = [planned[0], {**planned[1], "outcome": "succeeded"}]
+    with pytest.raises(AssertionError):
+        assert_conditions(task, variables)
