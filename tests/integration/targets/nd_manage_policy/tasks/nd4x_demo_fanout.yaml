@@ -738,7 +738,7 @@
             | selectattr('description', 'equalto', 'ND4X-fanout-vrf-tracking')
             | selectattr('name', 'equalto', 'vrf_route_tracking')
             | selectattr('priority', 'equalto', 230)
-            | selectattr('template_inputs.OBJECT_TRACKING_NUMBER', 'equalto', 10)
+            | selectattr('template_inputs.OBJECT_TRACKING_NUMBER', 'equalto', '10')
             | selectattr('template_inputs.IP_PREFIX', 'equalto', '10.0.0.1/31')
             | selectattr('template_inputs.VRF_NAME', 'equalto', 'vrf-prod-11234')
             | selectattr('switch.0.serial_number', 'equalto', test_switch_serial_1)

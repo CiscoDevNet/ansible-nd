@@ -61,8 +61,8 @@
           - nd4x_replace_original[0].name == 'clock_timezone'
           - nd4x_replace_original[0].priority == 300
           - nd4x_replace_original[0].template_inputs.TIME_ZONE == 'CET'
-          - nd4x_replace_original[0].template_inputs.HOUR_OFFSET == 1
-          - nd4x_replace_original[0].template_inputs.MINUTE_OFFSET == 0
+          - nd4x_replace_original[0].template_inputs.HOUR_OFFSET == '1'
+          - nd4x_replace_original[0].template_inputs.MINUTE_OFFSET == '0'
           - nd4x_replace_original[0].switch | length == 1
           - nd4x_replace_original[0].switch[0].serial_number == test_switch_serial_1
 
