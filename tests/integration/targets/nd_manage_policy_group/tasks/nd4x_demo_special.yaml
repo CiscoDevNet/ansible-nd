@@ -776,7 +776,7 @@
         nd4x_verify_expected:
           - description: "ND4X-PG-SPECIAL-IP selector"
             template_name: switch_freeform
-            switch_ids: ["{{ nd4x_policy_group_switch_ip_1 }}"]
+            switch_ids: ["{{ test_switch_serial_1 }}"]
             template_inputs: {CONF: "as-format asdot"}
       when: nd4x_policy_group_switch_ip_1 | default('') | length > 0
 
