@@ -33,6 +33,7 @@ class SmartSwitchOnboardingResponseAdapter:
     def normalize(body: Any, expected_identifiers: Sequence[str]) -> MutationResult:
         if not isinstance(body, dict):
             return MutationResult(protocol_errors=("Onboarding response must be an object",))
+        expected_keys = set(expected_identifiers)
         grouped: dict[str, list[tuple[str, SmartSwitchOnboardingResultEntry]]] = {}
         errors: list[str] = []
         invalid_keys: set[str] = set()
@@ -55,10 +56,10 @@ class SmartSwitchOnboardingResponseAdapter:
                         entries.append(SmartSwitchOnboardingResultEntry.model_validate(raw))
                     except (ValidationError, ValueError) as error:
                         errors.append(f"Malformed {side} entry: {error}")
-                        if isinstance(raw, dict) and isinstance(raw.get("name"), str) and raw["name"] in expected_identifiers:
+                        if isinstance(raw, dict) and isinstance(raw.get("name"), str) and raw["name"] in expected_keys:
                             invalid_keys.add(raw["name"])
             for entry in entries:
-                if entry.name not in expected_identifiers:
+                if entry.name not in expected_keys:
                     errors.append(f"Unexpected result name {entry.name!r}")
                     continue
                 grouped.setdefault(entry.name, []).append((side, entry))
@@ -273,9 +274,7 @@ class SmartSwitchOnboardingOrchestrator(NDBaseOrchestrator[SmartSwitchOnboarding
         if body is not None and body != {}:
             return MutationResult(protocol_errors=("Expected bodyless bulk deboarding HTTP 202; final effects are unknown",))
         return MutationResult(
-            tuple(
-                MutationResourceOutcome(key, MutationOutcome.SUCCEEDED, evidence=({"http_status": 202, "match": "bulk_request_completion"},)) for key in keys
-            )
+            tuple(MutationResourceOutcome(key, MutationOutcome.SUCCEEDED, evidence=({"http_status": 202, "match": "bulk_request_completion"},)) for key in keys)
         )
 
     def update(self, model_instance: SmartSwitchOnboardingModel, **kwargs) -> MutationResult:

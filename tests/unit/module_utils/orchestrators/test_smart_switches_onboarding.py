@@ -11,6 +11,21 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation i
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.smart_switches_onboarding import SmartSwitchOnboardingResponseAdapter
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.smart_switches_onboarding_helpers import orchestrator, page, response, row
+from ansible_collections.cisco.nd.tests.unit.module_utils.state_reconciliation_helpers import CountedIdentifier
+
+
+@pytest.mark.parametrize("size", [100, 400])
+def test_adapter_correlation_uses_bounded_identifier_comparisons(size):
+    identifiers = tuple(CountedIdentifier(f"switch-{index}") for index in range(size))
+    body = {"successResults": [{"name": str(key)} for key in reversed(identifiers)]}
+    # Malformed keyed evidence must also use the same indexed membership check.
+    body["failureResults"] = [{"name": str(identifiers[-1]), "status": 12}]
+    CountedIdentifier.comparisons = 0
+    normalized = SmartSwitchOnboardingResponseAdapter.normalize(body, identifiers)
+    assert CountedIdentifier.comparisons <= size * 5
+    assert tuple(item.identifier for item in normalized.outcomes) == identifiers
+    assert all(item.outcome is MutationOutcome.SUCCEEDED for item in normalized.outcomes[:-1])
+    assert normalized.outcomes[-1].outcome is MutationOutcome.UNKNOWN
 
 
 def test_schema_shaped_fixture_read_and_confirmed_wrapper_evidence():
