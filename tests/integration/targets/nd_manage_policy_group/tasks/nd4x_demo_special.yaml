@@ -149,6 +149,7 @@
         module: cisco.nd.nd_manage_policy_group
         state: merged
         check_mode: true
+        check_mode_only: true
         idempotency: false
         common_args: "{{ nd4x_policy_group_deploy_args }}"
         config:
@@ -212,6 +213,7 @@
         module: cisco.nd.nd_manage_policy_group
         state: deleted
         check_mode: true
+        check_mode_only: true
         idempotency: false
         common_args: "{{ nd4x_policy_group_deploy_args }}"
         config:
