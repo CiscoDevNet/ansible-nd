@@ -258,7 +258,7 @@
           - name: switch_freeform
             description: "ND4X-PG-SPECIAL-no-deploy create"
             switch_ids: ["{{ test_switch_serial_1 }}"]
-            template_inputs: {CONF: "as-format asdot"}
+            template_inputs: {CONF: "ip domain-name nd4x-no-deploy.example.com"}
         expected:
           check_mode: {changed: true, failed: false}
           apply: {changed: true, failed: false}
@@ -281,7 +281,7 @@
           - description: "ND4X-PG-SPECIAL-no-deploy create"
             template_name: switch_freeform
             switch_ids: ["{{ test_switch_serial_1 }}"]
-            template_inputs: {CONF: "as-format asdot"}
+            template_inputs: {CONF: "ip domain-name nd4x-no-deploy.example.com"}
 
     - name: "SPECIAL C.TC5 - Read switch running-config diff"
       cisco.nd.nd_rest:
@@ -299,7 +299,7 @@
              | map(attribute='runningConfig') | select('defined') | join('\n') }}
       ansible.builtin.assert:
         that:
-          - "'as-format asdot' not in running_config"
+          - "'ip domain-name nd4x-no-deploy.example.com' not in running_config"
 
     - name: "SPECIAL C.TC6.setup - Create multi-switch group"
       cisco.nd.nd4x_module_test:
