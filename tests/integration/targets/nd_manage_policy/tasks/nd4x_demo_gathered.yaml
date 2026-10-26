@@ -352,9 +352,7 @@
           apply:
             changed: true
             failed: false
-          idempotency:
-            changed: false
-            failed: false
+        idempotency: false
         check_mode_queries: "{{ nd4x_policy_check_mode_queries }}"
         nd_queries:
           - name: Validate force-created gathered policy
