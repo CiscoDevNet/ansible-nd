@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    NetworkChildConfigModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     VlanNetworkType,
 )
@@ -173,17 +176,18 @@ def preflight_feature_changes(
     *,
     attachment_names: set[str] | None = None,
     standalone_vrf: bool = False,
+    child_network: bool = False,
 ) -> None:
     """
     # Summary
 
-    Check changed definitions against fabric settings using the state machine's inventory snapshot.
+    Check effective feature dependencies and fabric settings using the state machine's inventory snapshot.
 
     ## Raises
 
     ### ValueError
 
-    - If an actionable definition or attachment requests a feature unavailable on its fabric.
+    - If an actionable definition has an invalid dependency or requests a feature unavailable on its fabric.
     """
     if state in ("gathered", "deleted"):
         return
@@ -204,6 +208,11 @@ def preflight_feature_changes(
             else proposed
         )
         config = effective.to_gathered_config()
+        if child_network:
+            try:
+                NetworkChildConfigModel.validate_feature_dependencies(config)
+            except ValueError as exc:
+                raise ValueError(f"child_fabric_config[{fabric_name}]: {exc}") from exc
         if standalone_vrf and resource == "VRF":
             validate_standalone_vrf_trm_requirements(config, index, fabric_name)
             validate_standalone_vrf_svi_requirements(
@@ -297,6 +306,7 @@ def preflight_workflow_features(
             strategy.fabric_name,
             attachment_names=attach_names,
             standalone_vrf=resource == "VRF",
+            child_network=resource == "Network" and strategy.is_child,
         )
 
 

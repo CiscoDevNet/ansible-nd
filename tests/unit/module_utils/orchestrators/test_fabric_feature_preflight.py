@@ -274,6 +274,53 @@ def test_sparse_merge_checks_effective_mode_without_mutating_inventory():
     assert current.config["display_name"] == "OLD"
 
 
+@pytest.mark.parametrize(
+    "prerequisite,dependent,value",
+    [
+        ("trm_enable", "igmp_version", 3),
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
+    ],
+)
+def test_child_dependencies_reuse_the_feature_preflight_merge(
+    monkeypatch, prerequisite, dependent, value
+):
+    """Child dependency checks reuse one effective merge and skip unchanged writes."""
+    current = _Model("BLUE", {prerequisite: True})
+    proposed = _Model("BLUE", {dependent: value})
+    sm = _StateMachine(proposed, {"BLUE": current}, "changed")
+    merges = []
+    original_merge = _Model.merge
+
+    def record_merge(model, intent):
+        merges.append(model)
+        return original_merge(model, intent)
+
+    monkeypatch.setattr(_Model, "merge", record_merge)
+    preflight_feature_changes(
+        sm, "merged", _details, "Network", "CHILD", child_network=True
+    )
+    assert len(merges) == 1
+    assert current.config == {prerequisite: True}
+
+    def unexpected_details():
+        raise AssertionError("Dependency validation must precede fabric retrieval")
+
+    sm.existing = _Collection({}, "new")
+    with pytest.raises(
+        ValueError, match=rf"child_fabric_config\[CHILD\].*{prerequisite}=true"
+    ):
+        preflight_feature_changes(
+            sm, "merged", unexpected_details, "Network", "CHILD", child_network=True
+        )
+
+    sm.existing = _Collection({"BLUE": current}, "no_diff")
+    preflight_feature_changes(
+        sm, "merged", unexpected_details, "Network", "CHILD", child_network=True
+    )
+    assert len(merges) == 1
+
+
 def test_sparse_standalone_vrf_trm_inherits_existing_required_values():
     current = _Model(
         "BLUE", {"ipv6_trm": True, "v6_no_rp": True, "underlay_mcast_ip": "239.1.1.3"}

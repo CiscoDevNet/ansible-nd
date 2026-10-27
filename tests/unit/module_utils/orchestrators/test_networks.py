@@ -1380,6 +1380,118 @@ def test_sparse_parent_child_override_validates_against_cached_child_mode(monkey
         coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
 
 
+@pytest.fixture
+def child_network_feature_fabric_data():
+    return {
+        "managementType": "vxlanIbgp",
+        "manageFabricDetails": {"management": {"type": "vxlanIbgp", "tenantRoutedMulticast": True, "netflowSettings": {"netflow": True}}},
+    }
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "prerequisite,dependent,value",
+    [
+        ("trm_enable", "igmp_version", 3),
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
+    ],
+)
+def test_sparse_parent_child_feature_preflight_uses_cached_effective_state(
+    monkeypatch, strategy_cls, check_mode, prerequisite, dependent, value, child_network_feature_fabric_data
+):
+    strategy = strategy_cls(fabric_name="parent", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": "merged", "config": [], "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    parent_entry = {"network_name": "N", "child_fabric_config": [{"fabric_name": "child1", dependent: value}]}
+    parsed = coordinator._parse_config([parent_entry], strategy.config_model_cls, "merged")
+    assert parsed[0]["child_fabric_config"][0] == parent_entry["child_fabric_config"][0]
+
+    child_entry = {"network_name": "N", dependent: value}
+    child_strategy = ChildNetworkStrategy(
+        fabric_name="child1", fabric_data=child_network_feature_fabric_data, cluster_name="cluster1" if strategy.is_multicluster else None
+    )
+    orchestrator = NDNetworkOrchestrator(rest_send=RestSend({"state": "merged"}), strategy=child_strategy)
+    existing_config = {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", prerequisite: True}
+    existing = orchestrator.model_class.from_config(orchestrator.prepare_config_data([existing_config])[0])
+    proposed = orchestrator.model_class.from_config(orchestrator.prepare_config_data([child_entry])[0])
+    sm = SimpleNamespace(
+        existing=NDConfigCollection(orchestrator.model_class, [existing]),
+        proposed=NDConfigCollection(orchestrator.model_class, [proposed]),
+    )
+    child_task = {"fabric": "child1", "module_args": {"state": "merged", "config": [child_entry]}, "strategy": child_strategy}
+    monkeypatch.setattr(coordinator, "_new_state_machine", lambda *_args: (sm, [], "merged"))
+    coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
+    coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
+    assert sm.existing.get("N").l3_data.fabric_data.igmp_version is None
+
+    setattr(existing.l3_data.fabric_data, "ipv4_trm" if prerequisite == "trm_enable" else "netflow", False)
+    with pytest.raises(NDStateMachineError, match=f"{dependent} requires {prerequisite}=true|netflow monitor fields require {prerequisite}=true"):
+        coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
+    sm.existing = NDConfigCollection(orchestrator.model_class)
+    with pytest.raises(NDStateMachineError, match=f"{dependent} requires {prerequisite}=true|netflow monitor fields require {prerequisite}=true"):
+        coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
+
+
+@pytest.mark.parametrize("parent_state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("prerequisite,dependent,value", [("trm_enable", "igmp_version", 3), ("netflow_enable", "vlan_netflow_monitor", "MON")])
+def test_child_feature_disable_rejects_existing_dependency_before_parent_write(
+    monkeypatch, parent_state, prerequisite, dependent, value, child_network_feature_fabric_data
+):
+    strategy = MultisiteParentNetworkStrategy(fabric_name="parent", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(_Module({"state": parent_state, "config": [], "output_level": "normal"}), strategy)
+    parent_entry = {"network_name": "N", "child_fabric_config": [{"fabric_name": "child1", prerequisite: False}]}
+    coordinator._parse_config([parent_entry], strategy.config_model_cls, parent_state)
+    child_strategy = ChildNetworkStrategy(fabric_name="child1", fabric_data=child_network_feature_fabric_data)
+    orchestrator = NDNetworkOrchestrator(rest_send=RestSend({"state": "merged"}), strategy=child_strategy)
+    existing_config = {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", prerequisite: True, dependent: value}
+    existing = orchestrator.model_class.from_config(orchestrator.prepare_config_data([existing_config])[0])
+    entry = {"network_name": "N", prerequisite: False}
+    proposed = orchestrator.model_class.from_config(orchestrator.prepare_config_data([entry])[0])
+    sm = SimpleNamespace(
+        existing=NDConfigCollection(orchestrator.model_class, [existing]),
+        proposed=NDConfigCollection(orchestrator.model_class, [proposed]),
+    )
+    child_task = {"fabric": "child1", "module_args": {"state": "merged", "config": [entry]}, "strategy": child_strategy}
+    monkeypatch.setattr(coordinator, "_new_state_machine", lambda *_args: (sm, [], parent_state))
+    with pytest.raises(NDStateMachineError, match=f"{dependent} requires {prerequisite}=true|netflow monitor fields require {prerequisite}=true"):
+        coordinator._preflight_child_feature_tasks({"child1": child_task}, parent_state)
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("prerequisite,dependent,value", [("trm_enable", "igmp_version", 3), ("netflow_enable", "vlan_netflow_monitor", "MON")])
+def test_sparse_parent_child_feature_update_converges(
+    monkeypatch, strategy_cls, check_mode, prerequisite, dependent, value, child_network_feature_fabric_data
+):
+    parent_strategy = strategy_cls(fabric_name="parent", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": "merged", "config": [], "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module, parent_strategy)
+    child_strategy = ChildNetworkStrategy(
+        fabric_name="child1", fabric_data=child_network_feature_fabric_data, cluster_name="cluster1" if parent_strategy.is_multicluster else None
+    )
+    entry = {"network_name": "N", dependent: value}
+    readback_orchestrator = NDNetworkOrchestrator(rest_send=RestSend({"state": "merged"}), strategy=child_strategy)
+    current = readback_orchestrator.model_class.from_config(
+        readback_orchestrator.prepare_config_data([{"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", prerequisite: True}])[0]
+    )
+    inventory = [readback_orchestrator._create_or_update_payload(current)]
+    child_task = {"fabric": "child1", "module_args": {"state": "merged", "config": [entry]}, "strategy": child_strategy}
+    monkeypatch.setattr(coordinator, "_new_state_machine", lambda *_args: (sm, [], "merged"))
+    for run in range(2):
+        orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": "merged"}), strategy=child_strategy, inventory=inventory)
+        sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data([entry]))
+        coordinator._preflight_child_feature_tasks({"child1": child_task}, "merged")
+        sm.manage_state()
+        assert sm.output.format()["changed"] is (run == 0)
+        assert len(orchestrator.written_payloads) == (1 if run == 0 and not check_mode else 0)
+        if run == 0:
+            inventory = [orchestrator._create_or_update_payload(sm.sent.get("N"))]
+
+
 def test_child_network_config_without_fabric_options_does_not_require_child_task():
     assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1"}) is False
     assert NetworkWorkflowCoordinator._has_child_network_options({"fabric_name": "child1", "multicast_group_address": "239.1.1.53"}) is True

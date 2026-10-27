@@ -345,6 +345,26 @@ class NetworkChildConfigModel(NDNestedModel):
         if configured and netflow_enable is not True:
             raise ValueError("netflow monitor fields require netflow_enable=true: " + ", ".join(configured))
 
+    @classmethod
+    def validate_feature_dependencies(cls, config: dict[str, Any]) -> None:
+        """
+        # Summary
+
+        Validate child feature prerequisites in the effective public configuration.
+
+        ## Raises
+
+        ### ValueError
+
+        - IGMP or NetFlow monitors are configured without their enabled feature.
+        """
+        cls._validate_igmp_trm_binding(igmp_version=config.get("igmp_version"), trm_enable=config.get("trm_enable"))
+        cls._validate_netflow_monitor_bindings(
+            netflow_enable=config.get("netflow_enable"),
+            vlan_netflow_monitor=config.get("vlan_netflow_monitor"),
+            interface_netflow_monitor=config.get("interface_netflow_monitor"),
+        )
+
     def validate_layer(self, layer: str | None) -> None:
         """Validate child overrides against the effective child Network mode."""
         if layer == NetworkLayer.LAYER2.value:
@@ -710,7 +730,7 @@ class NetworkParentConfigModel(NetworkConfigModel):
 
         - A child dependency is set without enabling its feature on that child.
         """
-        if (info.context or {}).get("state") in ("gathered", "deleted"):
+        if (info.context or {}).get("state") in ("gathered", "deleted", "merged"):
             return self
         for child in self.child_fabric_config or []:
             if child.igmp_version is not None and child.trm_enable is not True:
