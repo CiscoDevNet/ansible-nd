@@ -27,8 +27,7 @@ Safe harness coverage:
 ```bash
 ansible-test network-integration nd_manage_community_list \
   --inventory /absolute/path/to/inventory.networking \
-  --tags never,nd4x_demo \
-  --skip-tags nd4x_demo_overridden \
+  --tags nd4x_demo \
   -vv
 ```
 
@@ -67,7 +66,7 @@ list outside the reserved test names, then snapshots the complete
 - The legacy suite is intentionally retained until original and harness suites
   pass in the same environment and retirement is approved.
 - Live controller testing is complete for all isolated harness scenarios. An
-  aggregate harness run using the explicit `never` tag passed with `ok=69`,
+  aggregate harness run passed with `ok=69`,
   `changed=14`, `failed=0`, and
   `skipped=4`; those totals are not scenario-specific. The isolated
   `nd4x_demo_merged` scenario has passed with `ok=23`, `changed=3`,
