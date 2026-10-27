@@ -653,12 +653,14 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             def canonical_member(name):
                 return "Ethernet" + "/".join(str(int(value)) for value in name.removeprefix("ethernet").split("/"))
 
-            footprints.append(VpcDeletionPreviewPeer(
-                switch_id=self._normalized_interface_pair(row["interfaceName"], row["switchId"])[1],
-                interface_name=f"port-channel{int(po_id)}",
-                running_member_ports=tuple(sorted({canonical_member(name) for name in owned_members})),
-                reset_member_ports=tuple(sorted({canonical_member(name) for name in reset_members})),
-            ))
+            footprints.append(
+                VpcDeletionPreviewPeer(
+                    switch_id=self._normalized_interface_pair(row["interfaceName"], row["switchId"])[1],
+                    interface_name=f"port-channel{int(po_id)}",
+                    running_member_ports=tuple(sorted({canonical_member(name) for name in owned_members})),
+                    reset_member_ports=tuple(sorted({canonical_member(name) for name in reset_members})),
+                )
+            )
         return tuple(sorted(footprints, key=lambda item: item.switch_id))
 
     def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:

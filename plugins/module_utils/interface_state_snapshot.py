@@ -526,10 +526,11 @@ class InterfaceStateSnapshot:
         """
         with self.performance_profile.phase("reconciliation") if self.performance_profile is not None else nullcontext():
             normalised = self._normalise_switch_ids(switch_ids)
-            refresh_ids = [switch_id for switch_id in normalised
-                           if not self._refresh_boundary_depth
-                           or switch_id not in self._boundary_refreshed
-                           or not self.has_switch(switch_id)]
+            refresh_ids = [
+                switch_id
+                for switch_id in normalised
+                if not self._refresh_boundary_depth or switch_id not in self._boundary_refreshed or not self.has_switch(switch_id)
+            ]
             self._interface_inventory_refreshes += len(refresh_ids)
             self.invalidate(refresh_ids)
             result = self.load_switches(normalised)

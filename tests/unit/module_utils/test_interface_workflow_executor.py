@@ -914,6 +914,7 @@ def plan(
     auxiliary_orchestrators=(),
     execution_layers=(),
     parent_deployment_barriers=(),
+    member_preparations=(),
 ):
     """Build one InterfaceWorkflowPlan-shaped value."""
     return SimpleNamespace(
@@ -922,6 +923,7 @@ def plan(
         auxiliary_orchestrators=tuple(auxiliary_orchestrators),
         execution_layers=tuple(execution_layers),
         parent_deployment_barriers=tuple(parent_deployment_barriers),
+        member_preparations=tuple(member_preparations),
     )
 
 
@@ -1714,6 +1716,7 @@ def test_transition_put_precedes_ordinary_updates_and_creates_then_deploys_once(
         "status": "succeeded",
         "from_policy_type": "routedHost",
         "to_policy_type": "accessHost",
+        "execution_sequence": 1,
     }
     deploy_event = next(event for event in events if event[0] == "deploy")
     assert set(deploy_event[2]) == {

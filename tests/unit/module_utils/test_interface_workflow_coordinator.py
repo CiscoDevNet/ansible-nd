@@ -33,6 +33,9 @@ COMPACT_RESULT_KEYS = {
     "resources",
     "request_stats",
     "execution",
+    "vpc_staged_deletions",
+    "staged_deletions",
+    "member_preparations",
 }
 
 
@@ -256,6 +259,7 @@ def plan(*, changed=True, transition=False):
         target_switch_ids=("SERIAL1", "SERIAL2"),
         resources=resources,
         request_stats={"switches": 2, "interface_inventory_gets": 2},
+        member_preparations=(),
     )
 
 
@@ -633,6 +637,7 @@ def _deployment_only_plan(resource_type, sync_status_by_id, *, mutation=False, s
         target_switch_ids=target_switch_ids,
         resources=(resource_plan,),
         request_stats={"switches": len(target_switch_ids), "interface_inventory_gets": len(target_switch_ids)},
+        member_preparations=(),
     )
     return workflow_plan, context
 
@@ -870,6 +875,7 @@ def _projection_plan(resource_plan):
         target_switch_ids=("SERIAL1", "SERIAL2"),
         resources=(resource_plan,),
         request_stats={"switches": 2, "interface_inventory_gets": 0},
+        member_preparations=(),
     )
 
 

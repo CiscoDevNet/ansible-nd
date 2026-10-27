@@ -24,7 +24,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
-
 RETAIN_AUTO_NEGOTIATION_CONFIG = "negotiate auto"
 ROUTED_SIBLING_RESET_FIELDS = frozenset({"ip", "prefix", "routingTag", "ipRedirects", "pimSparse", "vrfInterface"})
 
@@ -38,12 +37,12 @@ def has_typed_routed_sibling_residue(config_data: dict) -> bool:
     Nullable routed schema fields and an empty routing tag still select a
     correction; they are not dropped or treated as successful reset evidence.
     """
-    if (not isinstance(config_data, dict) or set(config_data) != {"mode", "networkOS"}
-            or config_data.get("mode") != "trunk"):
+    # Exact controller/receipt types are part of the validation contract.
+    # pylint: disable=unidiomatic-typecheck
+    if not isinstance(config_data, dict) or set(config_data) != {"mode", "networkOS"} or config_data.get("mode") != "trunk":
         return False
     network = config_data.get("networkOS")
-    if (not isinstance(network, dict) or set(network) != {"networkOSType", "policy"}
-            or network.get("networkOSType") != "nx-os"):
+    if not isinstance(network, dict) or set(network) != {"networkOSType", "policy"} or network.get("networkOSType") != "nx-os":
         return False
     policy = network.get("policy")
     if not isinstance(policy, dict) or policy.get("policyType") != "trunkHost":
@@ -85,8 +84,10 @@ def has_typed_routed_sibling_residue(config_data: dict) -> bool:
     # No nondefault, null, empty or differently typed VRF value is qualified.
     if "vrfInterface" in residue and policy["vrfInterface"] != "default":
         return False
-    return all(policy[field] is None or type(policy[field]) is bool or isinstance(policy[field], str) and policy[field] in {"false", "true"}
-               for field in residue & {"ipRedirects", "pimSparse"})
+    return all(
+        policy[field] is None or type(policy[field]) is bool or isinstance(policy[field], str) and policy[field] in {"false", "true"}
+        for field in residue & {"ipRedirects", "pimSparse"}
+    )
 
 
 def has_retained_reset_auto_negotiation(config_data: dict) -> bool:
@@ -244,7 +245,9 @@ class InterfaceDefaultConfig(NDNestedModel):
 
     @classmethod
     def to_normalize_payload(
-        cls, switch_interfaces: list[tuple[str, str]], omit_description: bool = False,
+        cls,
+        switch_interfaces: list[tuple[str, str]],
+        omit_description: bool = False,
         retain_auto_negotiation: bool = False,
     ) -> dict:
         """
@@ -305,8 +308,11 @@ class InterfaceDefaultConfig(NDNestedModel):
             "switchId": switch_id,
         }
         if retain_auto_negotiation:
-            payload["configData"]["networkOS"]["policy"].update({
-                "speed": "auto", "negotiateAuto": True,
-                "extraConfig": RETAIN_AUTO_NEGOTIATION_CONFIG,
-            })
+            payload["configData"]["networkOS"]["policy"].update(
+                {
+                    "speed": "auto",
+                    "negotiateAuto": True,
+                    "extraConfig": RETAIN_AUTO_NEGOTIATION_CONFIG,
+                }
+            )
         return payload

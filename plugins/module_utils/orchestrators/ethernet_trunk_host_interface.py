@@ -130,8 +130,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         fields = ["configData." + str(key) for key in config if key not in {"mode", "networkOS"}]
         if "mode" in config and config["mode"] != "trunk":
             fields.append("configData.mode")
-        fields.extend("configData.networkOS." + str(key) for key in network
-                      if key not in {"networkOSType", "policy"})
+        fields.extend("configData.networkOS." + str(key) for key in network if key not in {"networkOSType", "policy"})
         if "networkOSType" in network and network["networkOSType"] != "nx-os":
             fields.append("configData.networkOS.networkOSType")
         known_policy = {field.alias or name for name, field in EthernetTrunkHostPolicyModel.model_fields.items()}
@@ -174,9 +173,18 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_xe_default(policy)
         if EthernetTrunkHostInterfaceOrchestrator.unsupported_nx_reset_fields(iface):
             return False
-        reset_fields = set(_default_interface_policy()) | {
-            "policyType", "description", "allowedVlans", "nativeVlan", "vlanMappingEntries", "ptp",
-        } | InterfaceDefaultConfig.UNRESETTABLE_FIELDS
+        reset_fields = (
+            set(_default_interface_policy())
+            | {
+                "policyType",
+                "description",
+                "allowedVlans",
+                "nativeVlan",
+                "vlanMappingEntries",
+                "ptp",
+            }
+            | InterfaceDefaultConfig.UNRESETTABLE_FIELDS
+        )
         if any(key not in reset_fields for key in policy):
             return False
         ptp = policy.get("ptp")

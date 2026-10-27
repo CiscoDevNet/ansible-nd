@@ -628,7 +628,7 @@ def test_nd_interface_ethernet_routed_00210(monkeypatch: pytest.MonkeyPatch) -> 
 
     ## Test
 
-    - Fixtures: switches list, normalize POST 500 (no deploy fixture: a deploy request would exhaust the generator and fail)
+    - Fixtures: switches list, current interfaces, normalize POST 500 (no deploy fixture: a deploy request would exhaust the generator and fail)
     - `fail_json` msg reports the bulk normalize failure with no NOTE appended
     - Both pairs remain queued for normalize and deploy
 
@@ -642,7 +642,9 @@ def test_nd_interface_ethernet_routed_00210(monkeypatch: pytest.MonkeyPatch) -> 
         _existing_model("192.168.1.1", name, "nx-os", {"policyType": "routedHost", "ip": ip, "prefix": 30})
         for name, ip in (("Ethernet1/31", "10.99.31.1"), ("Ethernet1/32", "10.99.32.1"))
     ]
-    kwargs, orchestrator = _run_delete_main(monkeypatch, fixture_keys=["test_wrapper_nx_normalize_00210a", "test_wrapper_nx_normalize_00210b"], models=models)
+    kwargs, orchestrator = _run_delete_main(
+        monkeypatch, fixture_keys=["test_wrapper_nx_normalize_00210a", "nx_normalize_before_31_32", "test_wrapper_nx_normalize_00210b"], models=models
+    )
 
     msg = kwargs["msg"]
     assert msg.startswith("Module failed: Bulk normalize failed for ['Ethernet1/31', 'Ethernet1/32']")
@@ -661,7 +663,7 @@ def test_nd_interface_ethernet_routed_00220(monkeypatch: pytest.MonkeyPatch) -> 
 
     ## Test
 
-    - Fixtures: switches list, normalize POST 207 mixed, deploy 200
+    - Fixtures: switches list, current interfaces, normalize POST 207 mixed, fresh accepted reset intent, deploy 200
     - `fail_json` msg names Ethernet1/32 as failed and Ethernet1/31 as accepted, then a NOTE naming only Ethernet1/31
     - The deploy payload contains only Ethernet1/31; Ethernet1/32 remains queued for normalize and deploy
 
@@ -678,7 +680,13 @@ def test_nd_interface_ethernet_routed_00220(monkeypatch: pytest.MonkeyPatch) -> 
     ]
     kwargs, orchestrator = _run_delete_main(
         monkeypatch,
-        fixture_keys=["test_wrapper_nx_normalize_00220a", "test_wrapper_nx_normalize_00220b", "test_wrapper_nx_normalize_00220c"],
+        fixture_keys=[
+            "test_wrapper_nx_normalize_00220a",
+            "nx_normalize_before_31_32",
+            "test_wrapper_nx_normalize_00220b",
+            "nx_normalize_after_31_only",
+            "test_wrapper_nx_normalize_00220c",
+        ],
         models=models,
     )
 

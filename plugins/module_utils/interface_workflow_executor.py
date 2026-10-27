@@ -504,8 +504,7 @@ class InterfaceWorkflowExecutor:
                 create_candidates = [
                     *resource.operations.creates,
                     *(transition.desired for transition in resource.transitions),
-                    *(preparation.model for preparation in plan.member_preparations
-                      if preparation.resource_index == resource.resource_index),
+                    *(preparation.model for preparation in plan.member_preparations if preparation.resource_index == resource.resource_index),
                 ]
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
@@ -747,6 +746,8 @@ class InterfaceWorkflowExecutor:
         plan: InterfaceWorkflowPlan,
         operations: Iterable[InterfaceWorkflowOperation] | None = None,
     ) -> bool:
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         selected = None if operations is None else {operation.key for operation in operations}
         batch_type = tuple[
             InterfaceResourcePlan,
@@ -775,18 +776,22 @@ class InterfaceWorkflowExecutor:
             items = [entry[2] for entry in batch]
             if batch[0][5] == "member":
                 requested = {(item.switch_id.casefold(), item.interface_name.casefold()): (item.switch_id, item.interface_name) for item in items}
+
                 def classify_members():
                     accepted, exact = source._bulk_modify_classify_result_pairs(requested)
                     return {(requested[key][1], requested[key][0]) for key in accepted}, exact
+
                 return self._call_items(
-                    source, items,
+                    source,
+                    items,
                     lambda: source.modify_bulk_members_prepared(
                         [entry[3] for entry in batch],
                         payload_orchestrators=[entry[0].orchestrator for entry in batch],
                         payload_models=[entry[1] for entry in batch],
                         grouping_mode=self.member_batching,
                     ),
-                    "Qualified member bulk update failed", exact_207_classifier=classify_members,
+                    "Qualified member bulk update failed",
+                    exact_207_classifier=classify_members,
                 )
             try:
                 # A preceding batch dirties each touched switch's shared
@@ -853,8 +858,11 @@ class InterfaceWorkflowExecutor:
                 if payload is not None:
                     if mode == "member":
                         policy_type = payload["configData"]["networkOS"]["policy"]["policyType"]
-                        key = (item.switch_id, policy_type) if self.member_batching == "switch_policy" else (
-                            ("", policy_type) if self.member_batching == "experimental_policy" else ("", ""))
+                        key = (
+                            (item.switch_id, policy_type)
+                            if self.member_batching == "switch_policy"
+                            else (("", policy_type) if self.member_batching == "experimental_policy" else ("", ""))
+                        )
                         member_batches[key].append((resource, model, item, payload, previous, mode))
                         continue
                     # Preserve dependency layers, split repeated exact
@@ -862,13 +870,12 @@ class InterfaceWorkflowExecutor:
                     # request limit.
                     # Plain wire identities have safe hash/equality behavior.
                     # Other caller values retain the original lazy comparisons.
-                    key = (item.switch_id, item.interface_name.casefold()) if (
-                        type(item.switch_id) is str and type(item.interface_name) is str
-                    ) else None
+                    key = (item.switch_id, item.interface_name.casefold()) if (type(item.switch_id) is str and type(item.interface_name) is str) else None
                     if len(pending) >= 10000 or (
-                        key in pending_keys if key is not None and pending_keys is not None else any(
-                            entry[2].switch_id == item.switch_id and entry[2].interface_name.casefold() == item.interface_name.casefold()
-                            for entry in pending
+                        key in pending_keys
+                        if key is not None and pending_keys is not None
+                        else any(
+                            entry[2].switch_id == item.switch_id and entry[2].interface_name.casefold() == item.interface_name.casefold() for entry in pending
                         )
                     ):
                         completed_batches.append(pending)
@@ -885,7 +892,7 @@ class InterfaceWorkflowExecutor:
         if pending:
             completed_batches.append(pending)
         for rows in member_batches.values():
-            completed_batches.extend(rows[start:start + 10000] for start in range(0, len(rows), 10000))
+            completed_batches.extend(rows[start : start + 10000] for start in range(0, len(rows), 10000))
         for batch in completed_batches:
             if not execute_batch(batch):
                 return False
@@ -1133,8 +1140,7 @@ class InterfaceWorkflowExecutor:
                 try:
                     orchestrator.refresh_new_member_preparation_contexts(
                         [preparation.model for preparation in preparations],
-                        expected_records={(preparation.switch_id, preparation.interface_name.casefold()): preparation.current
-                                          for preparation in preparations},
+                        expected_records={(preparation.switch_id, preparation.interface_name.casefold()): preparation.current for preparation in preparations},
                     )
                 except Exception as exc:  # pylint: disable=broad-except
                     message = f"resources[{resource.resource_index}] standalone member preparation preflight failed: {exc}"
@@ -1169,7 +1175,8 @@ class InterfaceWorkflowExecutor:
                     if any(self._preparation_items[preparation.key].status != "succeeded" for preparation in preparations):
                         raise RuntimeError("The required standalone preparation has no exact accepted write receipt.")
                     by_resource[resource_index].orchestrator.refresh_new_member_preparation_contexts(
-                        [preparation.model for preparation in preparations], require_prepared=True,
+                        [preparation.model for preparation in preparations],
+                        require_prepared=True,
                     )
                 except Exception as exc:  # pylint: disable=broad-except
                     self._errors.append(f"resources[{resource_index}] prepared host intent verification before parent staging failed: {exc}")
@@ -1183,20 +1190,41 @@ class InterfaceWorkflowExecutor:
         result = []
         for preparation in plan.member_preparations:
             item = self._preparation_items[preparation.key]
-            value = {**preparation.to_dict(), "status": item.status,
-                     "verified_before_membership": preparation.key in self._verified_preparations,
-                     "execution_sequence": item.execution_sequence,
-                     "verification_sequence": self._preparation_verification_sequences.get(preparation.key)}
-            parent = next((candidate for candidate in self._items
-                           if (candidate.resource_index, candidate.action, candidate.switch_id, candidate.interface_name.casefold()) == preparation.parent_key), None)
+            value = {
+                **preparation.to_dict(),
+                "status": item.status,
+                "verified_before_membership": preparation.key in self._verified_preparations,
+                "execution_sequence": item.execution_sequence,
+                "verification_sequence": self._preparation_verification_sequences.get(preparation.key),
+            }
+            parent = next(
+                (
+                    candidate
+                    for candidate in self._items
+                    if (candidate.resource_index, candidate.action, candidate.switch_id, candidate.interface_name.casefold()) == preparation.parent_key
+                ),
+                None,
+            )
             update_key = preparation.resource_index, "update", preparation.switch_id, preparation.interface_name.casefold()
-            update = next((candidate for candidate in self._items
-                           if (candidate.resource_index, candidate.action, candidate.switch_id, candidate.interface_name.casefold()) == update_key), None)
-            value["parent_operation"] = ({"status": parent.status, "execution_sequence": parent.execution_sequence}
-                                         if parent is not None else {"status": "not_attempted", "execution_sequence": None})
+            update = next(
+                (
+                    candidate
+                    for candidate in self._items
+                    if (candidate.resource_index, candidate.action, candidate.switch_id, candidate.interface_name.casefold()) == update_key
+                ),
+                None,
+            )
+            value["parent_operation"] = (
+                {"status": parent.status, "execution_sequence": parent.execution_sequence}
+                if parent is not None
+                else {"status": "not_attempted", "execution_sequence": None}
+            )
             value["member_refresh_sequence"] = self._member_refresh_sequences.get(update_key)
-            value["member_update"] = ({"status": update.status, "execution_sequence": update.execution_sequence}
-                                      if update is not None else {"status": "not_attempted", "execution_sequence": None})
+            value["member_update"] = (
+                {"status": update.status, "execution_sequence": update.execution_sequence}
+                if update is not None
+                else {"status": "not_attempted", "execution_sequence": None}
+            )
             if item.message:
                 value["message"] = item.message
             result.append(value)
@@ -1517,9 +1545,13 @@ class InterfaceWorkflowExecutor:
             seen.add(id(rest_send))
             recorded_mutations = 0
             recorded_deployments = 0
-            outcomes = rest_send.iter_request_outcomes() if hasattr(rest_send, "iter_request_outcomes") else (
-                (str(response.get("METHOD") or "").upper(), str(response.get("REQUEST_PATH") or ""), result.get("changed") is True)
-                for response, result in zip(rest_send.responses, rest_send.results)
+            outcomes = (
+                rest_send.iter_request_outcomes()
+                if hasattr(rest_send, "iter_request_outcomes")
+                else (
+                    (str(response.get("METHOD") or "").upper(), str(response.get("REQUEST_PATH") or ""), result.get("changed") is True)
+                    for response, result in zip(rest_send.responses, rest_send.results)
+                )
             )
             for method, path, changed in outcomes:
                 if method == "GET" or method.endswith(".GET"):
@@ -1622,8 +1654,9 @@ class InterfaceWorkflowExecutor:
 
         mutation_requests, deploy_requests, mutation_changed = self._write_observations(plan)
         execution_failed = not phases_ok or bool(self._errors)
-        mutation_attempted = bool(mutation_requests) or any(item.status in {"succeeded", "failed", "uncertain"}
-                                                         for item in [*self._items, *self._preparation_items.values()])
+        mutation_attempted = bool(mutation_requests) or any(
+            item.status in {"succeeded", "failed", "uncertain"} for item in [*self._items, *self._preparation_items.values()]
+        )
         # A deployment-only replay still needs a fresh observation when the
         # caller requested verification, even when its preview POST is no
         # longer (incorrectly) counted as an intent mutation.

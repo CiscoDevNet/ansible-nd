@@ -686,14 +686,15 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         older VRF schemas disagree; no unverified version cutoff is inferred.
         Keep model/config and legacy top-down template representations intact.
         """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         fabric_data = payload.get("fabricData")
         if not isinstance(fabric_data, dict):
             return payload
         value = fabric_data.get("bgpPasswordKeyType")
         if type(value) is not int or value not in (3, 7):
             return payload
-        wire_value = (BgpAuthenticationKeyTypeEnum.THREE_DES.value if value == 3
-                      else BgpAuthenticationKeyTypeEnum.TYPE7.value)
+        wire_value = BgpAuthenticationKeyTypeEnum.THREE_DES.value if value == 3 else BgpAuthenticationKeyTypeEnum.TYPE7.value
         return dict(payload, fabricData=dict(fabric_data, bgpPasswordKeyType=wire_value))
 
     @staticmethod

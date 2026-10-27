@@ -1438,11 +1438,12 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     def _replace_pending_deploys(self, targets: list[tuple[str, str]]) -> None:
         """Replace the ordered queue and rebuild its plain-string membership index."""
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         self._pending_deploys = targets
-        self._pending_deploy_keys = set(targets) if all(
-            type(pair) is tuple and len(pair) == 2 and all(type(value) is str for value in pair)
-            for pair in targets
-        ) else None
+        self._pending_deploy_keys = (
+            set(targets) if all(type(pair) is tuple and len(pair) == 2 and all(type(value) is str for value in pair) for pair in targets) else None
+        )
         self._pending_deploy_keys_for = targets
 
     def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
@@ -1456,11 +1457,17 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         None
         """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         pair = (interface_name, switch_id)
         keys = getattr(self, "_pending_deploy_keys", None)
-        if (type(interface_name) is str and type(switch_id) is str and keys is not None
-                and getattr(self, "_pending_deploy_keys_for", None) is self._pending_deploys
-                and len(keys) == len(self._pending_deploys)):
+        if (
+            type(interface_name) is str
+            and type(switch_id) is str
+            and keys is not None
+            and getattr(self, "_pending_deploy_keys_for", None) is self._pending_deploys
+            and len(keys) == len(self._pending_deploys)
+        ):
             if pair not in keys:
                 self._pending_deploys.append(pair)
                 keys.add(pair)

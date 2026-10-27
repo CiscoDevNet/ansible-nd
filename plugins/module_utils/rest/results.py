@@ -466,15 +466,26 @@ class Results:
         This explicit workflow-only operation does not change Results defaults
         or standalone-module diagnostic output.
         """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         for index, task in enumerate(self._tasks):
             response = task.response
-            if (task.sequence_number > sequence_start and task.path == path
-                    and str(task.verb).upper() == "GET" and not task.failed
-                    and task.result.get("success") is True and task.result.get("changed") is not True and not task.changed
-                    and type(response.get("RETURN_CODE")) is int and response["RETURN_CODE"] == 200):
-                self._tasks[index] = task.model_copy(update={
-                    "response": compact_consumed_get_response(response, path=path),
-                })
+            if (
+                task.sequence_number > sequence_start
+                and task.path == path
+                and str(task.verb).upper() == "GET"
+                and not task.failed
+                and task.result.get("success") is True
+                and task.result.get("changed") is not True
+                and not task.changed
+                and type(response.get("RETURN_CODE")) is int
+                and response["RETURN_CODE"] == 200
+            ):
+                self._tasks[index] = task.model_copy(
+                    update={
+                        "response": compact_consumed_get_response(response, path=path),
+                    }
+                )
 
     def register_api_call(self) -> None:
         """

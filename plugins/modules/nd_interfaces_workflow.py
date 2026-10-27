@@ -147,6 +147,7 @@ options:
     description:
     - Optional versioned execution evidence and experimental member-update batching.
     type: dict
+    default: {}
     suboptions:
       contract_version:
         description: Requested version of the execution receipt contract.
@@ -746,7 +747,8 @@ staged_deletions:
   description:
   - Current non-vPC logical deletions independently proved during planning from exact controller tombstones and scoped configuration previews.
   - Bound to the current C(workflow_contract.request_sha256) and advertised by the C(staged_deletions_v1) capability.
-  - This establishes staging only. It does not prove a historical accepted write, final interface absence, member default configuration, or postdeployment convergence.
+  - This establishes staging only. It does not prove a historical accepted write, final interface absence,
+    member default configuration, or postdeployment convergence.
   - Consumers requiring a read-only proof must also check the matching C(write_receipt) reports zero mutation and deployment attempts.
   returned: when planning completes
   type: list
@@ -896,11 +898,17 @@ def interface_workflow_argument_spec():
             },
             "profile": {"type": "bool", "default": False},
             "execution_options": {
-                "type": "dict", "default": {}, "options": {
+                "type": "dict",
+                "default": {},
+                "options": {
                     "contract_version": {"type": "int", "choices": [1], "default": 1},
                     "desired_equality": {"type": "bool", "default": False},
                     "observed_satisfaction": {"type": "bool", "default": False},
-                    "member_batching": {"type": "str", "choices": ["disabled", "switch_policy", "experimental_policy", "experimental_mixed"], "default": "disabled"},
+                    "member_batching": {
+                        "type": "str",
+                        "choices": ["disabled", "switch_policy", "experimental_policy", "experimental_mixed"],
+                        "default": "disabled",
+                    },
                 },
             },
         }
@@ -920,11 +928,15 @@ def main():
     except InterfaceWorkflowExecutionFailed as exc:
         module.fail_json(msg=str(exc), **coordinator.attach_contract(exc.result))
     except InterfaceWorkflowConflictError as exc:
-        module.fail_json(**coordinator.attach_contract(dict(
-            msg=str(exc),
-            changed=False,
-            conflicts=[conflict.to_dict() for conflict in exc.conflicts],
-        )))
+        module.fail_json(
+            **coordinator.attach_contract(
+                dict(
+                    msg=str(exc),
+                    changed=False,
+                    conflicts=[conflict.to_dict() for conflict in exc.conflicts],
+                )
+            )
+        )
     except InterfaceWorkflowValidationError as exc:
         module.fail_json(**coordinator.attach_contract(dict(msg=str(exc), changed=False)))
     except Exception as exc:  # pylint: disable=broad-except

@@ -627,8 +627,7 @@ class InterfaceWorkflowPlanner:
                 switch_id = self.fabric_context.get_switch_id(getattr(desired, "switch_ip"))
                 name = getattr(desired, "interface_name")
                 raw = inventory.get((switch_id, name.casefold()))
-                if (not isinstance(raw, dict) or self._wire_network_os_type(raw) != "nx-os"
-                        or InterfaceStateSnapshot.policy_type(raw) != "trunkHost"):
+                if not isinstance(raw, dict) or self._wire_network_os_type(raw) != "nx-os" or InterfaceStateSnapshot.policy_type(raw) != "trunkHost":
                     continue
                 unsupported = EthernetTrunkHostInterfaceOrchestrator.unsupported_nx_reset_fields(raw)
                 if unsupported:
@@ -1055,6 +1054,8 @@ class InterfaceWorkflowPlanner:
         blocks. Unknown HTML, another logical header, extra/missing members or
         commands cannot turn a staged deletion into an absence proof.
         """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         configs = preview["configurationDiffs"][0]["combinedConfigs"]
         expected = next(item for item in configs if item["configType"].strip().casefold() == "expected")
         text, lines = expected.get("config"), expected.get("lines")
@@ -1075,12 +1076,15 @@ class InterfaceWorkflowPlanner:
             # ND may reorder the old loopback commands and render its implicit
             # no-shutdown default inside the removed block. No other command
             # can be added or omitted from that exact current running intent.
-            if (not running_lines or running_lines[0].casefold() != header
-                    or len(set(removed)) != len(removed)
-                    or not set(running_lines[1:]) <= set(removed[1:])
-                    or set(removed[1:]) - set(running_lines[1:]) - {"no shutdown"}):
+            if (
+                not running_lines
+                or running_lines[0].casefold() != header
+                or len(set(removed)) != len(removed)
+                or not set(running_lines[1:]) <= set(removed[1:])
+                or set(removed[1:]) - set(running_lines[1:]) - {"no shutdown"}
+            ):
                 return False
-        remainder = text[struck.end():]
+        remainder = text[struck.end() :]
         if "<" in remainder or ">" in remainder:
             return False
         expected_lines = [line.strip().casefold() for line in remainder.splitlines() if line.strip()]
@@ -1088,6 +1092,7 @@ class InterfaceWorkflowPlanner:
             return not expected_lines
         pending = next(item for item in configs if item["configType"].strip().casefold() == "pending")
         pending_lines = [line.strip().casefold() for line in pending["config"].splitlines() if line.strip()]
+
         def blocks(values, *, pending=False):
             result, member = {}, None
             for line in values:
@@ -1105,12 +1110,17 @@ class InterfaceWorkflowPlanner:
                 else:
                     result[member].append(line)
             return result
+
         final_pending = blocks(pending_lines[1:], pending=True)
         actual_expected = blocks(expected_lines)
         members = {member.casefold() for member in preview_member_interfaces}
-        if (final_pending is None or actual_expected is None
-                or set(final_pending) != set(actual_expected) or set(final_pending) != members
-                or set(member_running_commands) != members):
+        if (
+            final_pending is None
+            or actual_expected is None
+            or set(final_pending) != set(actual_expected)
+            or set(final_pending) != members
+            or set(member_running_commands) != members
+        ):
             return False
         for member in members:
             # Apply only commands the existing pending/member validator has
@@ -1130,8 +1140,7 @@ class InterfaceWorkflowPlanner:
                     resulting.discard(command[3:])
                 else:
                     # These admitted CLI commands replace one current value.
-                    for prefix in ("mtu ", "switchport mode ", "switchport trunk allowed vlan ",
-                                   "spanning-tree port type "):
+                    for prefix in ("mtu ", "switchport mode ", "switchport trunk allowed vlan ", "spanning-tree port type "):
                         if command.startswith(prefix):
                             resulting = {old for old in resulting if not old.startswith(prefix)}
                     resulting.discard("no " + command)
@@ -1139,14 +1148,18 @@ class InterfaceWorkflowPlanner:
                         resulting.discard("no switchport")
                     resulting.add(command)
             expected_commands = actual_expected[member]
-            if (len(set(expected_commands)) != len(expected_commands)
-                    or not resulting <= set(expected_commands)
-                    or set(expected_commands) - resulting - {"no shutdown"}
-                    or any(command.startswith("channel-group ") for command in expected_commands)):
+            if (
+                len(set(expected_commands)) != len(expected_commands)
+                or not resulting <= set(expected_commands)
+                or set(expected_commands) - resulting - {"no shutdown"}
+                or any(command.startswith("channel-group ") for command in expected_commands)
+            ):
                 return False
         return True
 
-    def _record_current_logical_deletion(self, resource, current, preview, name, switch_id, *, member_interfaces=(), preview_member_interfaces=(), member_running_commands=None):
+    def _record_current_logical_deletion(
+        self, resource, current, preview, name, switch_id, *, member_interfaces=(), preview_member_interfaces=(), member_running_commands=None
+    ):
         """Publish a strict current observation, never a historical write receipt.
 
         Existing replay behavior stays conservative on its own terms. This
@@ -1157,20 +1170,19 @@ class InterfaceWorkflowPlanner:
         if not isinstance(config, dict) or set(config) != {"networkOS"}:
             return
         network_os = config["networkOS"]
-        if (not isinstance(network_os, dict) or set(network_os) != {"networkOSType", "policy"}
-                or network_os["networkOSType"] != "nx-os"):
+        if not isinstance(network_os, dict) or set(network_os) != {"networkOSType", "policy"} or network_os["networkOSType"] != "nx-os":
             return
         policy = network_os["policy"]
-        if (not isinstance(policy, dict)
-                or set(policy) not in ({"policyType", "templateName"},
-                                       {"policyType", "templateName", "templateConfig"})
-                or policy.get("policyType") != "userDefined"
-                or policy.get("templateName") != "interface_delete"):
+        if (
+            not isinstance(policy, dict)
+            or set(policy) not in ({"policyType", "templateName"}, {"policyType", "templateName", "templateConfig"})
+            or policy.get("policyType") != "userDefined"
+            or policy.get("templateName") != "interface_delete"
+        ):
             return
         if "templateConfig" in policy:
             template = policy["templateConfig"]
-            if not isinstance(template, dict) or not (template == {} or (
-                    set(template) == {"ReadOnlyOnEdit"} and template["ReadOnlyOnEdit"] is True)):
+            if not isinstance(template, dict) or not (template == {} or (set(template) == {"ReadOnlyOnEdit"} and template["ReadOnlyOnEdit"] is True)):
                 return
         rows = preview.get("configurationDiffs")
         if not isinstance(rows, list) or len(rows) != 1:
@@ -1188,14 +1200,18 @@ class InterfaceWorkflowPlanner:
             by_type[kind] = item
         if not self._current_logical_delete_expected_absence(preview, name, preview_member_interfaces, member_running_commands or {}):
             return
-        self._logical_staged_deletions.append(LogicalStagedDeletionProof(
-            resource_index=resource.resource_index, resource_type=resource.resource_type,
-            switch_id=switch_id, interface_name=name,
-            raw_observation_sha256=sha256(json.dumps(
-                current, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-                allow_nan=False).encode("utf-8")).hexdigest(),
-            member_interfaces=tuple(member_interfaces),
-        ))
+        self._logical_staged_deletions.append(
+            LogicalStagedDeletionProof(
+                resource_index=resource.resource_index,
+                resource_type=resource.resource_type,
+                switch_id=switch_id,
+                interface_name=name,
+                raw_observation_sha256=sha256(
+                    json.dumps(current, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
+                ).hexdigest(),
+                member_interfaces=tuple(member_interfaces),
+            )
+        )
 
     def _staged_subinterface_delete_echo(
         self,
@@ -1307,20 +1323,24 @@ class InterfaceWorkflowPlanner:
             return False
         try:
             footprints = orchestrator._validate_absent_vpc_delete_preview(
-                preview, name, primary_id,
+                preview,
+                name,
+                primary_id,
                 next(switch_id for switch_id in scope if switch_id != primary_id),
             )
         except RuntimeError:
             return False
         self._staged_delete_targets.append((name, primary_id))
-        self._vpc_staged_deletions.append(VpcStagedDeletionProof(
-            resource_index=resource.resource_index,
-            resource_type=resource.resource_type,
-            switch_id=primary_id,
-            interface_name=name,
-            peer_switch_ids=scope,
-            peer_footprints=footprints,
-        ))
+        self._vpc_staged_deletions.append(
+            VpcStagedDeletionProof(
+                resource_index=resource.resource_index,
+                resource_type=resource.resource_type,
+                switch_id=primary_id,
+                interface_name=name,
+                peer_switch_ids=scope,
+                peer_footprints=footprints,
+            )
+        )
         return True
 
     def _staged_parent_running_members(
@@ -1512,24 +1532,31 @@ class InterfaceWorkflowPlanner:
                     pending_member_owners[current_member] = current_po_id
                     proven_members.add(current_member)
                     continue
-                prior_commands = (running_member_commands.get(current_member, set())
-                    if current_po_id == own_po_id else self._staged_parent_member_commands_cache.get(
-                        (switch_id, current_po_id), {}).get(current_member, set()))
+                prior_commands = (
+                    running_member_commands.get(current_member, set())
+                    if current_po_id == own_po_id
+                    else self._staged_parent_member_commands_cache.get((switch_id, current_po_id), {}).get(current_member, set())
+                )
                 remove_known_member_setting = (
                     current_member in proven_members
                     and line[3:] in prior_commands
-                    and (re.fullmatch(r"no mtu ([0-9]+)", line) is not None
-                         and 576 <= int(line.split()[-1]) <= 9216
-                         or re.fullmatch(r"no switchport (?:mode trunk|trunk allowed vlan [0-9,-]+)", line) is not None)
+                    and (
+                        re.fullmatch(r"no mtu ([0-9]+)", line) is not None
+                        and 576 <= int(line.split()[-1]) <= 9216
+                        or re.fullmatch(r"no switchport (?:mode trunk|trunk allowed vlan [0-9,-]+)", line) is not None
+                    )
                 )
                 raw_member = inventory.get((switch_id, current_member)) or {}
-                routed_default_command = (line == "no switchport"
+                routed_default_command = (
+                    line == "no switchport"
                     and current_member in proven_members
                     and (raw_member.get("configData") or {}).get("mode") == "routed"
                     and self._wire_network_os_type(raw_member) == "nx-os"
-                    and self._wire_policy(raw_member).get("policyType") == "routedHost")
+                    and self._wire_policy(raw_member).get("policyType") == "routedHost"
+                )
                 allowed_member_command = (
-                    remove_known_member_setting or routed_default_command
+                    remove_known_member_setting
+                    or routed_default_command
                     or re.fullmatch(
                         r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
                         r"|switchport (?:access vlan|trunk native vlan) [0-9]+|switchport monitor"
@@ -1550,9 +1577,13 @@ class InterfaceWorkflowPlanner:
             # Publish only members independently named by BOTH this current
             # parent's running channel-group and its pending removal. A saved
             # historical member list is never authority for later correction.
-            member_interfaces = tuple(sorted(normalize_ethernet_interface_name(member)
-                for member, owner in pending_member_owners.items()
-                if owner == own_po_id and running_member_groups.get(member) == own_po_id))
+            member_interfaces = tuple(
+                sorted(
+                    normalize_ethernet_interface_name(member)
+                    for member, owner in pending_member_owners.items()
+                    if owner == own_po_id and running_member_groups.get(member) == own_po_id
+                )
+            )
             preview_member_interfaces = tuple(sorted(seen_members))
             for member in seen_members:
                 owner = pending_member_owners[member]
@@ -1564,10 +1595,16 @@ class InterfaceWorkflowPlanner:
                     if commands is not None:
                         preview_member_running_commands[member] = commands
 
-        self._record_current_logical_deletion(resource, current, preview, name, switch_id,
-                                              member_interfaces=member_interfaces,
-                                              preview_member_interfaces=preview_member_interfaces,
-                                              member_running_commands=preview_member_running_commands)
+        self._record_current_logical_deletion(
+            resource,
+            current,
+            preview,
+            name,
+            switch_id,
+            member_interfaces=member_interfaces,
+            preview_member_interfaces=preview_member_interfaces,
+            member_running_commands=preview_member_running_commands,
+        )
         self._staged_delete_targets.append((name, switch_id))
         return True
 
@@ -1904,9 +1941,12 @@ class InterfaceWorkflowPlanner:
             for explicit in resource.proposed:
                 identity = self._identity(resource.adapter, explicit)
                 final_claims = [claim for claim in claims.get(identity, ()) if claim.final]
-                if (len(final_claims) == 1 and not final_claims[0].current
-                        and final_claims[0].action in {"create", "update"}
-                        and final_claims[0].resource.adapter.ownership_domain == "port_channel"):
+                if (
+                    len(final_claims) == 1
+                    and not final_claims[0].current
+                    and final_claims[0].action in {"create", "update"}
+                    and final_claims[0].resource.adapter.ownership_domain == "port_channel"
+                ):
                     preparation_switches.add(identity.scope[0])
             for switch_id in sorted(preparation_switches):
                 peer_id = orchestrator._load_staged_detachment_peer(switch_id)
@@ -1977,15 +2017,17 @@ class InterfaceWorkflowPlanner:
                 rewritten.append(resource)
                 continue
             self._member_preparations.extend(prepares)
-            rewritten.append(replace(
-                resource,
-                operations=replace(
-                    resource.operations,
-                    creates=tuple(model for model in resource.operations.creates if model.get_identifier_value() not in prepared_ids),
-                    updates=(*resource.operations.updates, *(preparation.model for preparation in prepares), *retained_updates),
-                ),
-                transitions=tuple(transition for transition in resource.transitions if transition.desired.get_identifier_value() not in prepared_ids),
-            ))
+            rewritten.append(
+                replace(
+                    resource,
+                    operations=replace(
+                        resource.operations,
+                        creates=tuple(model for model in resource.operations.creates if model.get_identifier_value() not in prepared_ids),
+                        updates=(*resource.operations.updates, *(preparation.model for preparation in prepares), *retained_updates),
+                    ),
+                    transitions=tuple(transition for transition in resource.transitions if transition.desired.get_identifier_value() not in prepared_ids),
+                )
+            )
         return rewritten
 
     def _operation_node(self, resource: InterfaceResourcePlan, action: str, model: NDBaseModel) -> InterfaceWorkflowOperation:
@@ -2025,14 +2067,17 @@ class InterfaceWorkflowPlanner:
         """
 
         operations = [self._operation_node(resource, action, model) for resource in resources for action, model in self._iter_operations(resource)]
-        operations.extend(InterfaceWorkflowOperation(
-            resource_index=preparation.resource_index,
-            resource_type=preparation.resource_type,
-            action="prepare_member",
-            switch_id=preparation.switch_id,
-            interface_name=preparation.interface_name,
-            model=preparation.model,
-        ) for preparation in self._member_preparations)
+        operations.extend(
+            InterfaceWorkflowOperation(
+                resource_index=preparation.resource_index,
+                resource_type=preparation.resource_type,
+                action="prepare_member",
+                switch_id=preparation.switch_id,
+                interface_name=preparation.interface_name,
+                model=preparation.model,
+            )
+            for preparation in self._member_preparations
+        )
         by_key = {operation.key: operation for operation in operations}
         if len(by_key) != len(operations):
             raise InterfaceWorkflowValidationError("Interface execution graph contains duplicate operation identities.")
@@ -2724,11 +2769,17 @@ class InterfaceWorkflowPlanner:
         if not isinstance(current, Mapping) or current.get("interfaceType") != "ethernet" or self._effective_port_channel_id(current) is not None:
             return None
         expected_host = orchestrator.MEMBER_PLANNING_SHAPES[(descriptor.family, descriptor.network_os)][1]
-        prepared = next((preparation for preparation in self._member_preparations
-                         if preparation.resource_index == resource.resource_index
-                         and preparation.switch_id == member_identity.scope[0]
-                         and preparation.interface_name.casefold() == member_identity.interface_name
-                         and preparation.parent_key == self._operation_node(claim.resource, claim.action, claim.parent).key), None)
+        prepared = next(
+            (
+                preparation
+                for preparation in self._member_preparations
+                if preparation.resource_index == resource.resource_index
+                and preparation.switch_id == member_identity.scope[0]
+                and preparation.interface_name.casefold() == member_identity.interface_name
+                and preparation.parent_key == self._operation_node(claim.resource, claim.action, claim.parent).key
+            ),
+            None,
+        )
         if (InterfaceStateSnapshot.policy_type(current) != expected_host and prepared is None) or self._desired_policy_type(model) != expected_host:
             return None
         explicit = resource.proposed.get(model.get_identifier_value())
@@ -2921,8 +2972,9 @@ class InterfaceWorkflowPlanner:
                                 parent_policy_type=self._desired_policy_type(claim.parent),
                             )
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
-                create_candidates.extend(preparation.model for preparation in self._member_preparations
-                                         if preparation.resource_index == resource.resource_index)
+                create_candidates.extend(
+                    preparation.model for preparation in self._member_preparations if preparation.resource_index == resource.resource_index
+                )
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
                     *(transition.desired for transition in resource.transitions),
