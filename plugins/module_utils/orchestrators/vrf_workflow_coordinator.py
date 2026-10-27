@@ -1341,6 +1341,7 @@ class VrfWorkflowCoordinator:
         structured: dict[str, Any] = {
             "changed": parent_result.get("changed", False),
             "failed": parent_result.get("failed", False),
+            "output_level": parent_result.get("output_level") or self.module.params.get("output_level", "normal"),
             "fabric_type": fabric_type,
             "workflow": f"{log_type.capitalize()} Parent with Child Fabric Processing",
             "parent_fabric": self._scoped_fabric_result(

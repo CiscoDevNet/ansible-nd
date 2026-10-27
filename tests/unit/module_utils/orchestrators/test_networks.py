@@ -1482,6 +1482,7 @@ def test_network_workflow_coordinator_parent_deploy_deferred_after_child_tasks(u
 
     assert call_order == ["preflight", "parent", "child", "deploy"]
     assert result["changed"] is True
+    assert result["output_level"] == "debug"
     assert result["fabric_type"] == "multisite_parent"
 
 
@@ -2736,6 +2737,7 @@ def test_child_task_exception_returns_structured_network_failure():
 
     assert result["changed"] is True
     assert result["failed"] is True
+    assert result["output_level"] == "debug"
     assert "nac-msd-fabric2" in result["msg"]
     child = result["child_fabrics"][0]
     assert child["fabric_name"] == "nac-msd-fabric2"
@@ -2746,6 +2748,21 @@ def test_child_task_exception_returns_structured_network_failure():
     assert child["proposed"] == [{"network_name": "BLUE_NET"}]
     assert child["workflow_trace"][-1]["event"] == "child_task_error"
     assert child["workflow_trace"][-1]["exception"] == "RuntimeError"
+
+
+@pytest.mark.parametrize("output_level", ["normal", "info", "debug"])
+@pytest.mark.parametrize("with_child", [False, True])
+def test_network_parent_result_keeps_top_level_output_level(output_level, with_child):
+    coordinator = NetworkWorkflowCoordinator.__new__(NetworkWorkflowCoordinator)
+    parent_result = {"changed": False, "failed": False, "output_level": output_level, "before": [], "after": []}
+    child_results = [{"child_fabric": "CHILD", "changed": False, "failed": False, "output_level": output_level}] if with_child else []
+
+    result = coordinator._build_structured_result(parent_result, child_results, "PARENT", "multisite_parent", "multisite")
+
+    assert result["output_level"] == output_level
+    if with_child:
+        assert result["parent_fabric"]["output_level"] == output_level
+        assert result["child_fabrics"][0]["output_level"] == output_level
 
 
 def test_argument_spec_leaves_definition_defaults_to_models():

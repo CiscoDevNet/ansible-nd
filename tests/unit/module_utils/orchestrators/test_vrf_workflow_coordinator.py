@@ -1718,6 +1718,21 @@ def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_
     assert "child_fabric" not in child
 
 
+@pytest.mark.parametrize("output_level", ["normal", "info", "debug"])
+@pytest.mark.parametrize("with_child", [False, True])
+def test_vrf_parent_result_keeps_top_level_output_level(output_level, with_child):
+    coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    parent_result = {"changed": False, "failed": False, "output_level": output_level, "before": [], "after": []}
+    child_results = [{"child_fabric": "CHILD", "changed": False, "failed": False, "output_level": output_level}] if with_child else []
+
+    result = coordinator._build_structured_result(parent_result, child_results, "PARENT", "multisite_parent", "multisite")
+
+    assert result["output_level"] == output_level
+    if with_child:
+        assert result["parent_fabric"]["output_level"] == output_level
+        assert result["child_fabrics"][0]["output_level"] == output_level
+
+
 def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failure():
     """
     # Summary
@@ -1752,6 +1767,7 @@ def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failu
 
     assert result["changed"] is True
     assert result["failed"] is True
+    assert result["output_level"] == "debug"
     assert "AK-VXLAN" in result["msg"]
     child = result["child_fabrics"][0]
     assert child["fabric_name"] == "AK-VXLAN"
@@ -1847,6 +1863,7 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
 
     assert call_order == ["preflight", "parent", "child", "deploy"]
     assert result["changed"] is True
+    assert result["output_level"] == "debug"
     assert result["fabric_type"] == "multisite_parent"
     assert result["parent_fabric"]["fabric_type"] == "multisite_parent"
     assert result["child_fabrics"][0]["fabric_type"] == "multisite_child"

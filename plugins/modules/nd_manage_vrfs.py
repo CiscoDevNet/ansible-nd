@@ -764,7 +764,7 @@ before:
   description:
     - VRF configuration present on ND before the operation.
     - Structured in the same user-facing form as O(config) where possible.
-  returned: always
+  returned: top-level for standalone and parent-only workflows; nested under parent_fabric and child_fabrics when child tasks run
   type: list
   elements: dict
   sample:
@@ -775,7 +775,7 @@ after:
   description:
     - VRF configuration present on ND after the operation.
     - In check mode, the configuration that would result had the module run outside check mode.
-  returned: always
+  returned: top-level for standalone and parent-only workflows; nested under parent_fabric and child_fabrics when child tasks run
   type: list
   elements: dict
   sample:
