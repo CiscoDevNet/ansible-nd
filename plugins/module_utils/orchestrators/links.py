@@ -11,6 +11,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import ADDITIONAL_POLICY_TYPES
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_link import BaseLinkStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -290,6 +291,25 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         for model_instance in model_instances:
             self._raise_if_ambiguous(model_instance, "modify")
             self._raise_if_policy_type_change(model_instance)
+            self._validate_policy_version(model_instance)
+
+    def _validate_policy_version(self, model_instance: NDLinkModel) -> str | None:
+        """Check the new policies against the connection's cached ND version.
+
+        Existing policy paths do not trigger version discovery. New policies use
+        RestSend's shared cache once per connection, including during check mode.
+        """
+        config = model_instance.config_data
+        if config is None or config.policy_type not in ADDITIONAL_POLICY_TYPES:
+            return None
+        controller_version = self.rest_send.controller_version
+        if config.template_inputs is not None:
+            config.template_inputs.validate_controller_version(controller_version)
+        return controller_version
+
+    def _policy_payload(self, model_instance: NDLinkModel) -> dict[str, Any]:
+        controller_version = self._validate_policy_version(model_instance)
+        return model_instance.to_payload(controller_version=controller_version)
 
     def preflight_delete(self, model_instances: Sequence[NDLinkModel]) -> None:
         """Reject ambiguous endpoint identities before check mode predicts delete."""
@@ -311,7 +331,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         try:
             endpoint = self.strategy.links_post_cls()
             self.strategy.configure_mutation(endpoint)
-            items = [inst.to_payload() for inst in model_instances]
+            items = [self._policy_payload(inst) for inst in model_instances]
             response = self._post_bulk(endpoint, items, operation_type=OperationType.CREATE)
             self._raise_on_bulk_failures(response, op="create")
             return response
@@ -330,7 +350,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
             endpoint.link_uuid = link_id
             self.strategy.configure_mutation(endpoint)
 
-            return self._request(endpoint.path, endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
+            return self._request(endpoint.path, endpoint.verb, data=self._policy_payload(model_instance), operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception("Update failed for {0}: {1}".format(model_instance.get_identifier_value(), e)) from e
 
