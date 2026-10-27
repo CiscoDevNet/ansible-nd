@@ -133,18 +133,64 @@ The generic `nd4x_demo_replaced`, `nd4x_demo_negative`,
 `nd4x_demo_merged_fanout`, and `nd4x_demo_overridden` tags are not exposed here
 because this module has no corresponding harness scenario includes.
 
-For live testing, use the local networking inventory:
+Before live testing, create the local integration files from the provided
+templates and fill in the controller, credentials, fabric, and three test
+switch values. These files are local-only and must not be committed:
 
-```text
-ansible-playbook \
-  -i /Users/astawast/ansible_collections/cisco/nd/tests/integration/inventory.LOCAL.networking \
-  /Users/astawast/ansible_collections/cisco/nd_manage_policy_group/tests/integration/targets/nd_manage_policy_group/run_tests.yaml \
-  --tags nd4x_demo_merged
+```bash
+cp tests/integration/inventory.networking.template \
+  tests/integration/inventory.networking
+cp tests/integration/integration_config.yml.template \
+  tests/integration/integration_config.yml
 ```
 
-Individual groups can be selected with `nd4x_demo_merged`,
-`nd4x_demo_gathered`, `nd4x_demo_round_trip`, `nd4x_demo_deleted`,
-`nd4x_demo_special`, or `nd4x_demo_template_input_validation`.
+Run a harness scenario with `ansible-test` from the collection root. Replace
+the inventory path with an absolute path to the local inventory:
+
+```bash
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_merged \
+  -vv
+```
+
+Individual harness groups can be selected with:
+
+```bash
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_gathered \
+  -vv
+
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_round_trip \
+  -vv
+
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_deleted \
+  -vv
+
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_special \
+  -vv
+
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo_template_input_validation \
+  -vv
+```
+
+To run only the unchanged legacy suite, skip the aggregate harness tag:
+
+```bash
+ansible-test network-integration nd_manage_policy_group \
+  --inventory /absolute/path/to/inventory.networking \
+  --skip-tags nd4x_demo \
+  -vv
+```
 
 ## Live testing status
 
