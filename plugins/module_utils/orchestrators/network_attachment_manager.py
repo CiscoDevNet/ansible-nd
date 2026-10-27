@@ -155,7 +155,11 @@ class NetworkAttachmentManager:
             )
             self._trace("network_attachment_desired_expanded", phase=phase, desired_count=len(desired))
 
-        payloads = self.planned_detach_payloads(state, config, current, desired) if phase == "pre" else self.planned_attach_payloads(current, desired)
+        payloads = (
+            self.planned_detach_payloads(state, config, current, desired)
+            if phase == "pre"
+            else self.planned_attach_payloads(current, desired, preserve_omitted_fields=state == "merged")
+        )
         if not payloads:
             self._trace("network_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
             return {"current": current} if phase == "pre" else {}
@@ -167,9 +171,7 @@ class NetworkAttachmentManager:
             if deploy_enabled.get(network_name, True):
                 self.record_deploy_target(deploy_targets, network_name, payload.get("switchId"))
 
-        trace = self.post_network_attachments(
-            module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE
-        )
+        trace = self.post_network_attachments(module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE)
         self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
         trace["desired"] = desired
@@ -323,13 +325,19 @@ class NetworkAttachmentManager:
             endpoint.endpoint_params.max = self.attachment_query_page_size
             endpoint.endpoint_params.offset = offset
         query = NetworkAttachmentQueryRequestModel(network_names=network_names or None)
-        return orchestrator._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            data=query.to_payload(),
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
+        rest_send = orchestrator.rest_send
+        rest_send.save_settings()
+        rest_send.check_mode = False
+        try:
+            return orchestrator._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data=query.to_payload(),
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+        finally:
+            rest_send.restore_settings()
 
     @staticmethod
     def _attachment_items_from_query_result(data: Any) -> list[dict[str, Any]]:
@@ -446,10 +454,22 @@ class NetworkAttachmentManager:
         return remaining
 
     @staticmethod
-    def planned_attach_payloads(current: dict[tuple[str, str], dict[str, Any]], desired: dict[tuple[str, str], dict[str, Any]]) -> list[dict[str, Any]]:
+    def planned_attach_payloads(
+        current: dict[tuple[str, str], dict[str, Any]],
+        desired: dict[tuple[str, str], dict[str, Any]],
+        preserve_omitted_fields: bool = False,
+    ) -> list[dict[str, Any]]:
         payloads = []
         for key, desired_payload in desired.items():
             current_payload = current.get(key)
+            if preserve_omitted_fields and current_payload is not None:
+                retained = {
+                    field: current_payload[field]
+                    for field in ("vlanId", "interfaces")
+                    if field not in desired_payload and current_payload.get(field) is not None
+                }
+                if retained:
+                    desired_payload = {**desired_payload, **retained}
             if current_payload is None or NetworkAttachmentManager._attachment_changed(current_payload, desired_payload):
                 payloads.append(desired_payload)
         return payloads

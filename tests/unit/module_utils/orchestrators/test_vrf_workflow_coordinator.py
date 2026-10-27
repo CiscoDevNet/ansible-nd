@@ -43,6 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
     vrf_parent_argument_spec,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
 class _Module:
@@ -319,6 +320,8 @@ class _AttachmentQueryOrchestrator:
         self.strategy = strategy
         self.responses = responses
         self.requests = []
+        self.rest_send = RestSend({"check_mode": False})
+        self.request_check_modes = []
 
     def _make_endpoint(self, endpoint_cls):
         endpoint = endpoint_cls()
@@ -327,6 +330,7 @@ class _AttachmentQueryOrchestrator:
 
     def _request(self, **kwargs):
         self.requests.append(kwargs)
+        self.request_check_modes.append(self.rest_send.check_mode)
         return self.responses.pop(0)
 
 
@@ -1111,6 +1115,7 @@ def test_vrf_attachment_query_walks_paginated_results():
         },
     ]
     orchestrator = _AttachmentQueryOrchestrator(strategy, responses)
+    orchestrator.rest_send.check_mode = True
     results = _Results()
 
     class Coordinator:
@@ -1127,7 +1132,26 @@ def test_vrf_attachment_query_walks_paginated_results():
     assert orchestrator.requests[0]["path"].endswith("/vrfAttachments/query?offset=0&max=1&includeAll=true")
     assert orchestrator.requests[1]["path"].endswith("/vrfAttachments/query?offset=1&max=1&includeAll=true")
     assert orchestrator.requests[0]["data"] == {"vrfNames": ["BLUE"]}
+    assert orchestrator.request_check_modes == [False, False]
+    assert orchestrator.rest_send.check_mode is True
     assert results.finalized == 2
+
+
+def test_vrf_attachment_query_restores_check_mode_after_failure():
+    strategy = _StandaloneStrategy()
+    orchestrator = _AttachmentQueryOrchestrator(strategy, [])
+    orchestrator.rest_send.check_mode = True
+    results = _Results()
+
+    class Coordinator:
+        def _new_vrf_orchestrator(self, _module_args, _strategy):
+            return orchestrator, results
+
+    with pytest.raises(IndexError):
+        VrfAttachmentManager(Coordinator()).current_attachment_details({}, strategy, ["BLUE"])
+    assert orchestrator.request_check_modes == [False]
+    assert orchestrator.rest_send.check_mode is True
+    assert results.finalized == 0
 
 
 def test_vrf_workflow_coordinator_00001_arg_spec_blocks_invalid_child_suboptions():

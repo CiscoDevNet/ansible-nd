@@ -713,7 +713,7 @@ def _mcfg_parent_orchestrator():
     )
 
 
-def test_network_config_model_defaults_missing_attachment_interfaces_to_empty_list():
+def test_network_config_model_preserves_missing_attachment_interfaces():
     model = NetworkConfigModel.from_config(
         {
             "network_name": "BLUE_NET",
@@ -727,7 +727,7 @@ def test_network_config_model_defaults_missing_attachment_interfaces_to_empty_li
         }
     )
 
-    assert model.to_config()["attach"][0]["interfaces"] == []
+    assert "interfaces" not in model.to_config()["attach"][0]
 
 
 def test_network_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
@@ -767,7 +767,7 @@ def test_network_parent_argument_spec_includes_child_config():
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["choices"]
     assert spec["attach"]["options"]["interfaces"]["options"]["mode"]["required"] is True
     assert spec["attach"]["options"]["interfaces"]["options"]["interface_range"]["required"] is True
-    assert spec["attach"]["options"]["interfaces"]["default"] == []
+    assert "default" not in spec["attach"]["options"]["interfaces"]
     assert spec["attach"]["options"]["deploy"]["default"] is True
     assert "ports" not in spec["attach"]["options"]
     assert "tor_ports" not in spec["attach"]["options"]
@@ -3145,7 +3145,7 @@ def test_attachment_shape_rejects_ports_and_defaults_missing_interfaces():
         }
     )
 
-    assert omitted.to_config()["attach"][0]["interfaces"] == []
+    assert "interfaces" not in omitted.to_config()["attach"][0]
 
     with pytest.raises(ValueError, match="ports"):
         NetworkConfigModel.from_config(
@@ -3473,18 +3473,24 @@ def test_network_attachment_query_walks_paginated_results():
     requests = []
 
     class Orchestrator:
+        def __init__(self):
+            self.rest_send = RestSend({"check_mode": True})
+
         def _make_endpoint(self, endpoint_cls):
             endpoint = endpoint_cls()
             endpoint.fabric_name = strategy.fabric_name
             return endpoint
 
         def _request(self, **kwargs):
+            assert self.rest_send.check_mode is False
             requests.append(kwargs)
             return responses.pop(0)
 
+    orchestrator = Orchestrator()
+
     class Coordinator:
         def _new_network_orchestrator(self, _module_args, _strategy):
-            return Orchestrator(), {}
+            return orchestrator, {}
 
     manager = NetworkAttachmentManager(coordinator=Coordinator())
     manager.attachment_query_page_size = 1
@@ -3496,6 +3502,34 @@ def test_network_attachment_query_walks_paginated_results():
     assert requests[0]["path"].endswith("/networkAttachments/query?offset=0&max=1&includeAll=true")
     assert requests[1]["path"].endswith("/networkAttachments/query?offset=1&max=1&includeAll=true")
     assert requests[0]["data"] == {"networkNames": ["BLUE_NET"]}
+    assert orchestrator.rest_send.check_mode is True
+
+
+def test_network_attachment_query_restores_check_mode_after_failure():
+    strategy = _orchestrator().strategy
+
+    class Orchestrator:
+        rest_send = RestSend({"check_mode": True})
+
+        @staticmethod
+        def _make_endpoint(endpoint_cls):
+            endpoint = endpoint_cls()
+            endpoint.fabric_name = strategy.fabric_name
+            return endpoint
+
+        def _request(self, **_kwargs):
+            assert self.rest_send.check_mode is False
+            raise RuntimeError("query failed")
+
+    orchestrator = Orchestrator()
+
+    class Coordinator:
+        def _new_network_orchestrator(self, _module_args, _strategy):
+            return orchestrator, {}
+
+    with pytest.raises(RuntimeError, match="query failed"):
+        NetworkAttachmentManager(Coordinator()).current_attachment_details({}, strategy, ["BLUE_NET"])
+    assert orchestrator.rest_send.check_mode is True
 
 
 def test_network_attachment_query_chunks_large_network_name_sets():
@@ -5262,6 +5296,124 @@ def test_planned_attach_payloads_detect_real_interface_change():
     }
 
     assert NetworkAttachmentManager.planned_attach_payloads(current, {("BLUE_NET", "FDO123"): desired_payload}) == [desired_payload]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+def test_merged_attachment_omitted_interfaces_preserve_existing_bindings(check_mode, strategy_cls):
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": "merged", "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    config = [
+        {
+            "network_name": "N",
+            "layer": "layer3",
+            "vrf_name": "BLUE",
+            "deploy": False,
+            "attach": [{"ip_address": "192.0.2.1", "deploy": False, "attachment_options": {"svi_enabled": True}}],
+        }
+    ]
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}})
+    result = validator.validate({"config": config})
+    assert not result.error_messages
+    assert result.validated_parameters["config"][0]["attach"][0]["interfaces"] is None
+    parsed = coordinator._parse_config(result.validated_parameters["config"], strategy.config_model_cls, "merged")
+    assert "interfaces" not in parsed[0]["attach"][0]
+
+    manager = _RecordingNetworkAttachmentManager(coordinator)
+    manager.resolve_switch_ids = lambda *_args: {"192.0.2.1": "SW1"}
+    current_row = {
+        "networkName": "N",
+        "switchId": "SW1",
+        "vlanId": 3266,
+        "attach": True,
+        "interfaces": [{"mode": "access", "interfaceRange": "Ethernet1/1"}],
+        "instanceValues": {"sviEnabled": True},
+    }
+    current = {("N", "SW1"): current_row}
+    module_args = {"state": "merged", "config": parsed}
+    for _ in range(2):
+        desired = manager.desired_attachment_map(module_args, strategy)
+        assert "interfaces" not in desired[("N", "SW1")]
+        assert manager.apply_phase(module_args, strategy, "post", desired=desired, current=current, attachment_details=[current_row]) == {}
+    assert manager.posts == []
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+def test_merged_attachment_options_only_update_carries_existing_interfaces(check_mode, strategy_cls):
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": "merged", "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    manager = NetworkAttachmentManager(coordinator) if check_mode else _RecordingNetworkAttachmentManager(coordinator)
+    manager.resolve_switch_ids = lambda *_args: {"192.0.2.1": "SW1"}
+    module_args = {
+        "state": "merged",
+        "config": [{"network_name": "N", "deploy": False, "attach": [{"ip_address": "192.0.2.1", "attachment_options": {"svi_enabled": True}}]}],
+    }
+    current_row = {
+        "networkName": "N",
+        "switchId": "SW1",
+        "vlanId": 3266,
+        "attach": True,
+        "interfaces": [{"mode": "access", "interfaceRange": "Ethernet1/1"}],
+        "instanceValues": {"sviEnabled": False},
+    }
+    desired = manager.desired_attachment_map(module_args, strategy)
+    trace = manager.apply_phase(module_args, strategy, "post", desired=desired, current={("N", "SW1"): current_row}, attachment_details=[current_row])
+    payload = trace["check_mode_attachment_payloads"][0] if check_mode else manager.posts[0][0][0]
+    assert payload["instanceValues"] == {"sviEnabled": True}
+    assert payload["vlanId"] == 3266
+    assert payload["interfaces"] == current_row["interfaces"]
+    assert manager._prepare_attachment_payloads(strategy, [payload])[0]["interfaces"] == current_row["interfaces"]
+    if check_mode:
+        assert trace["changed"] is True
+    else:
+        assert len(manager.posts) == 1
+
+    updated_row = {**current_row, "instanceValues": payload["instanceValues"]}
+    repeat = manager.apply_phase(
+        module_args,
+        strategy,
+        "post",
+        desired=manager.desired_attachment_map(module_args, strategy),
+        current={("N", "SW1"): updated_row},
+        attachment_details=[updated_row],
+    )
+    assert repeat == {}
+    if not check_mode:
+        assert len(manager.posts) == 1
+
+
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("explicit_empty", [False, True])
+def test_new_switch_only_attachment_keeps_omitted_and_explicit_empty_interfaces_distinct(strategy_cls, explicit_empty):
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"state": "merged", "output_level": "normal"})
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+    attach = {"ip_address": "192.0.2.1"}
+    if explicit_empty:
+        attach["interfaces"] = []
+    config = [{"network_name": "N", "layer": "layer2", "attach": [attach]}]
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}})
+    validated = validator.validate({"config": config})
+    assert not validated.error_messages
+    parsed = coordinator._parse_config(validated.validated_parameters["config"], strategy.config_model_cls, "merged")
+    manager = NetworkAttachmentManager(coordinator)
+    manager.resolve_switch_ids = lambda *_args: {"192.0.2.1": "SW1"}
+    desired = manager.desired_attachment_map({"state": "merged", "config": parsed}, strategy)
+    payload = manager.planned_attach_payloads({}, desired, preserve_omitted_fields=True)[0]
+    assert ("interfaces" in payload) is explicit_empty
+    if explicit_empty:
+        assert payload["interfaces"] == []
+    prepared = manager._prepare_attachment_payloads(strategy, [payload])[0]
+    assert (prepared.get("interfaces") == []) is (explicit_empty or strategy.is_multicluster)
+
+    current = {("N", "SW1"): {"networkName": "N", "switchId": "SW1", "attach": True, "interfaces": [{"mode": "access", "interfaceRange": "Ethernet1/1"}]}}
+    if explicit_empty:
+        assert manager.planned_attach_payloads(current, desired, preserve_omitted_fields=True)[0]["interfaces"] == []
 
 
 def test_pending_network_status_is_not_delete_ready():

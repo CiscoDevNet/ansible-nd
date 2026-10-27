@@ -495,12 +495,18 @@ class VrfAttachmentManager:
             endpoint.endpoint_params.offset = offset
 
         query = VrfAttachmentQueryRequestModel(vrf_names=vrf_names or None)
-        data = orchestrator._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            data=query.to_payload(),
-            operation_type=OperationType.QUERY,
-        )
+        rest_send = orchestrator.rest_send
+        rest_send.save_settings()
+        rest_send.check_mode = False
+        try:
+            data = orchestrator._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data=query.to_payload(),
+                operation_type=OperationType.QUERY,
+            )
+        finally:
+            rest_send.restore_settings()
         results.build_final_result()
         return data
 

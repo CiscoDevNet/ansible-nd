@@ -142,9 +142,12 @@ options:
             description: Attachment VLAN ID.
             type: int
           interfaces:
-            description: Interface attachment entries.
+            description:
+              - Interface attachment entries.
+              - Under C(state=merged), omission preserves existing port bindings.
+              - An explicit empty list requests no interface bindings and also
+                supports a new switch-only attachment.
             type: list
-            default: []
             elements: dict
             suboptions:
               mode:

@@ -248,7 +248,7 @@ class NetworkAttachmentConfigModel(NDNestedModel):
 
     ip_address: str
     vlan_id: int | None = Field(default=None)
-    interfaces: list[NetworkInterfaceConfigModel] = Field(default_factory=list)
+    interfaces: list[NetworkInterfaceConfigModel] | None = Field(default=None)
     deploy: bool | None = True
     attachment_options: NetworkAttachmentOptionsConfigModel | None = Field(default=None)
     freeform_config: str | None = Field(default=None)
