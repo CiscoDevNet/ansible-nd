@@ -2331,6 +2331,43 @@ def test_sparse_merged_network_keeps_existing_pvlan_type_when_omitted():
     assert existing.model_copy(deep=True).merge(proposed).vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("layer", ["layer2", "layer3"])
+def test_sparse_primary_vlan_name_update_preserves_omitted_pvlan_type(check_mode, strategy_cls, layer):
+    inventory = [
+        {
+            "fabricName": "fab1",
+            "networkName": "PRIMARY",
+            "networkType": "vxlanIbgp",
+            "networkMode": layer,
+            "vlanNetworkType": "privatePrimary",
+            "vrfName": "T" if layer == "layer3" else "NA",
+            "networkId": 30001,
+            "l2Data": {"vlanName": "OLD"},
+        }
+    ]
+    config = [{"network_name": "PRIMARY", "vlan_name": "NEW"}]
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(config, inventory, check_mode, strategy_cls)
+    assert "vlan_network_type" not in parsed[0]
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    assert "vlan_network_type" not in sm.proposed.get("PRIMARY").model_fields_set
+    sm.manage_state()
+
+    assert sm.output.format()["changed"] is True
+    assert len(orchestrator.written_payloads) == (0 if check_mode else 1)
+    payload = orchestrator._create_or_update_payload(sm.sent.get("PRIMARY"))
+    assert payload["vlanNetworkType"] == "privatePrimary"
+    assert payload["l2Data"]["vlanName"] == "NEW"
+    assert payload["networkMode"] == layer
+
+    repeat_coordinator, repeat_sm, repeat_parsed, repeat_orchestrator = _layer_validation_state_machine(config, [payload], check_mode, strategy_cls)
+    repeat_coordinator._resolve_proposed_networks(repeat_sm, repeat_parsed, "merged", repeat_orchestrator.strategy)
+    repeat_sm.manage_state()
+    assert repeat_sm.output.format()["changed"] is False
+    assert repeat_orchestrator.written_payloads == []
+
+
 class _LayerValidationNetworkOrchestrator(NDNetworkOrchestrator):
     """Exercise real state-machine planning with an in-memory controller boundary."""
 
