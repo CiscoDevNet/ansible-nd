@@ -1,8 +1,8 @@
 # `nd_manage_community_list` Harness Parity
 
 The original integration suite remains enabled while the harness replacement
-is validated against the same controller and fabric. Harness scenarios are
-tagged `never` and run only when explicitly selected.
+is validated against the same controller and fabric. Harness scenarios run as
+part of the normal target suite and can be opted out with `--skip-tags nd4x_demo`.
 
 ## Scenario mapping
 
