@@ -2795,7 +2795,8 @@ class NDSwitchResourceModule:
             return
         try:
             fabric_type = self.fabric_details_cache.get_fabric_type()
-            capability = validate_switch_configs_for_fabric_type(self.fabric, fabric_type, configs)
+            controller_version = self.nd.get_rest_send().controller_version if any(cfg.role == SwitchRole.BORDER_SPINE for cfg in configs) else None
+            capability = validate_switch_configs_for_fabric_type(self.fabric, fabric_type, configs, controller_version=controller_version)
             self.log.debug(
                 "Switch capability validation passed for fabric %s using %s matrix",
                 self.fabric,

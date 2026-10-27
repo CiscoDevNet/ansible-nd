@@ -48,6 +48,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_switch_capabilities import (
     CAPABILITY_BY_FABRIC_TYPE,
+    CAMPUS_VXLAN_IOS_XE_ROLES,
+    CAMPUS_VXLAN_NX_OS_ROLES,
+    CAMPUS_VXLAN_ROLES,
     SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES,
     SwitchFabricCapabilityError,
     validate_switch_configs_for_fabric_type,
@@ -87,6 +90,7 @@ class FakeRestSend:
         self.send_interval = 5
         self.response_current = {}
         self.result_current = {}
+        self.controller_version = "4.2.1.10"
 
 
 class FakeND:
@@ -102,6 +106,9 @@ class FakeND:
         self.calls = []
 
     def _get_rest_send(self):
+        return self.rest_send
+
+    def get_rest_send(self):
         return self.rest_send
 
     def request(self, path=None, *, verb, data=None):
@@ -522,6 +529,24 @@ def test_fabric_capability_validation_rejects_new_campus_leaf_before_writes():
         resource.manage_state()
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(("version", "allowed"), [("4.2.1.10", False), ("4.3.1.1", True)])
+def test_resource_validates_campus_border_spine_using_controller_version(version, allowed, check_mode):
+    """Normal and check mode use the actual release before switch discovery or writes."""
+    config = _cfg(role="border_spine", platform_type="ios-xe", preserve_config=False)
+    resource = _resource(check_mode=check_mode)
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
+    resource.nd.rest_send.controller_version = version
+
+    if allowed:
+        resource._validate_fabric_capabilities([config])
+    else:
+        with pytest.raises(FailJsonError, match="IOS-XE borderSpine requires ND 4.3.1 or later"):
+            resource._validate_fabric_capabilities([config])
+
+    assert resource.nd.calls == []
+
+
 def test_existing_campus_ios_xe_leaf_omitted_platform_is_idempotent():
     """Existing Campus IOS-XE leaf can omit platform_type during no-op reconciliation."""
     config = [{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"}]
@@ -608,18 +633,30 @@ def test_existing_read_side_platform_actionable_write_does_not_default_to_nxos()
         resource.manage_state()
 
 
-@pytest.mark.parametrize("role", ["leaf", "spine"])
-def test_fabric_capability_validation_allows_campus_ios_xe_leaf_spine(role):
-    """Campus VXLAN accepts leaf/spine roles for IOS-XE switches."""
-    capability = validate_switch_configs_for_fabric_type("Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)])
+@pytest.mark.parametrize(
+    ("version", "role"),
+    [
+        (version, role)
+        for version, roles in (("4.2.1.10", ("leaf", "spine", "border")), ("4.3.1.1", ("leaf", "spine", "border", "border_spine")))
+        for role in roles
+    ],
+)
+def test_fabric_capability_validation_allows_campus_ios_xe_roles(version, role):
+    """Campus IOS-XE role support follows the controller release."""
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)], controller_version=version
+    )
 
     assert capability.family == "Campus VXLAN"
 
 
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.1"])
 @pytest.mark.parametrize("role", ["border_gateway", "border_gateway_spine", "border_gateway_super_spine"])
-def test_fabric_capability_validation_allows_campus_nxos_border_gateway_roles(role):
+def test_fabric_capability_validation_allows_campus_nxos_border_gateway_roles(version, role):
     """Campus VXLAN accepts border-gateway roles for NX-OS switches."""
-    capability = validate_switch_configs_for_fabric_type("Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)])
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)], controller_version=version
+    )
 
     assert capability.family == "Campus VXLAN"
 
@@ -642,6 +679,107 @@ def test_fabric_capability_validation_rejects_campus_nxos_leaf():
             "vxlanCampus",
             [_cfg(role="leaf", platform_type="nx-os", preserve_config=False)],
         )
+
+
+@pytest.mark.parametrize("version", ["4.2.0", "4.2.1.10", "4.3.0", None, "unknown"])
+def test_fabric_capability_validation_rejects_campus_ios_border_spine_without_supported_release(version):
+    """Border Spine is unavailable on 4.2 and must not be guessed when version is unknown."""
+    with pytest.raises(SwitchFabricCapabilityError, match="IOS-XE borderSpine requires ND 4.3.1 or later"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK", "vxlanCampus", [_cfg(role="border_spine", platform_type="ios-xe", preserve_config=False)], controller_version=version
+        )
+
+
+def test_campus_role_set_is_derived_from_platform_role_sets():
+    """The Campus-wide role catalog adds no roles outside its platform catalogs."""
+    assert CAMPUS_VXLAN_ROLES == CAMPUS_VXLAN_IOS_XE_ROLES | CAMPUS_VXLAN_NX_OS_ROLES
+
+
+def test_fabric_capability_validation_allows_campus_ios_border_spine_on_exact_431_release():
+    """Border Spine starts at ND 4.3.1, not at the later build suffix."""
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK", "vxlanCampus", [_cfg(role="border_spine", platform_type="ios-xe", preserve_config=False)], controller_version="4.3.1"
+    )
+
+    assert capability.family == "Campus VXLAN"
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.1"])
+@pytest.mark.parametrize("role", ["leaf", "spine", "border", "border_spine"])
+def test_fabric_capability_validation_rejects_campus_ios_roles_on_nxos(version, role):
+    """Catalyst-only Campus roles must not pass for Nexus switches."""
+    with pytest.raises(SwitchFabricCapabilityError, match="not supported for platform_type 'nx-os' in Campus VXLAN"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)], controller_version=version
+        )
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.1"])
+@pytest.mark.parametrize("role", ["border_gateway", "border_gateway_spine", "border_gateway_super_spine"])
+def test_fabric_capability_validation_rejects_campus_nxos_roles_on_ios(version, role):
+    """Nexus-only Campus roles must not pass for Catalyst switches."""
+    with pytest.raises(SwitchFabricCapabilityError, match="not supported for platform_type 'ios-xe' in Campus VXLAN"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)], controller_version=version
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "api_role"),
+    [
+        ("border", "border"),
+        ("border_spine", "borderSpine"),
+        ("border_gateway", "borderGateway"),
+        ("border_gateway_spine", "borderGatewaySpine"),
+        ("border_gateway_super_spine", "borderGatewaySuperSpine"),
+    ],
+)
+def test_campus_roles_serialize_to_change_roles_api(role, api_role):
+    """Explicit public role spellings reach the Manage API in its camel-case form."""
+    nd = FakeND()
+    ctx = _ctx(nd=nd)
+    fabric_ops = SwitchFabricOps(ctx, fabric_utils=SimpleNamespace())
+
+    fabric_ops.bulk_update_roles([("SW1", _cfg(role=role))])
+
+    assert nd.calls[-1]["data"] == {"switchRoles": [{"switchId": "SW1", "role": api_role}]}
+
+
+@pytest.mark.parametrize(
+    ("platform_type", "role", "api_role"),
+    [
+        ("ios-xe", "leaf", "leaf"),
+        ("ios-xe", "spine", "spine"),
+        ("ios-xe", "border", "border"),
+        ("ios-xe", "border_spine", "borderSpine"),
+        ("nx-os", "border_gateway", "borderGateway"),
+        ("nx-os", "border_gateway_spine", "borderGatewaySpine"),
+        ("nx-os", "border_gateway_super_spine", "borderGatewaySuperSpine"),
+    ],
+)
+def test_campus_roles_serialize_to_add_switch_api(platform_type, role, api_role):
+    """Every documented Campus role is preserved in the submitted add request."""
+    nd = FakeND()
+    fabric_ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    cfg = _cfg(role=role, platform_type=platform_type, preserve_config=False)
+
+    fabric_ops.bulk_add(
+        BulkAddSpec(
+            switches=[
+                (
+                    cfg,
+                    {"hostname": "sw1", "ip": cfg.seed_ip, "serialNumber": "SW1", "model": "N9K-C93180YC-EX", "softwareVersion": "10.3(1)"},
+                )
+            ],
+            username="admin",
+            password="password",
+            auth_proto="MD5",
+            platform_type=platform_type,
+            preserve_config=False,
+        )
+    )
+
+    assert nd.calls[-1]["data"]["switches"][0]["switchRole"] == api_role
 
 
 def test_fabric_capability_validation_allows_unspecified_role():

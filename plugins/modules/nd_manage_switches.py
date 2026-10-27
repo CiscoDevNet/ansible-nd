@@ -299,7 +299,11 @@ notes:
 - When C(preserve_config) is omitted, the module derives C(false) for Campus
   VXLAN and Data Center VXLAN eBGP fabrics. It derives C(true) for Data Center
   VXLAN iBGP and External and Inter-Fabric Connectivity fabrics.
-- Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
+- Campus VXLAN supports C(leaf), C(spine), and C(border) roles for IOS-XE switches
+  on ND 4.2.1 and 4.3.1. ND 4.3.1 also supports C(border_spine) for IOS-XE.
+- Catalyst 9000 switches added through in-band PnP cannot use C(border_spine).
+  The module cannot determine a switch's prior onboarding method from its
+  switch configuration; use C(leaf) or C(border) for in-band PnP switches.
 - Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
   C(border_gateway_super_spine) roles for NX-OS switches.
 - Validation failures include the exact supported platform, provided C(role),
