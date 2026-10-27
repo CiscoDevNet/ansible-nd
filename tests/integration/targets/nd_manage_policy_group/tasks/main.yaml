@@ -1,4 +1,11 @@
 ---
+- name: Set ND test output settings
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: "{{ api_key_output_level | default('debug') }}"
+  tags:
+    - always
+
 - name: Discover ND Policy Group Test Cases
   ansible.builtin.find:
     paths: "{{ role_path }}/tests"
@@ -15,3 +22,76 @@
   with_items: "{{ test_items }}"
   loop_control:
     loop_var: test_case_to_run
+
+# The legacy tests above remain unchanged. Harness scenarios run by default
+# when the ND version preflight reports support.
+- name: Run ND 4.x policy-group harness preflight
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_preflight.yaml
+    apply:
+      tags:
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_gathered
+        - nd4x_demo_round_trip
+        - nd4x_demo_deleted
+        - nd4x_demo_special
+        - nd4x_demo_template_input_validation
+  tags:
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_merged
+    - nd4x_demo_gathered
+    - nd4x_demo_round_trip
+    - nd4x_demo_deleted
+    - nd4x_demo_special
+    - nd4x_demo_template_input_validation
+
+- name: Run merged policy-group harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_merged.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_merged]
+  tags: [nd4x_demo, nd4x_demo_merged]
+  when: nd4x_supported | default(false) | bool
+
+- name: Run gathered policy-group harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_gathered.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_gathered]
+  tags: [nd4x_demo, nd4x_demo_gathered]
+  when: nd4x_supported | default(false) | bool
+
+- name: Run gathered round-trip policy-group harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_round_trip.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_round_trip]
+  tags: [nd4x_demo, nd4x_demo_round_trip]
+  when: nd4x_supported | default(false) | bool
+
+- name: Run deleted policy-group harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_deleted.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_deleted]
+  tags: [nd4x_demo, nd4x_demo_deleted]
+  when: nd4x_supported | default(false) | bool
+
+- name: Run special policy-group harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_special.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_special]
+  tags: [nd4x_demo, nd4x_demo_special]
+  when: nd4x_supported | default(false) | bool
+
+- name: Run template-input validation harness scenarios
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_template_input_validation.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_template_input_validation]
+  tags: [nd4x_demo, nd4x_demo_template_input_validation]
+  when: nd4x_supported | default(false) | bool

@@ -1,0 +1,359 @@
+---
+- name: Run nd_manage_policy_group gathered-state harness scenarios
+  block:
+    - name: "GATHERED SETUP: Remove harness-owned policy groups"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: true
+
+    - name: "GATHERED SETUP - Create four policy groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LACP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LLDP"
+            switch_ids: ["{{ test_switch_serial_2 }}"]
+            template_inputs: {featureName: lldp}
+          - name: switch_freeform
+            description: "ND4X-PG-GATHERED-System vlan long-name"
+            priority: 110
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: clock_timezone
+            description: "ND4X-PG-GATHERED-Timezone CET"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_setup
+
+    - name: "GATHERED SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_setup.first_run_result.changed | bool
+
+    - name: "GATHERED SETUP - Independently verify all created policies"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LACP"
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LLDP"
+          - name: switch_freeform
+            description: "ND4X-PG-GATHERED-System vlan long-name"
+          - name: clock_timezone
+            description: "ND4X-PG-GATHERED-Timezone CET"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-GATHERED-Enable LACP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - description: "ND4X-PG-GATHERED-Enable LLDP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_2 }}"]
+            template_inputs: {featureName: lldp}
+          - description: "ND4X-PG-GATHERED-System vlan long-name"
+            template_name: switch_freeform
+            priority: 110
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {CONF: "system vlan long-name"}
+          - description: "ND4X-PG-GATHERED-Timezone CET"
+            template_name: clock_timezone
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+    - name: "GATHERED TC1 - Gather all policy groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc1
+
+    - name: "GATHERED TC1 - Verify four test groups are present"
+      vars:
+        our_groups: >-
+          {{ nd4x_gathered_tc1.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-GATHERED-') | list }}
+      ansible.builtin.assert:
+        that:
+          - not nd4x_gathered_tc1.first_run_result.changed | bool
+          - our_groups | length == 4
+
+    - name: "GATHERED TC2 - Gather feature_enable groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: feature_enable}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc2
+
+    - name: "GATHERED TC2 - Verify both feature_enable groups"
+      vars:
+        our_groups: >-
+          {{ nd4x_gathered_tc2.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-GATHERED-') | list }}
+      ansible.builtin.assert:
+        that:
+          - our_groups | length == 2
+          - our_groups | selectattr('description', 'equalto', 'ND4X-PG-GATHERED-Enable LACP') | list | length == 1
+          - our_groups | selectattr('description', 'equalto', 'ND4X-PG-GATHERED-Enable LLDP') | list | length == 1
+
+    - name: "GATHERED TC3 - Gather clock_timezone groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: clock_timezone}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc3
+
+    - name: "GATHERED TC3 - Verify single clock_timezone group"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_tc3.first_run_result.gathered | selectattr('description', 'equalto', 'ND4X-PG-GATHERED-Timezone CET') | list | length == 1
+          - nd4x_gathered_tc3.first_run_result.gathered | selectattr('name', 'equalto', 'clock_timezone') | list | length == 1
+
+    - name: "GATHERED TC4 - Gather exact template and description"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LACP"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc4
+
+    - name: "GATHERED TC4 - Verify exact match"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_tc4.first_run_result.gathered | length == 1
+          - nd4x_gathered_tc4.first_run_result.gathered[0].description == 'ND4X-PG-GATHERED-Enable LACP'
+
+    - name: "GATHERED TC5a - Gather all to extract policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc5_all
+
+    - name: "GATHERED TC5b - Extract LACP policy_id"
+      ansible.builtin.set_fact:
+        nd4x_gathered_lacp_policy_id: >-
+          {{
+            nd4x_gathered_tc5_all.first_run_result.gathered
+            | selectattr('description', 'equalto', 'ND4X-PG-GATHERED-Enable LACP')
+            | map(attribute='policy_id') | first
+          }}
+
+    - name: "GATHERED TC5c - Gather by policy group ID"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: "{{ nd4x_gathered_lacp_policy_id }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc5
+
+    - name: "GATHERED TC5d - Verify ID-based gather"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_tc5.first_run_result.gathered | length == 1
+          - nd4x_gathered_tc5.first_run_result.gathered[0].policy_id == nd4x_gathered_lacp_policy_id
+
+    - name: "GATHERED TC6 - Gather nonexistent template"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: bogus_template_does_not_exist}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc6
+
+    - name: "GATHERED TC6 - Verify empty gathered result"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_tc6.first_run_result.gathered is defined
+          - nd4x_gathered_tc6.first_run_result.gathered == []
+
+    - name: "GATHERED TC7 - Gather nonexistent policy group ID"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: POLICY-GROUP-999999}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc7
+
+    - name: "GATHERED TC7 - Verify empty ID result"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_tc7.first_run_result.gathered is defined
+          - nd4x_gathered_tc7.first_run_result.gathered == []
+
+    - name: "GATHERED TC8 - Gather multiple filter entries"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: feature_enable
+          - name: clock_timezone
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc8
+
+    - name: "GATHERED TC8 - Verify three groups returned"
+      vars:
+        our_groups: >-
+          {{ nd4x_gathered_tc8.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-GATHERED-') | list }}
+      ansible.builtin.assert:
+        that:
+          - our_groups | length == 3
+
+    - name: "GATHERED TC9 - Validate gathered output structure"
+      vars:
+        our_groups: >-
+          {{ nd4x_gathered_tc5_all.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-GATHERED-') | list }}
+      ansible.builtin.assert:
+        that:
+          - item.name is defined
+          - item.policy_id is match('^POLICY-GROUP-')
+          - item.description is defined
+          - item.switch_ids is iterable
+          - item.switch_ids is not string
+          - item.priority is defined
+          - item.name is not match('^POLICY-GROUP-')
+      loop: "{{ our_groups }}"
+      loop_control:
+        label: "{{ item.description }}"
+
+    - name: "GATHERED TC10a - First filtered gather"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LACP"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc10_first
+
+    - name: "GATHERED TC10b - Second filtered gather"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-GATHERED-Enable LACP"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_gathered_tc10_second
+
+    - name: "GATHERED TC10c - Verify repeated gathers are identical"
+      ansible.builtin.assert:
+        that:
+          - nd4x_gathered_tc10_first.first_run_result.gathered | length == nd4x_gathered_tc10_second.first_run_result.gathered | length
+          - nd4x_gathered_tc10_first.first_run_result.gathered[0].policy_id == nd4x_gathered_tc10_second.first_run_result.gathered[0].policy_id
+
+    - name: "GATHERED TC11 - Verify clock_timezone fields"
+      vars:
+        clock_group: >-
+          {{ nd4x_gathered_tc5_all.first_run_result.gathered
+             | selectattr('description', 'equalto', 'ND4X-PG-GATHERED-Timezone CET') | first }}
+      ansible.builtin.assert:
+        that:
+          - clock_group.name == 'clock_timezone'
+          - clock_group.switch_ids | length == 1
+          - test_switch_serial_1 in clock_group.switch_ids
+          - clock_group.template_inputs.TIME_ZONE == 'CET'
+
+    - name: "GATHERED TC11b - Verify switch_freeform fields"
+      vars:
+        freeform_group: >-
+          {{ nd4x_gathered_tc5_all.first_run_result.gathered
+             | selectattr('description', 'equalto', 'ND4X-PG-GATHERED-System vlan long-name') | first }}
+      ansible.builtin.assert:
+        that:
+          - freeform_group.name == 'switch_freeform'
+          - freeform_group.switch_ids | length == 2
+          - freeform_group.priority == 110
+          - freeform_group.template_inputs.CONF == 'system vlan long-name'
+  always:
+    - name: "GATHERED - Final cleanup"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: false
+  module_defaults:
+    cisco.nd.nd4x_module_test:
+      nd_queries: "{{ nd4x_policy_group_nd_queries }}"

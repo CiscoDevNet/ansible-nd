@@ -1,0 +1,122 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.0.0', '>=')
+      }}
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x policy-group harness scenarios because controller version
+      {{ nd4x_version.current.platformVersion }} is older than 4.0.0.
+  when: not nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Require configured policy-group test switches"
+  ansible.builtin.assert:
+    that:
+      - test_switch_serial_1 | length > 0
+      - test_switch_serial_2 | length > 0
+      - test_switch_serial_3 | length > 0
+    fail_msg: >-
+      Configure switch_serial_1, switch_serial_2, and switch_serial_3 (or their
+      nd_test_* aliases) before running the policy-group harness scenarios.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify configured switches belong to the fabric"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr('serialNumber', 'defined')
+        | selectattr('serialNumber', 'equalto', item)
+        | list
+        | length == 1
+    fail_msg: >-
+      Configured policy-group test switch {{ item }} is not present in fabric
+      {{ test_fabric_name }}.
+  loop:
+    - "{{ test_switch_serial_1 }}"
+    - "{{ test_switch_serial_2 }}"
+    - "{{ test_switch_serial_3 }}"
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Resolve switch IDs for switch-side snapshots"
+  ansible.builtin.set_fact:
+    nd4x_policy_group_switch_id_1: >-
+      {{ nd4x_switch_inventory.current.switches
+         | selectattr('serialNumber', 'equalto', test_switch_serial_1)
+         | map(attribute='switchId') | first | default('') }}
+    nd4x_policy_group_switch_id_2: >-
+      {{ nd4x_switch_inventory.current.switches
+         | selectattr('serialNumber', 'equalto', test_switch_serial_2)
+         | map(attribute='switchId') | first | default('') }}
+    nd4x_policy_group_switch_id_3: >-
+      {{ nd4x_switch_inventory.current.switches
+         | selectattr('serialNumber', 'equalto', test_switch_serial_3)
+         | map(attribute='switchId') | first | default('') }}
+    nd4x_policy_group_switch_ip_1: >-
+      {{ nd4x_switch_inventory.current.switches
+         | selectattr('serialNumber', 'equalto', test_switch_serial_1)
+         | map(attribute='fabricManagementIp') | first | default('') }}
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify switch IDs for switch-side snapshots"
+  ansible.builtin.assert:
+    that:
+      - nd4x_policy_group_switch_id_1 | length > 0
+      - nd4x_policy_group_switch_id_2 | length > 0
+      - nd4x_policy_group_switch_id_3 | length > 0
+    fail_msg: >-
+      The fabric inventory did not provide switchId values for all configured
+      policy-group test switches; switch-side diff snapshots cannot run safely.
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify policy-group snapshot scope"
+  ansible.builtin.assert:
+    that:
+      - nd4x_policy_group_check_mode_queries | length == 4
+      - nd4x_policy_group_check_mode_queries | selectattr('path', 'search', '/policySummary') | list | length == 1
+      - nd4x_policy_group_check_mode_queries | selectattr('path', 'search', '/switches/.*/diff') | list | length == 3
+      - nd4x_policy_group_nd_queries | length == 4
+      - nd4x_policy_group_nd_queries | selectattr('path', 'search', '/policySummary') | list | length == 1
+      - nd4x_policy_group_nd_queries | selectattr('path', 'search', '/switches/.*/diff') | list | length == 3
+    fail_msg: >-
+      Policy-group harness scenarios require a fabric-wide policySummary snapshot
+      and one read-only switch-side diff snapshot per configured test switch in
+      both predictive and post-apply queries.
+  when: nd4x_supported | bool
+  tags:
+    - always

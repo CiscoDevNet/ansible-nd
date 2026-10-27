@@ -1,0 +1,288 @@
+---
+- name: Run nd_manage_policy_group template-input validation harness scenarios
+  block:
+    - name: "TIV SETUP: Remove harness-owned policy groups"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: true
+
+    - name: "TIV-TC1 - Create switch_freeform with valid inputs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-TIV-happy switch_freeform"
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "system vlan long-name"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_tiv_tc1
+
+    - name: "TIV-TC1 - Verify valid input success"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_tiv_tc1.first_run_result.failed | default(false) | bool
+          - nd4x_tiv_tc1.first_run_result.changed | bool
+
+    - name: "TIV-TC1 - Independently verify applied policy state"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: switch_freeform
+            description: "ND4X-PG-TIV-happy switch_freeform"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-TIV-happy switch_freeform"
+            template_name: switch_freeform
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "system vlan long-name"}
+
+    - name: "TIV-TC2 - Unknown template-input key must fail"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-TIV-unknown-key"
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "system vlan long-name"
+              BOGUS_TEMPLATE_KEY: "this should not exist"
+        expected:
+          apply: {failed: true}
+      register: nd4x_tiv_tc2
+
+    - name: "TIV-TC2 - Verify unknown-key validation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_tiv_tc2.first_run_result.failed | bool
+          - nd4x_tiv_tc2.first_run_result.msg is search('Template input validation failed')
+          - nd4x_tiv_tc2.first_run_result.msg is search('Unknown templateInput key')
+          - nd4x_tiv_tc2.first_run_result.msg is search('BOGUS_TEMPLATE_KEY')
+          - nd4x_tiv_tc2.first_run_result.msg is search('switch_freeform')
+
+    - name: "TIV-TC3 - Wrong integer type must fail"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-TIV-bad-type"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: "not-a-number"
+              MINUTE_OFFSET: 0
+        expected:
+          apply: {failed: true}
+      register: nd4x_tiv_tc3
+
+    - name: "TIV-TC3 - Verify type validation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_tiv_tc3.first_run_result.failed | bool
+          - nd4x_tiv_tc3.first_run_result.msg is search('Template input validation failed')
+          - nd4x_tiv_tc3.first_run_result.msg is search('HOUR_OFFSET')
+          - "'integer' in ((nd4x_tiv_tc3.first_run_result.msg | default('')) | lower)"
+
+    - name: "TIV-TC4 - Create round-trip source group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-TIV-roundtrip"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "TIV-TC4 - Gather round-trip source"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_tiv_tc4_gather
+
+    - name: "TIV-TC4 - Isolate gathered entry"
+      ansible.builtin.set_fact:
+        nd4x_tiv_roundtrip_entry: >-
+          {{ nd4x_tiv_tc4_gather.first_run_result.gathered
+             | selectattr('description', 'equalto', 'ND4X-PG-TIV-roundtrip') | first }}
+
+    - name: "TIV-TC4 - Replay gathered output through merged"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - "{{ nd4x_tiv_roundtrip_entry }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_tiv_tc4_replay
+
+    - name: "TIV-TC4 - Verify gathered replay has no validation error"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_tiv_tc4_replay.first_run_result.failed | default(false) | bool
+          - "'Unknown templateInput key' not in (nd4x_tiv_tc4_replay | to_json)"
+          - "'Template input validation failed' not in (nd4x_tiv_tc4_replay | to_json)"
+
+    - name: "TIV-TC4 - Independently verify replayed policy state"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: clock_timezone
+            description: "ND4X-PG-TIV-roundtrip"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-TIV-roundtrip"
+            template_name: clock_timezone
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+    - name: "TIV-TC5 - Three entries using one template"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache LACP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache LLDP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache BFD"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: bfd}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_tiv_tc5
+
+    - name: "TIV-TC5 - Verify all three entries succeeded"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_tiv_tc5.first_run_result.failed | default(false) | bool
+          - nd4x_tiv_tc5.first_run_result.after | selectattr('description', 'match', '^ND4X-PG-TIV-cache') | list | length == 3
+
+    - name: "TIV-TC5 - Independently verify all cached-template policies"
+      ansible.builtin.include_tasks: nd4x_demo_verify_policy.yaml
+      vars:
+        nd4x_verify_config:
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache LACP"
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache LLDP"
+          - name: feature_enable
+            description: "ND4X-PG-TIV-cache BFD"
+        nd4x_verify_expected:
+          - description: "ND4X-PG-TIV-cache LACP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - description: "ND4X-PG-TIV-cache LLDP"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+          - description: "ND4X-PG-TIV-cache BFD"
+            template_name: feature_enable
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: bfd}
+
+    - name: "TIV-TC6 - Unknown key must fail in global check mode"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        check_mode: true
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-TIV-check-mode"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "no ip domain-lookup"
+              ANOTHER_BOGUS_KEY: x
+        expected:
+          check_mode: {failed: true}
+          apply: {failed: true}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_tiv_tc6
+
+    - name: "TIV-TC6 - Verify check-mode validation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_tiv_tc6.check_mode_result.failed | bool
+          - nd4x_tiv_tc6.check_mode_result.msg is search('Template input validation failed')
+          - nd4x_tiv_tc6.check_mode_result.msg is search('Unknown templateInput key')
+          - nd4x_tiv_tc6.check_mode_result.msg is search('ANOTHER_BOGUS_KEY')
+
+    - name: "TIV-TC7 - Delete with garbage template_inputs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_no_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-TIV-happy switch_freeform"
+            template_inputs:
+              CONF: "ignored on delete"
+              YET_ANOTHER_BOGUS: "ignored on delete"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_tiv_tc7
+
+    - name: "TIV-TC7 - Verify delete bypassed validation"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_tiv_tc7.first_run_result.failed | default(false) | bool
+          - "'Unknown templateInput key' not in (nd4x_tiv_tc7 | to_json)"
+          - "'Template input validation failed' not in (nd4x_tiv_tc7 | to_json)"
+  always:
+    - name: "TIV - Final cleanup"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: false
+  module_defaults:
+    cisco.nd.nd4x_module_test:
+      nd_queries: "{{ nd4x_policy_group_nd_queries }}"

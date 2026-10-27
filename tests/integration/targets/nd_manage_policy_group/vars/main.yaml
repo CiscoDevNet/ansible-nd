@@ -1,0 +1,125 @@
+---
+# Variables for the opt-in ND 4.x harness scenarios.
+# The original suite continues to use fabric_name and switch_serial_* from
+# integration_config.yml. These aliases keep the harness scenarios target-local.
+
+test_fabric_name: "{{ nd_test_fabric_name | default(fabric_name | default('test_fabric')) }}"
+test_switch_serial_1: "{{ nd_test_switch_serial_1 | default(switch_serial_1 | default('')) }}"
+test_switch_serial_2: "{{ nd_test_switch_serial_2 | default(switch_serial_2 | default('')) }}"
+test_switch_serial_3: "{{ nd_test_switch_serial_3 | default(switch_serial_3 | default('')) }}"
+nd4x_policy_group_test_ticket_id: "{{ nd_test_ticket_id | default('') }}"
+nd4x_policy_group_test_cluster_name: "{{ nd_test_cluster_name | default('') }}"
+
+nd4x_policy_group_common_args:
+  fabric_name: "{{ test_fabric_name }}"
+  output_level: "{{ nd_info.output_level }}"
+
+nd4x_policy_group_deploy_args:
+  fabric_name: "{{ test_fabric_name }}"
+  output_level: "{{ nd_info.output_level }}"
+  deploy: true
+nd4x_policy_group_no_deploy_args:
+  fabric_name: "{{ test_fabric_name }}"
+  output_level: "{{ nd_info.output_level }}"
+  deploy: false
+
+# policySummary is the module's authoritative read view and is fabric-wide.
+# Keeping this snapshot broad detects unintended changes to policy groups that
+# are not present in the requested config.
+nd4x_policy_group_check_mode_queries:
+  - name: Snapshot all policy groups in the test fabric
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/policySummary?filter=policyId:*POLICY-GROUP-*
+    expected_status: 200
+    pagination:
+      page_size: 100
+      collection_key: policies
+      max_pages: 1000
+    unordered_paths: [/policies]
+    ignore_keys:
+      - operData
+
+  - name: Snapshot switch-side diff for policy-group test switch 1
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_policy_group_switch_id_1 }}/diff
+    expected_status: 200
+    unordered_paths: [/diffConfigs]
+    ignore_keys:
+      - operData
+
+  - name: Snapshot switch-side diff for policy-group test switch 2
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_policy_group_switch_id_2 }}/diff
+    expected_status: 200
+    unordered_paths: [/diffConfigs]
+    ignore_keys:
+      - operData
+
+  - name: Snapshot switch-side diff for policy-group test switch 3
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_policy_group_switch_id_3 }}/diff
+    expected_status: 200
+    unordered_paths: [/diffConfigs]
+    ignore_keys:
+      - operData
+
+# The action-plugin harness executes these only after a successful real apply
+# (and after idempotency validation). The REST endpoint response is retained
+# under nd_rest.current, so assert both a successful request and the expected
+# collection key rather than relying only on module return data.
+nd4x_policy_group_nd_queries:
+  - name: Validate policy-summary response after policy-group apply
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/policySummary?filter=policyId:*POLICY-GROUP-*
+    method: get
+    expected_status: 200
+    expect:
+      - jsonpath: $.current.policies
+        exists: true
+
+  - name: Validate switch-side diff response after policy-group apply on switch 1
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_policy_group_switch_id_1 }}/diff
+    method: get
+    expected_status: 200
+    expect:
+      - jsonpath: $.current
+        exists: true
+
+  - name: Validate switch-side diff response after policy-group apply on switch 2
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_policy_group_switch_id_2 }}/diff
+    method: get
+    expected_status: 200
+    expect:
+      - jsonpath: $.current
+        exists: true
+
+  - name: Validate switch-side diff response after policy-group apply on switch 3
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ nd4x_policy_group_switch_id_3 }}/diff
+    method: get
+    expected_status: 200
+    expect:
+      - jsonpath: $.current
+        exists: true
+
+nd4x_policy_group_cleanup_prefix: '^ND4X-PG-'
+
+# The anonymous force-create scenario intentionally omits description.  Keep
+# its complete identity here so cleanup can recover a leaked policy even when
+# execution fails before the module result is registered and its policy_id is
+# captured.  Cleanup uses the discovered policy_id for deletion; the exact
+# signature prevents broad deletion of unrelated descriptionless groups.
+nd4x_policy_group_anonymous_force_created_template: switch_freeform
+nd4x_policy_group_anonymous_force_created_switch_ids:
+  - "{{ test_switch_serial_1 }}"
+nd4x_policy_group_anonymous_force_created_conf: 'as-format asdot'

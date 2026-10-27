@@ -1,0 +1,733 @@
+---
+- name: Run nd_manage_policy_group gathered round-trip harness scenarios
+  block:
+    - name: "ROUND-TRIP SETUP: Remove harness-owned policy groups"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: true
+
+    - name: "RT SETUP - Create four round-trip policy groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-RT-Enable LACP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - name: feature_enable
+            description: "ND4X-PG-RT-Enable LLDP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lldp}
+          - name: switch_freeform
+            description: "ND4X-PG-RT-System vlan long-name"
+            priority: 110
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: clock_timezone
+            description: "ND4X-PG-RT-Timezone CET"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_setup
+
+    - name: "RT SETUP - Gather round-trip groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_baseline
+
+    - name: "RT SETUP - Extract round-trip groups"
+      ansible.builtin.set_fact:
+        nd4x_rt_groups: >-
+          {{ nd4x_rt_baseline.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-RT-') | list }}
+
+    - name: "RT SETUP - Verify four round-trip groups"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_groups | length == 4
+
+    - name: "RT TC1 - Re-apply gathered output via merged"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: "{{ nd4x_rt_groups }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc1
+
+    - name: "RT TC1 - Verify idempotent replay"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_rt_tc1.first_run_result.changed | bool
+          - not nd4x_rt_tc1.second_run_result.changed | bool
+
+    - name: "RT TC2a - Extract LACP group"
+      ansible.builtin.set_fact:
+        nd4x_rt_lacp: >-
+          {{ nd4x_rt_groups | selectattr('description', 'equalto', 'ND4X-PG-RT-Enable LACP') | first }}
+
+    - name: "RT TC2b - Update switch_ids through gathered data"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_rt_lacp.name }}"
+            description: "{{ nd4x_rt_lacp.description }}"
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: "{{ nd4x_rt_lacp.template_inputs }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc2
+
+    - name: "RT TC2c - Verify membership update"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc2.first_run_result.changed | bool
+
+    - name: "RT TC2e - Re-gather membership"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-RT-Enable LACP"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc2_gather
+
+    - name: "RT TC2f - Verify new switch_ids"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc2_gather.first_run_result.gathered[0].switch_ids | sort == [test_switch_serial_1, test_switch_serial_2] | sort
+
+    - name: "RT TC3a - Extract switch_freeform group"
+      ansible.builtin.set_fact:
+        nd4x_rt_freeform: >-
+          {{ nd4x_rt_groups | selectattr('description', 'equalto', 'ND4X-PG-RT-System vlan long-name') | first }}
+
+    - name: "RT TC3b - Update priority through gathered data"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_rt_freeform.name }}"
+            description: "{{ nd4x_rt_freeform.description }}"
+            switch_ids: "{{ nd4x_rt_freeform.switch_ids }}"
+            priority: 999
+            template_inputs: "{{ nd4x_rt_freeform.template_inputs }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc3
+
+    - name: "RT TC3c - Verify priority update"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc3.first_run_result.changed | bool
+
+    - name: "RT TC3d - Re-gather priority"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-RT-System vlan long-name"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc3_gather
+
+    - name: "RT TC3e - Verify priority is 999"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc3_gather.first_run_result.gathered[0].priority == 999
+
+    - name: "RT TC4a - Update template_inputs through gathered data"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_rt_freeform.name }}"
+            description: "{{ nd4x_rt_freeform.description }}"
+            switch_ids: "{{ nd4x_rt_freeform.switch_ids }}"
+            template_inputs:
+              CONF: "no system vlan long-name"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc4
+
+    - name: "RT TC4c - Verify template_inputs update"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc4.first_run_result.changed | bool
+
+    - name: "RT TC4e - Re-gather template_inputs"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-RT-System vlan long-name"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc4_gather
+
+    - name: "RT TC4f - Verify CONF changed"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc4_gather.first_run_result.gathered[0].template_inputs.CONF == 'no system vlan long-name'
+
+    - name: "RT TC5a - Delete clock_timezone through gathered data"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-RT-Timezone CET"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc5
+
+    - name: "RT TC5b - Verify deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc5.first_run_result.changed | bool
+
+    - name: "RT TC5d - Re-gather deleted clock_timezone"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: clock_timezone
+            description: "ND4X-PG-RT-Timezone CET"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc5_gather
+
+    - name: "RT TC5e - Verify clock_timezone is absent"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc5_gather.first_run_result.gathered | default([]) | length == 0
+
+    - name: "RT TC6a - Gather remaining round-trip groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc6_gather
+
+    - name: "RT TC6b - Extract remaining groups"
+      ansible.builtin.set_fact:
+        nd4x_rt_remaining: >-
+          {{ nd4x_rt_tc6_gather.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-RT-') | list }}
+
+    - name: "RT TC6c - Delete remaining groups using gathered output"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: "{{ nd4x_rt_remaining }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc6
+      when: nd4x_rt_remaining | length > 0
+
+    - name: "RT TC6d - Verify remaining deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc6.first_run_result.changed | bool
+      when: nd4x_rt_remaining | length > 0
+
+    - name: "RT TC6f - Verify no round-trip groups remain"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc6_final
+
+    - name: "RT TC6g - Assert zero remaining groups"
+      vars:
+        remaining: >-
+          {{ nd4x_rt_tc6_final.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-RT-') | list }}
+      ansible.builtin.assert:
+        that:
+          - remaining | length == 0
+
+    - name: "RT TC7 - Delete already-deleted groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - {name: feature_enable, description: "ND4X-PG-RT-Enable LACP"}
+          - {name: feature_enable, description: "ND4X-PG-RT-Enable LLDP"}
+          - {name: switch_freeform, description: "ND4X-PG-RT-System vlan long-name"}
+          - {name: clock_timezone, description: "ND4X-PG-RT-Timezone CET"}
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc7
+
+    - name: "RT TC7 - Verify idempotent delete"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_rt_tc7.first_run_result.changed | bool
+
+    - name: "RT TC8a - Re-create LACP group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-RT-Enable LACP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc8_create
+
+    - name: "RT TC8c - Gather LACP ID"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-RT-Enable LACP"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc8_gather
+
+    - name: "RT TC8d - Extract LACP ID"
+      ansible.builtin.set_fact:
+        nd4x_rt_lacp_id: "{{ nd4x_rt_tc8_gather.first_run_result.gathered[0].policy_id }}"
+
+    - name: "RT TC8e - Update by policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: "{{ nd4x_rt_lacp_id }}"
+            switch_ids:
+              - "{{ test_switch_serial_1 }}"
+              - "{{ test_switch_serial_2 }}"
+            template_inputs: {featureName: lacp}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc8
+
+    - name: "RT TC8f - Verify ID update"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc8.first_run_result.changed | bool
+
+    - name: "RT TC8h - Re-gather by policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: "{{ nd4x_rt_lacp_id }}"}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc8_final
+
+    - name: "RT TC8i - Verify ID-based membership"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc8_final.first_run_result.gathered[0].switch_ids | sort == [test_switch_serial_1, test_switch_serial_2] | sort
+
+    - name: "RT TC9a - Delete by policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: [{name: "{{ nd4x_rt_lacp_id }}"}]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc9
+
+    - name: "RT TC9b - Verify ID deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc9.first_run_result.changed | bool
+
+    - name: "RT TC9 - Re-gather deleted policy by ID"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config: [{name: "{{ nd4x_rt_lacp_id }}"}]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc9_final
+
+    - name: "RT TC9 - Verify policy is absent after ID deletion"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc9_final.first_run_result.gathered | default([]) == []
+
+    - name: "RT TC10a - Create two snapshot groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: feature_enable
+            description: "ND4X-PG-RT-Snapshot LACP"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {featureName: lacp}
+          - name: clock_timezone
+            description: "ND4X-PG-RT-Snapshot CET"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "RT TC10c - Gather snapshot groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc10_gather
+
+    - name: "RT TC10d - Save snapshot groups"
+      ansible.builtin.set_fact:
+        nd4x_rt_snapshot_groups: >-
+          {{ nd4x_rt_tc10_gather.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-RT-Snapshot') | list }}
+
+    - name: "RT TC10e - Delete snapshot groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: "{{ nd4x_rt_snapshot_groups }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "RT TC10g - Verify snapshot groups were deleted"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc10_post_delete
+
+    - name: "RT TC10h - Verify zero snapshot groups remain"
+      vars:
+        post_delete_groups: >-
+          {{ nd4x_rt_tc10_post_delete.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-RT-Snapshot') | list }}
+      ansible.builtin.assert:
+        that:
+          - post_delete_groups | length == 0
+
+    - name: "RT TC10i - Re-create without stale policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: >-
+          {{ nd4x_rt_snapshot_groups
+             | map('dict2items')
+             | map('rejectattr', 'key', 'equalto', 'policy_id')
+             | map('items2dict') | list }}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc10_recreate
+
+    - name: "RT TC10j - Verify recreation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc10_recreate.first_run_result.changed | bool
+
+    - name: "RT TC10l - Re-gather snapshot groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc10_final
+
+    - name: "RT TC10m - Verify snapshot group names and descriptions"
+      vars:
+        final_groups: >-
+          {{ nd4x_rt_tc10_final.first_run_result.gathered | default([])
+             | selectattr('description', 'match', '^ND4X-PG-RT-Snapshot') | list }}
+        final_lacp: >-
+          {{ final_groups | selectattr('description', 'equalto', 'ND4X-PG-RT-Snapshot LACP') | list }}
+        final_clock: >-
+          {{ final_groups | selectattr('description', 'equalto', 'ND4X-PG-RT-Snapshot CET') | list }}
+        snapshot_lacp: >-
+          {{ nd4x_rt_snapshot_groups | selectattr('description', 'equalto', 'ND4X-PG-RT-Snapshot LACP') | list }}
+        snapshot_clock: >-
+          {{ nd4x_rt_snapshot_groups | selectattr('description', 'equalto', 'ND4X-PG-RT-Snapshot CET') | list }}
+      ansible.builtin.assert:
+        that:
+          - final_groups | length == nd4x_rt_snapshot_groups | length
+          - final_groups | map(attribute='description') | sort == nd4x_rt_snapshot_groups | map(attribute='description') | sort
+          - final_groups | map(attribute='name') | sort == nd4x_rt_snapshot_groups | map(attribute='name') | sort
+          - final_lacp | length == 1
+          - snapshot_lacp | length == 1
+          - final_lacp[0].name == snapshot_lacp[0].name
+          - final_lacp[0].priority == snapshot_lacp[0].priority
+          - final_lacp[0].switch_ids | sort == snapshot_lacp[0].switch_ids | sort
+          - final_lacp[0].template_inputs == snapshot_lacp[0].template_inputs
+          - final_clock | length == 1
+          - snapshot_clock | length == 1
+          - final_clock[0].name == snapshot_clock[0].name
+          - final_clock[0].priority == snapshot_clock[0].priority
+          - final_clock[0].switch_ids | sort == snapshot_clock[0].switch_ids | sort
+          - final_clock[0].template_inputs == snapshot_clock[0].template_inputs
+
+    - name: "RT TC11a - Create switch_freeform group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-RT-freeform fallback"
+            switch_ids: ["{{ test_switch_serial_1 }}"]
+            template_inputs: {CONF: "system vlan long-name"}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "RT TC11c - Gather freeform group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-RT-freeform fallback"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc11_gather
+
+    - name: "RT TC11d - Verify gathered freeform group"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc11_gather.first_run_result.gathered | length == 1
+          - nd4x_rt_tc11_gather.first_run_result.gathered[0].name == 'switch_freeform'
+          - nd4x_rt_tc11_gather.first_run_result.gathered[0].description == 'ND4X-PG-RT-freeform fallback'
+
+    - name: "RT TC11e - Save freeform snapshot"
+      ansible.builtin.set_fact:
+        nd4x_rt_freeform_snapshot: "{{ nd4x_rt_tc11_gather.first_run_result.gathered }}"
+
+    - name: "RT TC11f - Delete freeform snapshot"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: deleted
+        idempotency: false
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: "{{ nd4x_rt_freeform_snapshot }}"
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+
+    - name: "RT TC11g - Verify freeform deletion"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-RT-freeform fallback"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc11_post_delete
+
+    - name: "RT TC11h - Verify freeform group is absent before recreation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc11_post_delete.first_run_result.gathered == []
+
+    - name: "RT TC11i - Re-create freeform without stale policy_id"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: merged
+        common_args: "{{ nd4x_policy_group_deploy_args }}"
+        config: >-
+          {{ nd4x_rt_freeform_snapshot
+             | map('dict2items')
+             | map('rejectattr', 'key', 'equalto', 'policy_id')
+             | map('items2dict') | list }}
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc11_recreate
+
+    - name: "RT TC11j - Verify freeform recreation changed"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc11_recreate.first_run_result.changed | bool
+
+    - name: "RT TC11l - Re-gather recreated freeform group"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_policy_group
+        state: gathered
+        common_args: "{{ nd4x_policy_group_common_args }}"
+        config:
+          - name: switch_freeform
+            description: "ND4X-PG-RT-freeform fallback"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_policy_group_check_mode_queries }}"
+      register: nd4x_rt_tc11_final
+
+    - name: "RT TC11m - Verify recreated freeform group"
+      ansible.builtin.assert:
+        that:
+          - nd4x_rt_tc11_final.first_run_result.gathered | length == 1
+          - nd4x_rt_tc11_final.first_run_result.gathered[0].name == 'switch_freeform'
+          - nd4x_rt_tc11_final.first_run_result.gathered[0].description == 'ND4X-PG-RT-freeform fallback'
+          - nd4x_rt_tc11_final.first_run_result.gathered[0].priority == nd4x_rt_freeform_snapshot[0].priority
+          - nd4x_rt_tc11_final.first_run_result.gathered[0].switch_ids == [test_switch_serial_1]
+          - nd4x_rt_tc11_final.first_run_result.gathered[0].template_inputs.CONF == 'system vlan long-name'
+
+    - name: "RT TC11m - Verify recreated switch-side configuration"
+      ansible.builtin.include_tasks: nd4x_demo_verify_switch_config.yaml
+      vars:
+        nd4x_switch_config_expectation:
+          switch_id: "{{ nd4x_policy_group_switch_id_1 }}"
+          present:
+            - "system vlan long-name"
+  always:
+    - name: "ROUND-TRIP - Final cleanup"
+      ansible.builtin.include_tasks: nd4x_demo_cleanup.yaml
+      vars:
+        nd4x_cleanup_capture_baseline: false
+  module_defaults:
+    cisco.nd.nd4x_module_test:
+      nd_queries: "{{ nd4x_policy_group_nd_queries }}"
