@@ -829,7 +829,7 @@
           ansible.builtin.assert:
             that:
               - spc_identity_accepted.gathered | map(attribute='policy_id') | sort == [spc_identity_first_id, spc_identity_second_id] | sort
-              - accepted == spc_identity_target | combine({'priority': 600})
+              - "accepted == spc_identity_target | combine({'priority': 600})"
               - sibling == spc_identity_sibling
 
         - name: "SPECIAL G - Repeat the exact-ID sparse update in real and check modes"
