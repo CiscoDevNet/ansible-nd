@@ -80,5 +80,154 @@
                 }
             ]
         }
+    },
+
+    "test_manage_community_list_00110b": {
+        "TEST_NOTES": [
+            "create_bulk per-item failure: the failure-path re-read finds nothing created"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "communityLists": [],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 0
+                },
+                "links": {}
+            }
+        }
+    },
+
+    "test_manage_community_list_00130a": {
+        "TEST_NOTES": [
+            "create_bulk flat 403 on [A, BAD, C] (issue #646): ND names only the failing item and carries no results[]",
+            "Lab-captured shape, ND 4.2.1.10 / 4.3.1.175 2026-10-23"
+        ],
+        "RETURN_CODE": 403,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "Forbidden",
+        "DATA": {
+            "code": 403,
+            "description": "",
+            "message": "Tenant name 'tenantA' is not valid in fabric 'fabric_1'"
+        }
+    },
+
+    "test_manage_community_list_00130b": {
+        "TEST_NOTES": [
+            "failure-path re-read after 00130a: only A, the item ahead of the failing one, exists"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "communityLists": [
+                {
+                    "name": "A",
+                    "type": "standard",
+                    "entries": [
+                        {
+                            "sequenceNumber": 10,
+                            "action": "permit",
+                            "communityNumbers": [
+                                "100:200"
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                },
+                "links": {}
+            }
+        }
+    },
+
+    "test_manage_community_list_00140a": {
+        "TEST_NOTES": [
+            "create_bulk flat 403; the re-read in 00140b fails"
+        ],
+        "RETURN_CODE": 403,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "Forbidden",
+        "DATA": {
+            "code": 403,
+            "description": "",
+            "message": "Tenant name 'tenantA' is not valid in fabric 'fabric_1'"
+        }
+    },
+
+    "test_manage_community_list_00140b": {
+        "TEST_NOTES": [
+            "failure-path re-read fails: nothing may be reported as created"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "message": "internal error"
+        }
+    },
+
+    "test_manage_community_list_00150a": {
+        "TEST_NOTES": [
+            "create_bulk flat 403 with a tenant-scoped item ahead of the failing one"
+        ],
+        "RETURN_CODE": 403,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "Forbidden",
+        "DATA": {
+            "code": 403,
+            "description": "",
+            "message": "Tenant name 'tenantA' is not valid in fabric 'fabric_1'"
+        }
+    },
+
+    "test_manage_community_list_00150b": {
+        "TEST_NOTES": [
+            "failure-path re-read: the tenant-scoped list is echoed under its qualified API name"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/communityLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "communityLists": [
+                {
+                    "name": "tenantA~A",
+                    "type": "standard",
+                    "entries": [
+                        {
+                            "sequenceNumber": 10,
+                            "action": "permit",
+                            "communityNumbers": [
+                                "100:200"
+                            ]
+                        }
+                    ],
+                    "tenantName": "tenantA"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                },
+                "links": {}
+            }
+        }
     }
 }
