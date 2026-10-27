@@ -341,22 +341,35 @@ def test_sparse_update_after_preserves_omitted_priority_and_existing_inputs(invo
 
 @pytest.mark.parametrize("unexpected", [False, True])
 def test_second_update_failure_reports_accepted_progress_and_unchanged_rejection(invoke, unexpected):
-    original = [policy(), policy(SECOND_ID, description="second feature")]
+    third_id = "POLICY-103"
+    original = [policy(), policy(SECOND_ID, description="second feature"), policy(third_id, description="third feature")]
     controller = Controller(original)
     (controller.crash_updates if unexpected else controller.reject_updates).add(SECOND_ID)
 
-    result = invoke(controller, [config(priority=600), config(SECOND_ID, priority=650)], verbosity=3)
+    result = invoke(
+        controller,
+        [config(priority=600), config(SECOND_ID, priority=650), config(third_id, priority=700)],
+        verbosity=3,
+    )
 
     assert result["failed"] is True
     assert result["changed"] is True
     assert result["before"] == original
+    expected_third_priority = 725 if unexpected else 700
     assert {entry["policyId"]: entry["priority"] for entry in result["after"]} == {
         POLICY_ID: 600,
         SECOND_ID: 725,
+        third_id: expected_third_priority,
     }
     assert controller.policies[POLICY_ID]["priority"] == 600
-    assert controller.policies[SECOND_ID]["priority"] == 725
-    assert [call[0] for call in controller.writes()] == ["PUT", "PUT"]
+    assert controller.policies[SECOND_ID] == original[1]
+    assert controller.policies[third_id]["priority"] == expected_third_priority
+    if unexpected:
+        assert controller.policies[third_id] == original[2]
+    expected_targets = [POLICY_ID, SECOND_ID] if unexpected else [POLICY_ID, SECOND_ID, third_id]
+    assert [(verb, urlsplit(path).path.rsplit("/", 1)[-1]) for verb, path, _payload in controller.writes()] == [
+        ("PUT", policy_id) for policy_id in expected_targets
+    ]
 
 
 def test_failed_update_only_reports_no_accepted_change_and_retains_original(invoke):
