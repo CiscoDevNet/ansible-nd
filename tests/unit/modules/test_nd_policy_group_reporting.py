@@ -637,3 +637,48 @@ def test_group_direct_snapshot_preserves_deletion_and_anonymous_visibility(invok
     else:
         assert GROUP_ID not in after
         assert result["direct_actions"]["updated"][0]["priority"] == 600
+
+
+@pytest.mark.parametrize("rejected_fallback", ["POLICY-GROUP-103", GROUP_ID])
+def test_group_delete_fallback_failure_retains_requested_order_and_duplicates(invoke, rejected_fallback):
+    """Failure output keeps accepted source entries in their original order, including repeats."""
+    third_id = "POLICY-GROUP-103"
+
+    class OrderedDeleteController(RejectingController):
+        def request(self, verb, path, payload):
+            if verb == "POST" and path.endswith("/markDelete"):
+                self.calls.append((verb, path, deepcopy(payload)))
+                self.groups.pop(SECOND_ID)
+                return {
+                    "RETURN_CODE": 207,
+                    "METHOD": verb,
+                    "REQUEST_PATH": path,
+                    "MESSAGE": "Multi-Status",
+                    "DATA": {
+                        "policyGroups": [
+                            {"policyId": third_id, "status": "failed"},
+                            {"policyId": GROUP_ID, "status": "failed"},
+                            {"policyId": SECOND_ID, "status": "SUCCESS"},
+                        ]
+                    },
+                }
+            if verb == "DELETE" and path.rsplit("/", 1)[-1] not in self.rejected_ids:
+                self.calls.append((verb, path, deepcopy(payload)))
+                self.groups.pop(path.rsplit("/", 1)[-1])
+                return {"RETURN_CODE": 200, "METHOD": verb, "REQUEST_PATH": path, "MESSAGE": "OK", "DATA": {}}
+            return super().request(verb, path, payload)
+
+    controller = OrderedDeleteController([group(), group(SECOND_ID), group(third_id)], rejected_ids=[rejected_fallback])
+    requested_ids = [SECOND_ID, GROUP_ID, SECOND_ID, third_id]
+    result = invoke(controller, [config(name=pid) for pid in requested_ids], state="deleted", deploy=True)
+
+    assert result["failed"] is True
+    assert result["changed"] is True
+    assert "Rejected priority by controller" in result["msg"]
+    assert controller.writes()[0][2] == {"policyIds": requested_ids}
+    expected_fallbacks = [third_id] if rejected_fallback == third_id else [third_id, GROUP_ID]
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes("DELETE")] == expected_fallbacks
+    expected_deleted = [SECOND_ID, SECOND_ID] if rejected_fallback == third_id else [SECOND_ID, SECOND_ID, third_id]
+    assert [item["policy_id"] for item in result["direct_actions"]["deleted"]] == expected_deleted
+    assert set(controller.groups) == ({GROUP_ID, SECOND_ID, third_id} - set(expected_deleted))
+    assert controller.deployments() == []

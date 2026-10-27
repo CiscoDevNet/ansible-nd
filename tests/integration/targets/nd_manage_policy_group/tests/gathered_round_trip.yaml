@@ -6,8 +6,8 @@
 # Tests that gathered output can be fed directly into state=merged
 # and state=deleted for full round-trip workflows.
 #
-# All test policy groups use description prefix "IT-RT-" to
-# isolate from any pre-existing fabric state.
+# Described test groups use prefix "IT-RT-". The anonymous fixture
+# is tracked and cleaned up by its controller-generated policy group ID.
 
 ##############################################
 ##               CLEANUP                    ##
@@ -280,7 +280,8 @@
     - name: "RT TC5e - Verify clock_timezone no longer in gathered"
       ansible.builtin.assert:
         that:
-          - re_gathered.gathered is not defined or re_gathered.gathered | default([]) | length == 0
+          - re_gathered.gathered is defined
+          - re_gathered.gathered == []
       tags: gathered_round_trip
 
     # ==========================================
@@ -295,7 +296,7 @@
 
     - name: "RT TC6b - Extract remaining IT-RT groups"
       ansible.builtin.set_fact:
-        remaining_rt: "{{ remaining.gathered | default([]) | selectattr('description', 'match', '^IT-RT-') | list }}"
+        remaining_rt: "{{ remaining.gathered | selectattr('description', 'match', '^IT-RT-') | list }}"
       tags: gathered_round_trip
 
     - name: "RT TC6c - Delete all remaining IT-RT groups using gathered"
@@ -324,9 +325,10 @@
 
     - name: "RT TC6g - Verify zero IT-RT groups"
       vars:
-        rt_groups: "{{ post_delete.gathered | default([]) | selectattr('description', 'match', '^IT-RT-') | list }}"
+        rt_groups: "{{ post_delete.gathered | selectattr('description', 'match', '^IT-RT-') | list }}"
       ansible.builtin.assert:
         that:
+          - post_delete.gathered is defined
           - rt_groups | length == 0
         fail_msg: "Expected 0 IT-RT groups but found: {{ rt_groups | map(attribute='description') | list }}"
       tags: gathered_round_trip
@@ -460,7 +462,8 @@
     - name: "RT TC9e - Verify deleted"
       ansible.builtin.assert:
         that:
-          - re_gathered.gathered is not defined or re_gathered.gathered | default([]) | length == 0
+          - re_gathered.gathered is defined
+          - re_gathered.gathered == []
       tags: gathered_round_trip
 
     # ==========================================
@@ -517,9 +520,10 @@
 
     - name: "RT TC10h - Verify zero IT-RT groups"
       vars:
-        rt_groups: "{{ post_delete.gathered | default([]) | selectattr('description', 'match', '^IT-RT-') | list }}"
+        rt_groups: "{{ post_delete.gathered | selectattr('description', 'match', '^IT-RT-') | list }}"
       ansible.builtin.assert:
         that:
+          - post_delete.gathered is defined
           - rt_groups | length == 0
       tags: gathered_round_trip
 
@@ -660,6 +664,148 @@
           - final_freeform.gathered[0].name == 'switch_freeform'
           - final_freeform.gathered[0].description == 'IT-RT-System vlan long-name'
       tags: gathered_round_trip
+
+    # Controller-added template metadata must not make anonymous ID updates
+    # perpetually changed. Use actual gathered input without assuming which
+    # bookkeeping keys a particular controller version returns.
+    - name: "RT TC12 - Anonymous gathered round-trip and direct-ID updates"
+      tags: gathered_round_trip
+      block:
+        - name: "RT TC12 - Create a staged anonymous comment-only group"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: false
+            config:
+              - name: switch_freeform
+                create_additional_policy: true
+                priority: 610
+                switch_ids:
+                  - "{{ switch_serial_1 }}"
+                template_inputs:
+                  CONF: "! IT-RT-anonymous round-trip"
+          register: rt_anonymous_created
+
+        - name: "RT TC12 - Require the controller-generated force-created ID"
+          ansible.builtin.assert:
+            that:
+              - rt_anonymous_created.changed
+              - rt_anonymous_created.force_created is defined
+              - rt_anonymous_created.force_created | length == 1
+              - rt_anonymous_created.force_created[0].policy_id is match('^POLICY-GROUP-')
+              - rt_anonymous_created.force_created[0].priority == 610
+
+        - name: "RT TC12 - Gather the anonymous group by its exact ID"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            config:
+              - name: "{{ rt_anonymous_created.force_created[0].policy_id }}"
+          register: rt_anonymous_gathered
+
+        - name: "RT TC12 - Verify the anonymous gathered configuration"
+          ansible.builtin.assert:
+            that:
+              - not rt_anonymous_gathered.changed
+              - rt_anonymous_gathered.gathered | length == 1
+              - rt_anonymous_gathered.gathered[0].policy_id == rt_anonymous_created.force_created[0].policy_id
+              - rt_anonymous_gathered.gathered[0].name == 'switch_freeform'
+              - rt_anonymous_gathered.gathered[0].description == ''
+              - rt_anonymous_gathered.gathered[0].switch_ids == [switch_serial_1]
+              - rt_anonymous_gathered.gathered[0].priority == 610
+              - rt_anonymous_gathered.gathered[0].template_inputs.CONF == '! IT-RT-anonymous round-trip'
+
+        - name: "RT TC12 - Reapply anonymous gathered input in real and check mode"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: false
+            config: "{{ rt_anonymous_gathered.gathered }}"
+          check_mode: "{{ item }}"
+          loop: [false, true]
+          register: rt_anonymous_noops
+
+        - name: "RT TC12 - Verify both anonymous round-trips are unchanged"
+          ansible.builtin.assert:
+            that:
+              - not item.changed
+              - item.direct_actions.updated == []
+          loop: "{{ rt_anonymous_noops.results }}"
+          loop_control:
+            label: "check_mode={{ item.item }}"
+
+        - name: "RT TC12 - Preview an anonymous priority update"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: false
+            config: "{{ [rt_anonymous_gathered.gathered[0] | combine({'priority': 725})] }}"
+          check_mode: true
+          register: rt_anonymous_preview
+
+        - name: "RT TC12 - Verify the direct-ID preview retains identity and inputs"
+          ansible.builtin.assert:
+            that:
+              - rt_anonymous_preview.changed
+              - rt_anonymous_preview.direct_actions.updated | length == 1
+              - rt_anonymous_preview.direct_actions.updated[0].policy_id == rt_anonymous_created.force_created[0].policy_id
+              - rt_anonymous_preview.direct_actions.updated[0].priority == 725
+              - rt_anonymous_preview.direct_actions.updated[0].template_inputs == rt_anonymous_gathered.gathered[0].template_inputs
+
+        - name: "RT TC12 - Independently read back after unchanged and preview runs"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            config:
+              - name: "{{ rt_anonymous_created.force_created[0].policy_id }}"
+          register: rt_anonymous_after_preview
+
+        - name: "RT TC12 - Verify preview did not alter the controller group"
+          ansible.builtin.assert:
+            that:
+              - rt_anonymous_after_preview.gathered == rt_anonymous_gathered.gathered
+
+        - name: "RT TC12 - Apply the same priority update by exact ID"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: false
+            config: "{{ [rt_anonymous_gathered.gathered[0] | combine({'priority': 725})] }}"
+          register: rt_anonymous_updated
+
+        - name: "RT TC12 - Verify the accepted direct update"
+          ansible.builtin.assert:
+            that:
+              - rt_anonymous_updated.changed
+              - rt_anonymous_updated.direct_actions.updated | length == 1
+              - rt_anonymous_updated.direct_actions.updated[0].policy_id == rt_anonymous_created.force_created[0].policy_id
+              - rt_anonymous_updated.direct_actions.updated[0].priority == 725
+
+        - name: "RT TC12 - Read back the accepted anonymous update"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            config:
+              - name: "{{ rt_anonymous_created.force_created[0].policy_id }}"
+          register: rt_anonymous_after_update
+
+        - name: "RT TC12 - Verify only the requested priority changed"
+          ansible.builtin.assert:
+            that:
+              - "rt_anonymous_after_update.gathered == [rt_anonymous_gathered.gathered[0] | combine({'priority': 725})]"
+
+      always:
+        - name: "RT TC12 - Remove only the anonymous fixture by its generated ID"
+          vars:
+            rt_anonymous_cleanup_id: >-
+              {{ (rt_anonymous_created.force_created | default([]) | first | default({})).policy_id | default('') }}
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: false
+            config:
+              - name: "{{ rt_anonymous_cleanup_id }}"
+          when: rt_anonymous_cleanup_id | length > 0
 
   always:
     - name: "RT - Final cleanup"

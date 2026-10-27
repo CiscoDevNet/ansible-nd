@@ -12,6 +12,7 @@
 #   D. POLICY_ID        identification via POLICY-GROUP-* IDs
 #   E. VALIDATION       expected module failures (bad input)
 #   F. BFD_PREREQ       feature_enable bfd → switch_freeform BFD timers
+#   G. EXACT_ID         duplicate identity, previews and partial progress
 #
 # All test policy groups use description prefix "SPC-" to isolate
 # from other test files. cleanup.yaml deletes all SPC- groups.
@@ -662,6 +663,344 @@
         that:
           - result.changed == false
       tags: special
+
+    # Unique comment-only fixtures stay undeployed and are cleaned by captured ID.
+    - name: "SPECIAL G - Initialize isolated identity fixtures"
+      ansible.builtin.set_fact:
+        spc_identity_description: "SPC-EXACT-{{ lookup('ansible.builtin.password', '/dev/null length=10 chars=ascii_lowercase,digits') }}"
+        spc_identity_first_id: ""
+        spc_identity_second_id: ""
+      tags: special
+
+    - name: "SPECIAL G - Verify duplicate exact-ID workflows"
+      tags: special
+      vars:
+        spc_identity_common: &spc_identity_options
+          fabric_name: "{{ fabric_name }}"
+          deploy: false
+      block:
+        - name: "SPECIAL G - Create first duplicate fixture"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: merged
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}"
+                create_additional_policy: true
+                priority: 425
+                switch_ids: ["{{ switch_serial_1 }}"]
+                template_inputs:
+                  CONF: "! {{ spc_identity_description }} first"
+          register: spc_identity_first
+
+        - name: "SPECIAL G - Capture first ID before later operations"
+          ansible.builtin.set_fact:
+            spc_identity_first_id: "{{ spc_identity_first.force_created[0].policy_id }}"
+
+        - name: "SPECIAL G - Preview a forced duplicate from the existing ID"
+          cisco.nd.nd_manage_policy_group: &spc_identity_second_options
+            <<: *spc_identity_options
+            state: merged
+            config:
+              - name: "{{ spc_identity_first_id }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_2 }}"]
+                template_inputs:
+                  CONF: "! {{ spc_identity_description }} second"
+          check_mode: true
+          register: spc_identity_preview
+
+        - name: "SPECIAL G - Verify effective forced-create preview without copied ID"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_preview.changed
+              - spc_identity_preview.force_created | length == 1
+              - spc_identity_preview.force_created[0].priority == 500
+              - "'policy_id' not in spc_identity_preview.force_created[0]"
+
+        - name: "SPECIAL G - Independently gather after the preview"
+          cisco.nd.nd_manage_policy_group: &spc_identity_gather_options
+            <<: *spc_identity_options
+            state: gathered
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}"
+          register: spc_identity_after_preview
+
+        - name: "SPECIAL G - Verify preview preserved the first fixture only"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_after_preview.gathered | map(attribute='policy_id') | list == [spc_identity_first_id]
+              - spc_identity_after_preview.gathered[0].priority == 425
+              - spc_identity_after_preview.gathered[0].switch_ids == [switch_serial_1]
+              - spc_identity_after_preview.gathered[0].template_inputs.CONF == '! ' ~ spc_identity_description ~ ' first'
+
+        - name: "SPECIAL G - Create the second duplicate with the previewed arguments"
+          cisco.nd.nd_manage_policy_group: *spc_identity_second_options
+          register: spc_identity_second
+
+        - name: "SPECIAL G - Capture second ID before later operations"
+          ansible.builtin.set_fact:
+            spc_identity_second_id: "{{ spc_identity_second.force_created[0].policy_id }}"
+
+        - name: "SPECIAL G - Independently gather both duplicate records"
+          cisco.nd.nd_manage_policy_group: *spc_identity_gather_options
+          register: spc_identity_original
+
+        # Read the legacy winner rather than assuming controller timestamp granularity.
+        - name: "SPECIAL G - Find the current composite winner without writing"
+          cisco.nd.nd_manage_policy_group: &spc_identity_winner_options
+            <<: *spc_identity_options
+            state: merged
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}"
+          check_mode: true
+          register: spc_identity_winner
+
+        - name: "SPECIAL G - Verify distinct fixtures and legacy winner selection"
+          vars:
+            first: "{{ spc_identity_original.gathered | selectattr('policy_id', 'equalto', spc_identity_first_id) | first }}"
+            second: "{{ spc_identity_original.gathered | selectattr('policy_id', 'equalto', spc_identity_second_id) | first }}"
+            winners: "{{ spc_identity_winner.before | selectattr('description', 'equalto', spc_identity_description) | list }}"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_original.gathered | length == 2
+              - spc_identity_first_id != spc_identity_second_id
+              - first.priority == 425 and first.switch_ids == [switch_serial_1]
+              - second.priority == 500 and second.switch_ids == [switch_serial_2]
+              - first.template_inputs.CONF != second.template_inputs.CONF
+              - not spc_identity_winner.changed
+              - winners | length == 1
+              - winners[0].policy_id in [spc_identity_first_id, spc_identity_second_id]
+
+        - name: "SPECIAL G - Select the duplicate excluded by composite matching"
+          vars:
+            winner_id: "{{ (spc_identity_winner.before | selectattr('description', 'equalto', spc_identity_description) | first).policy_id }}"
+          ansible.builtin.set_fact:
+            spc_identity_target: "{{ spc_identity_original.gathered | rejectattr('policy_id', 'equalto', winner_id) | first }}"
+            spc_identity_sibling: "{{ spc_identity_original.gathered | selectattr('policy_id', 'equalto', winner_id) | first }}"
+
+        - name: "SPECIAL G - Accept an exact-ID update while rejecting invalid sibling input"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: merged
+            config:
+              - name: "{{ spc_identity_target.policy_id }}"
+                priority: 600
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-invalid"
+                switch_ids: ["{{ switch_serial_1 }}"]
+                template_inputs:
+                  UNSUPPORTED_IDENTITY_INPUT: "must not create a policy group"
+          register: spc_identity_partial
+          ignore_errors: true
+
+        - name: "SPECIAL G - Verify accepted progress retains original and omitted fields"
+          vars:
+            original: "{{ spc_identity_partial.before | selectattr('policy_id', 'equalto', spc_identity_target.policy_id) | first }}"
+            accepted: "{{ spc_identity_partial.after | selectattr('policy_id', 'equalto', spc_identity_target.policy_id) | first }}"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_partial.failed and spc_identity_partial.changed
+              - spc_identity_partial.template_input_validation_failed | length == 1
+              - original.priority == spc_identity_target.priority
+              - original.switch_ids == spc_identity_target.switch_ids
+              - original.template_inputs.CONF == spc_identity_target.template_inputs.CONF
+              - accepted.priority == 600
+              - accepted.switch_ids == spc_identity_target.switch_ids
+              - accepted.template_inputs.CONF == spc_identity_target.template_inputs.CONF
+
+        - name: "SPECIAL G - Independently gather accepted and invalid-entry results"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: gathered
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}"
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-invalid"
+          register: spc_identity_accepted
+
+        - name: "SPECIAL G - Verify persistence and unchanged sibling without an invalid group"
+          vars:
+            accepted: "{{ spc_identity_accepted.gathered | selectattr('policy_id', 'equalto', spc_identity_target.policy_id) | first }}"
+            sibling: "{{ spc_identity_accepted.gathered | selectattr('policy_id', 'equalto', spc_identity_sibling.policy_id) | first }}"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_accepted.gathered | map(attribute='policy_id') | sort == [spc_identity_first_id, spc_identity_second_id] | sort
+              - accepted == spc_identity_target | combine({'priority': 600})
+              - sibling == spc_identity_sibling
+
+        - name: "SPECIAL G - Repeat the exact-ID sparse update in real and check modes"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: merged
+            config:
+              - name: "{{ spc_identity_target.policy_id }}"
+                priority: 600
+          check_mode: "{{ item }}"
+          loop: [false, true]
+          register: spc_identity_noops
+
+        - name: "SPECIAL G - Verify identical exact-ID updates remain unchanged"
+          ansible.builtin.assert:
+            that:
+              - not item.changed
+              - item.before == item.after
+          loop: "{{ spc_identity_noops.results }}"
+          loop_control:
+            label: "check_mode={{ item.item }}"
+
+        - name: "SPECIAL G - Read the winner before renaming its excluded sibling"
+          cisco.nd.nd_manage_policy_group: *spc_identity_winner_options
+          check_mode: true
+          register: spc_identity_winner
+
+        - name: "SPECIAL G - Capture the original non-winning rename target"
+          vars:
+            winner_id: "{{ (spc_identity_winner.before | selectattr('description', 'equalto', spc_identity_description) | first).policy_id }}"
+          ansible.builtin.set_fact:
+            spc_identity_rename_target: "{{ spc_identity_accepted.gathered | rejectattr('policy_id', 'equalto', winner_id) | first }}"
+
+        - name: "SPECIAL G - Rename the excluded duplicate and restore its description"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: merged
+            config:
+              - name: "{{ spc_identity_rename_target.policy_id }}"
+                description: "{{ item }}"
+                switch_ids: "{{ spc_identity_rename_target.switch_ids }}"
+                template_inputs: "{{ spc_identity_rename_target.template_inputs }}"
+          loop: ["{{ spc_identity_description }}-renamed", "{{ spc_identity_description }}"]
+          register: spc_identity_renames
+
+        - name: "SPECIAL G - Verify rename snapshots include the exact original target"
+          vars:
+            original: "{{ spc_identity_renames.results[0].before | selectattr('policy_id', 'equalto', spc_identity_rename_target.policy_id) | first }}"
+            renamed: "{{ spc_identity_renames.results[0].after | selectattr('policy_id', 'equalto', spc_identity_rename_target.policy_id) | first }}"
+            restored: "{{ spc_identity_renames.results[1].after | selectattr('policy_id', 'equalto', spc_identity_rename_target.policy_id) | first }}"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_renames.results | selectattr('changed') | list | length == 2
+              - spc_identity_rename_target.policy_id in (spc_identity_renames.results[0].before | map(attribute='policy_id') | list)
+              - spc_identity_rename_target.policy_id in (spc_identity_renames.results[0].after | map(attribute='policy_id') | list)
+              - original.description == spc_identity_description
+              - original.priority == spc_identity_rename_target.priority
+              - renamed.description == spc_identity_description ~ '-renamed'
+              - renamed.priority == spc_identity_rename_target.priority
+              - renamed.switch_ids == spc_identity_rename_target.switch_ids
+              - renamed.template_inputs.CONF == spc_identity_rename_target.template_inputs.CONF
+              - restored.description == spc_identity_description
+
+        - name: "SPECIAL G - Independently gather after restoring the duplicate description"
+          cisco.nd.nd_manage_policy_group: *spc_identity_gather_options
+          register: spc_identity_before_delete
+
+        - name: "SPECIAL G - Verify rename preserved both records' writable configuration"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_before_delete.gathered | sort(attribute='policy_id') == spc_identity_accepted.gathered | sort(attribute='policy_id')
+
+        - name: "SPECIAL G - Read the winner before exact-ID deletion"
+          cisco.nd.nd_manage_policy_group: *spc_identity_winner_options
+          check_mode: true
+          register: spc_identity_winner
+
+        - name: "SPECIAL G - Select the excluded deletion target and expected survivor"
+          vars:
+            winner_id: "{{ (spc_identity_winner.before | selectattr('description', 'equalto', spc_identity_description) | first).policy_id }}"
+          ansible.builtin.set_fact:
+            spc_identity_delete_target: "{{ spc_identity_before_delete.gathered | rejectattr('policy_id', 'equalto', winner_id) | first }}"
+            spc_identity_survivor: "{{ spc_identity_before_delete.gathered | selectattr('policy_id', 'equalto', winner_id) | first }}"
+
+        - name: "SPECIAL G - Delete the excluded ID while retaining its creation flag"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: deleted
+            config:
+              - name: "{{ spc_identity_delete_target.policy_id }}"
+                create_additional_policy: true
+                switch_ids: "{{ spc_identity_delete_target.switch_ids }}"
+                template_inputs: "{{ spc_identity_delete_target.template_inputs }}"
+          register: spc_identity_deleted
+
+        - name: "SPECIAL G - Gather after deletion to detect a wrong target or unexpected create"
+          cisco.nd.nd_manage_policy_group: *spc_identity_gather_options
+          register: spc_identity_after_delete
+
+        - name: "SPECIAL G - Verify only the selected ID was removed"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_deleted.changed
+              - "'force_created' not in spc_identity_deleted"
+              - spc_identity_after_delete.gathered == [spc_identity_survivor]
+
+        - name: "SPECIAL G - Delete an absent combination with its creation flag in real and check modes"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: deleted
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-absent"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_1 }}"]
+                template_inputs:
+                  CONF: "! {{ spc_identity_description }} must stay absent"
+          check_mode: "{{ item }}"
+          loop: [false, true]
+          register: spc_identity_absent
+
+        - name: "SPECIAL G - Verify absent deletion never enters forced creation"
+          ansible.builtin.assert:
+            that:
+              - not item.changed
+              - "'force_created' not in item"
+          loop: "{{ spc_identity_absent.results }}"
+          loop_control:
+            label: "check_mode={{ item.item }}"
+
+        - name: "SPECIAL G - Independently gather the survivor and absent description"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: gathered
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}"
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-absent"
+          register: spc_identity_after_absent
+
+        - name: "SPECIAL G - Verify absent deletion created nothing and preserved the survivor"
+          ansible.builtin.assert:
+            that:
+              - spc_identity_after_absent.gathered == [spc_identity_survivor]
+
+      always:
+        - name: "SPECIAL G - Capture any unexpected fixture IDs before cleanup"
+          cisco.nd.nd_manage_policy_group:
+            <<: *spc_identity_options
+            state: gathered
+            config:
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}"
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-renamed"
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-invalid"
+              - name: switch_freeform
+                description: "{{ spc_identity_description }}-absent"
+          register: spc_identity_cleanup
+
+        - name: "SPECIAL G - Clean up only captured fixture IDs without deployment"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: false
+            config:
+              - name: "{{ item }}"
+          loop: "{{ ([spc_identity_first_id, spc_identity_second_id] + (spc_identity_cleanup.gathered | map(attribute='policy_id') | list)) | unique }}"
+          when: item | length > 0
 
   always:
     # The shared cleanup deletes by (description, name) which collapses
