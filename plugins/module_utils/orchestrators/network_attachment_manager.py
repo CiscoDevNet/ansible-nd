@@ -171,7 +171,9 @@ class NetworkAttachmentManager:
             if deploy_enabled.get(network_name, True):
                 self.record_deploy_target(deploy_targets, network_name, payload.get("switchId"))
 
-        trace = self.post_network_attachments(module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE)
+        trace = self.post_network_attachments(
+            module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE
+        )
         self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
         trace["desired"] = desired

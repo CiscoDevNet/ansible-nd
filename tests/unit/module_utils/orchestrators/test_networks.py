@@ -58,7 +58,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
     MultisiteParentNetworkStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
