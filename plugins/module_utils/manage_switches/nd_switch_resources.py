@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 )
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType, PlatformType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
@@ -131,6 +131,7 @@ class ApiCallSpec:
     op_type: OperationType
     diff: dict[str, Any] | None = None
     context: str = ""
+    verbosity_level: int = 2
 
 
 @dataclass
@@ -278,11 +279,16 @@ class SwitchServiceContext:
         result = self.nd.rest_send.result_current
         ApiDataChecker.check(response.get("DATA", {}), spec.context, self.log, self.nd.module.fail_json)
 
+        recorded_payload = mask_password(spec.payload)
         self.results.action = spec.action
         self.results.operation_type = spec.op_type
+        self.results.path_current = spec.endpoint.path
+        self.results.verb_current = HttpVerbEnum(spec.endpoint.verb)
+        self.results.payload_current = recorded_payload
+        self.results.verbosity_level_current = spec.verbosity_level
         self.results.response_current = response
         self.results.result_current = result
-        self.results.diff_current = spec.diff if spec.diff is not None else spec.payload
+        self.results.diff_current = mask_password(spec.diff) if spec.diff is not None else recorded_payload
         self.results.register_api_call()
 
         if not result.get("success"):
@@ -1433,6 +1439,7 @@ class SwitchFabricOps:
         self.ctx.results.path_current = endpoint.path
         self.ctx.results.verb_current = endpoint.verb
         self.ctx.results.payload_current = payload
+        self.ctx.results.verbosity_level_current = 2
         self.ctx.results.register_api_call()
 
     def finalize(self, serial_numbers: list[str] | None = None) -> None:

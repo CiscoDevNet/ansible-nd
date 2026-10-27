@@ -389,9 +389,10 @@ def test_switch_service_context_api_call_registers_successful_result():
     response = ctx.api_call(
         ApiCallSpec(
             endpoint=SimpleNamespace(path="/api/test", verb="POST"),
-            payload={"payload": True},
+            payload={"payload": True, "password": "secret"},
             action="create",
             op_type=OperationType.CREATE,
+            verbosity_level=4,
         )
     )
 
@@ -399,6 +400,12 @@ def test_switch_service_context_api_call_registers_successful_result():
     assert nd.calls[0]["timeout"] == 1
     assert results.metadata[0]["action"] == "create"
     assert results.diffs[0]["payload"] is True
+    assert results.path == ["/api/test"]
+    assert results.verb == [HttpVerbEnum.POST]
+    assert results.payload == [{"payload": True, "password": "********"}]
+    assert results.diffs[0]["password"] == "********"
+    assert results.verbosity_level == [4]
+    assert nd.calls[0]["data"]["password"] == "secret"
 
 
 def test_switch_service_context_api_call_fails_on_request_error_and_unsuccessful_result():
@@ -426,6 +433,9 @@ def test_switch_service_context_api_call_fails_on_request_error_and_unsuccessful
                 context="create switch",
             )
         )
+    assert failed_ctx.results.path == ["/api/test"]
+    assert failed_ctx.results.verb == [HttpVerbEnum.POST]
+    assert failed_ctx.results.verbosity_level == [2]
 
 
 def test_validate_configs_accepts_dict_and_rejects_duplicates():
@@ -1173,6 +1183,7 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_switches"]
     assert results.path == ["/config-save", "/switch-deploy"]
     assert results.payload == [None, {"switchIds": ["SERIAL1"]}]
+    assert results.verbosity_level == [2, 2]
     assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
     calls.clear()
@@ -1269,6 +1280,34 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     swap_handler.handle([swap_cfg], [_sw("192.0.2.30", "OLD1")])
     assert cache.refreshes == 1
     assert [entry["action"] for entry in swap_handler.ctx.results.metadata] == ["swap_serial", "bootstrap"]
+
+
+@pytest.mark.parametrize("output_level,verbosity", [("normal", 0), ("normal", 2), ("normal", 3), ("debug", 0)])
+def test_poap_handler_records_submitted_request_at_documented_verbosity(output_level, verbosity):
+    nd = FakeND()
+    ctx = _ctx(nd=nd, results=Results())
+    handler = POAPHandler(ctx, RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": _bootstrap_entry("POAP1")}))
+
+    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "poap1"})])
+
+    assert len(nd.calls) == 1
+    request = nd.calls[0]
+    assert request["path"] == "/api/v1/manage/fabrics/FAB1/switchActions/importBootstrap"
+    assert request["verb"] == HttpVerbEnum.POST
+    effective_verbosity = max(verbosity, 3) if output_level == "debug" else verbosity
+    output = NDOutput(output_level).format_with_verbosity(effective_verbosity, results=ctx.results)
+    if effective_verbosity < 2:
+        assert "api_paths" not in output
+        assert "api_verbs" not in output
+        assert "api_payload" not in output
+    else:
+        assert output["api_paths"] == [request["path"]]
+        assert output["api_verbs"] == [request["verb"]]
+        if effective_verbosity < 3:
+            assert "api_payload" not in output
+        else:
+            assert output["api_payload"] == [mask_password(request["data"])]
+            assert output["api_diff"][0]["switches"][0]["password"] == "********"
 
 
 def test_poap_handler_omits_software_image_when_not_requested():
@@ -1786,7 +1825,7 @@ def test_utils_payload_masking_and_payload_builders_do_not_mutate_input():
     payload = {
         "password": "top-secret",
         "switches": [
-            {"serialNumber": "SERIAL1", "password": "switch-secret"},
+            {"serialNumber": "SERIAL1", "password": "switch-secret", "credentials": {"discoveryPassword": "discovery-secret"}},
             {"serialNumber": "SERIAL2"},
         ],
     }
@@ -1795,8 +1834,10 @@ def test_utils_payload_masking_and_payload_builders_do_not_mutate_input():
 
     assert masked["password"] == "********"
     assert masked["switches"][0]["password"] == "********"
+    assert masked["switches"][0]["credentials"]["discoveryPassword"] == "********"
     assert payload["password"] == "top-secret"
     assert payload["switches"][0]["password"] == "switch-secret"
+    assert payload["switches"][0]["credentials"]["discoveryPassword"] == "discovery-secret"
 
     utils = PayloadUtils()
     assert utils.build_credentials_payload(["SERIAL1"], "admin", "password") == {

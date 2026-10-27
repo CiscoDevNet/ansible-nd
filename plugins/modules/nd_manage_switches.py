@@ -492,7 +492,7 @@ api_verbs:
   sample:
     - POST
 api_payload:
-  description: REST request payloads sent to ND.
+  description: REST request payloads sent to ND, with passwords redacted.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
@@ -517,7 +517,7 @@ api_result:
     - success: true
       changed: true
 api_diff:
-  description: Per-REST-call diff data recorded by the result infrastructure.
+  description: Per-REST-call diff data recorded by the result infrastructure, with passwords redacted.
   returned: with verbosity C(-vvv) or C(output_level=debug)
   type: list
   elements: dict
