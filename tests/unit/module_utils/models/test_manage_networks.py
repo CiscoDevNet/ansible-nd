@@ -12,6 +12,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_actions_models import (
     MulticastIpResponseModel,
     NetworkRemoveRequestModel,
@@ -423,6 +424,31 @@ def test_network_factories_select_matching_typed_models(model_cls, l2_cls, l3_cl
         assert not model.l2_data.model_fields_set
         assert not model.l3_data.model_fields_set
     assert existing.get_diff(proposed, exclude_unset=True)
+
+
+@pytest.mark.parametrize("network_type", ["routed", "classicLanEnhanced", "aimlRouted"])
+@pytest.mark.parametrize("group_field", ["hsrpVrrpGroupNumber", "hsrpVrrpGroupNumberV6"])
+@pytest.mark.parametrize("group_number", [0, 100, 4095])
+def test_routed_network_group_number_collection_readback_preserves_integer(network_type, group_field, group_number):
+    row = {"networkName": "USERS", "networkType": network_type, "networkMode": "layer3", "l3Data": {group_field: group_number}}
+
+    collection = NDConfigCollection.from_api_response([row], NetworkBaseModel)
+
+    network = collection.get("USERS")
+    assert isinstance(network.l3_data, ClassicOrRoutedL3DataModel)
+    assert network.to_payload(exclude_unset=True)["l3Data"][group_field] == group_number
+    assert network.to_diff_dict(exclude_unset=True)["l3Data"][group_field] == group_number
+    assert network.to_gathered_config()["network_name"] == "USERS"
+
+
+@pytest.mark.parametrize("network_type", ["routed", "classicLanEnhanced", "aimlRouted"])
+@pytest.mark.parametrize("group_field", ["hsrpVrrpGroupNumber", "hsrpVrrpGroupNumberV6"])
+@pytest.mark.parametrize("invalid", [-1, 4096, {"group": 100}])
+def test_routed_network_group_number_readback_rejects_invalid_values(network_type, group_field, invalid):
+    row = {"networkName": "USERS", "networkType": network_type, "networkMode": "layer3", "l3Data": {group_field: invalid}}
+
+    with pytest.raises(ValidationError):
+        NDConfigCollection.from_api_response([row], NetworkBaseModel)
 
 
 def test_vxlan_nested_models_apply_defaults_without_manufacturing_explicit_fields():
