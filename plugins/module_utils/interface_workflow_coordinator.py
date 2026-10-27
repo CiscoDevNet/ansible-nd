@@ -25,6 +25,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters
     InterfaceDeleteStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_performance_profile import InterfacePerformanceProfile
+from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_contract import (
+    desired_equality, workflow_contract, workflow_options, write_receipt,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_observed_satisfaction import observed_satisfaction
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
     InterfaceStateSnapshot,
 )
@@ -35,6 +39,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_execut
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfaceWorkflowPlan,
     VpcStagedDeletionProof,
+    LogicalStagedDeletionProof,
     InterfaceWorkflowPlanner,
     InterfaceWorkflowValidationError,
 )
@@ -88,6 +93,8 @@ class InterfaceWorkflowCoordinator:
         self._vpc_pair_gets = 0
         self._snapshot: InterfaceStateSnapshot | None = None
         self._performance_profile = InterfacePerformanceProfile() if module.params.get("profile", False) else None
+        self._rest_sends = []
+        self._execution_options = workflow_options(module.params)
 
     def _new_rest_send(self, params: dict[str, Any] | None = None, *, check_mode: bool | None = None) -> RestSend:
         """Build an authenticated collection REST runtime for this module invocation."""
@@ -99,7 +106,15 @@ class InterfaceWorkflowCoordinator:
         rest_send.sender = sender
         rest_send.response_handler = ResponseHandler()
         rest_send.performance_profile = self._performance_profile
+        self._rest_sends.append(rest_send)
         return rest_send
+
+    def attach_contract(self, result):
+        """Preserve dispatch facts even when planning or validation rejects."""
+        result = dict(result)
+        result["workflow_contract"] = workflow_contract(self.module.params)
+        result["write_receipt"] = write_receipt(self._rest_sends, params=self.module.params)
+        return result
 
     @staticmethod
     def _request(
@@ -675,6 +690,42 @@ class InterfaceWorkflowCoordinator:
         return tuple(dict.fromkeys(targets))
 
     @classmethod
+    def _staged_deletions(cls, plan: InterfaceWorkflowPlan) -> list[dict[str, Any]]:
+        """Expose strict current non-vPC staging separately from final absence."""
+        staged = {(name.casefold(), switch_id)
+                  for name, switch_id in getattr(plan, "staged_delete_targets", ())}
+        proofs = {(proof.resource_index, proof.resource_type, proof.switch_id,
+                   proof.interface_name.casefold()): proof
+                  for proof in getattr(plan, "logical_staged_deletions", ())
+                  if isinstance(proof, LogicalStagedDeletionProof)}
+        result, seen = [], set()
+        allowed = {"svi", "loopback", "port_channel_access", "port_channel_trunk_host",
+                   "port_channel_routed", "subinterface_managed", "subinterface_unmanaged"}
+        for resource in plan.resources:
+            if (resource.state != "deleted" or resource.resource_type not in allowed
+                    or type(resource.resource_index) is not int or resource.resource_index < 0):
+                continue
+            context = getattr(resource.orchestrator, "fabric_context", None)
+            if context is None:
+                continue
+            operation_keys = cls._operation_keys(resource)
+            for desired in resource.proposed:
+                name = desired.interface_name
+                serial = context.get_switch_id(desired.switch_ip)
+                key = resource.resource_index, resource.resource_type, serial, name.casefold()
+                if (key not in proofs or key in seen or (name.casefold(), serial) not in staged
+                        or cls._target_key(desired) in operation_keys):
+                    continue
+                seen.add(key)
+                result.append({"resource_index": resource.resource_index,
+                               "type": resource.resource_type, "state": "deleted",
+                               "switch_id": serial, "interface_name": name,
+                               "status": "staged",
+                               "raw_observation_sha256": proofs[key].raw_observation_sha256,
+                               "member_interfaces": list(proofs[key].member_interfaces)})
+        return result
+
+    @classmethod
     def _vpc_staged_deletions(cls, plan: InterfaceWorkflowPlan) -> list[dict[str, Any]]:
         """Expose planner-proven pair delete staging without claiming absence.
 
@@ -1118,6 +1169,7 @@ class InterfaceWorkflowCoordinator:
             "mutation_count": plan.mutation_count,
             "target_switch_ids": list(plan.target_switch_ids),
             "vpc_staged_deletions": self._vpc_staged_deletions(plan),
+            "staged_deletions": self._staged_deletions(plan),
             "member_preparations": list(execution_result.get("member_preparations", ())),
             "resources": resource_results,
             "request_stats": request_stats,
@@ -1125,6 +1177,9 @@ class InterfaceWorkflowCoordinator:
         }
 
     def run(self) -> dict[str, Any]:
+        return self.attach_contract(self._run())
+
+    def _run(self) -> dict[str, Any]:
         """Plan the complete workflow, then execute only after all validation succeeds."""
         profile = self._performance_profile
         with profile.phase("planning") if profile is not None else nullcontext():
@@ -1144,18 +1199,34 @@ class InterfaceWorkflowCoordinator:
             preview_targets = tuple(dict.fromkeys((*self._operation_deployment_targets(plan), *pending_deployment_targets))) if deploy else ()
             with profile.phase("output") if profile is not None else nullcontext():
                 result = self._format_result(plan, deployment_targets=preview_targets)
+            if self._execution_options.get("observed_satisfaction") is True:
+                with profile.phase("observed_satisfaction") if profile is not None else nullcontext():
+                    result["observed_satisfaction"] = observed_satisfaction(
+                        params=self.module.params, plan=plan, snapshot=self._snapshot,
+                        rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
+                        check_mode=self.module.check_mode,
+                    )
             if profile is not None:
                 result["performance_profile"] = profile.to_dict()
             return result
         if not plan.changed and not pending_deployment_targets:
             with profile.phase("output") if profile is not None else nullcontext():
                 result = self._format_result(plan)
+            if self._execution_options["desired_equality"]:
+                with profile.phase("desired_equality") if profile is not None else nullcontext():
+                    result["desired_equality"] = desired_equality(
+                        params=self.module.params, plan=plan, snapshot=self._snapshot,
+                        rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
+                    )
             if profile is not None:
                 result["performance_profile"] = profile.to_dict()
             return result
         if self._snapshot is None:
             raise RuntimeError("Interface workflow snapshot was not initialized.")
-        executor = self.executor_factory(snapshot=self._snapshot, deploy=deploy, verify=verify)
+        executor_options = {"snapshot": self._snapshot, "deploy": deploy, "verify": verify}
+        if self._execution_options["member_batching"] != "disabled":
+            executor_options["member_batching"] = self._execution_options["member_batching"]
+        executor = self.executor_factory(**executor_options)
         try:
             with profile.phase("execution") if profile is not None else nullcontext():
                 execution = executor.execute(
@@ -1174,6 +1245,14 @@ class InterfaceWorkflowCoordinator:
             if profile is not None:
                 result["performance_profile"] = profile.to_dict()
             raise InterfaceWorkflowExecutionFailed(result, execution.message)
+        if self._execution_options["desired_equality"]:
+            with profile.phase("desired_equality") if profile is not None else nullcontext():
+                result["desired_equality"] = desired_equality(
+                    params=self.module.params, plan=plan, snapshot=self._snapshot,
+                    rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
+                ) if verify else {"version": 1, "observed": False, "complete": False,
+                                  "all_satisfied": False, "resources": [], "reason": "verification_disabled",
+                                  "request_sha256": workflow_contract(self.module.params)["request_sha256"]}
         if profile is not None:
             result["performance_profile"] = profile.to_dict()
         return result

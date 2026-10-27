@@ -181,6 +181,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         None
         """
         self._pending_deploys: list[tuple[str, str]] = []
+        self._pending_deploy_keys: set[tuple[str, str]] | None = set()
+        self._pending_deploy_keys_for = self._pending_deploys
         self._pending_removes: list[tuple[str, str]] = []
         self._deploy_attempted: bool = False
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
@@ -1434,6 +1436,15 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint.switch_sn = switch_sn
         return api_endpoint
 
+    def _replace_pending_deploys(self, targets: list[tuple[str, str]]) -> None:
+        """Replace the ordered queue and rebuild its plain-string membership index."""
+        self._pending_deploys = targets
+        self._pending_deploy_keys = set(targets) if all(
+            type(pair) is tuple and len(pair) == 2 and all(type(value) is str for value in pair)
+            for pair in targets
+        ) else None
+        self._pending_deploy_keys_for = targets
+
     def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
@@ -1446,6 +1457,17 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         None
         """
         pair = (interface_name, switch_id)
+        keys = getattr(self, "_pending_deploy_keys", None)
+        if (type(interface_name) is str and type(switch_id) is str and keys is not None
+                and getattr(self, "_pending_deploy_keys_for", None) is self._pending_deploys
+                and len(keys) == len(self._pending_deploys)):
+            if pair not in keys:
+                self._pending_deploys.append(pair)
+                keys.add(pair)
+            return
+        # Preserve list comparison behavior for nonstandard caller values or
+        # externally replaced queues, including unhashable tuple components.
+        self._pending_deploy_keys = None
         if pair not in self._pending_deploys:
             self._pending_deploys.append(pair)
 
@@ -1810,7 +1832,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     def dequeue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
         """Remove exact targets from the pending deploy queue without sending a request."""
         removed = set(targets)
-        self._pending_deploys = [target for target in self._pending_deploys if target not in removed]
+        self._replace_pending_deploys([target for target in self._pending_deploys if target not in removed])
 
     def absorb_deploy_context_from(self, source: NDBaseInterfaceOrchestrator) -> None:
         """Share exact derived identities and proven vPC pair scopes for a consolidated deploy."""
@@ -1882,7 +1904,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             return None
         self._deploy_attempted = True
         result = self.deploy_targets(self._pending_deploys)
-        self._pending_deploys = []
+        self._replace_pending_deploys([])
         return result
 
     def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
@@ -1923,7 +1945,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             self.deploy_targets(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
-        self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
+        self._replace_pending_deploys([pair for pair in self._pending_deploys if pair in unsent])
         return accepted
 
     def _unsent_delete_pairs(self) -> set[tuple[str, str]]:

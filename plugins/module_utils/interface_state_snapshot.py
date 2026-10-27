@@ -13,7 +13,7 @@ several orchestrators so every family observes the same initial state.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from typing import Any
 
@@ -91,6 +91,59 @@ class InterfaceStateSnapshot:
         self._interface_inventory_refreshes = 0
         self._dirty_refetches = 0
         self._snapshot_overlays = 0
+        # Topology evidence is shared across families for this execution. Host
+        # policy and member-setting writes do not change switch identity, vPC
+        # pairings or fabric links. Uncertain/topology writes invalidate it
+        # explicitly without replacing the original identity authority.
+        self._topology_context: FabricContext | None = None
+        self._topology_pairs: dict[str, dict[str, Any]] = {}
+        self._topology_generation = 0
+        self._refresh_boundary_depth = 0
+        self._boundary_refreshed: set[str] = set()
+
+    @property
+    def topology_generation(self) -> int:
+        """Execution-local generation of switch/pair/link evidence."""
+        return self._topology_generation
+
+    def topology_context(self, factory: Callable[[], FabricContext]) -> FabricContext:
+        """Read fresh raw switch metadata once per evidence generation."""
+        if self._topology_context is None:
+            self._topology_context = factory()
+        return self._topology_context
+
+    def topology_pair(self, switch_id: str, request: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Share positive and negative exact-pair responses across families."""
+        if switch_id not in self._topology_pairs:
+            result = request()
+            if not isinstance(result, dict):
+                raise ValueError("Switch pair evidence must be a dictionary.")
+            self._topology_pairs[switch_id] = deepcopy(result)
+        return deepcopy(self._topology_pairs[switch_id])
+
+    def invalidate_topology_evidence(self) -> None:
+        """Drop topology proof after relevant changes or uncertain requests."""
+        self._topology_context = None
+        self._topology_pairs.clear()
+        self._topology_generation += 1
+
+    @contextmanager
+    def refresh_boundary(self):
+        """Coalesce clean repeated switch refreshes within one dependency phase.
+
+        A write that marks a switch dirty still requires a new observation.
+        The boundary ends before advancing to a dependent mutation phase.
+        """
+        outermost = self._refresh_boundary_depth == 0
+        if outermost:
+            self._boundary_refreshed.clear()
+        self._refresh_boundary_depth += 1
+        try:
+            yield
+        finally:
+            self._refresh_boundary_depth -= 1
+            if outermost:
+                self._boundary_refreshed.clear()
 
     @staticmethod
     def _normalise_switch_ids(switch_ids: str | Iterable[str]) -> list[str]:
@@ -473,9 +526,16 @@ class InterfaceStateSnapshot:
         """
         with self.performance_profile.phase("reconciliation") if self.performance_profile is not None else nullcontext():
             normalised = self._normalise_switch_ids(switch_ids)
-            self._interface_inventory_refreshes += len(normalised)
-            self.invalidate(normalised)
-            return self.load_switches(normalised)
+            refresh_ids = [switch_id for switch_id in normalised
+                           if not self._refresh_boundary_depth
+                           or switch_id not in self._boundary_refreshed
+                           or not self.has_switch(switch_id)]
+            self._interface_inventory_refreshes += len(refresh_ids)
+            self.invalidate(refresh_ids)
+            result = self.load_switches(normalised)
+            if self._refresh_boundary_depth:
+                self._boundary_refreshed.update(refresh_ids)
+            return result
 
     @property
     def request_stats(self) -> dict[str, int]:

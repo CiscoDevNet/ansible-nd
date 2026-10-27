@@ -143,6 +143,40 @@ options:
           forces reconciliation even when this option is V(false).
         type: bool
         default: false
+  execution_options:
+    description:
+    - Optional versioned execution evidence and experimental member-update batching.
+    type: dict
+    suboptions:
+      contract_version:
+        description: Requested version of the execution receipt contract.
+        type: int
+        choices: [1]
+        default: 1
+      desired_equality:
+        description:
+        - Return per-target equality from a detached copy of observed inventories without additional controller requests.
+        - Mutating workflows require O(verify.enabled=true) for a complete observation. Unsupported scopes return incomplete proof.
+        type: bool
+        default: false
+      observed_satisfaction:
+        description:
+        - Return a distinct actual-observation receipt for a completely satisfied read-only check-mode preplan.
+        - Requires O(config_actions.deploy=false) and O(verify.enabled=false). This is not an apply or postdeployment receipt.
+        - Initially qualifies seven ordinary NX-OS families and strict already-reset physical deletions.
+        - Unsupported, changing, unknown or incomplete observations decline the proof and retain ordinary execution behavior.
+        type: bool
+        default: false
+      member_batching:
+        description:
+        - V(disabled) retains singular member PUTs.
+        - V(switch_policy) is an opt-in qualification path grouping ready ordinary NX-OS members by switch and member policy.
+        - V(experimental_policy) groups by member policy across switches; V(experimental_mixed) permits mixed policies and switches.
+        - Experimental grouping modes require separate bounded live qualification before operational use.
+        - Preserves member safety checks and dependency barriers. IOS-XE and paired vPC member policies retain the singular path.
+        type: str
+        choices: [disabled, switch_policy, experimental_policy, experimental_mixed]
+        default: disabled
   profile:
     description:
     - Include aggregate phase, CPU, transport-attempt, and logical JSON-size measurements for performance experiments.
@@ -697,6 +731,68 @@ request_stats:
     vpc_pair_gets:
       description: Fabric vPC-pair inventory GETs.
       type: int
+workflow_contract:
+  description:
+  - Version, capabilities, normalized requested options and C(request_sha256) binding fabric, exact resources and execution semantics.
+  returned: after coordinator initialization, including planning failures
+  type: dict
+write_receipt:
+  description:
+  - Versioned mutation and deployment dispatch-attempt counts, including failed attempts and lost responses.
+  - C(no_mutation_attempted=true) means no mutation or deployment dispatch began; it is bound by C(request_sha256).
+  returned: after coordinator initialization, including planning failures
+  type: dict
+staged_deletions:
+  description:
+  - Current non-vPC logical deletions independently proved during planning from exact controller tombstones and scoped configuration previews.
+  - Bound to the current C(workflow_contract.request_sha256) and advertised by the C(staged_deletions_v1) capability.
+  - This establishes staging only. It does not prove a historical accepted write, final interface absence, member default configuration, or postdeployment convergence.
+  - Consumers requiring a read-only proof must also check the matching C(write_receipt) reports zero mutation and deployment attempts.
+  returned: when planning completes
+  type: list
+  elements: dict
+  contains:
+    resource_index:
+      description: Index of the exact requested resource group.
+      type: int
+    type:
+      description: Requested non-vPC logical interface family.
+      type: str
+    state:
+      description: Always V(deleted).
+      type: str
+    switch_id:
+      description: Exact controller chassis identity.
+      type: str
+    interface_name:
+      description: Canonical requested interface name.
+      type: str
+    status:
+      description: Always V(staged); final absence requires a separate fresh observation after deployment.
+      type: str
+    raw_observation_sha256:
+      description: SHA256 of canonical JSON for the entire actual controller interface row before any name normalization or desired-state projection.
+      type: str
+    member_interfaces:
+      description:
+      - Canonical physical members independently named by both this parent's current running channel-group and its pending membership removal.
+      - Empty for other logical interfaces. Historical member lists and another parent's members do not grant correction authority.
+      type: list
+      elements: str
+desired_equality:
+  description:
+  - Versioned cache-only residual planning over actual observed inventories, bound by C(request_sha256).
+  - Includes every supported resource's exact targets with satisfied and residual-action evidence.
+  - Incomplete, unverified, removal and unqualified generated-vPC scopes cannot certify desired equality.
+  returned: when O(execution_options.desired_equality=true) and normal planning completes
+  type: dict
+observed_satisfaction:
+  description:
+  - Exact request-bound read-only observation of complete no-op intent, with strict cached raw configuration and ownership checks.
+  - C(complete=false) declines reuse; it does not reject an otherwise valid create or update.
+  - Never proves logical deletion, vPC generated-footprint recovery or postdeployment convergence.
+  returned: when O(execution_options.observed_satisfaction=true) and check-mode planning completes
+  type: dict
 performance_profile:
   description:
   - Inclusive phase wall/CPU measurements and categorized transport-attempt counts, durations, and logical JSON byte sizes.
@@ -799,6 +895,14 @@ def interface_workflow_argument_spec():
                 },
             },
             "profile": {"type": "bool", "default": False},
+            "execution_options": {
+                "type": "dict", "default": {}, "options": {
+                    "contract_version": {"type": "int", "choices": [1], "default": 1},
+                    "desired_equality": {"type": "bool", "default": False},
+                    "observed_satisfaction": {"type": "bool", "default": False},
+                    "member_batching": {"type": "str", "choices": ["disabled", "switch_policy", "experimental_policy", "experimental_mixed"], "default": "disabled"},
+                },
+            },
         }
     )
     argument_spec.update(config_actions_spec(include=("deploy",)))
@@ -810,20 +914,21 @@ def main():
     module = AnsibleModule(argument_spec=interface_workflow_argument_spec(), supports_check_mode=True)
     require_pydantic(module)
     setup_logging(module)
+    coordinator = InterfaceWorkflowCoordinator(module=module)
     try:
-        module.exit_json(**InterfaceWorkflowCoordinator(module=module).run())
+        module.exit_json(**coordinator.run())
     except InterfaceWorkflowExecutionFailed as exc:
-        module.fail_json(msg=str(exc), **exc.result)
+        module.fail_json(msg=str(exc), **coordinator.attach_contract(exc.result))
     except InterfaceWorkflowConflictError as exc:
-        module.fail_json(
+        module.fail_json(**coordinator.attach_contract(dict(
             msg=str(exc),
             changed=False,
             conflicts=[conflict.to_dict() for conflict in exc.conflicts],
-        )
+        )))
     except InterfaceWorkflowValidationError as exc:
-        module.fail_json(msg=str(exc), changed=False)
+        module.fail_json(**coordinator.attach_contract(dict(msg=str(exc), changed=False)))
     except Exception as exc:  # pylint: disable=broad-except
-        module.fail_json(msg=f"Unexpected interface workflow error: {exc}", changed=False)
+        module.fail_json(**coordinator.attach_contract(dict(msg=f"Unexpected interface workflow error: {exc}", changed=False)))
 
 
 if __name__ == "__main__":
