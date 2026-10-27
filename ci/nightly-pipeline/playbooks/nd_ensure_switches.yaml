@@ -585,12 +585,9 @@
               to finalise any pending Leaf-ToR unpairing before removal.
           when: nd_switch_predelete_deploy | bool
 
-        # A failed removal no longer stops the move. With the opt-in force-delete fallback the error
-        # is ignored here so that fallback gets a chance; the best-effort wait task further down then
-        # falls through to the onboard step regardless. ND often reports a delete as failed when the
-        # switch has in fact already left, so gating the eBGP add on a confirmed removal would wrongly
-        # block switches that are already gone (and the other switches that did leave) - instead we
-        # attempt the add and let the onboard retries + enforced confirmation gate be the arbiter.
+        # With the opt-in force-delete fallback the normal removal error is ignored here
+        # so that fallback gets a chance. The bounded source-membership wait below remains
+        # a hard gate: onboarding starts only after ND confirms the moved switches left.
         - name: Remove each switch from the fabric it is leaving
           cisco.nd.nd_manage_switches:
             fabric: "{{ _rm.key }}"
@@ -703,12 +700,9 @@
                     loop_var: _fres
                     label: "{{ _fres._ff.key }}"
 
-        # BEST-EFFORT wait (never fatal): give ND up to nd_switch_rehome_retries x
-        # nd_switch_rehome_delay seconds to report each moved switch gone, then proceed to the
-        # onboard step whether or not every switch was confirmed gone. A switch that is slow to
-        # leave (or that ND's gather is simply lagging on) must NOT block adding the switches that
-        # did leave to the eBGP fabric; a switch that genuinely never leaves is caught by the
-        # onboard add retries and the enforced confirmation gate below, not here.
+        # Require ND to confirm source membership removal before the destination add.
+        # Give ND up to nd_switch_rehome_retries x nd_switch_rehome_delay seconds to
+        # converge; an unconfirmed removal fails this move before onboarding begins.
         - name: Wait until ND reports the moved switches gone from the fabric they left
           cisco.nd.nd_manage_switches:
             fabric: "{{ _rm.key }}"
@@ -724,7 +718,6 @@
              | length) == 0
           retries: "{{ nd_switch_rehome_retries | int }}"
           delay: "{{ nd_switch_rehome_delay | int }}"
-          ignore_errors: true
 
         - name: Report the completed move
           ansible.builtin.debug:

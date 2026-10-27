@@ -930,6 +930,10 @@ def render_round_texts(texts, round_fabric, round_type=None):
     round_type = round_type or peer["type"]
     if not _FABRIC_TYPE_TOKEN.fullmatch(round_type):
         raise ValidationError(f"invalid fabric type: {round_type}")
+    if round_type != peer["type"]:
+        raise ValidationError(
+            f"the round type must be the preserved fabric type {peer['type']}, not {round_type}"
+        )
     missing = sorted(set(ROUND_RENDER_FILES) - set(texts))
     if missing:
         raise ValidationError(f"round files are missing: {missing}")
@@ -1054,19 +1058,60 @@ def render_fabric_round(root, round_fabric, round_type=None):
     _verify_rendered_round(rendered, round_fabric, round_type)
 
     staged = []
+    originals = {}
+    home_copy = root / HOME_ROSTER_COPY
     try:
-        home_copy = root / HOME_ROSTER_COPY
-        if home_copy.is_symlink():
+        if home_copy.is_symlink() or (home_copy.exists() and not home_copy.is_file()):
             raise ValidationError(f"home roster copy is unsafe: {home_copy}")
+        # Stage the original contents too: if any replacement fails, restore every
+        # file already replaced before returning an error to the Jenkins gate.
+        originals[home_copy] = (
+            _stage_text(home_copy, home_copy.read_text(encoding="utf-8"), home_copy.stat().st_mode & 0o777)
+            if home_copy.exists() else None
+        )
+        for relative, text in texts.items():
+            target = root / relative
+            originals[target] = _stage_text(target, text, modes[relative])
         staged.append((home_copy, _stage_text(home_copy, texts["integration_config.yml"], modes["integration_config.yml"])))
         for relative, text in rendered.items():
             staged.append((root / relative, _stage_text(root / relative, text, modes[relative])))
     except BaseException:
-        for _, temp_path in staged:
-            temp_path.unlink(missing_ok=True)
+        for temp_path in [temp for _, temp in staged] + list(originals.values()):
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
         raise
-    for target, temp_path in staged:
-        os.replace(temp_path, target)
+
+    committed = []
+    preserve_originals = set()
+    try:
+        for target, temp_path in staged:
+            os.replace(temp_path, target)
+            committed.append(target)
+    except BaseException as exc:
+        rollback_errors = []
+        for target in reversed(committed):
+            try:
+                original = originals[target]
+                if original is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    os.replace(original, target)
+            except OSError as rollback_exc:
+                if originals[target] is not None:
+                    preserve_originals.add(originals[target])
+                rollback_errors.append(
+                    f"{target}: {rollback_exc}; original backup: {originals[target]}"
+                )
+        if rollback_errors:
+            raise ValidationError(
+                "fabric round replacement failed and rollback was incomplete; no switches may be moved: "
+                + "; ".join(rollback_errors)
+            ) from exc
+        raise
+    finally:
+        for temp_path in [temp for _, temp in staged] + list(originals.values()):
+            if temp_path is not None and temp_path not in preserve_originals:
+                temp_path.unlink(missing_ok=True)
     return sorted(rendered)
 
 
