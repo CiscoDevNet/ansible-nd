@@ -276,14 +276,6 @@ notes:
   The final task result is failed when any entry fails. Failures returned after
   write calls begin are reported in task output and may require a rerun or manual
   cleanup.
-- Check mode reports C(changed=true) for planned policy changes or deletion
-  cleanup, without sending mutation or deployment requests.
-  C(state=gathered) always returns a C(gathered) list, including when empty.
-- C(before) preserves the original known target configuration. C(after) reports
-  accepted configuration, or predicted configuration in check mode. After a
-  partial failure, accepted changes are retained and rejected or unattempted
-  updates preserve their original values. These snapshots do not independently
-  verify controller persistence or switch running configuration.
 - C(state=gathered) and C(state=merged) idempotency checks use the active-policy
   view. Policies with C(markDeleted=true) and generated/internal policies with
   non-empty C(source) do not satisfy desired state, so replaying the same config

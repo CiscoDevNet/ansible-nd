@@ -135,6 +135,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
+        output_level: info
         use_description_as_key: true
         config:
           - name: switch_freeform
@@ -151,6 +152,13 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.before | length == 1
+          - result.after | length == 1
+          - result.before[0].priority == 115
+          - result.before[0].templateInputs.CONF == "bfd interval 250 min_rx 250 multiplier 3"
+          - result.after[0].priority == 115
+          - result.after[0].description == "BFD timers"
+          - result.after[0].templateInputs.CONF == "bfd interval 500 min_rx 500 multiplier 5"
       tags: modify
 
     - name: "MODIFY TC3 - Gather BFD timers after omitted-priority update"
@@ -172,6 +180,9 @@
           - tc3_gathered_result.gathered | length == 1
           - tc3_gathered_result.gathered[0].priority == 115
           - tc3_gathered_result.gathered[0].template_inputs.CONF == "bfd interval 500 min_rx 500 multiplier 5"
+          - result.after[0].policyId == tc3_gathered_result.gathered[0].policy_id
+          - result.after[0].priority == tc3_gathered_result.gathered[0].priority
+          - result.after[0].templateInputs.CONF == tc3_gathered_result.gathered[0].template_inputs.CONF
       tags: modify
 
     # TC-4: Modify using policy ID (gathered first to get ID)
@@ -186,10 +197,63 @@
       register: gathered_result
       tags: modify
 
+    - name: "MODIFY TC4 - Verify policy-ID fixture exists"
+      ansible.builtin.assert:
+        that:
+          - gathered_result.changed == false
+          - gathered_result.gathered | length == 1
+      tags: modify
+
     - name: "MODIFY TC4 - Extract policy ID from gathered result"
       ansible.builtin.set_fact:
         policy_id: "{{ gathered_result.gathered[0].policy_id }}"
-      when: gathered_result.gathered | length > 0
+      tags: modify
+
+    - name: "MODIFY TC4 - Preview sparse policy-ID update"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        output_level: info
+        config:
+          - name: "{{ policy_id }}"
+            priority: 800
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      check_mode: true
+      register: tc4_update_preview
+      tags: modify
+
+    - name: "MODIFY TC4 - Verify effective update preview"
+      ansible.builtin.assert:
+        that:
+          - tc4_update_preview.changed == true
+          - tc4_update_preview.before | length == 1
+          - tc4_update_preview.after | length == 1
+          - tc4_update_preview.before[0].priority == 999
+          - tc4_update_preview.after[0].priority == 800
+          - tc4_update_preview.after[0].policyId == policy_id
+          - tc4_update_preview.before[0].description == "Timezone CET"
+          - tc4_update_preview.after[0].description == "Timezone CET"
+          - tc4_update_preview.after[0].templateInputs == tc4_update_preview.before[0].templateInputs
+      tags: modify
+
+    - name: "MODIFY TC4 - Read policy after update preview"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ policy_id }}"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc4_preview_readback
+      tags: modify
+
+    - name: "MODIFY TC4 - Verify update preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - tc4_preview_readback.changed == false
+          - tc4_preview_readback.gathered == gathered_result.gathered
       tags: modify
 
     - name: "MODIFY TC4 - Modify policy by ID while omitting description"
@@ -197,6 +261,7 @@
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
+        output_level: info
         config:
           - name: "{{ policy_id }}"
             priority: 800
@@ -214,6 +279,12 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.before | length == 1
+          - result.after | length == 1
+          - result.before[0].priority == 999
+          - result.after[0].priority == 800
+          - result.after[0].description == "Timezone CET"
+          - result.after[0].policyId == policy_id
       when: policy_id is defined
       tags: modify
 
@@ -247,6 +318,9 @@
           - tc4_policy_id_matches | length == 1
           - tc4_policy_id_matches[0].description == "Timezone CET"
           - tc4_policy_id_matches[0].priority == 800
+          - result.after[0].priority == tc4_policy_id_matches[0].priority
+          - result.after[0].description == tc4_policy_id_matches[0].description
+          - result.after[0].templateInputs.TIME_ZONE == tc4_policy_id_matches[0].template_inputs.TIME_ZONE
       when: policy_id is defined
       tags: modify
 

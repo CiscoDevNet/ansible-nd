@@ -14,11 +14,12 @@
     ##############################################
 
     # TC-1: Create a single policy with clock_timezone template
-    - name: "MERGED TC1 - Create clock_timezone policy"
+    - name: "MERGED TC1 - Preview clock_timezone creation"
       cisco.nd.nd_manage_policy: &merged_clock_tz
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
+        output_level: info
         config:
           - name: clock_timezone
             create_additional_policy: false
@@ -30,6 +31,42 @@
               MINUTE_OFFSET: 0
           - switch:
               - serial_number: "{{ switch_serial_1 }}"
+      check_mode: true
+      register: tc1_create_preview
+      tags: merged
+
+    - name: "MERGED TC1 - Verify creation preview"
+      ansible.builtin.assert:
+        that:
+          - tc1_create_preview.changed == true
+          - tc1_create_preview.before == []
+          - tc1_create_preview.after | length == 1
+          - tc1_create_preview.after[0].policyId is not defined
+          - tc1_create_preview.after[0].priority == 101
+          - tc1_create_preview.after[0].description == "Set timezone to CET"
+          - tc1_create_preview.after[0].templateInputs.TIME_ZONE == "CET"
+      tags: merged
+
+    - name: "MERGED TC1 - Gather after creation preview"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc1_preview_readback
+      tags: merged
+
+    - name: "MERGED TC1 - Verify creation preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - tc1_preview_readback.changed == false
+          - tc1_preview_readback.gathered == []
+      tags: merged
+
+    - name: "MERGED TC1 - Create clock_timezone policy"
+      cisco.nd.nd_manage_policy: *merged_clock_tz
       register: result
       tags: merged
 
@@ -37,11 +74,20 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.before == []
+          - result.after | length == 1
+          - result.after[0].policyId is defined
+          - result.after[0].priority == tc1_create_preview.after[0].priority
+          - result.after[0].templateInputs.TIME_ZONE == tc1_create_preview.after[0].templateInputs.TIME_ZONE
       tags: merged
 
     # TC-2: Idempotence - Re-run the same task
-    - name: "MERGED TC2 - Idempotence check for clock_timezone"
+    - name: "MERGED TC2 - Idempotence in real and check modes for clock_timezone"
       cisco.nd.nd_manage_policy: *merged_clock_tz
+      check_mode: "{{ item }}"
+      loop: [false, true]
+      loop_control:
+        label: "check_mode={{ item }}"
       register: result
       tags: merged
 
@@ -49,6 +95,11 @@
       ansible.builtin.assert:
         that:
           - result.changed == false
+          - result.results | length == 2
+          - result.results[0].changed == false
+          - result.results[1].changed == false
+          - result.results[0].before == result.results[0].after
+          - result.results[1].before == result.results[1].after
       tags: merged
 
     # TC-3: Create policy with clock_summertime template
