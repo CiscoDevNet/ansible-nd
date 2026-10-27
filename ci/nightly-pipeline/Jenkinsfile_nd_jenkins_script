@@ -223,7 +223,7 @@ def CONSUL_CONFIG_FILES = [
 // Consul-sourced integration runner. It is downloaded and freshness-validated
 // together with each active playbook before anything can execute.
 @Field
-def CONSUL_RUNNER_FILES = ['run_integration_module.yaml']
+def CONSUL_RUNNER_FILES = ['run_integration_module.yaml', 'nd_result_summary.py', 'nd_report.py']
 
 // Shared vPC standalone pre-clean playbook, installed with the other required helpers.
 @Field
@@ -425,6 +425,7 @@ pipeline {
     // User-facing run options. Every topology / module choice is a fixed constant of this script.
     parameters {
         booleanParam(name: 'DEBUG', defaultValue: false, description: 'Enable debug logging')
+        string(name: 'DEBUG_MODULES', defaultValue: '', description: 'With DEBUG enabled, comma-separated module names to debug; empty selects all')
         string(name: 'ND_GIT_BRANCH', defaultValue: 'develop', description: 'ansible-nd branch to run, or fork as owner:branch (for example nikhilsrikrishna:fix/nd-switch-deploy-no-commands-207). Leave blank to use develop.')
         string(name: 'WEBEX_CUSTOM_MESSAGE', defaultValue: '', description: 'Optional note shown below the Webex notification title (use for private/test runs).')
     }
@@ -1420,7 +1421,9 @@ def verifyInventoryFile(inventoryPath) {
  * @param ndfcConfig The NDFC configuration object.
  * @param playbookName The name of the playbook (e.g., 'dcnm_policy.yaml').
  */
-def archiveTestOutput(ndfcConfig, playbookName) {
+def archiveTestOutput(ndfcConfig, playbookName, expectedRunMarker = '') {
+    def archiveStarted = System.currentTimeMillis()
+    def archiveSucceeded = false
     def timestamp = new Date().format('yyyyMMdd_HHmmss')
     def baseFileName = "test_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}_${playbookName}"
     def archivedFileName = "${baseFileName}_${timestamp}.txt"
@@ -1449,7 +1452,8 @@ def archiveTestOutput(ndfcConfig, playbookName) {
         """
 
         // Archive the file from workspace
-        archiveArtifacts artifacts: "${archivedFileName}", allowEmptyArchive: true, fingerprint: true
+        archiveArtifacts artifacts: "${archivedFileName}", allowEmptyArchive: false, fingerprint: true
+        archiveSucceeded = true
         echo "✅ Archived: ${archivedFileName}"
 
         // Clean up workspace copy after archiving
@@ -1459,6 +1463,35 @@ def archiveTestOutput(ndfcConfig, playbookName) {
     } catch (Exception e) {
         echo "⚠️ Failed to archive ${baseFileName}: ${e.getMessage()}"
         return ''
+    } finally {
+        def archiveSeconds = (System.currentTimeMillis() - archiveStarted) / 1000.0
+        try {
+            withEnv(["ND_REPORT_LOG=${COLLECTIONS_DIRECTORY}/${baseFileName}.txt",
+                     "ND_REPORT_MODULE=${playbookName}", "ND_REPORT_RUN=${expectedRunMarker}",
+                     "ND_REPORT_ARCHIVE_SECONDS=${archiveSeconds}",
+                     "ND_REPORT_ARCHIVE_STATUS=${archiveSucceeded ? 'success' : 'failed'}",
+                     "ND_REPORT_ARTIFACT=${archivedFileName}"]) {
+                sh '''#!/bin/bash
+                    set -e
+                    "$HOME/ansible/venv/bin/python" "$COLLECTIONS_DIRECTORY/nd_result_summary.py" archive \\
+                        --log "$ND_REPORT_LOG" --module "$ND_REPORT_MODULE" --run-id "$ND_REPORT_RUN" \\
+                        --archive-seconds "$ND_REPORT_ARCHIVE_SECONDS" --archive-status "$ND_REPORT_ARCHIVE_STATUS"
+                    for kind in execution phases summary; do
+                        if [ -f "$ND_REPORT_LOG.$kind.json" ]; then
+                            cp "$ND_REPORT_LOG.$kind.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.$kind.json"
+                            chmod 0644 "$WORKSPACE/$ND_REPORT_ARTIFACT.$kind.json"
+                        fi
+                    done
+                '''
+                archiveArtifacts artifacts: "${archivedFileName}.*.json", allowEmptyArchive: false, fingerprint: true
+                sh '''#!/bin/bash
+                    rm -f -- "$WORKSPACE/$ND_REPORT_ARTIFACT.execution.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.phases.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.summary.json"
+                '''
+            }
+        } catch (Exception metadataError) {
+            echo "Failed to archive result metadata for ${playbookName}: ${metadataError.getMessage() ?: metadataError.getClass().getName()}"
+            env.PIPELINE_FAILED = 'true'
+        }
     }
 }
 
@@ -1989,14 +2022,14 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
     def totalFailedCount = 0
 
     try {
-        // Read the test output file (already created by the test run shell script).
-        // It lives under COLLECTIONS_DIRECTORY (outside the Jenkins workspace) and was
-        // written by `tee` inside the container. On the docker agent readFile() throws
-        // NoSuchFileException for that out-of-workspace absolute path even though
-        // fileExists() sees it, which mislabeled every passing module as
-        // "could not parse test output". Read it the same way it was written: a
-        // container-side cat via sh.
-        def testOutput = sh(script: "cat -- '${testOutputFileName}'", returnStdout: true)
+        def testOutput = withEnv(["ND_REPORT_LOG=${testOutputFileName}", "ND_REPORT_MODULE=${pb}", "ND_REPORT_RUN=${expectedRunMarker}"]) {
+            sh(script: '''#!/bin/bash
+                set -e
+                "$HOME/ansible/venv/bin/python" "$COLLECTIONS_DIRECTORY/nd_result_summary.py" summarize \\
+                    --log "$ND_REPORT_LOG" --module "$ND_REPORT_MODULE" --run-id "$ND_REPORT_RUN" \\
+                    --require-execution --format recap
+            ''', returnStdout: true).trim()
+        }
         echo "📊 Parsing test results from: ${testOutputFileName}"
 
         // A previous build's successful recap must never satisfy this run. Every
@@ -2179,7 +2212,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
             // suite runs more than once, every row carries its fabric round, e.g. "(eBGP)".
             // Fields: status|playbook|fabric|nd|passed|failed|skipped|duration|note
             def pbLabel = ((testType == 'smoke') ? "${pb} (smoke)" : pb) + (ndfcConfig.round_tag ?: '')
-            def rowStatus = moduleSkipped ? 'SKIP' : ((failedCount > 0) ? 'FAIL' : 'OK')
+            def rowStatus = moduleSkipped ? 'SKIP' : ((failedCount > 0 || ansibleExitStatus > 0) ? 'FAIL' : 'OK')
             if (moduleSkipped) {
                 echo "Module ${pb} skipped because its declared lab substrate is unavailable: ${skipNote}"
                 TEST_RESULT_SUMMARY_BUF += "\n${rowStatus}|${pbLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|${durationStr}|${skipNote}"
@@ -2259,12 +2292,13 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
         BUILD_FAILURE_REASON_BUF += "❌ ${ndfcConfig.fabric_name} test output file not found on ND ${ndfcConfig.version} (Playbook: ${pb})"
         error("Test output file not found: ${testOutputFileName}")
     } catch (Exception e) {
-        if (e.getMessage().contains("Test stage failed")) {
+        def failureMessage = e.getMessage() ?: e.getClass().getName()
+        if (failureMessage.contains("Test stage failed")) {
             // Re-throw test errors
             throw e
         } else {
             // Handle file reading or parsing errors
-            echo "⚠️ Error parsing test results for ${ndfcConfig.fabric_name}: ${e.getMessage()}"
+            echo "⚠️ Error parsing test results for ${ndfcConfig.fabric_name}: ${failureMessage}"
             setFailureFlag(failureFlagName, true)
             // Keep the DETAILED table consistent: show this module as an ERROR row
             // (same shape as the pass/fail rows) instead of leaving the section empty.
@@ -2273,7 +2307,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
                 BUILD_FAILURE_REASON_BUF += "\n"
             }
             BUILD_FAILURE_REASON_BUF += "❌ ${ndfcConfig.fabric_name} ${pb} on ND ${ndfcConfig.version}: test output missing/unreadable"
-            error("${ndfcConfig.fabric_name} test result parsing failed: ${e.getMessage()}")
+            error("${ndfcConfig.fabric_name} test result parsing failed: ${failureMessage}")
         }
     }
 }
@@ -3092,6 +3126,8 @@ def runFabricTest(ndfcConfig) {
                                  "VPC_PAIR_RUNS=${vpcPairRunsForShell}",
                                  "NETWORK_FABRIC_NAME=${networkFabricName}",
                                  "TEST_RUN_MARKER=${testRunMarker}",
+                                 "ND_REPORT_DEBUG_ENABLED=${params.DEBUG == true}",
+                                 "ND_REPORT_DEBUG_MODULES=${params.DEBUG_MODULES ?: ''}",
                                  "FABRIC_NAME=${ndfcConfig.fabric_name}",
                                  "SECONDARY_FABRIC_NAME=${secondaryFabricName}",
                                  "VERSION_ID=${ndfcConfig.versionId}",
@@ -3117,10 +3153,37 @@ def runFabricTest(ndfcConfig) {
                                     if [ -e "${EXPECTED_OUTPUT}" ] || [ -L "${EXPECTED_OUTPUT}" ]; then
                                         rm -f -- "${EXPECTED_OUTPUT}"
                                     fi
+                                    rm -f -- "${EXPECTED_OUTPUT}.execution.json" "${EXPECTED_OUTPUT}.phases.json" "${EXPECTED_OUTPUT}.summary.json"
                                 done
 
                                 cd \${COLLECTIONS_DIRECTORY}
                                 source \$HOME/ansible/venv/bin/activate
+
+                                mkdir -p .nd_reporting_callbacks
+                                cp nd_report.py .nd_reporting_callbacks/nd_report.py
+                                run_reported_playbook() {
+                                    local result_module="$1" result_log="$2" result_phase="$3"
+                                    shift 3
+                                    export ND_RESULT_MODULE="${result_module}" ND_RESULT_LOG="${PWD}/${result_log}"
+                                    export ND_RESULT_PHASE="${result_phase}"
+                                    export ANSIBLE_CALLBACK_PLUGINS="${PWD}/.nd_reporting_callbacks"
+                                    export ANSIBLE_STDOUT_CALLBACK=nd_report ANSIBLE_NOCOLOR=1
+                                    export ND_REPORT_DEBUG=false ANSIBLE_VERBOSITY=0
+                                    if [ "${ND_REPORT_DEBUG_ENABLED}" = true ]; then
+                                        case ",${ND_REPORT_DEBUG_MODULES// /}," in
+                                            ,,|*,"${result_module}",*) export ND_REPORT_DEBUG=true ANSIBLE_VERBOSITY=4 ;;
+                                        esac
+                                    fi
+                                    local result_start result_end result_status
+                                    result_start=$(date +%s)
+                                    if "$@"; then result_status=0; else result_status=$?; fi
+                                    result_end=$(date +%s)
+                                    python "${COLLECTIONS_DIRECTORY}/nd_result_summary.py" record \\
+                                        --log "${result_log}" --module "${result_module}" --run-id "${TEST_RUN_MARKER}" \\
+                                        --started "${result_start}" --ended "${result_end}" --exit-code "${result_status}" \\
+                                        --prerequisite-seconds "$((result_start - PREREQUISITE_START))" || return 125
+                                    return "${result_status}"
+                                }
 
                                 PROFILE_VALIDATOR="${COLLECTIONS_DIRECTORY}/validate_nd_prerequisites.py"
                                 PROFILE_REGISTRY="${COLLECTIONS_DIRECTORY}/nd_prerequisite_profiles.yaml"
@@ -3292,6 +3355,7 @@ def runFabricTest(ndfcConfig) {
                                         exit 1
                                     fi
                                     IFS='|' read -r _ VPC_FABRIC VPC_TYPE VPC_SW1 VPC_SW2 <<< "${VPC_ROW}"
+                                    PREREQUISITE_START=$(date +%s)
                                     ensure_switches_ready "standalone module $m"
                                     TARGET_PLAYBOOK="${COLLECTIONS_DIRECTORY}/tests/integration/targets/${VPC_MODULE}/tasks/main.yaml"
                                     OUTPUT_FILE="test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
@@ -3390,7 +3454,7 @@ PEERLINK_PROBE_EOF
                                         -e "@${INVENTORY_VARS_FILE}" -e "preclean_fabric=${VPC_FABRIC}" \
                                         -e "preclean_s1=${VPC_SW1}" -e "preclean_s2=${VPC_SW2}" \
                                         2>&1 | tee -a "${OUTPUT_FILE}" || true
-                                    ${TIMEOUT_CMD} ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}" \
+                                    run_reported_playbook "$m" "${OUTPUT_FILE}" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}" \
                                         -e "@${INVENTORY_VARS_FILE}" \
                                         -e "fabric_name=${VPC_FABRIC}" \
                                         -e "switch1_serial=${VPC_SW1}" \
@@ -3424,6 +3488,7 @@ PEERLINK_PROBE_EOF
                                     echo "========================================"
                                     echo "Running integration module: $m, pwd: $(pwd)"
                                     echo "========================================"
+                                    PREREQUISITE_START=$(date +%s)
                                     # Switches sanity is destructive (wipe + re-add); give the roster a
                                     # 10-min-spaced re-add retry before this module only. Every other module
                                     # keeps the single pre-module confirm/re-add.
@@ -3507,7 +3572,7 @@ PEERLINK_PROBE_EOF
                                             MOD_TIMEOUT="${MODULE_TIMEOUT}"
                                         fi
                                         MOD_TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 60 ${MOD_TIMEOUT}" || true)"
-                                        ${MOD_TIMEOUT_CMD} ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" \
+                                        run_reported_playbook "$m" "test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" prerequisites ${MOD_TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" \
                                             -e "@${INVENTORY_VARS_FILE}" \
                                             -e "test_module=$m" \
                                             -e "fabric_name=${FABRIC_NAME}" \
@@ -3544,6 +3609,7 @@ PEERLINK_PROBE_EOF
                                     echo "========================================"
                                     echo "Running playbook: \$pb, pwd: $(pwd)"
                                     echo "========================================"
+                                    PREREQUISITE_START=$(date +%s)
                                     ensure_switches_ready "smoke playbook $pb"
                                     if [ -f "\${COLLECTIONS_DIRECTORY}/\$pb" ] && \
                                        [ ! -L "\${COLLECTIONS_DIRECTORY}/\$pb" ] && \
@@ -3562,7 +3628,7 @@ PEERLINK_PROBE_EOF
                                         echo "=============="
                                         echo "\$pb: ${pb}"
                                         echo "INVENTORY_FILE: ${INVENTORY_FILE}"
-                                        ${TIMEOUT_CMD} ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/${pb}" \
+                                        run_reported_playbook "$pb" "test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/${pb}" \
                                             -e "@${INVENTORY_VARS_FILE}" \
                                             2>&1 | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
                                         ANSIBLE_STATUS=${PIPESTATUS[0]}
@@ -3740,7 +3806,7 @@ PEERLINK_PROBE_EOF
 
                             // Archive test output and retain its exact timestamped
                             // filename for the Webex row link.
-                            def archivedArtifact = archiveTestOutput(ndfcConfig, token)
+                            def archivedArtifact = archiveTestOutput(ndfcConfig, token, testRunMarker)
                             if (archivedArtifact) {
                                 def artifactLabel = ((testType == 'smoke') ? "${token} (smoke)" : token) + (ndfcConfig.round_tag ?: '')
                                 TEST_RESULT_ARTIFACTS_BUF += "\n${artifactLabel}|${archivedArtifact}"

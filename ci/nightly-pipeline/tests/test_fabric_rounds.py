@@ -832,6 +832,7 @@ import groovy.transform.Field
 @Field def failureFlag = false
 def echo(message) { messages.add(message.toString()) }
 def sh(options) { output }
+def withEnv(values, body) { body() }
 def setFailureFlag(name, value) { failureFlag = value }
 def error(message) { throw new RuntimeException(message.toString()) }
 '''

@@ -1259,6 +1259,12 @@
     # RUN: the module's full suite. A failure here fails the PLAY (so the recap
     # reports failed>0), while the always-cleanup still resets the fabric.
     # -------------------------------------------------------------------------
+    - name: "[{{ test_module }}] Begin execution timing"
+      ansible.builtin.debug:
+        msg: "NDP_PHASE_EXECUTION"
+      tags: [nd_phase_execution]
+      when: not (nd_prerequisite_only | default(false) | bool)
+
     - name: "[{{ test_module }}] RUN full integration suite (all test cases)"
       block:
         - name: "[{{ test_module }}] validate selected test groups"
@@ -1537,6 +1543,11 @@
                   - (_tor_gathered_2.after | selectattr('access_or_tor_switch_id', 'equalto', _ndp_tor_serial) | list | length) == 0
       when: not (nd_prerequisite_only | default(false) | bool)
       always:
+        - name: "[{{ test_module }}] Begin cleanup timing"
+          ansible.builtin.debug:
+            msg: "NDP_PHASE_CLEANUP"
+          tags: [nd_phase_cleanup]
+
         - name: "[{{ test_module }}] CLEANUP - post-clean (required)"
           ansible.builtin.include_role:
             name: "{{ test_module }}"

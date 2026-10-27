@@ -440,9 +440,9 @@ def test_jenkins_exposes_only_supported_job_parameters():
     match = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S)
     assert match is not None
     assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", match.group(1)) == [
-        "DEBUG", "ND_GIT_BRANCH", "WEBEX_CUSTOM_MESSAGE",
+        "DEBUG", "DEBUG_MODULES", "ND_GIT_BRANCH", "WEBEX_CUSTOM_MESSAGE",
     ]
-    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == {"ND_GIT_BRANCH", "WEBEX_CUSTOM_MESSAGE"}
+    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == {"DEBUG", "DEBUG_MODULES", "ND_GIT_BRANCH", "WEBEX_CUSTOM_MESSAGE"}
     for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC", "ND_SUBIF_ETHERNET_PARENT", "ND_INTERFACE_TEST_SWITCH_IP"):
         assert removed not in jenkins_text, removed
 
@@ -456,7 +456,7 @@ def test_jenkins_always_runs_nd_vpc_pair_and_never_skips_it():
     assert '"${TARGET_PLAYBOOK}"' in standalone
     assert 'VPC_PRECLEAN_PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_vpc_pair_preclean.yaml"' in standalone
     assert standalone.index('ansible-playbook -i "${INVENTORY_FILE}" "${VPC_PRECLEAN_PLAYBOOK}"') < standalone.index(
-        'ansible-playbook -vvvv -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}"'
+        'run_reported_playbook "$m" "${OUTPUT_FILE}" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}"'
     )
     assert "VPC_PRECLEAN_EOF" not in standalone
 
