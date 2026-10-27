@@ -125,6 +125,7 @@ NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
         "childFabricConfig",
     }
 )
+NETWORK_LAYER_INFERENCE_FIELDS = NETWORK_DEFINITION_INTENT_FIELDS - {"child_fabric_config", "childFabricConfig"}
 _L3_LAYER_INTENT_FIELDS = frozenset(
     {
         "mtu",
@@ -450,7 +451,7 @@ class NetworkConfigModel(NDBaseModel):
     @staticmethod
     def _has_definition_intent_for_layer(data: dict[str, Any]) -> bool:
         """Return true when sparse input is intended to create or update a network definition."""
-        return any(data.get(field) is not None for field in NETWORK_DEFINITION_INTENT_FIELDS)
+        return any(data.get(field) is not None for field in NETWORK_LAYER_INFERENCE_FIELDS)
 
     @staticmethod
     def _normalize_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:

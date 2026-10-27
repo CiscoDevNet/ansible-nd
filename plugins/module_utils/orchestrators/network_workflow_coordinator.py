@@ -652,8 +652,7 @@ class NetworkWorkflowCoordinator:
                 prepared_config_count=len(self.module.params["config"] or []),
             )
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
-            if state == "merged" and not active_strategy.is_child:
-                self._resolve_merged_layers(sm, module_args.get("config") or [], active_strategy)
+            self._resolve_proposed_networks(sm, module_args.get("config") or [], state, active_strategy)
             self._trace(
                 "state_machine_init_end",
                 fabric_name=active_strategy.fabric_name,
@@ -668,23 +667,36 @@ class NetworkWorkflowCoordinator:
             if not initialization_complete:
                 self._restore_state_machine_params(original_config, original_state)
 
-    def _resolve_merged_layers(self, sm: NDStateMachine, config: list[dict], strategy: BaseNetworkStrategy) -> None:
+    @staticmethod
+    def _resolve_proposed_networks(sm: NDStateMachine, config: list[dict], state: str, strategy: BaseNetworkStrategy) -> None:
         """
         # Summary
 
-        Validate deferred merged definitions against the cached inventory and resolve their proposed layer before CRUD.
-
-        Existing definitions retain their layer and VRF when omitted. New definitions use normal model inference.
-        Only proposed models are updated; the inventory snapshot and sparse property intent remain unchanged.
+        Resolve operational-only definitions and sparse merged layers from cached inventory in one pass.
 
         ## Raises
 
+        ### NDStateMachineError
+
+        - An operational-only Network is absent or has an unsupported policy.
+
         ### ValidationError
 
-        - If requested fields conflict with the effective layer or a new L3 definition has no VRF.
+        - A sparse merged definition conflicts with its effective layer.
         """
+        if state in ("gathered", "deleted"):
+            return
         for entry in config:
-            if not NDNetworkOrchestrator.should_defer_omitted_layer(entry, "merged"):
+            if not NDNetworkOrchestrator.has_network_definition_intent(entry):
+                name = entry["network_name"]
+                current = sm.existing.get(name)
+                if current is None:
+                    raise NDStateMachineError(f"Network '{name}' must already exist for an operational-only task.")
+                if getattr(current, "is_unsupported_policy", False):
+                    raise NDStateMachineError(current.describe_unsupported_policy() + "; this module cannot modify it.")
+                sm.proposed.replace(current.model_copy(deep=True))
+                continue
+            if state != "merged" or strategy.is_child or not NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
                 continue
             current = sm.existing.get(entry["network_name"])
             context = {"state": "merged", "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}

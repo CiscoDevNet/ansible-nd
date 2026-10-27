@@ -2256,7 +2256,7 @@ def test_primary_network_l3_fields_survive_validation_and_payload(state, explici
 
         snapshot = Snapshot()
         snapshot.proposed.add(proposed)
-        coordinator._resolve_merged_layers(snapshot, parsed, strategy)
+        coordinator._resolve_proposed_networks(snapshot, parsed, state, strategy)
     orchestrator.preflight_create([proposed])
     payload = orchestrator._create_or_update_payload(proposed)
     assert payload["vlanNetworkType"] == "privatePrimary"
@@ -2374,7 +2374,7 @@ def test_external_network_three_field_definition_defaults_to_layer2(state, check
     orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy, inventory=[])
     sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
     if state == "merged":
-        coordinator._resolve_merged_layers(sm, parsed, strategy)
+        coordinator._resolve_proposed_networks(sm, parsed, state, strategy)
     sm.manage_state()
 
     payload = orchestrator._create_or_update_payload(sm.sent.get("EXTERNAL_NET"))
@@ -2399,7 +2399,7 @@ def test_external_sparse_merged_update_preserves_existing_layer3():
         "l2Data": {"vlanName": "OLD"},
     }
     coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [existing], False, network_type="externalConnectivity")
-    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     assert sm.proposed.get("EXTERNAL_NET").layer == "layer3"
     sm.manage_state()
     payload = orchestrator.written_payloads[0]
@@ -2423,7 +2423,7 @@ def test_external_network_three_field_repeat_is_idempotent():
         }
     ]
     coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], inventory, False, network_type="externalConnectivity")
-    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     sm.manage_state()
 
     assert sm.output.format()["changed"] is False
@@ -2452,7 +2452,7 @@ def test_sparse_primary_update_keeps_existing_mode_through_real_state_machine(ch
     config = [{"network_name": "PRIMARY", "vlan_network_type": "primary", **update}]
     coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(config, inventory, check_mode, strategy_cls)
     assert "layer" not in parsed[0]
-    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     assert sm.before.get("PRIMARY").layer == layer
     sm.manage_state()
     payload = orchestrator._create_or_update_payload(sm.sent.get("PRIMARY"))
@@ -2506,7 +2506,7 @@ def test_sparse_l2_primary_rename_preserves_layer2_without_l3_defaults():
     coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
         [{"network_name": "PRIMARY", "vlan_network_type": "primary", "vlan_name": "NEW_NAME"}], inventory, False
     )
-    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     sm.manage_state()
     assert orchestrator.written_payloads[0]["networkMode"] == "layer2"
     assert orchestrator.written_payloads[0]["l2Data"]["vlanName"] == "NEW_NAME"
@@ -2522,7 +2522,7 @@ def test_sparse_primary_l3_fields_on_existing_l2_fail_before_writes(check_mode, 
         [{"network_name": "PRIMARY", "vlan_network_type": "primary", **update}], inventory, check_mode
     )
     with pytest.raises(ValueError, match="layer2 networks do not support L3 properties"):
-        coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     assert orchestrator.written_payloads == []
     assert orchestrator.query_count == 1
     assert sm.before.get("PRIMARY").layer == "layer2"
@@ -2537,10 +2537,10 @@ def test_new_primary_mtu_intent_resolves_to_l3_or_fails_before_create(check_mode
     coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([config], [], check_mode)
     if not with_vrf:
         with pytest.raises(ValueError, match="vrf_name is required"):
-            coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+            coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
         assert orchestrator.written_payloads == []
     else:
-        coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
         sm.manage_state()
         payload = orchestrator._create_or_update_payload(sm.sent.get("PRIMARY"))
         assert payload["networkMode"] == "layer3"
@@ -5922,7 +5922,7 @@ def test_sparse_x_connect_rejects_existing_routed_mode_before_writes(check_mode,
         strategy_cls,
     )
     with pytest.raises(ValueError, match="x_connect is only valid for layer2 networks"):
-        coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     assert not orchestrator.written_payloads
     assert orchestrator.query_count == 1
 
@@ -5978,7 +5978,7 @@ def test_sparse_layer2_rename_preserves_existing_vlan_netflow():
         ],
         False,
     )
-    coordinator._resolve_merged_layers(sm, parsed, orchestrator.strategy)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
     sm.manage_state()
     assert len(orchestrator.written_payloads) == 1
     payload = orchestrator.written_payloads[0]
@@ -6346,8 +6346,8 @@ def test_network_delete_wait_times_out_with_controller_blockers(wait_kind):
             manager.wait_for_attachments_delete_ready({}, strategy, ["N"])
 
 
-@pytest.mark.parametrize("state,should_resolve", [("merged", True), ("replaced", False)])
-def test_network_state_machine_setup_restores_params_after_validation(state, should_resolve, monkeypatch):
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_network_state_machine_setup_restores_params_after_validation(state, monkeypatch):
     from types import SimpleNamespace
 
     module = _Module({"config": [{"network_name": "ORIGINAL"}], "state": "original"})
@@ -6355,12 +6355,12 @@ def test_network_state_machine_setup_restores_params_after_validation(state, sho
     snapshot = SimpleNamespace(existing={}, proposed={}, state=state)
     calls = []
     monkeypatch.setattr(coordinator_mod, "NDStateMachine", lambda **_kwargs: snapshot)
-    monkeypatch.setattr(coordinator, "_resolve_merged_layers", lambda *_args: calls.append("resolve"))
+    monkeypatch.setattr(coordinator, "_resolve_proposed_networks", lambda *_args: calls.append("resolve"))
     sm, original_config, original_state = coordinator._new_state_machine(
         {"state": state, "config": [{"network_name": "N", "layer": "layer2"}]}, coordinator.strategy
     )
     assert sm is snapshot
-    assert calls == (["resolve"] if should_resolve else [])
+    assert calls == ["resolve"]
     coordinator._restore_state_machine_params(original_config, original_state)
     assert module.params == {"config": [{"network_name": "ORIGINAL"}], "state": "original"}
 
@@ -6388,7 +6388,7 @@ def test_network_merged_layer_resolution_updates_cached_proposal():
         existing={"N": SimpleNamespace(layer="layer2", vrf_name="NA")},
         proposed={"N": proposed},
     )
-    coordinator._resolve_merged_layers(sm, [{"network_name": "N", "vlan_name": "NEW"}], strategy)
+    coordinator._resolve_proposed_networks(sm, [{"network_name": "N", "vlan_name": "NEW"}], "merged", strategy)
     assert proposed.layer == "layer2"
 
 
@@ -6399,8 +6399,8 @@ def test_network_merged_layer_resolution_leaves_unresolved_proposal_unchanged():
     proposed = SimpleNamespace(layer=None)
     snapshot = SimpleNamespace(existing={}, proposed={"N": proposed})
     model_cls = SimpleNamespace(from_config=lambda *_args, **_kwargs: SimpleNamespace(layer=None))
-    strategy = SimpleNamespace(config_model_cls=model_cls, fabric_data={"managementType": "vxlanIbgp"})
-    coordinator._resolve_merged_layers(snapshot, [{"network_name": "N", "vlan_id": 100}], strategy)
+    strategy = SimpleNamespace(config_model_cls=model_cls, fabric_data={"managementType": "vxlanIbgp"}, is_child=False)
+    coordinator._resolve_proposed_networks(snapshot, [{"network_name": "N", "vlan_id": 100}], "merged", strategy)
     assert proposed.layer is None
 
 
