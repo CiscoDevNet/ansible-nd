@@ -1,8 +1,8 @@
 # `nd_manage_policy_group` Harness Parity
 
-The legacy suite under `tests/` is intentionally unchanged. The opt-in ND 4.x
-harness scenarios live under `tasks/nd4x_demo_*.yaml` and are selected with
-the `nd4x_demo` tag.
+The legacy suite under `tests/` is intentionally unchanged. The ND 4.x
+harness scenarios live under `tasks/nd4x_demo_*.yaml` and run as part of the
+normal target suite when the ND version preflight reports support.
 
 The harness scenarios use `ND4X-PG-` descriptions and target-local cleanup, so
 they do not remove resources created by the legacy suite or by other users.
@@ -113,11 +113,12 @@ read and, where applicable, a direct switch diff assertion.
 
 ## Execution
 
-The legacy suite remains the default path. Run the additive harness suite with
-the target's existing runner and the opt-in tag. Every supported module-specific
-harness tag is also applied to the preflight include, so a state-specific run
-executes preflight first. Preflight records `nd4x_supported`; the selected
-scenario then runs only when the controller is ND 4.x or newer.
+The legacy suite and harness run through the target's normal execution path.
+Use `--skip-tags nd4x_demo` to run only the legacy suite. Every supported
+module-specific harness tag is also applied to the preflight include, so a
+state-specific run executes preflight first. Preflight records
+`nd4x_supported`; the selected scenario then runs only when the controller is
+ND 4.x or newer.
 
 The supported tags for this module are:
 
