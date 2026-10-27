@@ -238,6 +238,58 @@ def test_execution_wrapper_records_exit_and_selects_debug(tmp_path, enabled, sel
     assert recorded["prerequisite_guard_seconds"] >= 0
 
 
+def test_final_phase_timing_table_groovy_runtime(tmp_path):
+    java = os.environ.get("ND_REPORT_JAVA")
+    groovy_jar = os.environ.get("ND_REPORT_GROOVY_JAR")
+    if not java or not groovy_jar:
+        pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
+    assert java and groovy_jar
+    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    functions = source.split("def formatPhaseDuration(", 1)[1].split("def fabricScopeLabel(", 1)[0]
+    harness = "def formatPhaseDuration(" + functions + r'''
+assert formatPhaseDuration(null) == 'N/A'
+assert formatPhaseDuration(-1) == 'N/A'
+assert formatPhaseDuration(Double.NaN) == 'N/A'
+assert formatPhaseDuration(Double.POSITIVE_INFINITY) == 'N/A'
+assert formatPhaseDuration('12') == 'N/A'
+assert formatPhaseDuration(0) == '00h 00m 00.000s'
+assert formatPhaseDuration(3661.125) == '01h 01m 01.125s'
+assert formatPhaseDuration(59.9999) == '00h 01m 00.000s'
+assert formatPhaseDuration(360000) == '100h 00m 00.000s'
+def table = formatPhaseTimingTable([
+    [prerequisites: 10, execution: 3600, cleanup: 2, parsing: 0.125, archiving: 3,
+     process_seconds: 99999, prerequisite_guard_seconds: 99999],
+    [prerequisites: null, execution: 60, cleanup: 0, parsing: 0.125, archiving: 2],
+    [:]
+], 4000)
+def rows = table.readLines().findAll { it.contains(' | ') }.collect { line ->
+    line.split('\\|').collect { it.trim() }
+}
+assert rows.find { it[0] == 'Prerequisite setup' } == ['Prerequisite setup', '00h 00m 10.000s', '1 / 3']
+assert rows.find { it[0] == 'Test execution' } == ['Test execution', '01h 01m 00.000s', '2 / 3']
+assert rows.find { it[0] == 'Cleanup' } == ['Cleanup', '00h 00m 02.000s', '2 / 3']
+assert rows.find { it[0] == 'Result parsing' } == ['Result parsing', '00h 00m 00.250s', '2 / 3']
+assert rows.find { it[0] == 'Measured phase subtotal' }[1] == '01h 01m 17.250s'
+assert rows.find { it[0] == 'Build elapsed (to report)' }[1] == '01h 06m 40.000s'
+assert formatPhaseTimingTable([], 0).contains('0 / 0')
+assert formatPhaseTimingTable([[:]], 10).contains('N/A')
+println table
+'''
+    script = tmp_path / "timing.groovy"
+    script.write_text(harness)
+    completed = subprocess.run([java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(script)],
+                               capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "FINAL TIME BREAKDOWN" in completed.stdout
+    post = source.split("    post {", 1)[1]
+    assert post.index("echo formatPhaseTimingTable") < post.index("Post-build Webex")
+    archive = source.split("def archiveTestOutput(", 1)[1].split("def archiveSkipList(", 1)[0]
+    assert "PHASE_TIMING_RESULTS[timingKey] = [:]" in archive
+    assert "timingSummary.run_id != expectedRunMarker" in archive
+    assert archive.index("PHASE_TIMING_RESULTS[timingKey] = timingSummary.phase_seconds") < archive.index(
+        'archiveArtifacts artifacts: "${archivedFileName}.*.json"')
+
+
 @pytest.mark.parametrize("scenario", ["null_message", "nonzero_exit", "success"])
 def test_jenkins_result_rows_groovy_runtime(tmp_path, scenario):
     java = os.environ.get("ND_REPORT_JAVA")
@@ -248,12 +300,17 @@ def test_jenkins_result_rows_groovy_runtime(tmp_path, scenario):
     source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
     start = source.index("def parseTestResults(")
     parser = source[start:source.index("\n}\n", start) + 3]
+    helpers = ""
+    for function_name in ("fabricScopeLabel", "activityResultKey"):
+        helper_start = source.index(f"def {function_name}(")
+        helpers += source[helper_start:source.index("\n}\n", helper_start) + 3]
     harness = r'''
 import groovy.transform.Field
 @Field def env = [COLLECTIONS_DIRECTORY: '/tmp/collection', TOTAL_FAILED_COUNT: '0',
                   TOTAL_PASSED_COUNT: '0', TEST_RESULT_SUMMARY: '', BUILD_FAILURE_REASON: '']
 @Field def TEST_RESULT_SUMMARY_BUF = ''
 @Field def BUILD_FAILURE_REASON_BUF = ''
+@Field def MODULE_ACTIVITY_RESULTS = [:]
 @Field def scenario = 'SCENARIO'
 @Field def flags = [:]
 def echo(message) {}
@@ -267,6 +324,7 @@ def sh(options) {
            'host : ok=43 changed=6 unreachable=0 failed=0 skipped=2\n' +
            '[ANSIBLE_EXIT_STATUS: ' + (scenario == 'nonzero_exit' ? '2' : '0') + ']\n'
 }
+HELPERS
 PARSER
 def caught = null
 try {
@@ -283,7 +341,7 @@ if (scenario == 'null_message') {
     assert caught.message.contains('java.lang.RuntimeException') : caught.message
     assert !caught.message.contains('contains() on null')
 }
-'''.replace("SCENARIO", scenario).replace("PARSER", parser)
+'''.replace("SCENARIO", scenario).replace("HELPERS", helpers).replace("PARSER", parser)
     script = tmp_path / "Reporting.groovy"
     script.write_text(harness)
     result = subprocess.run([java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(script)],

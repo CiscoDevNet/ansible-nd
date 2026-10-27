@@ -1,5 +1,8 @@
 import groovy.transform.Field
 
+@Field Map PHASE_TIMING_RESULTS = [:]
+@Field Map MODULE_ACTIVITY_RESULTS = [:]
+
 // ============================================================================
 // WEBEX NOTIFICATION TARGET - both Webex space room IDs live here so the
 // destination can be chosen from the top of the script. Select which one the
@@ -106,10 +109,9 @@ def INTEGRATION_MODULES = [
     // fixed lab pairs in VPC_PAIR_EXECUTIONS. The two nd_interface_vpc_* targets run from
     // INTERFACE_INTEGRATION_MODULES (the runner forms both physical leaf pairs, leaf_1/leaf_2 and leaf_3/leaf_4, around them).
     // 'nd_manage_vpc_pair',
-    // nd_manage_switches is part of the nightly suite. Its device credentials are
-    // validated before any module runs, and the canonical fabric roster is restored
-    // after the switch lifecycle even if the test fails.
-    // nd_resource_manager, nd_manage_fabric, and nd_manage_switches are appended
+    // Only nd_manage_switches functional tests are disabled. Device credentials,
+    // two-round membership transfer, readiness gates, and home restoration stay enabled.
+    // nd_resource_manager, nd_manage_fabric, and nd_manage_links are appended
     // after the enabled static and interface modules in effectiveIntegrationModules.
     // Rationale (build #27): nd_resource_manager's vPC-pair config-save can push the
     // fabric into "migration mode" and corrupt the underlay; running it (then fabric)
@@ -132,8 +134,8 @@ def STANDALONE_INTEGRATION_MODULES = [
 //   fabric    fabric the round runs on                          type      ND management.type that fabric must report
 //   vpcType   nd_vpc_pair fabric_type used for the round's pair   label     shown in stage names and the Webex table
 //   idSuffix  appended to the version id (output files, dynamic inventory, failure flag); empty keeps round 1 unchanged
-// The eBGP destination must report an eBGP type: vxlanEbgp, or ND's 'routed' label for an eBGP/routed underlay
-// (both accepted). The round checks this before moving any switch; switches onboard into the fabric by name.
+// The eBGP destination must report vxlanEbgp exactly. The round checks this before moving any switch;
+// switches onboard into the fabric by name.
 @Field
 def FABRIC_ROUNDS = [
     [fabric: 'VXLAN_EVPN_Fabric', type: 'vxlanIbgp', vpcType: 'vxlanIbgp', label: 'iBGP', idSuffix: ''],
@@ -223,7 +225,7 @@ def CONSUL_CONFIG_FILES = [
 // Consul-sourced integration runner. It is downloaded and freshness-validated
 // together with each active playbook before anything can execute.
 @Field
-def CONSUL_RUNNER_FILES = ['run_integration_module.yaml', 'nd_result_summary.py', 'nd_report.py']
+def CONSUL_RUNNER_FILES = ['run_integration_module.yaml', 'nd_result_summary.py', 'nd_report.py', 'nd_test_activity.py']
 
 // Shared vPC standalone pre-clean playbook, installed with the other required helpers.
 @Field
@@ -569,6 +571,7 @@ pipeline {
         //Clone repository stage
         stage('Clone Repository') {
             steps {
+                script { env.ND_GIT_COMMIT = '' }
                 // echo timestamp when stage starts
                 echo "⏱ Stage 'Clone Repository' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
                 script {
@@ -917,6 +920,15 @@ pipeline {
                     } else {
                         runCloneRepository()
                     }
+                    // Capture the verified checkout for both reused and newly cloned repositories.
+                    def checkedOutCommit = sh(
+                        label: 'Read ansible-nd commit SHA',
+                        script: '''#!/bin/bash
+git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true
+''',
+                        returnStdout: true
+                    ).trim()
+                    env.ND_GIT_COMMIT = (checkedOutCommit ==~ /(?:[0-9a-f]{40}|[0-9a-f]{64})/) ? checkedOutCommit : ''
                 }
             }
         }
@@ -1011,6 +1023,8 @@ pipeline {
                     BUILD_FAILURE_REASON_BUF = ''
                     env.TOTAL_PASSED_COUNT = '0'
                     env.TOTAL_FAILED_COUNT = '0'
+                    MODULE_ACTIVITY_RESULTS.clear()
+                    env.MODULE_ACTIVITY_REPORT_FILE = ''
 
                     // Prerequisites are always enabled AND applied so the live setup is
                     // reconciled to the required setup before the tests; audit-only mode
@@ -1043,6 +1057,7 @@ pipeline {
                             currentBuild.result = 'UNSTABLE'
                             echo "NDP_SWITCH_ROUNDS_SKIPPED: skipping ND ${ndfcConfig.version}${ndfcConfig.round_tag ?: ''}; the previous restore did not confirm the full roster"
                             TEST_RESULT_SUMMARY_BUF += "\nABORT|round skipped${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|previous switch restore incomplete"
+                            recordUnstartedRound(ndfcConfig, 'previous switch restore incomplete')
                             continue
                         }
                         // Define failure flag for this NDFC version
@@ -1062,6 +1077,7 @@ pipeline {
                                 env.PIPELINE_FAILED = 'true'
                             }
                         } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+                            recordUnstartedRound(ndfcConfig, 'round interrupted; see console')
                             throw e
                         } catch (Exception e) {
                             echo "❌ NDFC ${ndfcConfig.version}${ndfcConfig.round_tag ?: ''} testing failed: ${e.getMessage()}"
@@ -1074,6 +1090,7 @@ pipeline {
                                 abortReason = abortReason.substring(0, 170)
                             }
                             TEST_RESULT_SUMMARY_BUF += "\nABORT|round stopped${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|${abortReason}"
+                            recordUnstartedRound(ndfcConfig, abortReason)
                             if (env.CONSUL_SYNC_FAILED == 'true' || env.REQUIRED_FILES_READY != 'true') {
                                 echo "🛑 Required runtime files were not freshly synchronized; aborting before reset or further tests"
                                 throw e
@@ -1083,6 +1100,10 @@ pipeline {
                                 continue
                             }
                             echo "🔄 Continuing to next NDFC version..."
+                        } finally {
+                            // Archive while the Docker agent still has a workspace.
+                            // The retained small rows can also be printed in post{}.
+                            publishModuleActivityReport()
                         }
 
                         // A prerequisite-only audit performs controller GETs only; do not
@@ -1107,6 +1128,8 @@ pipeline {
                                 restoreHomeFabric(ndfcVersions)
                             }
                         } finally {
+                            ndfcVersions.each { recordUnstartedRound(it, 'not reached after an earlier round stopped') }
+                            publishModuleActivityReport()
                             bundleAllLogs()
                         }
                     }
@@ -1135,6 +1158,8 @@ pipeline {
     post {
         always {
             script {
+                echo formatPhaseTimingTable(PHASE_TIMING_RESULTS.values().toList(),
+                    (System.currentTimeMillis() - currentBuild.startTimeInMillis) / 1000.0)
                 try {
                     echo "Post-build Webex notification block started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
 
@@ -1148,9 +1173,11 @@ pipeline {
                     def notificationTitle = "ND ${activeNdVersions}${roundsSuffix} NIGHTLY NOTIFICATION"
                     def customWebexMessage = (params.WEBEX_CUSTOM_MESSAGE ?: '').trim()
                     def selectedBranch = (env.ND_GIT_BRANCH ?: 'develop').trim() ?: 'develop'
-                    def totalPassed = env.TOTAL_PASSED_COUNT ?: '0'
-                    def totalFailed = env.TOTAL_FAILED_COUNT ?: '0'
-                    def resultTable = formatResultsTable(TEST_RESULT_SUMMARY_BUF)
+                    def selectedCommit = (env.ND_GIT_COMMIT ?: '').trim() ?: 'unavailable'
+                    def caseTotals = moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList())
+                    def totalPassed = caseTotals.passed
+                    def totalFailed = caseTotals.failed
+                    def resultTable = formatResultsTable(moduleCaseSummaryRows(), 'module test cases')
                     def artifactLinks = formatArtifactLinks(TEST_RESULT_ARTIFACTS_BUF)
                     def skippedTestLinks = formatSkippedTestLinks(SKIPLIST_FILES_BUF)
                     def runDuration = calculateRunDuration(
@@ -1165,9 +1192,10 @@ pipeline {
                     }
                     message += "📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n"
                     message += "🌿 ansible-nd branch: ${selectedBranch}\n"
+                    message += "🔖 ansible-nd commit: ${selectedCommit}\n"
                     message += "\n"
-                    message += "Total Passed: ${totalPassed}\n"
-                    message += "Total Failed: ${totalFailed}\n"
+                    message += "Test cases passed: ${totalPassed}\n"
+                    message += "Test cases failed: ${totalFailed}\n"
                     message += "\n📝 DETAILED TEST RESULTS:\n\n"
                     message += "${resultTable}\n"
                     message += "\n**Artifact links:**\n"
@@ -1187,6 +1215,9 @@ pipeline {
                     if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
                         message += "📦 [All logs (zip)](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})\n"
                     }
+                    if ((env.MODULE_ACTIVITY_REPORT_FILE ?: '').trim()) {
+                        message += "📋 [Module test activity table](${JOB_URL}${BUILD_NUMBER}/artifact/${env.MODULE_ACTIVITY_REPORT_FILE})\n"
+                    }
                     message += "⏱️ **Total run duration:** ${runDuration}"
 
                     // Webex limits message content to 7,439 characters before
@@ -1204,9 +1235,10 @@ pipeline {
                         }
                         compactMessage.append("📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n")
                         compactMessage.append("🌿 ansible-nd branch: ${selectedBranch}\n")
+                        compactMessage.append("🔖 ansible-nd commit: ${selectedCommit}\n")
                         compactMessage.append("\n")
-                        compactMessage.append("Total Passed: ${totalPassed}\n")
-                        compactMessage.append("Total Failed: ${totalFailed}\n")
+                        compactMessage.append("Test cases passed: ${totalPassed}\n")
+                        compactMessage.append("Test cases failed: ${totalFailed}\n")
                         compactMessage.append("\n📝 DETAILED TEST RESULTS:\n\n${resultTable}\n")
                         compactMessage.append("\n**Artifact links:**\n")
                         compactMessage.append("- Individual module links were omitted only because the complete message exceeded the Webex limit.\n")
@@ -1221,6 +1253,9 @@ pipeline {
                         if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
                             compactMessage.append("📦 [All logs (zip)](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})\n")
                         }
+                        if ((env.MODULE_ACTIVITY_REPORT_FILE ?: '').trim()) {
+                            compactMessage.append("📋 [Module test activity table](${JOB_URL}${BUILD_NUMBER}/artifact/${env.MODULE_ACTIVITY_REPORT_FILE})\n")
+                        }
                         compactMessage.append("⏱️ **Total run duration:** ${runDuration}")
                         message = compactMessage.toString()
                         echo "📏 Webex message length: ${message.length()} characters"
@@ -1230,56 +1265,22 @@ pipeline {
                         echo "📏 Webex message length: ${message.length()} characters"
                     }
 
-                    // Two fabric rounds can make even the compact message too long for one Webex message. Rather than
-                    // drop result rows, send one message per fabric round: the first carries the header and totals,
-                    // the last the links, lint summary, skip list and duration.
-                    def webexMessages = [message]
-                    if (message.length() > WEBEX_SAFE_MESSAGE_LIMIT) {
-                        def roundGroups = groupResultRowsByFabric(TEST_RESULT_SUMMARY_BUF)
-                        if (roundGroups.size() > 1) {
-                            webexMessages = []
-                            roundGroups.eachWithIndex { roundGroup, index ->
-                                def part = new StringBuilder()
-                                if (index == 0) {
-                                    part.append("${notificationTitle}\n")
-                                    if (customWebexMessage) {
-                                        part.append("${customWebexMessage}\n\n")
-                                    }
-                                    part.append("📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n")
-                                    part.append("🌿 ansible-nd branch: ${selectedBranch}\n")
-                                    part.append("\n")
-                                    part.append("Total Passed: ${totalPassed}\n")
-                                    part.append("Total Failed: ${totalFailed}\n")
-                                }
-                                part.append("\n📝 DETAILED TEST RESULTS - ${roundGroup.fabric} (${index + 1}/${roundGroups.size()}):\n\n${formatResultsTable(roundGroup.rows)}\n")
-                                if (index == roundGroups.size() - 1) {
-                                    part.append("\n**Artifact links:**\n")
-                                    part.append("- Individual module links were omitted only because the results needed more than one Webex message.\n")
-                                    part.append("- [Build artifacts (file list)](${JOB_URL}${BUILD_NUMBER}/artifact/)\n")
-                                    if (lintSummary) {
-                                        part.append("\n─────────\n")
-                                        part.append("🧹 **Ansible-lint Results:**\n${lintSummary}\n")
-                                    }
-                                    if (skippedTestLinks) {
-                                        part.append("${skippedTestLinks}\n")
-                                    }
-                                    if ((env.LOG_BUNDLE_FILE ?: '').trim()) {
-                                        part.append("📦 [All logs (zip)](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})\n")
-                                    }
-                                    part.append("⏱️ **Total run duration:** ${runDuration}")
-                                }
-                                webexMessages.add(part.toString())
-                            }
-                            echo "⚠️ The results do not fit one Webex message; sending ${webexMessages.size()} messages, one per fabric round"
-                        }
-                    }
-                    webexMessages.collectMany { splitWebexReport(it, WEBEX_SAFE_MESSAGE_LIMIT) }.each { webexMessage ->
+                    // Render the complete case table once. Splitting physical-fabric subgroups
+                    // would create false NOT_RUN counterpart rows for cases present in another part.
+                    def continuationHeader = "${notificationTitle} - Build ${BUILD_NUMBER}\n" +
+                        "🌿 ansible-nd branch: ${selectedBranch}\n" +
+                        "🔖 ansible-nd commit: ${selectedCommit}\n\n"
+                    splitWebexMessage(message, continuationHeader, WEBEX_SAFE_MESSAGE_LIMIT).each { webexMessage ->
                         postWebexMarkdown(webexMessage)
                     }
                 } catch (Exception e) {
                     rethrowIfInterrupt(e)
                     // Absolutely never let Webex notification break the pipeline
                     echo "⚠️ Webex notification post-build block encountered an error but will be ignored: ${e.getMessage()}"
+                } finally {
+                    // No FilePath is needed here; cleanup may already have removed it.
+                    echo "\nFINAL MODULE TEST ACTIVITY TABLE\n" +
+                        formatModuleActivityTable(MODULE_ACTIVITY_RESULTS.values().toList(), BUILD_NUMBER)
                 }
             }
         }
@@ -1422,6 +1423,8 @@ def verifyInventoryFile(inventoryPath) {
  * @param playbookName The name of the playbook (e.g., 'dcnm_policy.yaml').
  */
 def archiveTestOutput(ndfcConfig, playbookName, expectedRunMarker = '') {
+    def timingKey = "${ndfcConfig.fabric_name}|${ndfcConfig.versionId}|${playbookName}|${expectedRunMarker}".toString()
+    PHASE_TIMING_RESULTS[timingKey] = [:]
     def archiveStarted = System.currentTimeMillis()
     def archiveSucceeded = false
     def timestamp = new Date().format('yyyyMMdd_HHmmss')
@@ -1476,16 +1479,22 @@ def archiveTestOutput(ndfcConfig, playbookName, expectedRunMarker = '') {
                     "$HOME/ansible/venv/bin/python" "$COLLECTIONS_DIRECTORY/nd_result_summary.py" archive \\
                         --log "$ND_REPORT_LOG" --module "$ND_REPORT_MODULE" --run-id "$ND_REPORT_RUN" \\
                         --archive-seconds "$ND_REPORT_ARCHIVE_SECONDS" --archive-status "$ND_REPORT_ARCHIVE_STATUS"
-                    for kind in execution phases summary; do
+                    for kind in execution phases summary activity; do
                         if [ -f "$ND_REPORT_LOG.$kind.json" ]; then
                             cp "$ND_REPORT_LOG.$kind.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.$kind.json"
                             chmod 0644 "$WORKSPACE/$ND_REPORT_ARTIFACT.$kind.json"
                         fi
                     done
                 '''
+                def timingSummary = new groovy.json.JsonSlurperClassic().parseText(
+                    readFile(file: "${archivedFileName}.summary.json"))
+                if (timingSummary.module != playbookName || timingSummary.run_id != expectedRunMarker) {
+                    error('Timing summary belongs to another run or module')
+                }
+                PHASE_TIMING_RESULTS[timingKey] = timingSummary.phase_seconds ?: [:]
                 archiveArtifacts artifacts: "${archivedFileName}.*.json", allowEmptyArchive: false, fingerprint: true
                 sh '''#!/bin/bash
-                    rm -f -- "$WORKSPACE/$ND_REPORT_ARTIFACT.execution.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.phases.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.summary.json"
+                    rm -f -- "$WORKSPACE/$ND_REPORT_ARTIFACT.execution.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.phases.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.summary.json" "$WORKSPACE/$ND_REPORT_ARTIFACT.activity.json"
                 '''
             }
         } catch (Exception metadataError) {
@@ -1601,52 +1610,165 @@ def virtualPeerLinkCapabilityFailures(testOutput) {
  *
  * Webex does not document support for GitHub-style pipe tables, but it does
  * support fenced code blocks. Render a compact fixed-width table inside a
- * Markdown code block so columns remain aligned. Fabric and ND version remain
- * in the raw summary for artifacts but are intentionally omitted here.
+ * Markdown code block so columns remain aligned. Fabric scope is displayed per module; the ND column is shown when multiple
+ * versions are present. Missing iBGP/eBGP counterpart rows are display-only.
  */
-def formatResultsTable(rawSummary) {
+def formatPhaseDuration(seconds) {
+    if (!(seconds instanceof Number) || seconds < 0 ||
+        Double.isNaN(seconds.doubleValue()) || Double.isInfinite(seconds.doubleValue())) {
+        return 'N/A'
+    }
+    long milliseconds = Math.round(seconds.doubleValue() * 1000)
+    return String.format('%02dh %02dm %02d.%03ds',
+        (long) (milliseconds / 3600000), (long) ((milliseconds % 3600000) / 60000),
+        (long) ((milliseconds % 60000) / 1000), milliseconds % 1000)
+}
+
+def formatPhaseTimingTable(results, elapsedSeconds) {
+    def phases = [prerequisites: 'Prerequisite setup', execution: 'Test execution',
+                  cleanup: 'Cleanup', parsing: 'Result parsing', archiving: 'Log archiving']
+    def rows = [['Activity', 'Duration', 'Measured / attempts']]
+    double measuredTotal = 0
+    int measurements = 0
+    phases.each { phase, label ->
+        def values = results.collect { it[phase] }.findAll { formatPhaseDuration(it) != 'N/A' }
+        def seconds = values ? values.sum() : null
+        if (seconds != null) {
+            measuredTotal += seconds.doubleValue()
+            measurements += values.size()
+        }
+        rows << [label, formatPhaseDuration(seconds), "${values.size()} / ${results.size()}"]
+    }
+    rows << ['Measured phase subtotal', formatPhaseDuration(measurements ? measuredTotal : null), '-']
+    rows << ['Build elapsed (to report)', formatPhaseDuration(elapsedSeconds), '-']
+    def lines = rows.collect { row ->
+        row[0].padRight(27) + ' | ' + row[1].padLeft(18) + ' | ' + row[2]
+    }
+    lines.add(1, '-' * 72)
+    return '\nFINAL TIME BREAKDOWN\n' + lines.join('\n') +
+        '\nN/A = no measurement. Counts cover module attempts reaching reporting; interrupted timings may be partial.' +
+        '\nPhase subtotal is not build wall time; other pipeline work is not included.' +
+        '\nTarget-internal setup/cleanup is part of execution. Parsing is agent extraction only.' +
+        '\nArchiving excludes metadata upload and the combined log bundle.'
+}
+
+def fabricScopeLabel(value) {
+    def text = (value ?: '').toString().trim()
+    if (text in ['iBGP', 'eBGP', 'External', 'Mixed', 'Logical', 'Controller', 'Unknown']) {
+        return text
+    }
+    if (text in ['iBGP+External', 'eBGP+External']) {
+        return text
+    }
+    def lower = text.toLowerCase()
+    if (lower.contains('ebgp')) { return 'eBGP' }
+    if (lower.contains('external')) { return 'External' }
+    if (lower.contains('ibgp') || text == 'VXLAN_EVPN_Fabric') { return 'iBGP' }
+    return 'Unknown'
+}
+
+def resultContextForTarget(ndfcConfig, token, networkFabricName = '', vpcPairRows = []) {
+    def module = token.toString().replaceFirst(/\.yaml$/, '')
+    def primary = (ndfcConfig.fabric_name ?: '').toString()
+    def scope = fabricScopeLabel(ndfcConfig.fabric_type ?: primary)
+    if (scope == 'Unknown') {
+        scope = fabricScopeLabel(ndfcConfig.vpc_pair_fabric_type)
+    }
+    def fabric = primary
+    if (module == 'nd_manage_networks') {
+        fabric = (networkFabricName ?: primary).toString()
+        scope = fabricScopeLabel(fabric)
+    } else if (module.startsWith('nd_vpc_pair.')) {
+        def pairId = module.substring('nd_vpc_pair.'.length())
+        def pair = vpcPairRows.find { it.id.toString() == pairId }
+        fabric = pair ? pair.fabric.toString() : primary
+        scope = pair ? fabricScopeLabel(pair.type ?: pair.fabric) : 'Unknown'
+    } else if (module == 'nd_local_user') {
+        fabric = 'controller'
+        scope = 'Controller'
+    } else if (module == 'nd_manage_fabric') {
+        fabric = 'disposable fabric matrix'
+        scope = 'Mixed'
+    } else if (module in ['nd_manage_fabric_group_vxlan', 'nd_manage_fabric_group_members']) {
+        fabric = 'logical fabric groups'
+        scope = 'Logical'
+    } else if (module in ['nd_manage_l3out', 'nd_manage_links']) {
+        fabric = primary + ', ' + (ndfcConfig.fabric_name_2 ?: 'External_Connectivity_Fabric')
+        scope = scope + '+External'
+    }
+    [fabric: fabric, scope: scope]
+}
+
+def formatResultsTable(rawSummary, countUnit = 'Ansible tasks') {
     def lines = (rawSummary ?: '').split('\n').findAll { it.trim() }
     if (lines.isEmpty()) {
         return '(no per-module results captured)'
     }
     def cleanCell = { value ->
-        (value ?: '').toString()
-            .replace('\r', ' ')
-            .replace('\n', ' ')
-            .replace('\t', ' ')
+        (value ?: '').toString().replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
     }
-    def rows = lines.collect { ln ->
-        def fields = ln.split('\\|', -1)
-        def cell = { int index ->
-            (index < fields.size() && fields[index] != null) ? fields[index].trim() : ''
-        }
-        [cell(0), cell(1), cell(4), cell(5), cell(6), cell(7)].collect { cleanCell(it) }
+    def records = lines.collect { line ->
+        def fields = line.split('\\|', -1)
+        def cell = { int index -> index < fields.size() ? cleanCell(fields[index]).trim() : '' }
+        [status: cell(0), module: cell(1), fabric: cell(2), nd: cell(3),
+         passed: cell(4), failed: cell(5), skipped: cell(6), duration: cell(7), note: cell(8),
+         scope: cell(9) ?: fabricScopeLabel(cell(2))]
     }
-    def headers = ['Status', 'Playbook', 'Passed', 'Failed', 'Skipped', 'Duration']
-    def widths = (0..<headers.size()).collect { int index ->
-        int width = headers[index].length()
-        rows.each { row ->
-            int cellWidth = row[index].length()
-            if (cellWidth > width) {
-                width = cellWidth
+    def groups = [:]
+    records.each { record ->
+        def key = record.module + '|' + record.nd
+        if (!groups.containsKey(key)) { groups[key] = [] }
+        groups[key].add(record)
+    }
+    def displayRecords = []
+    groups.values().each { group ->
+        // Missing counterpart rows are presentation only: never add them to task totals.
+        if (group.any { it.scope in ['iBGP', 'eBGP'] }) {
+            ['iBGP', 'eBGP'].each { scope ->
+                def matching = group.findAll { it.scope == scope }
+                if (matching) {
+                    displayRecords.addAll(matching)
+                } else {
+                    displayRecords.add([status: 'NOT_RUN', module: group[0].module,
+                        nd: group[0].nd, scope: scope, passed: '-', failed: '-', skipped: '-',
+                        duration: 'not scheduled', note: ''])
+                }
             }
+            displayRecords.addAll(group.findAll { !(it.scope in ['iBGP', 'eBGP']) })
+        } else {
+            // Combined/shared/controller results cannot be divided into per-fabric counts.
+            displayRecords.addAll(group)
         }
-        width
+    }
+    def showNd = records.collect { it.nd }.unique().size() > 1
+    def headers = ['Status', 'Module', 'Fabric']
+    if (showNd) { headers.add('ND') }
+    headers.addAll(['Passed', 'Failed', 'Skipped', 'Duration'])
+    def rows = displayRecords.collect { record ->
+        def row = [record.status, record.module, record.scope]
+        if (showNd) { row.add(record.nd) }
+        def noExecution = record.status == 'NOT_RUN'
+        row.addAll([noExecution ? '-' : record.passed, noExecution ? '-' : record.failed,
+                    noExecution ? '-' : record.skipped, record.duration])
+        row.collect { cleanCell(it) }
+    }
+    def widths = (0..<headers.size()).collect { int index ->
+        ([headers[index].length()] + rows.collect { it[index].length() }).max()
     }
     def renderRow = { cells ->
         (0..<cells.size()).collect { int index ->
             def value = cells[index].toString()
             def padding = ' ' * (widths[index] - value.length())
-            index < 2 ? value + padding : padding + value
+            index < (showNd ? 4 : 3) ? value + padding : padding + value
         }.join('  ')
     }
     def separator = widths.collect { int width -> '-' * width }
-    def renderedRows = rows.collect { renderRow(it) }.join('\n')
-    // Modules skipped because the lab lacks their declared substrate: list the reason under the table.
-    def skipNotes = lines.collect { ln -> ln.split('\\|', -1) }
-        .findAll { f -> f.size() > 8 && f[0].trim() == 'SKIP' && f[8].trim() }
-        .collect { f -> "  ${f[1].trim()}: ${cleanCell(f[8]).trim()}" }
+    def skipNotes = records.findAll { it.status == 'SKIP' && it.note }
+        .collect { "  ${it.module} (${it.scope}): ${it.note}" }
     def skipBlock = skipNotes ? "\n\nSKIPPED - lab substrate unavailable:\n${skipNotes.join('\n')}" : ''
+    def resultNotes = records.findAll { it.status in ['FAIL', 'ERR', 'UNKNOWN', 'NOT_RUN'] && it.note }
+        .collect { "  ${it.module} (${it.scope}) ${it.status}: ${it.note}" }
+    def resultBlock = resultNotes ? "\n\nRESULT DETAILS:\n${resultNotes.join('\n')}" : ''
     // A fabric round that stopped before it could finish (pre-flight, preparation) is listed with its reason.
     def abortNotes = lines.collect { ln -> ln.split('\\|', -1) }
         .findAll { f -> f.size() > 8 && f[0].trim() == 'ABORT' && f[8].trim() }
@@ -1661,8 +1783,70 @@ def formatResultsTable(rawSummary) {
         "  ${cleanCell(fields[1])} [${cleanCell(fields[2])}]: ${cleanCell(fields[8])}"
     }
     def capabilityBlock = capabilityNotes ? "\n\nUNSUPPORTED CAPABILITY - N9K-C9300v virtual peer-link / vPC Fabric Peering:\n${capabilityCount} affected task case(s) across ${capabilityRows.size()} module/round result(s).\nFailure totals are unchanged; other failures may coexist.\n${capabilityNotes.join('\n')}" : ''
-    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${renderedRows}${skipBlock}${abortBlock}${capabilityBlock}\n```"
+    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${rows.collect { renderRow(it) }.join('\n')}${skipBlock}${resultBlock}${abortBlock}${capabilityBlock}\n```" +
+        "\nPassed/Failed/Skipped = ${countUnit}. NOT_RUN = no execution for that fabric." +
+        '\nMixed/shared rows contain one combined result; counts are included once.' +
+        (countUnit == 'module test cases' ? '\n? = case count unavailable or incomplete; setup and cleanup are excluded.' : '')
 }
+
+def splitWebexMessage(message, continuationHeader = '', maxLength = 7000) {
+    def text = (message ?: '').toString()
+    if (text.length() <= maxLength) { return [text] }
+    // Reserve enough room for a numbered part marker after all parts are known.
+    int contentLimit = maxLength - 80
+    def parts = []
+    def current = new StringBuilder()
+    boolean inFence = false
+    def tableHeader = []
+    def startContinuation = {
+        current = new StringBuilder(continuationHeader.toString())
+        if (inFence) {
+            current.append('```\n')
+            tableHeader.each { current.append(it).append('\n') }
+        }
+        if (current.length() + 8 >= contentLimit) {
+            throw new IllegalArgumentException('Webex continuation header exceeds message capacity')
+        }
+    }
+    def flushPart = {
+        if (inFence) { current.append('```\n') }
+        parts.add(current.toString().trim())
+        startContinuation()
+    }
+    text.split('\n', -1).each { originalLine ->
+        def line = originalLine.toString()
+        boolean fenceLine = line.trim().startsWith('```')
+        int reserve = inFence ? 4 : 0
+        if (current.length() + line.length() + 1 + reserve > contentLimit && current.length() > 0) {
+            flushPart()
+        }
+        // Preserve even an unusually long diagnostic line instead of truncating content.
+        while (current.length() + line.length() + 1 + (inFence ? 4 : 0) > contentLimit) {
+            int available = contentLimit - current.length() - 1 - (inFence ? 4 : 0)
+            if (available <= 0) { throw new IllegalArgumentException('Webex message capacity exhausted') }
+            current.append(line.substring(0, available)).append('\n')
+            line = line.substring(available)
+            flushPart()
+        }
+        current.append(line).append('\n')
+        if (fenceLine) {
+            inFence = !inFence
+            if (inFence) { tableHeader = [] }
+        } else if (inFence && tableHeader.size() < 2) {
+            tableHeader.add(line)
+        }
+    }
+    if (inFence) { current.append('```\n') }
+    if (current.toString().trim()) { parts.add(current.toString().trim()) }
+    parts.withIndex().collect { part, index ->
+        def rendered = "📄 Report part ${index + 1}/${parts.size()}\n" + part
+        if (rendered.length() > maxLength) {
+            throw new IllegalArgumentException('Webex report part exceeds message limit')
+        }
+        rendered
+    }
+}
+
 
 def splitWebexReport(message, int limit = 7000) {
     def remaining = message.toString()
@@ -1828,6 +2012,212 @@ def calculateRunDuration(long startTimeMillis, long endTimeMillis) {
  * artifact/file list) and records its name for the post{} Webex link. Runs on the
  * agent (COLLECTIONS_DIRECTORY + workspace exist here) and never fails the build.
  */
+def activityResultKey(ndfcConfig, module, runId) {
+    "${ndfcConfig.versionId}|${module}|${runId}".toString()
+}
+
+def activityCount(value) {
+    value instanceof Number && value >= 0 ? value.toString() : '?'
+}
+
+def activityCountSum(rows, getter) {
+    long known = 0
+    boolean unknown = rows.isEmpty()
+    rows.findAll { it.result != 'NOT_RUN' }.each { row ->
+        def value = getter(row)
+        if (value instanceof Number && value >= 0) { known += value.longValue() }
+        else { unknown = true }
+    }
+    unknown ? (known ? "${known} + ?" : '?') : known.toString()
+}
+
+def moduleCaseTotals(rows) {
+    ['passed', 'failed', 'skipped'].collectEntries { name ->
+        [(name): activityCountSum(rows, { row -> row.case_totals?.get(name) })]
+    }
+}
+
+def moduleCaseSummaryRows() {
+    MODULE_ACTIVITY_RESULTS.values().collect { row ->
+        def status = row.result == 'PASS' ? 'OK' : row.result
+        def note = [row.capability_note,
+            row.result == 'SKIP' ? row.skip_reason : row.failure,
+            row.coverage == 'COMPLETE' ? '' : 'case coverage ' + (row.coverage ?: 'UNKNOWN')]
+            .findAll { it }.join('; ')
+        [status, row.module, row.fabric, row.nd, activityCount(row.case_totals?.passed),
+         activityCount(row.case_totals?.failed), activityCount(row.case_totals?.skipped),
+         row.duration ?: '-', note, row.scope].collect {
+             (it ?: '').toString().replace('|', '/').replace('\n', ' ').replace('\r', ' ')
+         }.join('|')
+    }.join('\n')
+}
+
+def activityStageLabel(stage) {
+    if (stage instanceof String) { return stage }
+    if (!(stage instanceof Map)) { return 'Not observed' }
+    if (stage.failed) { return 'Failed' }
+    if (stage.successful || stage.observed) { return 'Yes' }
+    if (stage.skipped) { return 'Skipped' }
+    'Not observed'
+}
+
+def formatModuleActivityTable(results, buildNumber) {
+    def states = ['merged', 'replaced', 'overridden', 'deleted', 'gathered']
+    def headers = ['S.No.', 'Build', 'Module', 'Fabric type', 'Merged', 'Replaced',
+                   'Overridden', 'Delete', 'Gather', 'Base', 'Cleanup', 'Skipped', 'Result / failure']
+    def rows = []
+    def groups = [:]
+    results.each { record ->
+        def key = record.module + '|' + record.nd
+        if (!groups.containsKey(key)) { groups[key] = [] }
+        groups[key].add(record)
+    }
+    int sequence = 0
+    groups.values().each { group ->
+        sequence++
+        def display = []
+        if (group.any { it.scope in ['iBGP', 'eBGP'] }) {
+            ['iBGP', 'eBGP'].each { scope ->
+                def matching = group.findAll { it.scope == scope }
+                if (matching) { display.addAll(matching) }
+                else { display.add([module: group[0].module, nd: group[0].nd, scope: scope,
+                    result: 'NOT_RUN', display_only: true, failure: 'not scheduled']) }
+            }
+            display.addAll(group.findAll { !(it.scope in ['iBGP', 'eBGP']) })
+        } else { display.addAll(group) }
+        display.eachWithIndex { record, index ->
+            def noExecution = record.result == 'NOT_RUN'
+            def cells = [index == 0 ? sequence.toString() : '', buildNumber.toString(),
+                         index == 0 ? record.module : '', record.scope ?: 'Unknown']
+            states.each { state -> cells.add(noExecution ? '-' : activityCount(record.counts?.get(state)?.started)) }
+            cells.add(record.display_only ? '-' : noExecution ? 'Not reached' : activityStageLabel(record.base))
+            cells.add(record.display_only ? '-' : noExecution ? 'Not reached' : activityStageLabel(record.cleanup))
+            cells.add(noExecution ? '-' : activityCount(record.case_totals?.skipped))
+            def notes = [record.result ?: 'UNKNOWN']
+            if (record.failure) { notes.add(record.failure) }
+            if (!noExecution) {
+                notes.add("cases passed ${activityCount(record.case_totals?.passed)}, failed ${activityCount(record.case_totals?.failed)}")
+                if (record.counts?.other?.started instanceof Number && record.counts.other.started > 0) {
+                    notes.add("other cases ${record.counts.other.started}")
+                }
+                if (record.coverage != 'COMPLETE') { notes.add('case coverage ' + (record.coverage ?: 'UNKNOWN')) }
+            }
+            cells.add(notes.join('; '))
+            rows.add(cells)
+        }
+    }
+    def addTotal = { label, scope, records ->
+        def cells = ['', buildNumber.toString(), label, scope]
+        states.each { state -> cells.add(activityCountSum(records, { row -> row.counts?.get(state)?.started })) }
+        cells.addAll(['-', '-', activityCountSum(records, { row -> row.case_totals?.skipped })])
+        def totals = moduleCaseTotals(records)
+        cells.add("${records.count { it.validated == true }} validated executions / ${records.size()} selected; cases passed ${totals.passed}, failed ${totals.failed}")
+        rows.add(cells)
+    }
+    results.collect { it.scope ?: 'Unknown' }.unique().each { scope ->
+        addTotal('Subtotal', scope, results.findAll { (it.scope ?: 'Unknown') == scope })
+    }
+    addTotal('MAIN TOTAL', 'All scopes', results)
+    def clean = { value -> (value ?: '').toString().replace('|', '/').replace('\r', ' ').replace('\n', ' ') }
+    rows = rows.collect { row -> row.collect { clean(it) } }
+    def widths = (0..<headers.size()).collect { int index ->
+        ([headers[index].length()] + rows.collect { it[index].length() }).max()
+    }
+    def render = { cells -> '| ' + (0..<cells.size()).collect { int index ->
+        cells[index].toString().padRight(widths[index])
+    }.join(' | ') + ' |' }
+    def table = ([render(headers), render(widths.collect { '-' * it })] + rows.collect { render(it) }).join('\n')
+    "ND MODULE TEST ACTIVITY - Build ${buildNumber}\n\n${table}\n\n" +
+        'State columns count distinct module cases started, not Ansible tasks or API calls.\n' +
+        'Each case is assigned one primary tested state; verification gathers do not add Gather cases.\n' +
+        'Base/Cleanup are separate observed-stage indicators and contribute no test cases.\n' +
+        'Skipped counts explicitly fully skipped module cases; not reached is not skipped.\n' +
+        '? = unavailable/incomplete count; N + ? = known subtotal with unknown contributions.\n' +
+        'Other cases (such as validation) are included in case outcomes, outside the five state columns.\n' +
+        'NOT_RUN counterpart rows are display-only and excluded from subtotals and the main total.\n' +
+        'Mixed/shared results contain one combined execution and are counted once.\n'
+}
+
+def captureModuleActivity(ndfcConfig, module, testType, runId, context, logFile) {
+    def key = activityResultKey(ndfcConfig, module, runId)
+    def row = MODULE_ACTIVITY_RESULTS[key]
+    try {
+        withEnv(["ND_ACTIVITY_LOG=${logFile}", "ND_ACTIVITY_MODULE=${module}",
+                 "ND_ACTIVITY_RUN=${runId}", "ND_ACTIVITY_FABRIC=${context.scope}",
+                 "ND_ACTIVITY_TEST_TYPE=${testType}"]) {
+            sh '''#!/bin/bash
+                set -euo pipefail
+                "$HOME/ansible/venv/bin/python" "$COLLECTIONS_DIRECTORY/nd_test_activity.py" summarize \\
+                    --log "$ND_ACTIVITY_LOG" --module "$ND_ACTIVITY_MODULE" --run-id "$ND_ACTIVITY_RUN" \\
+                    --build "$BUILD_NUMBER" --fabric "$ND_ACTIVITY_FABRIC" \\
+                    --collection-root "$COLLECTIONS_DIRECTORY" --test-type "$ND_ACTIVITY_TEST_TYPE" \\
+                    --output "$ND_ACTIVITY_LOG.activity.json"
+            '''
+        }
+        def activity = new groovy.json.JsonSlurperClassic().parseText(readFile(file: "${logFile}.activity.json"))
+        if (activity.module != module || activity.run_id != runId ||
+            activity.build.toString() != BUILD_NUMBER.toString() || activity.fabric != context.scope || !activity.validated) {
+            error('Module activity summary belongs to another execution')
+        }
+        row.putAll(activity)
+        row.counts = activity.counts.collectEntries { state, count -> [(state): [started: count]] }
+        row.counts.other = [started: activity.other_cases]
+        row.case_totals = activity.testcase_totals ?: [:]
+        row.failure = (activity.failure ?: []).join('; ')
+        row.fabric = context.fabric
+        row.scope = context.scope
+        row.nd = ndfcConfig.version
+        row.duration = '-'
+    } catch (Exception e) {
+        rethrowIfInterrupt(e)
+        row.result = 'UNKNOWN'
+        row.failure = 'module case report unavailable; see console'
+        row.coverage = 'UNKNOWN'
+        env.PIPELINE_FAILED = 'true'
+        echo "⚠️ Module case report unavailable for ${module} (${context.scope}); Ansible result parsing will continue"
+    }
+}
+
+/** Show modules blocked before execution without inventing test-case counts. */
+def recordUnstartedRound(ndfcConfig, reason) {
+    def pairRows = VPC_PAIR_EXECUTIONS.collect { run ->
+        [id: run.id, fabric: run.id == 'advanced' ? ndfcConfig.fabric_name : run.fabric,
+         type: run.id == 'advanced' ? ndfcConfig.vpc_pair_fabric_type : run.type]
+    }
+    def targets = []
+    (INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_links']).each { module ->
+        targets.add(module)
+        if (module == 'nd_manage_policy_group') {
+            targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })
+        }
+    }
+    targets.addAll(PLAYBOOK_FILES)
+    targets.each { module ->
+        def prefix = "${ndfcConfig.versionId}|${module}|".toString()
+        if (!MODULE_ACTIVITY_RESULTS.keySet().any { it.startsWith(prefix) }) {
+            def context = resultContextForTarget(ndfcConfig, module, ndfcConfig.fabric_name, pairRows)
+            MODULE_ACTIVITY_RESULTS[prefix + 'not-run'] = [module: module, nd: ndfcConfig.version,
+                round_label: ndfcConfig.round_label, fabric: context.fabric, scope: context.scope,
+                result: 'NOT_RUN', coverage: 'UNKNOWN', counts: [:], case_totals: [:],
+                failure: (reason ?: 'round not reached').toString().replace('|', '/').replace('\n', ' ').take(170)]
+        }
+    }
+}
+
+def publishModuleActivityReport() {
+    try {
+        def reportFile = "module_test_activity_build_${BUILD_NUMBER}.txt"
+        writeFile file: reportFile, text: formatModuleActivityTable(MODULE_ACTIVITY_RESULTS.values().toList(), BUILD_NUMBER)
+        archiveArtifacts artifacts: reportFile, allowEmptyArchive: false, fingerprint: true
+        env.MODULE_ACTIVITY_REPORT_FILE = reportFile
+        echo "📋 Archived module-only test activity table: ${reportFile}"
+    } catch (Exception e) {
+        rethrowIfInterrupt(e)
+        env.PIPELINE_FAILED = 'true'
+        echo "⚠️ Could not archive module activity table: ${e.getMessage() ?: e.getClass().getName()}"
+    }
+}
+
 def bundleAllLogs() {
     def zipName = "nd_nightly_logs_build_${BUILD_NUMBER}.zip"
     try {
@@ -1839,11 +2229,11 @@ Generated: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 Console: ${JOB_URL}${BUILD_NUMBER}/console
 Branch: ${env.ND_GIT_BRANCH ?: 'develop'}
 
-Total Passed: ${env.TOTAL_PASSED_COUNT ?: '0'}
-Total Failed: ${env.TOTAL_FAILED_COUNT ?: '0'}
+Test cases passed: ${moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList()).passed}
+Test cases failed: ${moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList()).failed}
 
 DETAILED TEST RESULTS:
-${formatResultsTable(TEST_RESULT_SUMMARY_BUF)}
+${formatResultsTable(moduleCaseSummaryRows(), 'module test cases')}
 """
         if ((env.LINT_SUMMARY ?: '').trim()) {
             summary += """
@@ -1903,6 +2293,7 @@ ${BUILD_FAILURE_REASON_BUF}
                 copy_matches "skip-summary" "${COLLECTIONS_DIRECTORY}"/skipped_tests_*.txt
                 copy_matches "lint-summary" "${BASE_DIRECTORY}/lint_summary.txt"
                 copy_matches "pipeline-summary" "${WORKSPACE}/pipeline_summary_build_${BUILD_NUMBER}.txt"
+                copy_matches "module-activity" "${WORKSPACE}/module_test_activity_build_${BUILD_NUMBER}.txt"
 
                 # Full live Jenkins console needs Overall/Read; on a locked-down controller
                 # this 403s -> drop a pointer so the zip always says where it lives.
@@ -2013,7 +2404,9 @@ def parseDeploymentResults(ndfcConfig, failureFlagName) {
  * @param ndfcConfig The NDFC configuration object.
  * @param failureFlagName The failure flag to set on failure.
  */
-def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expectedRunMarker = '') {
+def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expectedRunMarker = '', reportContext = [:]) {
+    def reportingFabric = reportContext.fabric ?: ndfcConfig.fabric_name
+    def reportingScope = reportContext.scope ?: fabricScopeLabel(ndfcConfig.fabric_name)
     echo "⏱ Function 'parseTestResults' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
 
     // DEBUG: Used for sample test. def testOutputFileResponse = httpRequest(url: "http://198.51.100.155:8500/v1/kv/ansible-nd/sample_output.txt?raw")
@@ -2042,11 +2435,13 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
 
         def capabilityCases = virtualPeerLinkCapabilityFailures(testOutput)
         def capabilityNote = capabilityCases ? "NDP_UNSUPPORTED_CAPABILITY count=${capabilityCases.size()} tests=${capabilityCases.join('; ')}" : ''
+        def activityRow = MODULE_ACTIVITY_RESULTS[activityResultKey(ndfcConfig, pb, expectedRunMarker)]
+        if (activityRow != null) { activityRow.capability_note = capabilityNote }
         if (capabilityNote) {
             if (!testOutput.contains('PLAY RECAP')) {
                 echo "${pb} [${ndfcConfig.fabric_name}]: N9K-C9300v virtual peer-link / vPC Fabric Peering is unsupported. ${capabilityNote}"
                 def capabilityLabel = ((testType == 'smoke') ? "${pb} (smoke)" : pb) + (ndfcConfig.round_tag ?: '')
-                TEST_RESULT_SUMMARY_BUF += "\nERR|${capabilityLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|${capabilityNote}"
+                TEST_RESULT_SUMMARY_BUF += "\nERR|${capabilityLabel}|${reportingFabric}|${ndfcConfig.version}|-|-|-|-|${capabilityNote}|${reportingScope}"
                 setFailureFlag(failureFlagName, true)
                 error("Test stage failed: unsupported virtual peer-link capability (no PLAY RECAP)")
             }
@@ -2101,6 +2496,11 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
                     }
                 }
             }
+        }
+
+        def activityKey = activityResultKey(ndfcConfig, pb, expectedRunMarker)
+        if (MODULE_ACTIVITY_RESULTS.containsKey(activityKey)) {
+            MODULE_ACTIVITY_RESULTS[activityKey].duration = durationStr
         }
 
         // Pattern 1: Check for Ansible PLAY RECAP failures using simple string operations
@@ -2205,7 +2605,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
             def currentTotalPassed = env.TOTAL_PASSED_COUNT as Integer
             env.TOTAL_PASSED_COUNT = (currentTotalPassed + (moduleSkipped ? 0 : okCount)).toString()
 
-            echo "📊 Playbook failed count: ${failedCount} | Total accumulated failures: ${env.TOTAL_FAILED_COUNT} | Duration: ${durationStr} | Playbook: ${pb} | Fabric: ${ndfcConfig.fabric_name}"
+            echo "📊 Diagnostic Ansible failed-task count: ${failedCount} | Duration: ${durationStr} | Playbook: ${pb} | Fabric: ${reportingFabric} (${reportingScope})"
 
             // Per-module result ROW (pipe-delimited; rendered as an aligned table by
             // formatResultsTable). All runs are shown; smoke playbooks are tagged "(smoke)" and, when the
@@ -2215,9 +2615,10 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
             def rowStatus = moduleSkipped ? 'SKIP' : ((failedCount > 0 || ansibleExitStatus > 0) ? 'FAIL' : 'OK')
             if (moduleSkipped) {
                 echo "Module ${pb} skipped because its declared lab substrate is unavailable: ${skipNote}"
-                TEST_RESULT_SUMMARY_BUF += "\n${rowStatus}|${pbLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|${durationStr}|${skipNote}"
+                if (activityRow != null) { activityRow.skip_reason = skipNote }
+                TEST_RESULT_SUMMARY_BUF += "\n${rowStatus}|${pbLabel}|${reportingFabric}|${ndfcConfig.version}|-|-|-|${durationStr}|${skipNote}|${reportingScope}"
             } else {
-                TEST_RESULT_SUMMARY_BUF += "\n${rowStatus}|${pbLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|${okCount}|${failedCount}|${skippedCount}|${durationStr}|${capabilityNote}"
+                TEST_RESULT_SUMMARY_BUF += "\n${rowStatus}|${pbLabel}|${reportingFabric}|${ndfcConfig.version}|${okCount}|${failedCount}|${skippedCount}|${durationStr}|${capabilityNote}|${reportingScope}"
             }
         }
         
@@ -2275,7 +2676,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
                 // any task ran (e.g. a playbook-style target run via include_role, or
                 // a parse error). Surface it instead of silently dropping the module.
                 def pbLabelErr = ((testType == 'smoke') ? "${pb} (smoke)" : pb) + (ndfcConfig.round_tag ?: '')
-                TEST_RESULT_SUMMARY_BUF += "\nERR|${pbLabelErr}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|did not run (no PLAY RECAP -- see console)"
+                TEST_RESULT_SUMMARY_BUF += "\nERR|${pbLabelErr}|${reportingFabric}|${ndfcConfig.version}|-|-|-|-|did not run (no PLAY RECAP -- see console)|${reportingScope}"
                 setFailureFlag(failureFlagName, true)
             }
         }
@@ -2285,7 +2686,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
         setFailureFlag(failureFlagName, true)
         // Keep the DETAILED table consistent: show this module as an ERROR row
         // (same shape as the pass/fail rows) instead of leaving the section empty.
-        TEST_RESULT_SUMMARY_BUF += "\nERR|${pb}${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|no test output (see console)"
+        TEST_RESULT_SUMMARY_BUF += "\nERR|${pb}${ndfcConfig.round_tag ?: ''}|${reportingFabric}|${ndfcConfig.version}|-|-|-|-|no test output (see console)|${reportingScope}"
         if (BUILD_FAILURE_REASON_BUF) {
             BUILD_FAILURE_REASON_BUF += "\n"
         }
@@ -2302,7 +2703,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
             setFailureFlag(failureFlagName, true)
             // Keep the DETAILED table consistent: show this module as an ERROR row
             // (same shape as the pass/fail rows) instead of leaving the section empty.
-            TEST_RESULT_SUMMARY_BUF += "\nERR|${pb}${ndfcConfig.round_tag ?: ''}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|-|-|-|-|could not parse test output (see console)"
+            TEST_RESULT_SUMMARY_BUF += "\nERR|${pb}${ndfcConfig.round_tag ?: ''}|${reportingFabric}|${ndfcConfig.version}|-|-|-|-|could not parse test output (see console)|${reportingScope}"
             if (BUILD_FAILURE_REASON_BUF) {
                 BUILD_FAILURE_REASON_BUF += "\n"
             }
@@ -2404,14 +2805,12 @@ PY
             if (reportedType.startsWith('UNREADABLE')) {
                 error("Cannot read ${ndfcConfig.fabric_name} from ND to verify its type (${reportedType})")
             }
-            // ND labels a VXLAN EVPN fabric with an eBGP/routed underlay as 'routed', not 'vxlanEbgp'; accept either for
-            // the eBGP round (switches onboard by fabric NAME, so a 'routed' eBGP fabric is a valid re-home target).
-            def acceptedTypes = (ndfcConfig.primary_fabric_type.toLowerCase() == 'vxlanebgp') ? ['vxlanebgp', 'routed'] : [ndfcConfig.primary_fabric_type.toLowerCase()]
-            if (!acceptedTypes.contains(reportedType.toLowerCase())) {
-                echo "❌ ${ndfcConfig.fabric_name} reports ND type '${reportedType}'. The ${ndfcConfig.round_label} round accepts ${acceptedTypes}: recreate the fabric as a VXLAN EVPN ${ndfcConfig.round_label} fabric under the same name."
-                error("${ndfcConfig.fabric_name} is a '${reportedType}' fabric in ND but this round needs one of ${acceptedTypes}; nothing was moved")
+            // The module supports vxlanEbgp; a generic routed fabric is not
+            // sufficient evidence that this destination accepts VXLAN switches.
+            if (reportedType.toLowerCase() != ndfcConfig.primary_fabric_type.toLowerCase()) {
+                error("${ndfcConfig.fabric_name} reports '${reportedType}', expected '${ndfcConfig.primary_fabric_type}'; no switches were moved")
             }
-            echo "✅ ${ndfcConfig.fabric_name} reports ND type '${reportedType}' (accepted for the ${ndfcConfig.round_label} round: ${acceptedTypes})"
+            echo "NDP_FABRIC_DESTINATION_VALIDATED: ${ndfcConfig.fabric_name} (${reportedType})"
             sh '''#!/bin/bash
                 set -euo pipefail
                 cd ${COLLECTIONS_DIRECTORY}
@@ -3077,7 +3476,10 @@ def runFabricTest(ndfcConfig) {
             // The destructive switch lifecycle runs last and is followed by the canonical restore.
             // Run numbered links after fabric/resource tests and immediately before
             // nd_manage_switches, whose upstream setup removes all VXLAN members.
-            def effectiveIntegrationModules = INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + ['nd_resource_manager', 'nd_manage_fabric', 'nd_manage_links', 'nd_manage_switches']
+            def effectiveIntegrationModules = INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + [
+                'nd_resource_manager', 'nd_manage_fabric', 'nd_manage_links',
+                // 'nd_manage_switches', // functional suite disabled; membership and recovery remain enabled
+            ]
             // One standalone run (and output file) per fixed vPC pair: nd_vpc_pair.<id>.
             def standaloneTargets = vpcPairRows.collect { row -> "nd_vpc_pair.${row.id}".toString() }
             def orderedIntegrationTargets = []
@@ -3087,6 +3489,19 @@ def runFabricTest(ndfcConfig) {
                     orderedIntegrationTargets.addAll(standaloneTargets)
                 }
             }
+            def plannedResultTargets = orderedIntegrationTargets.collect { [it, 'integration'] }
+            if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
+                PLAYBOOK_FILES.each { plannedResultTargets.add([it, 'smoke']) }
+            }
+            def reportContextsForShell = plannedResultTargets.collect { target ->
+                def context = resultContextForTarget(ndfcConfig, target[0], networkFabricName, vpcPairRows)
+                def key = activityResultKey(ndfcConfig, target[0], testRunMarker)
+                MODULE_ACTIVITY_RESULTS[key] = [module: target[0], nd: ndfcConfig.version,
+                    run_id: testRunMarker, fabric: context.fabric, scope: context.scope,
+                    result: 'UNKNOWN', coverage: 'UNKNOWN', counts: [:], case_totals: [:],
+                    failure: 'result not collected; execution may be interrupted or not reached']
+                "${target[0]}|${context.scope}|${context.fabric}"
+            }.join('\n')
             def integrationForShell = effectiveIntegrationModules.join(' ')
             def standaloneIntegrationForShell = standaloneTargets.join(' ')
             def vpcPairRunsForShell = vpcPairRows.collect { row -> "${row.id}|${row.fabric}|${row.type}|${row.switch1}|${row.switch2}".toString() }.join(' ')
@@ -3125,6 +3540,7 @@ def runFabricTest(ndfcConfig) {
                                  "NDP_EFFECTIVE_MODULES=${profileCoverageForShell}",
                                  "VPC_PAIR_RUNS=${vpcPairRunsForShell}",
                                  "NETWORK_FABRIC_NAME=${networkFabricName}",
+                                 "ND_REPORT_TARGET_CONTEXTS=${reportContextsForShell}",
                                  "TEST_RUN_MARKER=${testRunMarker}",
                                  "ND_REPORT_DEBUG_ENABLED=${params.DEBUG == true}",
                                  "ND_REPORT_DEBUG_MODULES=${params.DEBUG_MODULES ?: ''}",
@@ -3153,7 +3569,7 @@ def runFabricTest(ndfcConfig) {
                                     if [ -e "${EXPECTED_OUTPUT}" ] || [ -L "${EXPECTED_OUTPUT}" ]; then
                                         rm -f -- "${EXPECTED_OUTPUT}"
                                     fi
-                                    rm -f -- "${EXPECTED_OUTPUT}.execution.json" "${EXPECTED_OUTPUT}.phases.json" "${EXPECTED_OUTPUT}.summary.json"
+                                    rm -f -- "${EXPECTED_OUTPUT}.execution.json" "${EXPECTED_OUTPUT}.phases.json" "${EXPECTED_OUTPUT}.summary.json" "${EXPECTED_OUTPUT}.activity.json"
                                 done
 
                                 cd \${COLLECTIONS_DIRECTORY}
@@ -3462,8 +3878,8 @@ PEERLINK_PROBE_EOF
                                         -e "fabric_type=${VPC_TYPE}" \
                                         2>&1 | tee -a "${OUTPUT_FILE}"
                                     ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                    echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${OUTPUT_FILE}"
                                     if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
-                                        echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${OUTPUT_FILE}"
                                         RUN_FAILURE=1
                                     fi
                                     END_TIME=$(date +%s)
@@ -3585,8 +4001,8 @@ PEERLINK_PROBE_EOF
                                             -e "nd_prerequisite_run_id=${TEST_RUN_MARKER}_${m}" \
                                             ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} 2>&1 | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
                                         ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                        echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
                                         if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
-                                            echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt
                                             RUN_FAILURE=1
                                         fi
                                         END_TIME=$(date +%s)
@@ -3632,8 +4048,8 @@ PEERLINK_PROBE_EOF
                                             -e "@${INVENTORY_VARS_FILE}" \
                                             2>&1 | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
                                         ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                        echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
                                         if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
-                                            echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt
                                             RUN_FAILURE=1
                                         fi
                                         END_TIME=$(date +%s)
@@ -3659,11 +4075,12 @@ PEERLINK_PROBE_EOF
                                 {
                                     echo "ND NIGHTLY MODULE TEST-PROGRESS REPORT"
                                     echo "Build: ${BUILD_NUMBER:-unknown}"
-                                    echo "Fabric: ${FABRIC_NAME}"
+                                    echo "Primary fabric: ${FABRIC_NAME} (actual fabric/type is shown for each module below)"
                                     echo "ND/NDFC version: ${VERSION_ID}"
                                     echo "Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
                                     echo ""
                                     echo "Meaning:"
+                                    echo "  DIAGNOSTIC ANSIBLE TASK ACTIVITY ONLY - not module test-case totals."
                                     echo "  COMPLETED = task/test had at least one executed result (ok/changed/failed)."
                                     echo "  EXPECTED-FAILURE = fatal result was ignored by the playbook."
                                     echo "  FAILED = non-ignored fatal/failed result, or non-zero Ansible exit status."
@@ -3674,7 +4091,17 @@ PEERLINK_PROBE_EOF
                                 for sm in ${ORDERED_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do
                                     smlog="test_output_${FABRIC_NAME}_${VERSION_ID}_${sm}.txt"
                                     [ -f "${smlog}" ] || continue
-                                    awk -v module="${sm}" -v logfile="${smlog}" '
+                                    report_fabric="Unknown"
+                                    report_scope="Unknown"
+                                    while IFS='|' read -r report_module candidate_scope candidate_fabric; do
+                                        if [ "${report_module}" = "${sm}" ]; then
+                                            report_fabric="${candidate_fabric}"
+                                            report_scope="${candidate_scope}"
+                                            break
+                                        fi
+                                    done <<< "${ND_REPORT_TARGET_CONTEXTS}"
+                                    awk -v module="${sm}" -v logfile="${smlog}" \
+                                        -v actual_fabric="${report_fabric}" -v fabric_type="${report_scope}" '
                                         function trim(value) {
                                             sub(/^[[:space:]]+/, "", value)
                                             sub(/[[:space:]]+$/, "", value)
@@ -3745,6 +4172,8 @@ PEERLINK_PROBE_EOF
                                             if (failed_count > 0 || (exit_status != "not recorded" && exit_status != "0")) result = "FAILED"
                                             print "============================================================"
                                             print "MODULE: " module
+                                            print "FABRIC: " actual_fabric
+                                            print "FABRIC TYPE: " fabric_type
                                             print "SOURCE LOG: " logfile
                                             print "RESULT: " result
                                             print "ANSIBLE EXIT STATUS: " exit_status
@@ -3792,12 +4221,14 @@ PEERLINK_PROBE_EOF
                     resultTargets.each { t ->
                         def token = t[0]
                         def testType = t[1]
+                        def reportContext = resultContextForTarget(ndfcConfig, token, networkFabricName, vpcPairRows)
                         def testOutputFile = "${COLLECTIONS_DIRECTORY}/test_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}_${token}.txt"
                         echo "🔍 Checking for test output file: ${testOutputFile}"
                         if (fileExists(testOutputFile)) {
+                            captureModuleActivity(ndfcConfig, token, testType, testRunMarker, reportContext, testOutputFile)
                             echo "📊 Parsing ${testType} results for: ${token}"
                             try {
-                                parseTestResults(ndfcConfig, failureFlagName, token, testType, testRunMarker)
+                                parseTestResults(ndfcConfig, failureFlagName, token, testType, testRunMarker, reportContext)
                             } catch (Exception e) {
                                 // Log the error but continue processing the other targets
                                 echo "⚠️ Error parsing results for ${token}: ${e.getMessage()}"
@@ -3809,7 +4240,7 @@ PEERLINK_PROBE_EOF
                             def archivedArtifact = archiveTestOutput(ndfcConfig, token, testRunMarker)
                             if (archivedArtifact) {
                                 def artifactLabel = ((testType == 'smoke') ? "${token} (smoke)" : token) + (ndfcConfig.round_tag ?: '')
-                                TEST_RESULT_ARTIFACTS_BUF += "\n${artifactLabel}|${archivedArtifact}"
+                                TEST_RESULT_ARTIFACTS_BUF += "\n${artifactLabel} (${reportContext.scope})|${archivedArtifact}"
                             }
                         } else {
                             setFailureFlag(failureFlagName, true)
@@ -3818,12 +4249,17 @@ PEERLINK_PROBE_EOF
                             // starting.  The owner must see NOT_RUN/PENDING instead
                             // of losing every later module from the Webex summary.
                             def missingLabel = ((testType == 'smoke') ? "${token} (smoke)" : token) + (ndfcConfig.round_tag ?: '')
-                            TEST_RESULT_SUMMARY_BUF += "\nNOT_RUN|${missingLabel}|${ndfcConfig.fabric_name}|${ndfcConfig.version}|0|0|0|not reached|output file missing"
+                            TEST_RESULT_SUMMARY_BUF += "\nNOT_RUN|${missingLabel}|${reportContext.fabric}|${ndfcConfig.version}|-|-|-|not reached|output file missing|${reportContext.scope}"
+                            def missingActivity = MODULE_ACTIVITY_RESULTS[activityResultKey(ndfcConfig, token, testRunMarker)]
+                            missingActivity.result = 'NOT_RUN'
+                            missingActivity.failure = 'not reached; current-run output file missing'
                             echo "⚠️ Required test output file not found; recording ${missingLabel} as NOT_RUN: ${testOutputFile}"
                         }
                     }
                     // Archive the module-wise skipped-tests summary and record its link.
                     archiveSkipList(ndfcConfig)
+                    echo "\nINTERNAL MODULE TEST RESULTS (CASE COUNTS)\n" +
+                        formatResultsTable(moduleCaseSummaryRows(), 'module test cases')
                 }
             } catch (Exception e) {
                 setFailureFlag(failureFlagName, true)
