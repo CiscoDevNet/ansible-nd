@@ -451,6 +451,54 @@ def test_routed_network_group_number_readback_rejects_invalid_values(network_typ
         NDConfigCollection.from_api_response([row], NetworkBaseModel)
 
 
+@pytest.mark.parametrize("network_type", ["routed", "classicLanEnhanced", "aimlRouted"])
+@pytest.mark.parametrize(
+    "field,address",
+    [
+        ("activePrimaryInterfaceIpv4", "192.0.2.1"),
+        ("standbyBackupInterfaceIpv4", "192.0.2.2"),
+        ("activePrimaryInterfaceIpv6", "2001:db8::1"),
+        ("standbyBackupInterfaceIpv6", "2001:db8::2"),
+        ("virtualPrimaryLinkLocalIpv6", "fe80::1"),
+        ("activePrimaryInterfaceIpv4", "192.0.2.1/24"),
+        ("standbyBackupInterfaceIpv4", "192.0.2.2/24"),
+        ("activePrimaryInterfaceIpv6", "2001:db8::1/64"),
+        ("standbyBackupInterfaceIpv6", "2001:db8::2/64"),
+    ],
+)
+def test_routed_network_interface_address_collection_readback_preserves_host_and_cidr(network_type, field, address):
+    row = {"networkName": "USERS", "networkType": network_type, "networkMode": "layer3", "l3Data": {field: address}}
+
+    network = NDConfigCollection.from_api_response([row], NetworkBaseModel).get("USERS")
+
+    assert isinstance(network.l3_data, ClassicOrRoutedL3DataModel)
+    assert network.to_payload(exclude_unset=True)["l3Data"][field] == address
+    assert network.to_diff_dict(exclude_unset=True)["l3Data"][field] == address
+    assert network.to_gathered_config()["network_name"] == "USERS"
+    assert network.get_diff(NetworkBaseModel.from_response(row), exclude_unset=True)
+
+
+@pytest.mark.parametrize("network_type", ["routed", "classicLanEnhanced", "aimlRouted"])
+@pytest.mark.parametrize(
+    "field,address",
+    [
+        ("activePrimaryInterfaceIpv4", "192.0.2.999"),
+        ("standbyBackupInterfaceIpv4", "2001:db8::1"),
+        ("activePrimaryInterfaceIpv6", "192.0.2.1"),
+        ("standbyBackupInterfaceIpv6", "2001:db8::zz"),
+        ("virtualPrimaryLinkLocalIpv6", "192.0.2.1"),
+        ("virtualPrimaryLinkLocalIpv6", "fe80::1/64"),
+        ("gatewayIpv4Address", "192.0.2.1"),
+        ("gatewayIpv6Address", "2001:db8::1"),
+    ],
+)
+def test_routed_network_interface_readback_rejects_invalid_and_unmasked_gateways(network_type, field, address):
+    row = {"networkName": "USERS", "networkType": network_type, "networkMode": "layer3", "l3Data": {field: address}}
+
+    with pytest.raises(ValidationError):
+        NDConfigCollection.from_api_response([row], NetworkBaseModel)
+
+
 def test_vxlan_nested_models_apply_defaults_without_manufacturing_explicit_fields():
     """Verify natural nested conversion preserves model defaults separately from supplied values."""
     model = VxlanIbgpNetworkModel(networkName="USERS", l2Data={"fabricData": {}}, l3Data={"fabricData": {}})

@@ -301,26 +301,30 @@ class ClassicOrRoutedL3DataModel(NDNestedModel):
     vlan_netflow_monitor: str | None = Field(default=None, alias="l2NetflowMonitor")
     interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
 
-    @field_validator(
-        "gateway_ipv4_address",
-        "active_primary_interface_ipv4",
-        "standby_backup_interface_ipv4",
-        mode="before",
-    )
+    @field_validator("gateway_ipv4_address", mode="before")
     @classmethod
-    def validate_ipv4_cidr_fields(cls, v: str | None) -> str | None:
+    def validate_ipv4_gateway(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_cidrv4(v)
 
-    @field_validator(
-        "gateway_ipv6_address",
-        "active_primary_interface_ipv6",
-        "standby_backup_interface_ipv6",
-        "virtual_primary_link_local_ipv6",
-        mode="before",
-    )
+    @field_validator("active_primary_interface_ipv4", "standby_backup_interface_ipv4", mode="before")
     @classmethod
-    def validate_ipv6_cidr_fields(cls, v: str | None) -> str | None:
+    def validate_ipv4_interface(cls, v: str | None) -> str | None:
+        return NetworkValidators.validate_cidrv4(v) if v is not None and "/" in str(v) else NetworkValidators.validate_ipv4_address(v)
+
+    @field_validator("gateway_ipv6_address", mode="before")
+    @classmethod
+    def validate_ipv6_gateway(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_cidrv6(v)
+
+    @field_validator("active_primary_interface_ipv6", "standby_backup_interface_ipv6", mode="before")
+    @classmethod
+    def validate_ipv6_interface(cls, v: str | None) -> str | None:
+        return NetworkValidators.validate_cidrv6(v) if v is not None and "/" in str(v) else NetworkValidators.validate_ipv6_address(v)
+
+    @field_validator("virtual_primary_link_local_ipv6", mode="before")
+    @classmethod
+    def validate_virtual_primary_link_local_ipv6(cls, v: str | None) -> str | None:
+        return NetworkValidators.validate_ipv6_address(v)
 
     @field_validator("mtu", mode="before")
     @classmethod
