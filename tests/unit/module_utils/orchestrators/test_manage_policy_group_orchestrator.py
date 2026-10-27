@@ -1907,6 +1907,76 @@ def test_manage_policy_group_orchestrator_00750() -> None:
     assert result == {"policyIds": ["P1"], "status": "success"}
 
 
+@pytest.mark.parametrize(
+    "mark_items,fallback_ids,accepted_ids",
+    [
+        (
+            [
+                {"policyId": "P3", "status": "SUCCESS"},
+                {"policyId": "P2", "status": "success"},
+                {"policyId": "P2", "status": "success"},
+                {"policyId": "P1", "status": "Success"},
+            ],
+            [],
+            ["P3", "P2", "P2", "P1"],
+        ),
+        (
+            [
+                {"policyId": "UNREQUESTED", "status": "success"},
+                {"policyId": "P3", "status": "success"},
+                {"policyId": "P1", "status": "failed", "message": "first retry"},
+                {"policyId": "P2", "status": "SUCCESS"},
+                {"policyId": "P1", "status": "failed", "message": "second retry"},
+            ],
+            ["P1", "P1"],
+            ["P3", "P2", "P1", "P1"],
+        ),
+        ([], [], ["P2", "P1", "P2", "P3"]),
+    ],
+    ids=["reordered-successes", "duplicate-fallbacks", "legacy-empty-response"],
+)
+def test_delete_bulk_preserves_order_duplicates_and_requested_membership(mark_items, fallback_ids, accepted_ids):
+    """Membership indexes cannot reorder requests, collapse retries, or accept unrelated IDs."""
+    requested_ids = ["P2", "P1", "P2", "P3"]
+    members = {"P1": ["SN1"], "P2": ["SN2", "SN3"], "P3": ["SN3", "SN4"]}
+    responses = [_resp({"policyGroups": mark_items}, method="POST")]
+    responses.extend(_resp({}, method="DELETE") for _ in fallback_ids)
+    responses.append(_resp({"switchIds": []}, method="POST"))
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send(responses), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid, switch_ids=members[pid]) for pid in requested_ids]
+
+    result = instance.delete_bulk(models)
+
+    assert result == {"policyIds": requested_ids, "status": "success"}
+    assert results._tasks[0].payload == {"policyIds": requested_ids}
+    assert [task.path.rsplit("/", 1)[-1] for task in results._tasks if task.verb == "DELETE"] == fallback_ids
+    assert len(results._tasks) == 2 + len(fallback_ids)
+    assert results._tasks[-1].payload == {"switchIds": ["SN1", "SN2", "SN3", "SN4"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": pid} for pid in accepted_ids]
+
+
+@pytest.mark.parametrize("malformed_item", [None, {"policyId": [], "status": "failed"}], ids=["non-object-item", "non-string-id"])
+def test_delete_bulk_malformed_response_preserves_only_explicit_requested_successes(malformed_item):
+    """A parser error retains known accepted deletions without fallback or deployment."""
+    mark_items = [
+        {"policyId": "UNREQUESTED", "status": "success"},
+        {"policyId": "P2", "status": "SUCCESS"},
+        malformed_item,
+        {"policyId": "P3", "status": "success"},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp({"policyGroups": mark_items}, method="POST")]), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid) for pid in ["P2", "P1", "P3"]]
+
+    with pytest.raises(Exception, match="Bulk delete policy groups failed"):
+        instance.delete_bulk(models)
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].payload == {"policyIds": ["P2", "P1", "P3"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": "P2"}, {"operation": "delete", "policy_id": "P3"}]
+
+
 # =============================================================================
 # Test: _switch_deploy
 # =============================================================================

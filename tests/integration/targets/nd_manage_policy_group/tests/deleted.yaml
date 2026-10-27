@@ -40,7 +40,7 @@
     ##     TC1 - Delete with deploy=true        ##
     ##############################################
 
-    - name: "DELETED TC1 - Delete switch_freeform policy group with deploy"
+    - name: "DELETED TC1 - Preview deletion with retained creation flag"
       cisco.nd.nd_manage_policy_group: &delete_freeform
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -48,6 +48,44 @@
         config:
           - name: switch_freeform
             description: "Enable system vlan long-name"
+            create_additional_policy: true
+      check_mode: true
+      register: delete_preview
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion preview"
+      vars:
+        target_before: "{{ delete_preview.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+        target_after: "{{ delete_preview.after | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - delete_preview.changed == true
+          - delete_preview.force_created is not defined
+          - target_before | length == 1
+          - target_before[0].priority == 110
+          - target_after == []
+      tags: deleted
+
+    - name: "DELETED TC1 - Gather after deletion preview"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: delete_preview_readback
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - delete_preview_readback.changed == false
+          - delete_preview_readback.gathered | length == 1
+          - delete_preview_readback.gathered[0].policy_id == (delete_preview.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | first).policy_id
+      tags: deleted
+
+    - name: "DELETED TC1 - Delete switch_freeform policy group with deploy"
+      cisco.nd.nd_manage_policy_group: *delete_freeform
       register: result
       tags: deleted
 
@@ -55,14 +93,19 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.force_created is not defined
       tags: deleted
 
     ##############################################
     ##     TC2 - Idempotence after delete       ##
     ##############################################
 
-    - name: "DELETED TC2 - Idempotence check (already deleted)"
+    - name: "DELETED TC2 - Already absent with creation flag in real and check modes"
       cisco.nd.nd_manage_policy_group: *delete_freeform
+      check_mode: "{{ item }}"
+      loop: [false, true]
+      loop_control:
+        label: "check_mode={{ item }}"
       register: result
       tags: deleted
 
@@ -70,6 +113,29 @@
       ansible.builtin.assert:
         that:
           - result.changed == false
+          - result.results | length == 2
+          - result.results[0].changed == false
+          - result.results[1].changed == false
+          - result.results[0].force_created is not defined
+          - result.results[1].force_created is not defined
+      tags: deleted
+
+    - name: "DELETED TC2 - Gather after repeated deletion"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: absent_readback
+      tags: deleted
+
+    - name: "DELETED TC2 - Verify no replacement group was created"
+      ansible.builtin.assert:
+        that:
+          - absent_readback.changed == false
+          - absent_readback.gathered is defined
+          - absent_readback.gathered == []
       tags: deleted
 
     ##############################################

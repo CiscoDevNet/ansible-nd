@@ -14,7 +14,7 @@
     ##############################################
 
     # TC-1: Create a single policy group
-    - name: "MERGED TC1 - Create switch_freeform policy group"
+    - name: "MERGED TC1 - Preview switch_freeform policy group creation"
       cisco.nd.nd_manage_policy_group: &merged_freeform
         fabric_name: "{{ fabric_name }}"
         state: merged
@@ -27,19 +27,69 @@
               - "{{ switch_serial_1 }}"
             template_inputs:
               CONF: "system vlan long-name"
+      check_mode: true
+      register: create_preview
+      tags: merged
+
+    - name: "MERGED TC1 - Verify effective creation preview"
+      vars:
+        target_before: "{{ create_preview.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+        target_after: "{{ create_preview.after | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - create_preview.changed == true
+          - target_before == []
+          - target_after | length == 1
+          - target_after[0].policy_id is not defined
+          - target_after[0].priority == 110
+          - target_after[0].switch_ids == [switch_serial_1]
+          - target_after[0].template_inputs.CONF == 'system vlan long-name'
+      tags: merged
+
+    - name: "MERGED TC1 - Gather after creation preview"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: create_preview_readback
+      tags: merged
+
+    - name: "MERGED TC1 - Verify creation preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - create_preview_readback.changed == false
+          - create_preview_readback.gathered == []
+      tags: merged
+
+    - name: "MERGED TC1 - Create switch_freeform policy group"
+      cisco.nd.nd_manage_policy_group: *merged_freeform
       register: result
       tags: merged
 
     - name: "MERGED TC1 - Verify creation"
+      vars:
+        target_before: "{{ result.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+        target_after: "{{ result.after | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - target_before == []
+          - target_after | length == 1
+          - target_after[0].policy_id is match('^POLICY-GROUP-')
+          - target_after[0].priority == 110
+          - target_after[0].template_inputs.CONF == 'system vlan long-name'
       tags: merged
 
 
     # TC-2: Idempotence - Re-run the same task
-    - name: "MERGED TC2 - Idempotence check"
+    - name: "MERGED TC2 - Idempotence in real and check modes"
       cisco.nd.nd_manage_policy_group: *merged_freeform
+      check_mode: "{{ item }}"
+      loop: [false, true]
+      loop_control:
+        label: "check_mode={{ item }}"
       register: result
       tags: merged
 
@@ -47,6 +97,11 @@
       ansible.builtin.assert:
         that:
           - result.changed == false
+          - result.results | length == 2
+          - result.results[0].changed == false
+          - result.results[1].changed == false
+          - result.results[0].before == result.results[0].after
+          - result.results[1].before == result.results[1].after
       tags: merged
 
     ##############################################
@@ -99,8 +154,8 @@
     ##############################################
 
     # TC-4: Update template_inputs on existing group
-    - name: "MERGED TC4 - Update template_inputs on existing policy group"
-      cisco.nd.nd_manage_policy_group:
+    - name: "MERGED TC4 - Preview sparse template-input update"
+      cisco.nd.nd_manage_policy_group: &merged_freeform_update
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -109,13 +164,63 @@
             description: "Enable system vlan long-name"
             template_inputs:
               CONF: "system vlan long-name\nno ip domain-lookup"
+      check_mode: true
+      register: update_preview
+      tags: merged
+
+    - name: "MERGED TC4 - Verify effective update preview"
+      vars:
+        target_before: "{{ update_preview.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+        target_after: "{{ update_preview.after | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - update_preview.changed == true
+          - target_before | length == 1
+          - target_after | length == 1
+          - target_before[0].policy_id == target_after[0].policy_id
+          - target_before[0].priority == 110
+          - target_after[0].priority == 110
+          - target_after[0].switch_ids == target_before[0].switch_ids
+          - target_before[0].template_inputs.CONF == 'system vlan long-name'
+          - target_after[0].template_inputs.CONF == 'system vlan long-name\nno ip domain-lookup'
+      tags: merged
+
+    - name: "MERGED TC4 - Gather after update preview"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: update_preview_readback
+      tags: merged
+
+    - name: "MERGED TC4 - Verify update preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - update_preview_readback.changed == false
+          - update_preview_readback.gathered | length == 1
+          - update_preview_readback.gathered[0].priority == 110
+          - update_preview_readback.gathered[0].template_inputs.CONF == 'system vlan long-name'
+      tags: merged
+
+    - name: "MERGED TC4 - Update template_inputs on existing policy group"
+      cisco.nd.nd_manage_policy_group: *merged_freeform_update
       register: result
       tags: merged
 
     - name: "MERGED TC4 - Verify update (changed)"
+      vars:
+        target_before: "{{ result.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+        target_after: "{{ result.after | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - target_before | length == 1
+          - target_after | length == 1
+          - target_before[0].priority == 110
+          - target_after[0].priority == 110
+          - target_after[0].template_inputs.CONF == 'system vlan long-name\nno ip domain-lookup'
       tags: merged
 
     - name: "MERGED TC4 - Gather updated policy group"
@@ -206,9 +311,17 @@
       tags: merged
 
     - name: "MERGED TC7 - Verify bulk creation"
+      vars:
+        created: >-
+          {{ result.after | selectattr('description', 'in',
+             ['Enable LACP on leaf switches', 'Enable LLDP on leaf switches']) | list }}
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - created | length == 2
+          - created | map(attribute='priority') | list == [500, 500]
+          - created | map(attribute='policy_id') | unique | list | length == 2
+          - created | map(attribute='template_inputs.featureName') | sort == ['lacp', 'lldp']
       tags: merged
 
     # TC-8: Idempotence on bulk create
