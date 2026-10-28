@@ -144,7 +144,7 @@ def test_unrecognized_controller_only_message_is_not_rewritten():
 
 
 @pytest.mark.parametrize("description_case", ["null", "missing", "empty"])
-def test_anonymous_template_delete_diagnostic_preserves_existing_behavior(invoke, description_case):
+def test_anonymous_template_delete_uses_exact_controller_id(invoke, description_case):
     current = group(description=None if description_case == "null" else "")
     if description_case == "missing":
         current.pop("description")
@@ -152,13 +152,8 @@ def test_anonymous_template_delete_diagnostic_preserves_existing_behavior(invoke
 
     result = invoke(controller, [{"name": "feature_enable"}], state="deleted")
 
-    assert controller.writes() == []
-    assert controller.groups[GROUP_ID] == current
-    if description_case == "null":
-        assert result["failed"] is True
-        assert result["msg"] == (
-            "Initialization failed: Failed to extract identifier: "
-            "Composite identifier fields ['description'] are None. All required: ['description', 'template_name']"
-        )
-    else:
-        assert result == {"output_level": "normal", "changed": False, "after": [], "before": [], "diff": []}
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.groups == {}
+    assert [call[2] for call in controller.writes() if call[1].endswith("/markDelete")] == [{"policyIds": [GROUP_ID]}]
+    assert [item["policy_id"] for item in result["direct_actions"]["deleted"]] == [GROUP_ID]
