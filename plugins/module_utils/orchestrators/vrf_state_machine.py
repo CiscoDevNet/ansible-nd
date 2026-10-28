@@ -186,12 +186,12 @@ class VrfStateMachine:
         """
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
-        desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_vrf_names = self.coordinator._configured_vrf_names(config)
 
         sm, original_config, original_state = self.coordinator._new_state_machine(module_args, strategy)
         try:
             prepare_crud_state(sm, state)
+            desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
             current_vrf_names = self._vrf_names_from_models(sm.existing)
             current_vrf_name_set = set(current_vrf_names)
             desired_vrf_name_set = set(desired_vrf_names)

@@ -44,6 +44,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
     MultisiteParentVrfStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.child_vrf import ChildVrfStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.standalone_vrf import StandaloneVrfStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
     VrfConfigModel,
     VrfParentConfigModel,
@@ -373,6 +374,48 @@ class _ConcreteVxlanVrfModel(VrfDataModel):
     vrf_type: Literal["vxlan", "vxlanIbgp", "vxlanEbgp"] = Field(alias="vrfType")
 
 
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("existing_mode", [False, True])
+@pytest.mark.parametrize("explicit_mode", [None, False, True])
+def test_parent_child_l3vni_mode_preserves_state_and_reuses_inventory(*, strategy_cls, state, existing_mode, explicit_mode, child_vrf_trm_controller):
+    """Sparse child mode preservation converges using one inventory snapshot per run."""
+    controller = child_vrf_trm_controller
+    controller["inventory"][0]["fabricData"] = {"l3VniWithoutVlan": existing_mode, "bgpLogNeighborChange": False}
+    multicluster = strategy_cls is MulticlusterParentVrfStrategy
+    member = {
+        "fabricName": "c1",
+        "fabricState": "member",
+        "managementType": "vxlanIbgp",
+        "manageFabricDetails": {"management": {"type": "vxlanIbgp", "l3VniNoVlanDefaultOption": not existing_mode}},
+    }
+    if multicluster:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    child = {"fabric_name": "c1", "bgp_log_neighbor_change": True}
+    if explicit_mode is not None:
+        child["l3vni_wo_vlan"] = explicit_mode
+    config = [{"vrf_name": "BLUE", "child_fabric_config": [child]}]
+    validated = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}}).validate({"config": config})
+    assert not validated.error_messages
+    expected = existing_mode if explicit_mode is None else explicit_mode
+
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
+        result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert not result["failed"]
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["queries"] == [("c1", multicluster)] * (run + 1)
+
+    payload = controller["writes"][0]
+    assert set(payload) == {"fabricName", "vrfName", "vrfType", "fabricData"}
+    assert payload["fabricData"]["l3VniWithoutVlan"] is expected
+    assert controller["inventory"][0]["vlanId"] == 2001
+    assert all("l3vni_wo_vlan" not in task["config"][0] for task in controller["parents"])
+
+
 @pytest.mark.parametrize("multicluster", [False, True])
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 @pytest.mark.parametrize("vrf_type", ["vxlan", "vxlanIbgp", "vxlanEbgp"])
@@ -466,11 +509,12 @@ class _FabricDefaultStrategy(_StandaloneStrategy):
     fabric_data = {"manageFabricDetails": {"management": {"l3VniNoVlanDefaultOption": True}}}
 
 
-@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
-def test_vrf_authoritative_states_use_fabric_l3vni_default_when_omitted(state):
-    """Apply the fabric default in authoritative states without overriding explicit false."""
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged", "gathered", "deleted"])
+def test_vrf_parsing_leaves_l3vni_creation_default_until_inventory_lookup(state):
+    """Parsing must not turn a fabric creation default into requested mode."""
     coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_FabricDefaultStrategy())
-    assert coordinator._parse_config([{"vrf_name": "BLUE"}], VrfConfigModel, state)[0]["l3vni_wo_vlan"] is True
+    assert "l3vni_wo_vlan" not in coordinator._parse_config([{"vrf_name": "BLUE"}], VrfConfigModel, state)[0]
+    assert coordinator._parse_config([{"vrf_name": "BLUE", "vlan_id": 2001}], VrfConfigModel, state)[0]["vlan_id"] == 2001
     assert coordinator._parse_config([{"vrf_name": "BLUE", "l3vni_wo_vlan": False}], VrfConfigModel, state)[0]["l3vni_wo_vlan"] is False
 
 
@@ -480,6 +524,108 @@ def test_vrf_parent_does_not_inject_fabric_l3vni_default(state):
     parsed = coordinator._parse_config([{"vrf_name": "BLUE", "vlan_id": 2001}], VrfParentConfigModel, state)
     assert "l3vni_wo_vlan" not in parsed[0]
     assert parsed[0]["vlan_id"] == 2001
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "existing_mode,fabric_default,fields,expected",
+    [
+        (None, True, {}, True),
+        (None, False, {}, False),
+        (None, True, {"vlan_id": 2001}, False),
+        (None, True, {"vrf_vlan_name": "BLUE_VLAN"}, False),
+        (None, True, {"vrf_intf_desc": "BLUE SVI"}, False),
+        (False, True, {}, False),
+        (True, False, {}, True),
+        (True, True, {"vlan_id": 2001}, False),
+        (False, False, {"l3vni_wo_vlan": True}, True),
+        (True, True, {"l3vni_wo_vlan": False}, False),
+    ],
+)
+def test_vrf_l3vni_workflow_create_update_and_repeat(*, state, check_mode, existing_mode, fabric_default, fields, expected, monkeypatch):
+    """Actual parsing, CRUD, check-mode planning and normalized repeats obey mode precedence."""
+    entry = {"vrf_name": "BLUE", "vrf_id": 50001, "deploy": False, **fields}
+    accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": vrf_standalone_argument_spec()}}).validate({"config": [entry]})
+    assert not accepted.error_messages
+    stored = (
+        []
+        if existing_mode is None
+        else [{"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vrfId": 50001, "vrfType": "vxlanIbgp", "fabricData": {"l3VniWithoutVlan": existing_mode}}]
+    )
+    requests = []
+
+    def request(_self, **kwargs):
+        requests.append(kwargs)
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            return {"vrfs": deepcopy(stored)}
+        assert not check_mode
+        assert kwargs["verb"] in (HttpVerbEnum.POST, HttpVerbEnum.PUT)
+        payload = deepcopy(kwargs["data"]["vrfs"][0] if kwargs["verb"] == HttpVerbEnum.POST else kwargs["data"])
+        assert payload["fabricData"]["l3VniWithoutVlan"] is expected
+        if expected:
+            assert "vlanId" not in payload
+            assert not {"vrfVlanName", "vrfInterfaceDescription", "mtu", "ipv6LinkLocal"}.intersection(payload.get("coreData") or {})
+            payload.setdefault("coreData", {}).update({"mtu": 9216, "ipv6LinkLocal": True})
+        stored[:] = [payload]
+        return {}
+
+    monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "_request", request)
+    strategy = StandaloneVrfStrategy(fabric_name="AK-VXLAN", fabric_data={"management": {"type": "vxlanIbgp", "l3VniNoVlanDefaultOption": fabric_default}})
+
+    def run():
+        module_args = {"fabric_name": "AK-VXLAN", "state": state, "config": deepcopy(accepted.validated_parameters["config"]), "output_level": "debug"}
+        coordinator = VrfWorkflowCoordinator(_Module(deepcopy(module_args), check_mode=check_mode), strategy)
+        monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+        monkeypatch.setattr(coordinator, "_current_attachment_details_ignore_missing", lambda *_args: [])
+        plan_attachments = coordinator._desired_attachment_map
+
+        def desired_attachments(args, active_strategy):
+            assert args["config"][0]["l3vni_wo_vlan"] is expected
+            return plan_attachments(args, active_strategy)
+
+        monkeypatch.setattr(coordinator, "_desired_attachment_map", desired_attachments)
+        result = coordinator._handle_standalone_workflow(module_args, "standalone")
+        assert not result.get("failed")
+        assert result["proposed"][0]["fabric_data"]["l3VniWithoutVlan"] is expected
+        return result
+
+    first = run()
+    changed = existing_mode is None or existing_mode is not expected or any(key in fields for key in ("vlan_id", "vrf_vlan_name", "vrf_intf_desc"))
+    assert first["changed"] is changed
+    assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
+    assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(changed and not check_mode)
+    if check_mode:
+        assert run()["changed"] is changed
+    else:
+        requests.clear()
+        assert run()["changed"] is False
+        assert len(requests) == 1 and requests[0]["verb"] == HttpVerbEnum.GET
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "field,value", [("vlan_id", 2001), ("vrf_vlan_name", "BLUE_VLAN"), ("vrf_intf_desc", "BLUE SVI"), ("vrf_int_mtu", 9216), ("ipv6_linklocal_enable", False)]
+)
+def test_vrf_explicit_no_vlan_rejects_svi_before_any_write(state, check_mode, field, value, monkeypatch):
+    """Explicit contradictions still fail before CRUD in normal and check mode."""
+    module_args = {"fabric_name": "AK-VXLAN", "state": state, "config": [{"vrf_name": "BLUE", "l3vni_wo_vlan": True, field: value}]}
+    strategy = StandaloneVrfStrategy(fabric_name="AK-VXLAN", fabric_data={"management": {"l3VniNoVlanDefaultOption": True}})
+    coordinator = VrfWorkflowCoordinator(_Module(deepcopy(module_args), check_mode=check_mode), strategy)
+    requests = []
+
+    def request(_self, **kwargs):
+        requests.append(kwargs)
+        assert kwargs["verb"] == HttpVerbEnum.GET
+        return {"vrfs": []}
+
+    monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "_request", request)
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+    with pytest.raises((AssertionError, ValidationError), match=field):
+        coordinator._handle_standalone_workflow(module_args, "standalone")
+    assert len(requests) == int(state == "merged")
+    assert coordinator.module.params == module_args
 
 
 def test_standalone_merged_parsing_defers_cross_field_dependencies():

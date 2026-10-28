@@ -306,6 +306,30 @@ class VrfWorkflowCoordinator:
         return value if isinstance(value, bool) else None
 
     @staticmethod
+    def _resolve_l3vni_mode(proposed: VrfDataModel, current: VrfDataModel | None, entry: dict[str, Any], fabric_default: bool | None) -> None:
+        """
+        # Summary
+
+        Resolve omitted mode from VLAN intent, existing state, or a creation default.
+
+        ## Raises
+
+        None
+        """
+        if entry.get("l3vni_wo_vlan") is not None:
+            return
+        if any(entry.get(field) is not None for field in ("vlan_id", "vrf_vlan_name", "vrf_intf_desc")):
+            mode = False
+        elif current is not None:
+            fabric_data = current.fabric_data if isinstance(current.fabric_data, dict) else {}
+            mode = fabric_data.get("l3VniWithoutVlan")
+        else:
+            mode = fabric_default
+        if isinstance(mode, bool):
+            proposed.fabric_data = {**(proposed.fabric_data or {}), "l3VniWithoutVlan": mode}
+            entry["l3vni_wo_vlan"] = mode
+
+    @staticmethod
     def _resolve_parent_route_map_fallback(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
         """Apply the parent IPv4 route-map fallback only when it is authoritative."""
         for entry in entries:
@@ -330,11 +354,7 @@ class VrfWorkflowCoordinator:
                 continue
             current = sm.existing.get(identifier)
 
-            if state == "merged" and current is None and entry.get("l3vni_wo_vlan") is None and fabric_default is not None:
-                candidate = {**entry, "l3vni_wo_vlan": fabric_default}
-                VrfConfigModel.from_config(candidate, context={"state": state})
-                proposed.fabric_data = {**(proposed.fabric_data or {}), "l3VniWithoutVlan": fabric_default}
-                entry["l3vni_wo_vlan"] = fabric_default
+            self._resolve_l3vni_mode(proposed, current, entry, fabric_default)
 
             core = proposed.core_data if isinstance(proposed.core_data, dict) else {}
             current_core = current.core_data if current is not None and isinstance(current.core_data, dict) else {}
@@ -368,9 +388,10 @@ class VrfWorkflowCoordinator:
                 public.pop("bgp_passwd_encrypt", None)
             VrfConfigModel.from_config(public, context={"state": state})
 
-    @staticmethod
-    def _validate_child_vrf_intent(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
+    @classmethod
+    def _validate_child_vrf_intent(cls, sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
         """Resolve sparse child types and validate dependencies from cached state."""
+        fabric_default = cls._fabric_l3vni_default(strategy)
         for entry in entries:
             identifier = (entry["vrf_name"], strategy.fabric_name)
             proposed = sm.proposed.get(identifier)
@@ -382,6 +403,8 @@ class VrfWorkflowCoordinator:
                 model_data["vrfType"] = (current.vrf_type if current is not None else None) or NDVrfOrchestrator.default_vrf_type(strategy.fabric_data)
                 proposed = VrfDataModel.from_config(model_data, context={"state": state})
                 sm.proposed.replace(proposed)
+            if proposed.vrf_type in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+                cls._resolve_l3vni_mode(proposed, current, entry, fabric_default)
             effective = current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
             public = effective.to_gathered_config()
             child_fields = set(getattr(VrfChildConfigModel, "model_fields", {}))
@@ -404,20 +427,15 @@ class VrfWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        For authoritative states, an omitted L3VNI-without-VLAN setting uses
-        the resolved fabric default. Merged leaves it unset for sparse updates;
-        new VRFs receive the fabric default after existing-state lookup.
+        Omitted L3VNI mode stays unset until existing-state lookup distinguishes
+        a new VRF's creation default from an existing VRF's current mode.
 
         Validation errors are reported immediately via ``module.fail_json``.
         """
         parsed = []
-        fabric_default = self._fabric_l3vni_default(self.strategy) if not self.strategy.is_parent else None
         for idx, entry in enumerate(config):
             try:
-                candidate = entry
-                if state in ("replaced", "overridden", "staged") and fabric_default is not None and entry.get("l3vni_wo_vlan") is None:
-                    candidate = {**entry, "l3vni_wo_vlan": fabric_default}
-                model = model_cls.from_config(candidate, context={"state": state, "defer_dependencies": model_cls is VrfConfigModel and state == "merged"})
+                model = model_cls.from_config(entry, context={"state": state, "defer_dependencies": model_cls is VrfConfigModel and state == "merged"})
                 parsed.append(model.to_config(exclude_unset=True))
             except ValidationError as exc:
                 self.module.fail_json(msg=(f"config[{idx}] validation failed " f"({model_cls.__name__}, state={state!r}): {exc}"))

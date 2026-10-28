@@ -85,7 +85,7 @@ def _effective_vrf(sm, name="BLUE", state="merged"):
     return current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
 
 
-def _validate_child_effective(intent, existing=None, state="merged", vrf_type="vxlanIbgp"):
+def _validate_child_effective(intent, existing=None, state="merged", vrf_type="vxlanIbgp", *, fabric_default=None, is_multicluster=False):
     entry = {"vrf_name": "BLUE", **intent}
     proposed = VrfDataModel.from_config(_transform(entry, fabric_name="AK-VXLAN", is_child=True))
     proposed.vrf_type = vrf_type
@@ -96,7 +96,8 @@ def _validate_child_effective(intent, existing=None, state="merged", vrf_type="v
     )
     key = ("BLUE", "AK-VXLAN")
     sm = SimpleNamespace(proposed={key: proposed}, existing={key: current} if current is not None else {})
-    VrfWorkflowCoordinator._validate_child_vrf_intent(sm, [entry], state, _Strategy(is_child=True))
+    fabric_data = {"management": {"l3VniNoVlanDefaultOption": fabric_default}} if fabric_default is not None else {}
+    VrfWorkflowCoordinator._validate_child_vrf_intent(sm, [entry], state, _Strategy(fabric_data=fabric_data, is_child=True, is_multicluster=is_multicluster))
     return proposed, current
 
 
@@ -767,14 +768,90 @@ def test_standalone_sparse_no_vlan_rejects_explicit_svi_and_drops_readback_echo(
         _resolve_standalone(sm, [intent], "merged")
 
 
-def test_standalone_new_vrf_fabric_no_vlan_default_rejects_svi_intent():
-    intent = {"vrf_name": "BLUE", "vlan_id": 200}
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("existing_mode", [None, False, True])
+@pytest.mark.parametrize(
+    "field,value,wire",
+    [
+        ("vlan_id", 2001, "vlanId"),
+        ("vrf_vlan_name", "BLUE_VLAN", "vrfVlanName"),
+        ("vrf_intf_desc", "BLUE SVI", "vrfInterfaceDescription"),
+        ("vrf_vlan_name", "", "vrfVlanName"),
+        ("vrf_intf_desc", "", "vrfInterfaceDescription"),
+    ],
+)
+def test_standalone_l3vni_vlan_intent_overrides_creation_default_and_existing_mode(state, existing_mode, field, value, wire):
+    """Explicit VLAN/SVI identity selects VLAN-backed mode, including explicit clears."""
+    intent = {"vrf_name": "BLUE", field: value}
+    current = (
+        []
+        if existing_mode is None
+        else [VrfDataModel.from_response({"fabricName": "AK-VXLAN", "vrfName": "BLUE", "fabricData": {"l3VniWithoutVlan": existing_mode}})]
+    )
     sm = SimpleNamespace(
-        existing=NDConfigCollection(VrfDataModel),
+        existing=NDConfigCollection(VrfDataModel, current),
         proposed=NDConfigCollection(VrfDataModel, [VrfDataModel.from_config(_transform(intent))]),
     )
-    with pytest.raises(ValidationError, match="vlan_id"):
-        _resolve_standalone(sm, [intent], "merged", l3vni_default=True)
+    _resolve_standalone(sm, [intent], state, l3vni_default=True)
+    payload = _effective_vrf(sm, state=state).to_payload()
+    assert payload["fabricData"]["l3VniWithoutVlan"] is False
+    assert (payload if field == "vlan_id" else payload["coreData"])[wire] == value
+    assert intent["l3vni_wo_vlan"] is False
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("fabric_default", [None, False, True])
+@pytest.mark.parametrize("existing_mode", [None, False, True])
+def test_standalone_l3vni_default_is_creation_only(state, fabric_default, existing_mode):
+    """Fabric settings choose new modes without migrating existing VRFs."""
+    intent = {"vrf_name": "BLUE"}
+    current = (
+        []
+        if existing_mode is None
+        else [VrfDataModel.from_response({"fabricName": "AK-VXLAN", "vrfName": "BLUE", "fabricData": {"l3VniWithoutVlan": existing_mode}})]
+    )
+    sm = SimpleNamespace(
+        existing=NDConfigCollection(VrfDataModel, current),
+        proposed=NDConfigCollection(VrfDataModel, [VrfDataModel.from_config(_transform(intent))]),
+    )
+    _resolve_standalone(sm, [intent], state, l3vni_default=fabric_default)
+    payload = _effective_vrf(sm, state=state).to_payload()
+    expected = existing_mode if existing_mode is not None else fabric_default
+    assert (payload.get("fabricData") or {}).get("l3VniWithoutVlan") is expected
+    if expected is None:
+        assert "l3vni_wo_vlan" not in intent
+    else:
+        assert intent["l3vni_wo_vlan"] is expected
+    if current:
+        assert sm.existing.get_diff_config(sm.proposed.get(("BLUE", "AK-VXLAN")), exclude_unset=state == "merged") == "no_diff"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("selected", [False, True])
+def test_standalone_l3vni_explicit_mode_wins_over_creation_default_and_current(state, selected):
+    """An explicit mode overrides both cached state and the creation default."""
+    intent = {"vrf_name": "BLUE", "l3vni_wo_vlan": selected}
+    current = VrfDataModel.from_response({"fabricName": "AK-VXLAN", "vrfName": "BLUE", "fabricData": {"l3VniWithoutVlan": not selected}})
+    sm = SimpleNamespace(
+        existing=NDConfigCollection(VrfDataModel, [current]),
+        proposed=NDConfigCollection(VrfDataModel, [VrfDataModel.from_config(_transform(intent))]),
+    )
+    _resolve_standalone(sm, [intent], state, l3vni_default=not selected)
+    assert _effective_vrf(sm, state=state).fabric_data["l3VniWithoutVlan"] is selected
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("vlan_id", [None, 2001])
+def test_standalone_missing_observed_mode_does_not_inherit_creation_default(state, vlan_id):
+    """An unknown existing mode is not replaced with a fabric creation default."""
+    intent = {"vrf_name": "BLUE"}
+    current = VrfDataModel.from_response({"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vlanId": vlan_id})
+    sm = SimpleNamespace(
+        existing=NDConfigCollection(VrfDataModel, [current]),
+        proposed=NDConfigCollection(VrfDataModel, [VrfDataModel.from_config(_transform(intent))]),
+    )
+    _resolve_standalone(sm, [intent], state, l3vni_default=True)
+    assert "l3VniWithoutVlan" not in (sm.proposed.get(("BLUE", "AK-VXLAN")).fabric_data or {})
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
@@ -1890,6 +1967,39 @@ def test_child_vrf_sparse_defaults_and_repeat_comparison(state):
     proposed, current = _validate_child_effective(intent, {"advertiseHostRoute": False, "bgpLogNeighborChange": True}, state)
     assert proposed.fabric_data == {"advertiseHostRoute": False, "bgpLogNeighborChange": True}
     assert current.get_diff(proposed, exclude_unset=state == "merged") is True
+
+
+@pytest.mark.parametrize("is_multicluster", [False, True], ids=["msd", "mcfg"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("fabric_default", [None, False, True])
+@pytest.mark.parametrize("existing_mode", [None, False, True])
+def test_child_vrf_l3vni_creation_default_preserves_existing_mode(is_multicluster, state, fabric_default, existing_mode):
+    """Both child topologies use only their own creation defaults for new VRFs."""
+    existing = None if existing_mode is None else {"l3VniWithoutVlan": existing_mode, "bgpLogNeighborChange": False}
+    proposed, current = _validate_child_effective(
+        {"bgp_log_neighbor_change": False}, existing, state, fabric_default=fabric_default, is_multicluster=is_multicluster
+    )
+    expected = fabric_default if current is None else existing_mode
+    assert proposed.fabric_data.get("l3VniWithoutVlan") is expected
+    if current is not None:
+        assert current.get_diff(proposed, exclude_unset=state == "merged") is True
+    if expected is None:
+        assert "l3VniWithoutVlan" not in proposed.fabric_data
+
+
+@pytest.mark.parametrize("is_multicluster", [False, True], ids=["msd", "mcfg"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("selected", [False, True])
+def test_child_vrf_explicit_l3vni_mode_overrides_existing_and_fabric(is_multicluster, state, selected):
+    """Both explicit child modes remain authoritative across parent states."""
+    proposed, _current = _validate_child_effective(
+        {"l3vni_wo_vlan": selected},
+        {"l3VniWithoutVlan": not selected},
+        state,
+        fabric_default=not selected,
+        is_multicluster=is_multicluster,
+    )
+    assert proposed.fabric_data["l3VniWithoutVlan"] is selected
 
 
 @pytest.mark.parametrize(

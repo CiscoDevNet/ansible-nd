@@ -153,8 +153,9 @@ options:
       l3vni_wo_vlan:
         description:
           - Configure L3VNI without VLAN/SVI.
-          - When omitted on creation, uses the fabric's L3VNI without VLAN setting; an explicit value overrides it.
-          - On existing VRFs, omission in C(merged) retains the current value; C(replaced), C(overridden), and C(staged) use the fabric default when available.
+          - An explicit value overrides mode inference. Explicit C(true) cannot be combined with VLAN/SVI properties.
+          - When omitted, an explicit C(vlan_id), C(vrf_vlan_name), or C(vrf_intf_desc) selects VLAN-backed mode.
+          - Otherwise, existing VRFs retain their current mode in every write state; only new VRFs inherit the fabric's L3VNI without VLAN setting.
           - Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
           - Not applicable on parent fabrics.
         type: bool
@@ -472,7 +473,9 @@ options:
             type: str
             required: true
           l3vni_wo_vlan:
-            description: Enable L3VNI without VLAN; Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
+            description:
+              - Enable L3VNI without VLAN; Campus requires N9000 -EX/-FX/-GX and NX-OS 10.3.1 or later.
+              - When omitted, existing child VRFs retain their mode in every write state; new child VRFs use the child fabric's creation default.
             type: bool
           bgp_best_path_relax:
             description: Enable BGP best-path AS-path multipath-relax; NX-OS only.
