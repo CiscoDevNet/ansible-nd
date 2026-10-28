@@ -1,0 +1,182 @@
+---
+- name: Run nd_manage_community_list overridden harness scenarios
+  block:
+    - name: "OVERRIDDEN SAFETY: Initialize complete community-list inventory"
+      ansible.builtin.set_fact:
+        nd4x_community_list_inventory: []
+        nd4x_community_list_inventory_offset: 0
+        nd4x_community_list_inventory_pages: 0
+        nd4x_community_list_inventory_page_size: 100
+        nd4x_community_list_inventory_max_pages: 10000
+
+    - name: "OVERRIDDEN SAFETY: Read every community-list inventory page"
+      ansible.builtin.include_tasks: nd4x_demo_community_list_inventory_page.yaml
+
+    - name: "OVERRIDDEN SAFETY: Require a complete community-list inventory"
+      ansible.builtin.assert:
+        that:
+          - nd4x_community_list_inventory is defined
+          - nd4x_community_list_inventory is sequence
+          - nd4x_community_list_inventory is not string
+          - nd4x_community_list_inventory_pages | int > 0
+        fail_msg: >-
+          Refusing destructive overridden coverage because a complete
+          community-list inventory could not be established.
+
+    - name: "OVERRIDDEN PREFLIGHT: Build reserved API names"
+      ansible.builtin.set_fact:
+        nd4x_community_list_reserved_names: >-
+          {{
+            [
+              community_list_standard.name,
+              community_list_expanded.name,
+              community_list_overridden.name
+            ]
+            + (
+                [community_list_tenant_identity_name]
+                if nd_test_tenant_name_a is defined
+                or nd_test_tenant_name_b is defined else []
+              )
+            + (
+                [
+                  nd_test_tenant_name_a
+                  ~ '~'
+                  ~ community_list_tenant_identity_name
+                ]
+                if nd_test_tenant_name_a is defined else []
+              )
+            + (
+                [
+                  nd_test_tenant_name_b
+                  ~ '~'
+                  ~ community_list_tenant_identity_name
+                ]
+                if nd_test_tenant_name_b is defined else []
+              )
+          }}
+
+    - name: "OVERRIDDEN PREFLIGHT: Reject unreserved controller state"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              (
+                nd4x_community_list_inventory
+                | map(attribute='name')
+                | list
+              )
+              | difference(nd4x_community_list_reserved_names)
+              | length
+            ) == 0
+        fail_msg: >-
+          Refusing destructive overridden coverage because the test fabric
+          contains a community list outside the reserved harness names: {{
+            nd4x_community_list_inventory
+            | map(attribute='name')
+            | list
+            | difference(nd4x_community_list_reserved_names)
+          }}
+
+    - name: "OVERRIDDEN SETUP: Create extra community lists"
+      cisco.nd.nd_manage_community_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_standard }}"
+          - "{{ community_list_expanded }}"
+        state: merged
+
+    - name: "OVERRIDDEN: Keep only the requested community list"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_community_list
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ community_list_overridden }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained overridden community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_overridden.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.name"
+                equals: "{{ community_list_overridden.name }}"
+              - jsonpath: "$.current.type"
+                equals: standard
+              - jsonpath: "$.current.entries[0].communityNumbers[0]"
+                equals: "300:400"
+          - name: Validate standard community list was removed by override
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_standard.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Validate expanded community list was removed by override
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/communityLists/{{ community_list_expanded.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: overridden_lists
+
+    - name: "OVERRIDDEN: Verify only requested test list remains"
+      ansible.builtin.assert:
+        that:
+          - overridden_lists.check_mode_result.changed | bool
+          - overridden_lists.first_run_result.changed | bool
+          - overridden_lists.first_run_result.before | selectattr('name', 'in', [community_list_standard.name, community_list_expanded.name]) | list | length == 2
+          - overridden_lists.first_run_result.after | selectattr('name', 'equalto', community_list_overridden.name) | list | length == 1
+          - overridden_lists.first_run_result.after | selectattr('name', 'in', [community_list_standard.name, community_list_expanded.name]) | list | length == 0
+          - >-
+            (
+              overridden_lists.first_run_result.after
+              | selectattr('name', 'equalto', community_list_overridden.name)
+              | first
+            ).type == 'standard'
+          - >-
+            (
+              overridden_lists.first_run_result.after
+              | selectattr('name', 'equalto', community_list_overridden.name)
+              | first
+            ).entries | length == 1
+          - >-
+            (
+              overridden_lists.first_run_result.after
+              | selectattr('name', 'equalto', community_list_overridden.name)
+              | first
+            ).entries[0].sequence_number == 10
+          - >-
+            (
+              overridden_lists.first_run_result.after
+              | selectattr('name', 'equalto', community_list_overridden.name)
+              | first
+            ).entries[0].action == 'permit'
+          - >-
+            (
+              overridden_lists.first_run_result.after
+              | selectattr('name', 'equalto', community_list_overridden.name)
+              | first
+            ).entries[0].community_numbers[0] == '300:400'
+          - overridden_lists.second_run_result.changed == false
+          - overridden_lists.nd_query_results | length == 3
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved community lists"
+      ansible.builtin.include_tasks: setup.yaml

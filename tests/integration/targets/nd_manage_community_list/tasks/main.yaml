@@ -16,14 +16,64 @@
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ nd_output_level | default("debug") }}'
+  tags:
+    - always
+
+- name: "ND4X GUARD: Require an explicit harness fabric"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd_test_fabric_name is defined
+        and nd_test_fabric_name is string
+        and nd_test_fabric_name | trim | length > 0
+    fail_msg: >-
+      ND4X harness scenarios require an explicit nd_test_fabric_name. The
+      legacy SITE1 default is not accepted for harness execution.
+  tags:
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_merged
+    - nd4x_demo_replaced
+    - nd4x_demo_deleted
+    - nd4x_demo_tenant_identity
+    - nd4x_demo_overridden
+    - nd4x_demo_negative
+
+- name: "ND4X GUARD: Select the explicit harness fabric"
+  ansible.builtin.set_fact:
+    test_fabric_name: "{{ nd_test_fabric_name | trim }}"
+  tags:
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_merged
+    - nd4x_demo_replaced
+    - nd4x_demo_deleted
+    - nd4x_demo_tenant_identity
+    - nd4x_demo_overridden
+    - nd4x_demo_negative
 
 - name: Run nd_manage_community_list state tests
   block:
+    - name: "ND4X GUARD: Require explicit overridden-state opt-in"
+      ansible.builtin.assert:
+        that:
+          - nd_test_community_lists_run_overridden | default(false) | bool
+        fail_msg: >-
+          state=overridden can remove community lists across the fabric. Run
+          this scenario only on a dedicated test fabric and set
+          nd_test_community_lists_run_overridden=true.
+      when:
+        - "'nd4x_demo_overridden' in ansible_run_tags"
+      tags:
+        - nd4x_demo_overridden
+
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
 
@@ -48,9 +98,108 @@
     - name: Run overridden state tests
       ansible.builtin.include_tasks: overridden.yaml
       when: nd_test_community_lists_run_overridden | default(false) | bool
+
+    - name: Run ND 4.x harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_tenant_identity
+            - nd4x_demo_overridden
+            - nd4x_demo_negative
+      tags:
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_tenant_identity
+        - nd4x_demo_overridden
+        - nd4x_demo_negative
+
+    - name: Run merged state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_merged
+      tags:
+        - nd4x_demo
+        - nd4x_demo_merged
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run replaced state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - nd4x_demo
+        - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run deleted state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - nd4x_demo
+        - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run tenant identity tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_tenant_identity.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_tenant_identity
+      tags:
+        - nd4x_demo
+        - nd4x_demo_tenant_identity
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd_test_tenant_name_a is defined
+        - nd_test_tenant_name_b is defined
+
+    - name: Run overridden state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_overridden
+      tags:
+        - nd4x_demo
+        - nd4x_demo_overridden
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd_test_community_lists_run_overridden | default(false) | bool
+
+    - name: Run validation tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - nd4x_demo
+        - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
   always:
     - name: Post-test cleanup
       ansible.builtin.include_tasks: setup.yaml
-  module_defaults:
-    cisco.nd.nd_manage_community_list:
-      timeout: 300
+  vars:
+    ansible_command_timeout: 300

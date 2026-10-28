@@ -1,0 +1,56 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Record nd_manage_community_list harness support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.2.1', '>=')
+      }}
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x nd_manage_community_list harness scenarios because
+      controller version {{ nd4x_version.current.platformVersion }} is older
+      than 4.2.1.
+  when: not nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Build fabric-wide community-list snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_community_list_check_mode_queries:
+      - name: Snapshot all community lists in the test fabric
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/communityLists
+        expected_status: 200
+        pagination:
+          page_size: 100
+          collection_key: communityLists
+          max_pages: 10000
+        unordered_paths: [/communityLists]
+        ignore_keys:
+          - lastUpdateTimestamp
+  when: nd4x_supported | bool
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Verify community-list snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_community_list_check_mode_queries | length == 1
+    fail_msg: >-
+      The nd_manage_community_list harness requires a fabric-wide
+      communityLists predictive snapshot.
+  when: nd4x_supported | bool
+  tags:
+    - always
