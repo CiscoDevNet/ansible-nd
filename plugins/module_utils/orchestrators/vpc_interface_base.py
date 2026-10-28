@@ -702,7 +702,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Hook called by `bulk_create_groups` (via the base `create_bulk` template) for each model after its switch is resolved and before
-        its payload is built. Retains the item's pair/child deploy context, exactly as the singular `create` does after its POST.
+        its payload is built. Retains the item's pair/child deploy context at the same pre-POST position where the previous vPC
+        `create_bulk` ran it per item (before the payload is built and the group is posted).
 
         ## Raises
 

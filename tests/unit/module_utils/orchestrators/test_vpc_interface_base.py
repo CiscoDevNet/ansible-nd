@@ -1770,7 +1770,8 @@ def test_vpc_interface_base_00960() -> None:
     ## Classes and Methods
 
     - VpcInterfaceBaseOrchestrator.query_all()
-    - VpcInterfaceBaseOrchestrator._policy_type()
+    - NDBaseInterfaceOrchestrator._policy_type_of()
+    - NDBaseInterfaceOrchestrator._managed_records()
     """
     method_name = inspect.stack()[0][3]
 
