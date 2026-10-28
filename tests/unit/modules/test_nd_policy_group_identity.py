@@ -67,6 +67,204 @@ def snapshots_by_id(result, key):
     return {item["policy_id"]: item for item in result[key]}
 
 
+@pytest.mark.parametrize(
+    "policy_id,description",
+    [
+        ("POLICY-777", None),
+        ("POLICY-777", "Existing"),
+        ("101", None),
+        ("policy-group-101", "Existing"),
+        ("", None),
+        (" ", "Existing"),
+        ("POLICY-GROUP-", None),
+    ],
+)
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_explicit_id_rejects_invalid_namespace_before_requests(invoke, policy_id, description, state, check_mode):
+    """An invalid explicit ID cannot become a template selector or a planned direct action."""
+    controller = Controller([group(description="Existing"), group(SECOND_ID, description="Sibling"), group(ANONYMOUS_ID)])
+    original = deepcopy(controller.groups)
+    entry = config(name=TEMPLATE, policy_id=policy_id)
+    if description is not None:
+        entry["description"] = description
+    result = invoke(controller, [entry], state=state, deploy=True, check_mode=check_mode)
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert "config[0]" in result["msg"] and "policy_id" in result["msg"]
+    assert "POLICY-GROUP-" in result["msg"]
+    assert controller.calls == []
+    assert controller.groups == original
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_name_id_requires_nonempty_suffix_before_requests(invoke, state, check_mode):
+    """The consumed name-ID field receives the same namespace/suffix guard."""
+    controller = Controller([group(description="Existing")])
+    result = invoke(controller, [{"name": "POLICY-GROUP-", "policy_id": GROUP_ID}], state=state, check_mode=check_mode)
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert "config[0]" in result["msg"] and "name" in result["msg"]
+    assert controller.calls == []
+    assert GROUP_ID in controller.groups
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_explicit_id_creation_flag_cannot_bypass_validation(invoke, state, check_mode):
+    """A merged force-create or retained deleted flag cannot hide an invalid ID."""
+    controller = Controller([group(description="Existing")])
+    entry = config(name=TEMPLATE, policy_id="POLICY-777", description="Forced", create_additional_policy=True)
+    result = invoke(controller, [entry], state=state, check_mode=check_mode)
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert "policy_id" in result["msg"]
+    assert "force_created" not in result
+    assert controller.calls == []
+    assert set(controller.groups) == {GROUP_ID}
+
+
+@pytest.mark.parametrize("first_bucket", ["special", "normal", "ip"])
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_explicit_id_preflights_complete_mixed_batch(invoke, monkeypatch, first_bucket, state, check_mode):
+    """A later invalid ID stops earlier writes, previews and IP inventory requests."""
+    from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy_group
+
+    inventory_reads = []
+
+    def forbidden_inventory(*_args, **_kwargs):
+        inventory_reads.append(True)
+        raise AssertionError("Invalid-ID preflight must run before IP inventory")
+
+    monkeypatch.setattr(nd_manage_policy_group.FabricSwitchInventory, "from_fabric", forbidden_inventory)
+    controller = Controller([group(description="Existing"), group(ANONYMOUS_ID)])
+    original = deepcopy(controller.groups)
+    first = {"name": GROUP_ID, "priority": 600}
+    if first_bucket == "special":
+        first = config(name=TEMPLATE, description="Forced", create_additional_policy=True) if state == "merged" else {"name": ANONYMOUS_ID}
+    elif first_bucket == "ip":
+        first["switch_ids"] = ["192.0.2.10"]
+    result = invoke(
+        controller,
+        [first, config(name=TEMPLATE, description="Existing", policy_id="POLICY-777")],
+        state=state,
+        deploy=True,
+        check_mode=check_mode,
+    )
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert "config[1]" in result["msg"] and "policy_id" in result["msg"]
+    assert "force_created" not in result and "direct_actions" not in result
+    assert controller.calls == []
+    assert inventory_reads == []
+    assert controller.groups == original
+
+
+@pytest.mark.parametrize("field", ["name", "policy_id"])
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_id_outer_whitespace_matches_canonical_execution(invoke, field, state, check_mode):
+    """Normalize before resolution so padded IDs inherit the canonical target's sparse intent."""
+    canonical = (
+        {"name": GROUP_ID, "policy_id": "POLICY-ignored", "priority": 600} if field == "name" else {"name": TEMPLATE, "policy_id": GROUP_ID, "priority": 600}
+    )
+    padded = {**canonical, field: f" {GROUP_ID} "}
+    ordinary, normalized = Controller(duplicate_groups()), Controller(duplicate_groups())
+    expected = invoke(ordinary, [canonical], state=state, deploy=True, check_mode=check_mode)
+    actual = invoke(normalized, [padded], state=state, deploy=True, check_mode=check_mode)
+    assert not expected.get("failed"), expected
+    assert actual == expected
+    assert normalized.calls == ordinary.calls
+    assert normalized.groups == ordinary.groups
+    assert snapshots_by_id(actual, "before")[GROUP_ID]["description"] == DESCRIPTION
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_name_id_ignores_conflicting_empty_policy_id(invoke, state, check_mode):
+    """Only the effective ID is validated; an ignored empty field cannot override name."""
+    controller = Controller(duplicate_groups())
+    result = invoke(controller, [{"name": GROUP_ID, "policy_id": "", "priority": 600}], state=state, deploy=True, check_mode=check_mode)
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    if check_mode:
+        assert controller.writes() == []
+    elif state == "deleted":
+        assert [call[2] for call in mark_delete_calls(controller)] == [{"policyIds": [GROUP_ID]}]
+        assert set(controller.groups) == {SECOND_ID}
+    else:
+        assert {call[1].rsplit("/", 1)[-1] for call in controller.writes("PUT")} == {GROUP_ID}
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_explicit_id_null_keeps_omitted_selector_behavior(invoke, state, check_mode):
+    """Null remains omission, including deliberate template-wide deleted requests."""
+    entry = {"name": TEMPLATE, **({"description": "Existing", "priority": 600} if state == "merged" else {})}
+    omitted, null = Controller([group(description="Existing"), group(SECOND_ID, description="Sibling")]), Controller(
+        [group(description="Existing"), group(SECOND_ID, description="Sibling")]
+    )
+    expected = invoke(omitted, [entry], state=state, check_mode=check_mode)
+    actual = invoke(null, [{**entry, "policy_id": None}], state=state, check_mode=check_mode)
+    assert actual == expected
+    assert null.calls == omitted.calls
+    assert null.groups == omitted.groups
+
+
+@pytest.mark.parametrize("policy_id", ["POLICY-777", "", None])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_id_validation_keeps_gathered_policy_id_ignored(invoke, policy_id, check_mode):
+    """Gathered remains filter-only and does not consume or validate policy_id."""
+    controller = Controller([group(description="Existing"), group(SECOND_ID)])
+    result = invoke(controller, [{"name": TEMPLATE, "policy_id": policy_id}], state="gathered", deploy=True, check_mode=check_mode)
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert {item["policy_id"] for item in result["gathered"]} == {GROUP_ID, SECOND_ID}
+    assert controller.writes() == []
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_id_validation_keeps_gathered_raw_name_filter(invoke, check_mode):
+    """Mutation-only ID normalization cannot change gathered name matching."""
+    controller = Controller([group(description="Existing")])
+    result = invoke(controller, [{"name": f" {GROUP_ID} "}], state="gathered", check_mode=check_mode)
+    assert result == {"changed": False, "gathered": []}
+    assert controller.writes() == []
+
+
+@pytest.mark.parametrize("template_name", ["POLICY-777", "policy-group-101"])
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+def test_consumed_id_validation_does_not_guess_template_name_intent(invoke, template_name, state):
+    """A name outside the reserved namespace remains a template name."""
+    controller = Controller([group(description="Existing", templateName=template_name)])
+    result = invoke(controller, [{"name": template_name, "description": "Existing", "priority": 600}], state=state)
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    if state == "deleted":
+        assert [call[2] for call in mark_delete_calls(controller)] == [{"policyIds": [GROUP_ID]}]
+    else:
+        assert {call[1].rsplit("/", 1)[-1] for call in controller.writes("PUT")} == {GROUP_ID}
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_consumed_id_validation_accepts_opaque_nonnumeric_suffix(invoke, state, check_mode):
+    """The module reserves a namespace, without inventing a numeric suffix contract."""
+    opaque_id = "POLICY-GROUP-opaque-ABC"
+    controller = Controller([group(opaque_id, description="Existing")])
+    result = invoke(controller, [{"name": TEMPLATE, "policy_id": opaque_id, "priority": 600}], state=state, check_mode=check_mode)
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    if check_mode:
+        assert controller.writes() == []
+    elif state == "deleted":
+        assert [call[2] for call in mark_delete_calls(controller)] == [{"policyIds": [opaque_id]}]
+    else:
+        assert {call[1].rsplit("/", 1)[-1] for call in controller.writes("PUT")} == {opaque_id}
+
+
 @pytest.mark.parametrize("selector", ["name", "policy_id", "name_precedence"])
 @pytest.mark.parametrize("deploy", [False, True])
 @pytest.mark.parametrize("check_mode", [False, True])

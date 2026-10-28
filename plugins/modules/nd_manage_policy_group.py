@@ -101,6 +101,7 @@ options:
         - When a C(POLICY-GROUP-*) ID is provided, the module queries the controller to resolve it
           to its corresponding template and description. The exact ID remains authoritative for
           matching, comparison, updates, and deletion, even when another group shares those values.
+        - For C(merged) and C(deleted), surrounding whitespace is removed from a consumed ID before lookup.
         - Without an ID, description/template matching selects the newest matching record,
           except when O(state=deleted) also supplies O(config[].switch_ids) to select by active membership.
         - For C(merged), if the ID is not found on the controller, the module fails with an error.
@@ -129,6 +130,9 @@ options:
         - This is B(not) an alias for O(config[].name).
         - Use snake-case O(config[].policy_id). C(policyId) is not an alias.
         - Optional for C(merged) and C(deleted).
+        - In these states, a non-null value must use the case-sensitive C(POLICY-GROUP-) prefix
+          followed by a non-empty suffix. Surrounding whitespace is removed. Null is treated as
+          omitted; an empty or whitespace-only explicit ID is rejected.
         - Not used as a C(state=gathered) filter. To gather one policy group by ID,
           set O(config[].name) to the C(POLICY-GROUP-*) value.
         - ID-based updates for no-description groups or description changes bypass
@@ -1554,6 +1558,26 @@ def main():
 
     state = module.params.get("state")
     config = module.params.get("config") or []
+    if state in ("merged", "deleted"):
+        for idx, entry in enumerate(config):
+            name = entry.get("name") or ""
+            normalized_name = name.strip()
+            if normalized_name.startswith("POLICY-GROUP-"):
+                id_field, policy_id = "name", normalized_name
+            elif entry.get("policy_id") is not None:
+                id_field = "policy_id"
+                raw_id = entry["policy_id"]
+                policy_id = raw_id.strip() if isinstance(raw_id, str) else raw_id
+            else:
+                continue
+            if not isinstance(policy_id, str) or not policy_id.startswith("POLICY-GROUP-") or not policy_id[len("POLICY-GROUP-") :]:
+                module.fail_json(
+                    changed=False,
+                    msg=f"config[{idx}]: '{id_field}' must use 'POLICY-GROUP-' followed by a non-empty policy group ID suffix.",
+                )
+            # Normalize only the consumed ID. A name-ID keeps precedence over
+            # an ignored policy_id; null remains omitted and gathered is untouched.
+            entry[id_field] = policy_id
     template_wide_delete = state == "deleted" and any(_is_template_only_delete(entry) for entry in config)
 
     # Config is mandatory for merged and deleted states.

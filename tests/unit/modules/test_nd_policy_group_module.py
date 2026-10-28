@@ -69,6 +69,22 @@ def test_deleted_membership_argument_spec_preserves_presence(provided, expected)
     assert validated.validated_parameters["config"][0]["switch_ids"] == expected
 
 
+@pytest.mark.parametrize(
+    "provided,expected", [("omitted", None), (None, None), ("", ""), (" ", " "), (" POLICY-GROUP-101 ", " POLICY-GROUP-101 "), (101, "101")]
+)
+def test_explicit_id_argument_spec_preserves_values_before_local_validation(provided, expected):
+    """Ansible keeps empty/padded IDs distinguishable and stringifies integers."""
+    from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+
+    entry = {"name": "feature_enable"}
+    if provided != "omitted":
+        entry["policy_id"] = provided
+    config_spec = nd_manage_policy_group.PolicyGroupCreate.get_argument_spec()["config"]
+    validated = ArgumentSpecValidator({"config": config_spec}).validate({"config": [entry]})
+    assert validated.error_messages == []
+    assert validated.validated_parameters["config"][0]["policy_id"] == expected
+
+
 def test_nd_policy_group_module_00005_deploy_default_matches_documentation() -> None:
     """Verify the safe deploy default is identical in docs and argument spec."""
     documentation = yaml.safe_load(nd_manage_policy_group.DOCUMENTATION)
