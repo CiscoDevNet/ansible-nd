@@ -80,15 +80,51 @@
     ##############################################
 
     # TC-1: Delete a single policy by template name
-    - name: "DELETED TC1 - Delete clock_timezone policy with deploy"
-      cisco.nd.nd_manage_policy:
+    - name: "DELETED TC1 - Preview clock_timezone deletion with deploy"
+      cisco.nd.nd_manage_policy: &deleted_clock_tz
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
+        output_level: info
         config:
           - name: clock_timezone
           - switch:
               - serial_number: "{{ switch_serial_1 }}"
+      check_mode: true
+      register: tc1_delete_preview
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion preview"
+      ansible.builtin.assert:
+        that:
+          - tc1_delete_preview.changed == true
+          - tc1_delete_preview.before | length == 1
+          - tc1_delete_preview.before[0].priority == 101
+          - tc1_delete_preview.after == []
+      tags: deleted
+
+    - name: "DELETED TC1 - Read policy after deletion preview"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc1_preview_readback
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - tc1_preview_readback.changed == false
+          - tc1_preview_readback.gathered | length == 1
+          - tc1_preview_readback.gathered[0].policy_id == tc1_delete_preview.before[0].policyId
+          - tc1_preview_readback.gathered[0].priority == 101
+      tags: deleted
+
+    - name: "DELETED TC1 - Delete clock_timezone policy with deploy"
+      cisco.nd.nd_manage_policy: *deleted_clock_tz
       register: result
       tags: deleted
 
@@ -96,18 +132,18 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.before | length == 1
+          - result.before[0].policyId == tc1_delete_preview.before[0].policyId
+          - result.after == []
       tags: deleted
 
     # TC-2: Repeat delete triggers blind pending-cleanup switch deploy
-    - name: "DELETED TC2 - Delete clock_timezone again triggers cleanup deploy"
-      cisco.nd.nd_manage_policy:
-        fabric_name: "{{ fabric_name }}"
-        state: deleted
-        deploy: true
-        config:
-          - name: clock_timezone
-          - switch:
-              - serial_number: "{{ switch_serial_1 }}"
+    - name: "DELETED TC2 - Absent-policy cleanup in check and real modes"
+      cisco.nd.nd_manage_policy: *deleted_clock_tz
+      check_mode: "{{ item }}"
+      loop: [true, false]
+      loop_control:
+        label: "check_mode={{ item }}"
       register: result
       tags: deleted
 
@@ -115,6 +151,13 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.results | length == 2
+          - result.results[0].changed == true
+          - result.results[1].changed == true
+          - result.results[0].before == []
+          - result.results[0].after == []
+          - result.results[1].before == []
+          - result.results[1].after == []
       tags: deleted
 
     # TC-3: Delete multiple policies by template name in one task
@@ -154,7 +197,9 @@
     - name: "DELETED TC4 - Verify switch1 has no test policies"
       ansible.builtin.assert:
         that:
-          - (gathered_result.gathered | default([])) | length == 0
+          - gathered_result.changed == false
+          - gathered_result.gathered is defined
+          - gathered_result.gathered == []
       tags: deleted
 
     ##############################################
