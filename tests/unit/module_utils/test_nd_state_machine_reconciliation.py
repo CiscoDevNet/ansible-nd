@@ -5,6 +5,7 @@
 
 from typing import ClassVar
 from types import SimpleNamespace
+from unittest.mock import Mock
 import logging
 
 import pytest
@@ -67,8 +68,8 @@ def result(*pairs):
     return MutationResult(tuple(MutationResourceOutcome(key, MutationOutcome(state), messages=(f"{key}: {state}",)) for key, state in pairs))
 
 
-def machine(*, state="replaced", rows=(), desired=({"name": "a"}, {"name": "b"}), responses=(), check=False):
-    orchestrator = OutcomeOrchestrator(rest_send=RestSend({"check_mode": check}))
+def machine(*, state="replaced", rows=(), desired=({"name": "a"}, {"name": "b"}), responses=(), check=False, orchestrator_class=OutcomeOrchestrator):
+    orchestrator = orchestrator_class(rest_send=RestSend({"check_mode": check}))
     orchestrator._rows = list(rows)
     orchestrator._responses = list(responses)
     orchestrator._calls = []
@@ -166,6 +167,101 @@ def test_delete_retains_earlier_confirmed_success_on_later_unknown():
     assert sm.removed.keys() == ["a"]
     assert sm.sent.keys() == []
     assert sm.output.format()["changed"]
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        pytest.param(("succeeded",) * 2000, id="large-success"),
+        pytest.param(("succeeded", "failed", "succeeded"), id="mixed-failure"),
+        pytest.param(("succeeded", "unknown", "succeeded"), id="mixed-unknown"),
+        pytest.param(("failed", "failed"), id="all-failed"),
+        pytest.param(("unknown", "unknown"), id="all-unknown"),
+    ],
+)
+def test_bulk_deletion_batches_only_confirmed_effects(monkeypatch, outcomes):
+    class BulkDeleteOrchestrator(OutcomeOrchestrator):
+        supports_bulk_delete: ClassVar[bool] = True
+        delete_bulk_endpoint: type = NDEndpointBaseModel
+
+        def delete_bulk(self, model_instances, **kwargs):
+            self._calls.append(("delete", [item.name for item in model_instances], self.rest_send.max_attempts))
+            return self._respond()
+
+    keys = [f"item-{index}" for index in range(len(outcomes))]
+    midpoint = len(keys) // 2
+    original_keys = ["retain-first", *keys[:midpoint], "retain-middle", *keys[midpoint:], "retain-last"]
+    rows = [{"name": key, "value": f"before-{key}"} for key in original_keys]
+    sm = machine(
+        state="deleted",
+        rows=rows,
+        desired=[{"name": key} for key in keys],
+        responses=(result(*reversed(list(zip(keys, outcomes)))),),
+        orchestrator_class=BulkDeleteOrchestrator,
+    )
+    before = sm.before.to_ansible_config()
+    # Measure only execution bookkeeping, excluding initialization and planning.
+    delete_many = Mock(wraps=sm.confirmed.delete_many)
+    rebuild_index = Mock(wraps=sm.confirmed._rebuild_index)
+    monkeypatch.setattr(sm.confirmed, "delete_many", delete_many)
+    monkeypatch.setattr(sm.confirmed, "_rebuild_index", rebuild_index)
+    failed = any(outcome != "succeeded" for outcome in outcomes)
+    if failed:
+        with pytest.raises(NDStateMachineError):
+            sm.manage_state()
+    else:
+        sm.manage_state()
+
+    succeeded = [key for key, outcome in zip(keys, outcomes) if outcome == "succeeded"]
+    succeeded_keys = set(succeeded)
+    remaining = [key for key in original_keys if key not in succeeded_keys]
+    assert delete_many.call_count == int(bool(succeeded))
+    assert rebuild_index.call_count == int(bool(succeeded))
+    if succeeded:
+        delete_many.assert_called_once_with(succeeded)
+    assert sm.confirmed.keys() == remaining
+    assert all(sm.confirmed.get(key).value == f"before-{key}" for key in remaining)
+    assert all(sm.confirmed.get(key) is None for key in succeeded)
+    assert sm.removed.keys() == succeeded
+    assert all(item.value == f"before-{item.name}" for item in sm.removed)
+    assert sm.sent.keys() == []
+    assert sm.existing is sm.confirmed
+    assert sm.before.to_ansible_config() == before
+    assert sm.planned.keys() == ["retain-first", "retain-middle", "retain-last"]
+    assert sm.model_orchestrator._calls == [("delete", keys, 1)]
+    output = sm.output.format()
+    assert output["changed"] is bool(succeeded)
+    assert output["failed"] is failed
+    assert [item["outcome"] for item in output["action_results"]] == list(outcomes)
+    assert [item["effect_confirmed"] for item in output["action_results"]] == [outcome == "succeeded" for outcome in outcomes]
+    assert [item["messages"] for item in output["action_results"]] == [[f"{key}: {outcome}"] for key, outcome in zip(keys, outcomes)]
+    if "unknown" in outcomes:
+        assert "after" not in output and "diff" not in output
+        assert output["after_status"] == "unknown"
+    else:
+        assert [item["name"] for item in output["after"]] == remaining
+        if succeeded:
+            assert [item["name"] for item in output["diff"]["before"]] == original_keys
+            assert [item["name"] for item in output["diff"]["after"]] == remaining
+        else:
+            assert output["diff"] == []
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_non_delete_effects_do_not_rebuild_confirmed_index(monkeypatch, operation):
+    monkeypatch.setattr(OutcomeOrchestrator, "update", lambda self, item: self._respond())
+    rows = [{"name": "a", "value": "old"}] if operation == "update" else []
+    sm = machine(rows=rows, desired=({"name": "a", "value": "new"},), responses=(result(("a", "succeeded")),))
+    delete_many = Mock(wraps=sm.confirmed.delete_many)
+    rebuild_index = Mock(wraps=sm.confirmed._rebuild_index)
+    monkeypatch.setattr(sm.confirmed, "delete_many", delete_many)
+    monkeypatch.setattr(sm.confirmed, "_rebuild_index", rebuild_index)
+    sm.manage_state()
+    delete_many.assert_not_called()
+    rebuild_index.assert_not_called()
+    assert sm.confirmed.get("a").value == "new"
+    assert sm.sent.keys() == ["a"]
+    assert sm.removed.keys() == []
 
 
 @pytest.mark.parametrize("check", [True, False])

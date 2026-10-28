@@ -343,10 +343,10 @@ class NDStateMachine:
 
     def _apply_confirmed_effects(self, checkpoint) -> None:
         """Apply a successful subset even when its enclosing request failed."""
+        deletion_effects: list[MutationEffect] = []
         for effect in checkpoint.confirmed_effects:
             if effect.operation is MutationOperation.DELETE:
-                self.confirmed.delete(effect.identifier)
-                self.removed.add(effect.before)
+                deletion_effects.append(effect)
             else:
                 item = effect.after
                 if self.confirmed.get(effect.identifier) is None:
@@ -354,6 +354,9 @@ class NDStateMachine:
                 else:
                     self.confirmed.replace(item)
                 self.sent.add(item)
+        if deletion_effects:
+            self.confirmed.delete_many([effect.identifier for effect in deletion_effects])
+            self.removed.add_many([effect.before for effect in deletion_effects])
         self.existing = self.confirmed
 
     def _assign_snapshot_diff(self, after) -> None:
