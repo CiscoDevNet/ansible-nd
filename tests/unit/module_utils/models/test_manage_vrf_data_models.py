@@ -16,6 +16,21 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 
 @pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
 @pytest.mark.parametrize("wire_keys", [False, True])
+def test_external_schema_requires_fabric_identity(vrf_type, wire_keys):
+    schema = ExternalVrfDataModel.model_json_schema(by_alias=wire_keys)
+    fabric_key = "fabricName" if wire_keys else "fabric_name"
+    assert schema["properties"][fabric_key]["type"] == "string"
+    assert fabric_key in schema["required"]
+
+    config = {"vrfName": "BLUE", "vrfType": vrf_type} if wire_keys else {"vrf_name": "BLUE", "vrf_type": vrf_type}
+    with pytest.raises(ValidationError, match="fabricName"):
+        VrfDataModel.from_config(config)
+    config[fabric_key] = "EXT"
+    assert VrfDataModel.from_config(config).to_payload()["fabricName"] == "EXT"
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("wire_keys", [False, True])
 def test_external_factories_select_the_same_concrete_type_and_preserve_omission(vrf_type, wire_keys):
     config = {"fabricName": "EXT", "vrfName": "BLUE", "vrfType": vrf_type} if wire_keys else {"fabric_name": "EXT", "vrf_name": "BLUE", "vrf_type": vrf_type}
     proposed = VrfDataModel.from_config(config)

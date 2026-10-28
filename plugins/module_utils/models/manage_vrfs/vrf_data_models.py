@@ -861,7 +861,12 @@ class VrfDataModel(NDBaseModel):
 
 
 class ExternalVrfDataModel(VrfDataModel):
-    """External VRF state with an empty description as its canonical default."""
+    """External VRF state with required fabric identity and sparse descriptions.
+
+    The inherited ``fabric_name`` field is required in POST and PUT bodies.
+    ND 4.2.1/4.3.1 ``externalVrfBase`` omits ``fabricName``, but the controller
+    requires it for both ``externalConnectivity`` and ``vxlanExternal`` VRFs.
+    """
 
     vrf_type: Literal[VrfType.EXTERNAL_CONNECTIVITY, VrfType.VXLAN_EXTERNAL] = Field(alias="vrfType")
     # TODO(4.3.1) external-vrf-get-omits-empty-description: ND omits a cleared description from GET.

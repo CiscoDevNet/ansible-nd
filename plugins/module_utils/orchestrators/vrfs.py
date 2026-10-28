@@ -1085,7 +1085,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
         if model_instance.vrf_type in _EXTERNAL_VRF_TYPES:
             payload = model_instance.to_payload()
-            # TODO(4.3.1) external-vrf-create-requires-fabric-name: ND rejects the schema-minimal body as "Invalid fabric".
             return {key: payload[key] for key in ("fabricName", "vrfName", "vrfType", "description") if key in payload}
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
             return self._mcfg_parent_vrf_payload(model_instance)

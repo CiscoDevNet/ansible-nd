@@ -1137,14 +1137,17 @@ def test_external_vrf_rejects_explicit_default_valued_vxlan_option(monkeypatch):
         orchestrator.prepare_config_data([parsed])
 
 
-def test_external_vrf_create_and_update_include_fabric_identity():
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("description", [{}, {"description": "External routing"}, {"description": ""}])
+def test_external_vrf_create_and_update_include_fabric_identity(vrf_type, description):
     orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    orchestrator.strategy.fabric_name = "AK_EXT"
     model = VrfDataModel.from_config(
         {
             "fabric_name": "AK_EXT",
             "vrf_name": "EXT_BLUE",
-            "vrf_type": "externalConnectivity",
-            "description": "External routing",
+            "vrf_type": vrf_type,
+            **description,
         }
     )
     calls = []
@@ -1160,10 +1163,15 @@ def test_external_vrf_create_and_update_include_fabric_identity():
     expected = {
         "fabricName": "AK_EXT",
         "vrfName": "EXT_BLUE",
-        "vrfType": "externalConnectivity",
-        "description": "External routing",
+        "vrfType": vrf_type,
+        **description,
     }
+    assert len(calls) == 2
+    assert calls[0]["path"] == "/api/v1/manage/fabrics/AK_EXT/vrfs"
+    assert calls[0]["verb"] == HttpVerbEnum.POST
     assert calls[0]["data"] == {"vrfs": [expected]}
+    assert calls[1]["path"] == "/api/v1/manage/fabrics/AK_EXT/vrfs/EXT_BLUE"
+    assert calls[1]["verb"] == HttpVerbEnum.PUT
     assert calls[1]["data"] == expected
 
 
