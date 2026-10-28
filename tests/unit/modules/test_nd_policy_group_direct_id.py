@@ -40,6 +40,7 @@ class Controller:
         self.next_id = 200
         self.omit_group_after_create = False
         self.omit_group_from_next_summary = False
+        self.warnings = []
 
     def request(self, verb, path, payload):
         self.calls.append((verb, path, deepcopy(payload)))
@@ -172,8 +173,8 @@ def invoke(monkeypatch):
         def fail_json(self, **kwargs):
             raise ModuleResult({"failed": True, **kwargs})
 
-        def warn(self, _message):
-            pass
+        def warn(self, message):
+            active["controller"].warnings.append(message)
 
     monkeypatch.setattr(nd_manage_policy_group, "Sender", Sender)
     monkeypatch.setattr(nd_state_machine, "Sender", Sender)
