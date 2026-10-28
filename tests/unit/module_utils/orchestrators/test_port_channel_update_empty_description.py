@@ -12,6 +12,7 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import EpManageInterfacesPut
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import PortChannelTrunkHostInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_base import PortChannelBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_coordinator import InterfaceWorkflowCoordinator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -59,7 +60,10 @@ def _put(model):
 
     orchestrator = SimpleNamespace(
         _resolve_switch_id=lambda _ip: "99TRB2TMZYJ",
-        _removed_xe_members=lambda *_args: [],
+        _before_update=lambda *_args: [],
+        _decorate_write_payload=lambda *_args: None,
+        _on_update_accepted=lambda *_args: None,
+        _after_update_accepted=lambda *_args: None,
         _configure_endpoint=configure,
         update_endpoint=EpManageInterfacesPut,
         _request=lambda **kwargs: requests.append(deepcopy(kwargs)) or {},
@@ -68,7 +72,10 @@ def _put(model):
         deploy=False,
         workflow_deploy_requested=False,
     )
-    PortChannelBaseOrchestrator.update(orchestrator, model)
+    # The PUT is built by the shared `NDBaseInterfaceOrchestrator.update` template (issue #348); the port-channel wire adaptation
+    # lives in the `_decorate_update_payload` hook, so drive the template with the port-channel hook bound to the stand-in.
+    orchestrator._decorate_update_payload = lambda *args: PortChannelBaseOrchestrator._decorate_update_payload(orchestrator, *args)
+    NDBaseInterfaceOrchestrator.update(orchestrator, model)
     assert len(requests) == 1
     return requests[0]["data"]
 

@@ -1731,6 +1731,20 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         return None
 
+    def _decorate_update_payload(self, payload: dict[str, Any], model_instance: ModelType, switch_id: str) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook that mutates an update (PUT) payload in place after `_decorate_write_payload` and before it is sent. Called by `update` only,
+        never by `create` or `bulk_create_groups`. The base implementation does nothing; a family whose PUT body differs from its POST body
+        overrides it.
+
+        ## Raises
+
+        None
+        """
+        return None
+
     def _before_update(self, model_instance: ModelType, switch_id: str, previous_model: ModelType | None) -> Any:  # pylint: disable=unused-argument
         """
         # Summary
@@ -1850,7 +1864,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         # Summary
 
         Update one interface. Resolves the switch, runs `_before_update` (with `kwargs["previous_model"]`), builds the payload with
-        `switchId`, runs `_decorate_write_payload` and PUTs it to the per-interface path. After the PUT is accepted it runs
+        `switchId`, runs `_decorate_write_payload` and `_decorate_update_payload`, and PUTs it to the per-interface path. After the PUT is accepted it runs
         `_on_update_accepted`, `_prepare_deploy_context`, queues a deploy, then runs `_after_update_accepted` with the `_before_update` result.
 
         ## Raises
@@ -1868,6 +1882,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             self._decorate_write_payload(payload, model_instance, switch_id)
+            self._decorate_update_payload(payload, model_instance, switch_id)
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
             self._on_update_accepted(model_instance, switch_id)
             self._prepare_deploy_context(model_instance, switch_id)
