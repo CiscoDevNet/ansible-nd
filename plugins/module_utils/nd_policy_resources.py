@@ -1042,6 +1042,18 @@ class NDPolicyModule:
 
             # Phase 2: Compute diff
             diff_entry = self._get_diff_merged_single(want, have_list)
+            if want.get("policyId") and template_inputs and diff_entry.get("have"):
+                # ID resolution supplies the real template only after the
+                # template-name validation above. Validate the effective PUT
+                # inputs so sparse updates retain existing required values.
+                payload = self._update_policy_payload(want, diff_entry["have"])
+                template_name = payload["templateName"]
+                effective_inputs = self._clean_template_inputs(template_name, payload.get("templateInputs") or {})
+                validation_errors = self._validate_template_inputs(template_name, effective_inputs)
+                if validation_errors:
+                    error_msg = f"Template input validation failed for '{template_name}': " + "; ".join(validation_errors)
+                    self.log.error(error_msg)
+                    diff_entry.update(action="fail", error_msg=error_msg)
             self.log.debug(f"Diff result for {want.get('templateName', want.get('policyId', 'unknown'))}: " f"action={diff_entry['action']}")
             diff_results.append(diff_entry)
 

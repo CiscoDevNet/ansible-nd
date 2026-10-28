@@ -27,6 +27,8 @@
 #   TC5  Multi-entry same-template -- cache hit smoke test
 #   TC6  Check-mode still validates -- check_mode=true surfaces the
 #        same unknown-key error before any API write
+#   TC7  ID updates reject unknown keys and wrong types in both modes
+#   TC8  Sparse ID updates preserve omitted inputs and remain idempotent
 #
 # Run with:
 #   ansible-playbook ... run_tests.yaml -e testcase=template_input_validation
@@ -296,6 +298,153 @@
           - tiv_tc6.changed == false
           - (tiv_tc6.after | default([])) | length == 0
           - (tiv_tc6.proposed | default([]) | map(attribute='templateInputs') | map('default', {}) | list | to_json) is search('ANOTHER_BOGUS_KEY')
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC7 - ID-based updates must not bypass validation       ##
+    ##############################################################
+
+    - name: "TIV-TC7 - Reject invalid template inputs through both ID forms"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        output_level: info
+        config:
+          - name: "{{ tiv_tc4_rt_entry.policy_id if item.0.form == 'name' else tiv_tc4_rt_entry.name }}"
+            policy_id: "{{ tiv_tc4_rt_entry.policy_id if item.0.form == 'policy_id' else omit }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+            template_inputs: "{{ item.0.inputs }}"
+      check_mode: "{{ item.1 }}"
+      loop: >-
+        {{
+          [
+            {'form': 'name', 'inputs': {'BOGUS_TEMPLATE_KEY': 'reject'}},
+            {'form': 'policy_id', 'inputs': {'BOGUS_TEMPLATE_KEY': 'reject'}},
+            {'form': 'name', 'inputs': {'HOUR_OFFSET': 'not-a-number'}},
+            {'form': 'policy_id', 'inputs': {'HOUR_OFFSET': 'not-a-number'}}
+          ] | product([true, false]) | list
+        }}
+      loop_control:
+        label: "{{ item.0.form }} inputs={{ item.0.inputs }} check_mode={{ item.1 }}"
+      register: tiv_tc7
+      ignore_errors: true
+      tags: template_input_validation
+
+    - name: "TIV-TC7 - Assert all ID validations failed without changing the policy"
+      ansible.builtin.assert:
+        that:
+          - item.failed | default(false)
+          - item.changed == false
+          - item.before | length == 1
+          - item.before[0].policyId == tiv_tc4_rt_entry.policy_id
+          - item.after == item.before
+          - item.proposed | length == 1
+          - item.proposed[0].policyId == tiv_tc4_rt_entry.policy_id
+      loop: "{{ tiv_tc7.results }}"
+      loop_control:
+        label: "{{ item.item.0.form }} check_mode={{ item.item.1 }}"
+      tags: template_input_validation
+
+    - name: "TIV-TC7 - Independently read back the exact original policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ tiv_tc4_rt_entry.policy_id }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+      register: tiv_tc7_readback
+      tags: template_input_validation
+
+    - name: "TIV-TC7 - Verify invalid updates preserved every original field"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc7_readback.gathered == [tiv_tc4_rt_entry]
+      tags: template_input_validation
+
+    ##############################################################
+    ##  TC8 - Validate effective inputs for a sparse ID update  ##
+    ##############################################################
+
+    - name: "TIV-TC8 - Preview a valid sparse update using gathered policy_id"
+      cisco.nd.nd_manage_policy: &tiv_sparse_id_update
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: false
+        config:
+          - name: "{{ tiv_tc4_rt_entry.name }}"
+            policy_id: "{{ tiv_tc4_rt_entry.policy_id }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+            template_inputs:
+              HOUR_OFFSET: 2
+      check_mode: true
+      register: tiv_tc8_preview
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Verify the preview preserves omitted inputs and priority"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc8_preview.changed
+          - tiv_tc8_preview.after | length == 1
+          - tiv_tc8_preview.after[0].policyId == tiv_tc4_rt_entry.policy_id
+          - tiv_tc8_preview.after[0].priority == tiv_tc4_rt_entry.priority
+          - tiv_tc8_preview.after[0].templateInputs.HOUR_OFFSET | string == '2'
+          - tiv_tc8_preview.after[0].templateInputs.TIME_ZONE == tiv_tc4_rt_entry.template_inputs.TIME_ZONE
+          - tiv_tc8_preview.after[0].templateInputs.MINUTE_OFFSET | string == tiv_tc4_rt_entry.template_inputs.MINUTE_OFFSET | string
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Gather after preview to prove it made no persistent change"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ tiv_tc4_rt_entry.policy_id }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+      register: tiv_tc8_after_preview
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Verify preview preserved the original policy"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc8_after_preview.gathered == [tiv_tc4_rt_entry]
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Apply the validated sparse update"
+      cisco.nd.nd_manage_policy: *tiv_sparse_id_update
+      register: tiv_tc8_update
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Independently gather the updated policy"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ tiv_tc4_rt_entry.policy_id }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+      register: tiv_tc8_readback
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Verify only the supplied template input changed"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc8_update.changed
+          - tiv_tc8_readback.gathered | length == 1
+          - tiv_tc8_readback.gathered[0].policy_id == tiv_tc4_rt_entry.policy_id
+          - tiv_tc8_readback.gathered[0].priority == tiv_tc4_rt_entry.priority
+          - tiv_tc8_readback.gathered[0].description == tiv_tc4_rt_entry.description
+          - tiv_tc8_readback.gathered[0].template_inputs.HOUR_OFFSET | string == '2'
+          - "tiv_tc8_readback.gathered[0].template_inputs == (tiv_tc4_rt_entry.template_inputs | combine({'HOUR_OFFSET': tiv_tc8_readback.gathered[0].template_inputs.HOUR_OFFSET}))"
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Repeat the same validated sparse update"
+      cisco.nd.nd_manage_policy: *tiv_sparse_id_update
+      register: tiv_tc8_repeat
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Verify the repeated update is unchanged"
+      ansible.builtin.assert:
+        that:
+          - tiv_tc8_repeat.changed == false
       tags: template_input_validation
 
   always:
