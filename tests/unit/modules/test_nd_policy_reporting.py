@@ -726,3 +726,110 @@ def test_update_after_preserves_existing_template_value_types(invoke, input_valu
     assert payload["templateInputs"]["featureName"] == input_value
     assert result["after"][0]["templateInputs"] == payload["templateInputs"]
     assert result["after"][0]["priority"] == payload["priority"] == 725
+
+
+class TemplateValidationController(Controller):
+    """Expose required and typed parameters through the real schema fetch path."""
+
+    def request(self, verb, path, payload=None):
+        if verb == "GET" and urlsplit(path).path.endswith("/parameters"):
+            self.calls.append((verb, path, deepcopy(payload)))
+            return {
+                "parameters": [
+                    {"name": "featureName", "parameterType": "string", "optional": False},
+                    {"name": "EXISTING_REQUIRED", "parameterType": "string", "optional": False},
+                    {"name": "RETRIES", "parameterType": "integer", "optional": True},
+                ]
+            }
+        return super().request(verb, path, payload)
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "invalid_inputs,missing_existing,expected_error",
+    [
+        ({"BOGUS_TEMPLATE_KEY": "x"}, False, "Unknown templateInput key 'BOGUS_TEMPLATE_KEY'"),
+        ({"RETRIES": "not-a-number"}, False, "expects integer"),
+        ({"featureName": "lldp"}, True, "Required templateInput 'EXISTING_REQUIRED'"),
+    ],
+)
+def test_policy_id_update_validates_effective_template_inputs(invoke, caplog, separate_id, check_mode, invalid_inputs, missing_existing, expected_error):
+    inputs = {"featureName": "lacp", "FABRIC_NAME": "FABRIC_A"}
+    if not missing_existing:
+        inputs["EXISTING_REQUIRED"] = "retained"
+    controller = TemplateValidationController([policy(templateInputs=inputs)])
+    original = deepcopy(controller.policies)
+    entry = config(template_inputs=invalid_inputs)
+    if separate_id:
+        entry.update(name="feature_enable", policy_id=POLICY_ID)
+
+    result = invoke(controller, [entry], check_mode=check_mode)
+
+    assert result.get("failed") is True, result
+    assert result["changed"] is False
+    assert expected_error in caplog.text
+    assert controller.writes() == []
+    assert controller.policies == original
+    assert result["before"] == result["after"]
+    assert result["before"][0]["policyId"] == POLICY_ID
+    assert [call[1] for call in controller.calls if "/parameters" in call[1]] == ["/api/v1/manage/configTemplates/feature_enable/parameters"]
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("feature_name", ["lacp", "lldp"])
+def test_policy_id_validation_preserves_sparse_inputs_and_metadata(invoke, separate_id, check_mode, feature_name):
+    inputs = {"featureName": "lacp", "EXISTING_REQUIRED": "retained", "FABRIC_NAME": "FABRIC_A", "POLICY_ID": POLICY_ID}
+    controller = TemplateValidationController([policy(templateInputs=inputs)])
+    entry = config(template_inputs={"featureName": feature_name})
+    if separate_id:
+        entry.update(name="feature_enable", policy_id=POLICY_ID)
+
+    result = invoke(controller, [entry], check_mode=check_mode)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is (feature_name != "lacp")
+    assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
+    expected_inputs = {**inputs, "featureName": feature_name}
+    assert result["after"][0]["templateInputs"] == expected_inputs
+    assert result["after"][0]["priority"] == 725
+    if check_mode or feature_name == "lacp":
+        assert controller.writes() == []
+    else:
+        assert controller.writes()[0][2]["templateInputs"] == expected_inputs
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("template_inputs", [None, {}])
+def test_priority_only_policy_id_update_does_not_fetch_template_schema(invoke, check_mode, template_inputs):
+    controller = TemplateValidationController([policy()])
+    entry = config(priority=600)
+    if template_inputs is not None:
+        entry["template_inputs"] = template_inputs
+
+    result = invoke(controller, [entry], check_mode=check_mode)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert not any("/parameters" in call[1] for call in controller.calls)
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_policy_id_validation_caches_schema_and_preserves_valid_batch_progress(invoke, caplog, check_mode):
+    inputs = {"featureName": "lacp", "EXISTING_REQUIRED": "retained"}
+    controller = TemplateValidationController([policy(templateInputs=inputs), policy(SECOND_ID, templateInputs=inputs)])
+    original = deepcopy(controller.policies[SECOND_ID])
+
+    result = invoke(
+        controller,
+        [config(template_inputs={"featureName": "lldp"}), config(SECOND_ID, template_inputs={"BOGUS_TEMPLATE_KEY": "x"})],
+        check_mode=check_mode,
+    )
+
+    assert result.get("failed") is True
+    assert result["changed"] is True
+    assert "Unknown templateInput key 'BOGUS_TEMPLATE_KEY'" in caplog.text
+    assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
+    assert controller.policies[SECOND_ID] == original
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ([] if check_mode else [POLICY_ID])
