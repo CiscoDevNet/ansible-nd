@@ -462,6 +462,40 @@ def test_ios_xe_workflow_deploy_preview_failure_preserves_accepted_put_and_reads
     assert instance._accepted_post_write_model.get_identifier_value() == model.get_identifier_value()
 
 
+def test_port_channel_update_accepted_model_survives_deploy_context_failure(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify that a port-channel PUT the controller accepted is still recorded as accepted when `_prepare_deploy_context` raises afterwards.
+
+    ## Test
+
+    - `_removed_xe_members` returns no removed members and the PUT returns an accepted response
+    - `_prepare_deploy_context` raises `RuntimeError("derived")` after the PUT is accepted
+    - `update` raises `RuntimeError("Update failed for ...: derived")`
+    - `_accepted_post_write_model` is the proposed model, so the set-point stays immediately after the PUT and before `_prepare_deploy_context`
+
+    ## Classes and Methods
+
+    - PortChannelBaseOrchestrator.update()
+    """
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    model = _build_xe_pc_model(ports=[])
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_removed_xe_members", lambda *_args: [])
+
+    def deploy_context_failure(*_args):
+        raise RuntimeError("derived")
+
+    monkeypatch.setattr(instance, "_prepare_deploy_context", deploy_context_failure)
+    monkeypatch.setattr(instance, "_request", lambda **_kwargs: {"status": "accepted"})
+
+    with pytest.raises(RuntimeError, match=r"^Update failed for .*: derived$"):
+        instance.update(model)
+
+    assert instance._accepted_post_write_model is model
+
+
 def test_unchanged_port_channel_with_current_member_previews_removed_member() -> None:
     """A prior staged removal can leave a pending former member beside a retained one."""
 
