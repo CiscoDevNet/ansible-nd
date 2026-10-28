@@ -3,27 +3,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-Loopback interface orchestrator for Nexus Dashboard.
+Loopback interface orchestrator for Nexus Dashboard (NX-OS and IOS-XE managed loopbacks).
 
-This module provides `LoopbackInterfaceOrchestrator`, which implements CRUD operations
-for loopback interfaces via the ND Manage Interfaces API. Supports configuring interfaces
-across multiple switches in a single task.
-
-Each mutation operation (create, update, delete) is followed by a deploy call to persist
-changes to the switch. Deploy and remove operations are batched per-switch and executed
-in bulk after all mutations are complete.
-
-Uses `FabricContext` for pre-flight validation (fabric existence, deployment-freeze check)
-and switch IP-to-serial resolution. The model structure mirrors the API payload, so the
-orchestrator only needs to inject `switchId` and filter `query_all` results by interface type.
-
-`query_all` manages the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` — see `LoopbackPolicyTypeEnum`) and
-IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`, `csrLoopback`,
-`csr1kvLoopback` — see `XeLoopbackPolicyTypeEnum`) managed loopback policy types. Note that IOS-XE's
-`iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is system-provisioned), so it is
-included here. `userDefined` and other system-provisioned policy types (e.g. NX-OS `underlayLoopback`) are excluded.
-The `csrLoopback` branch's wire name is lab-verified (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as
-`csrIntLoopback`, but the wire echoes `csrLoopback` on reads too (drift recorded in the bug-tracker vault).
+All CRUD (create, update, delete, bulk create, bulk delete, query_one, query_all) comes from the shared templates on
+`NDBaseInterfaceOrchestrator`. This module contributes the wire `interfaceType`, the managed policy set, the IOS-XE delete preflight
+and the canonical IOS-XE loopback name used on the delete-side queues. The one CRUD specialization is `mplsLoopback` creation, which
+`create` and `create_bulk` route through a placeholder POST plus a conversion PUT (`_create_mpls_loopbacks`).
 """
 
 from __future__ import annotations
@@ -62,25 +47,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations
 MPLS_PLACEHOLDER_VRF = "management"
 
 
-class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):
+class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfaceModel]):  # pylint: disable=too-few-public-methods
     """
     # Summary
 
-    Orchestrator for loopback interface CRUD operations on Nexus Dashboard.
-
-    Supports configuring interfaces across multiple switches in a single task. Each config item
-    includes a `switch_ip` that is resolved to a `switchId` via `FabricContext`.
-
-    Overrides the base orchestrator to handle the ND interfaces API, which requires `fabric_name` and `switch_sn`
-    on every endpoint, injects `switchId` into payloads, and defers deploy calls for bulk execution.
-
-    Mutation methods (`create`, `update`) queue deploys instead of executing them immediately. Call `deploy_pending`
-    after all mutations are complete to deploy all changes in a single API call. `delete` queues interfaces for bulk
-    removal via `remove_pending`.
-
-    For `state: overridden`, `query_all` queries ALL switches in the fabric to enable fabric-wide convergence.
-
-    Uses `FabricContext` for pre-flight validation and switch resolution.
+    Orchestrator for loopback interfaces on Nexus Dashboard. CRUD comes from `NDBaseInterfaceOrchestrator`; this class contributes the wire
+    `interfaceType` (`query_interface_type`), the managed policy set (`_managed_policy_types`), the IOS-XE delete preflight (`preflight_delete`,
+    `_check_overridden_removals_discovered`) and the canonical IOS-XE name helper (`_canonical_xe_loopback_name`, used by the `_delete_side_name` hook).
+    `create` and `create_bulk` are overridden only to create an `mplsLoopback` in two requests; every other policy type takes the shared template.
 
     ## Raises
 
@@ -90,17 +64,9 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
       another controller.
     - For mutation states, also if the fabric is in deployment-freeze mode.
     - Read-only gathered operations remain permitted during deployment freeze.
-    - Via `preflight` if a `csrLoopback` would be created or transitioned to on an ND 4.3.1-or-later controller.
-    - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
-    - Via `create` if the create API request fails, or if the response's per-item `results[]` reports a failure.
-    - Via `create_bulk` if any create API request fails, or if a response's per-item `results[]` reports a failure.
+    - Via `preflight_safety` if a `csrLoopback` would be created or transitioned to on an ND 4.3.1-or-later controller.
+    - Via `preflight_safety` if an interface would become `mplsLoopback` while MPLS Handoff is disabled on the fabric.
     - Via `create` / `create_bulk` if an `mplsLoopback` placeholder create or its conversion PUT fails; unconverted placeholders are removed first.
-    - Via `preflight` if an interface would become `mplsLoopback` while MPLS Handoff is disabled on the fabric.
-    - Via `update` if the update API request fails.
-    - Via `remove_pending` if the bulk remove API request fails.
-    - Via `deploy_pending` if the bulk deploy API request fails.
-    - Via `query_one` if the query API request fails.
-    - Via `query_all` if the query API request fails.
     """
 
     _MANAGED_POLICY_TYPES: ClassVar[frozenset[str]] = frozenset(
@@ -113,6 +79,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
     staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"loopback"})
+    query_interface_type: ClassVar[str] = "loopback"
     interface_mode: ClassVar[str] = "managed"
     # TODO(4.2.1) ios-xe-loopback-remove-case: Recheck whether ND removal
     # accepts lowercase names and still generates device-side deletion.
@@ -144,7 +111,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             self._switch_interfaces(switch_id)
-            self._delete_side_name(model_instance.interface_name, switch_id)
+            self._canonical_xe_loopback_name(model_instance.interface_name, switch_id)
             pairs.append((model_instance.interface_name, switch_id))
         self._check_xe_removal_discovered(pairs)
 
@@ -160,11 +127,11 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             name = str(iface.get("interfaceName") or "")
             if switch_ip in switch_map and (switch_ip, name.strip().lower()) not in proposed:
                 switch_id = switch_map[switch_ip]
-                self._delete_side_name(name, switch_id)
+                self._canonical_xe_loopback_name(name, switch_id)
                 pairs.append((name, switch_id))
         self._check_xe_removal_discovered(pairs)
 
-    def _delete_side_name(self, name: str, switch_id: str) -> str:
+    def _canonical_xe_loopback_name(self, name: str, switch_id: str) -> str:
         """Use canonical IOS-XE spelling so ND queues an actual switch-side remove."""
         # Normal state planning and the delete preflight have already loaded
         # the complete switch inventory. Do not add a GET during queueing.
@@ -317,76 +284,60 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         """
         # Summary
 
-        Create a loopback interface. Resolves `switch_ip` from the model instance, injects `switchId`, and wraps the payload
-        in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`. An `mplsLoopback` is created in two
-        requests instead (`_create_mpls_loopbacks`).
+        Create a loopback interface. Every policy type except `mplsLoopback` uses the shared `NDBaseInterfaceOrchestrator.create` template.
+        An `mplsLoopback` is created in two requests instead (`_create_mpls_loopbacks`).
 
         ## Raises
 
         ### RuntimeError
 
-        - If the create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item
-          (detected centrally by `NdV1Strategy.is_success`, which `_request` consults).
-        - If an `mplsLoopback` conversion fails (see `_create_mpls_loopbacks_on_switch`).
+        - Propagated from `NDBaseInterfaceOrchestrator.create` for every policy type except `mplsLoopback`.
+        - `Create failed for <identifier>: ...` if an `mplsLoopback` placeholder create or its conversion fails (see `_create_mpls_loopbacks_on_switch`).
         """
+        # TODO(4.3.1) mpls-loopback-create-requires-mpls-handoff
+        # mplsLoopback cannot be created with the bulk POST on ND 4.3.1; see _create_mpls_loopbacks_on_switch.
+        if model_instance.policy_type != LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value:
+            return super().create(model_instance, **kwargs)
         try:
-            # TODO(4.3.1) mpls-loopback-create-requires-mpls-handoff
-            # mplsLoopback cannot be created with the bulk POST on ND 4.3.1; see _create_mpls_loopbacks_on_switch.
-            if model_instance.policy_type == LoopbackPolicyTypeEnum.MPLS_LOOPBACK.value:
-                return self._create_mpls_loopbacks([model_instance])
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            request_body = {"interfaces": [payload]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-            self._queue_deploy(model_instance.interface_name, switch_id)
-            return result
+            return self._create_mpls_loopbacks([model_instance])
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def update(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
+    def _delete_side_name(self, model_instance: LoopbackInterfaceModel) -> str:
         """
         # Summary
 
-        Update a loopback interface. Resolves `switch_ip` from the model instance, injects `switchId` into the payload.
-        Queues a deploy for later bulk execution via `deploy_pending`.
+        Return the canonical IOS-XE spelling of the loopback name for the delete-side queues, via `_canonical_xe_loopback_name`. The switch is already
+        resolved (and cached) by the base `delete`, so this makes no request.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the update API request fails.
+        - Via `_resolve_switch_id` if no switch matches the model's `switch_ip` in the fabric.
+        - Via `_canonical_xe_loopback_name` if the IOS-XE loopback has no managed policy or its name cannot be canonicalized.
         """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-            self._queue_deploy(model_instance.interface_name, switch_id)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+        return self._canonical_xe_loopback_name(model_instance.interface_name, self._resolve_switch_id(model_instance.switch_ip))
 
-    def delete(self, model_instance: LoopbackInterfaceModel, **kwargs) -> None:
+    def _managed_policy_types(self) -> set[str]:
         """
         # Summary
 
-        Queue a loopback interface for deferred bulk removal via `remove_pending` and bulk deploy via `deploy_pending`.
-        The remove deletes the interface from ND's config; the deploy pushes that removal to the switch.
+        Return the loopback policy types this module manages - the union of NX-OS (`loopback`, `ipfmLoopback`, `mplsLoopback` - see
+        `LoopbackPolicyTypeEnum`) and IOS-XE (`iosXeLoopback`, `iosXeLoopbackShutNoshut`, `iosXeUnderlayLoopback`, `iosXeInternalLoopback`,
+        `csrLoopback`, `csr1kvLoopback` - see `XeLoopbackPolicyTypeEnum`) policy types. The `csrLoopback` branch's wire name is lab-verified
+        (2026-07-18): the ND 4.2.1 OpenAPI READ schema lists it as `csrIntLoopback`, but the wire echoes `csrLoopback` on reads too (drift recorded
+        in the bug-tracker vault).
 
-        No API calls are made until `remove_pending` and `deploy_pending` are called after all mutations are complete.
+        IOS-XE's `iosXeUnderlayLoopback` is user-creatable (unlike NX-OS's `underlayLoopback`, which is system-provisioned) and is therefore
+        included in the managed set. System-provisioned loopbacks (e.g. NX-OS Loopback0 routing, Loopback1 VTEP with
+        `policyType: "underlayLoopback"`) and the `userDefined` policy type are excluded - those are out of scope for this module.
 
         ## Raises
 
         None
         """
-        switch_id = self._resolve_switch_id(model_instance.switch_ip)
-        name = self._delete_side_name(model_instance.interface_name, switch_id)
-        self._queue_remove(name, switch_id)
-        self._queue_deploy(name, switch_id)
+        return {policy_type.value for policy_type in LoopbackPolicyTypeEnum} | {policy_type.value for policy_type in XeLoopbackPolicyTypeEnum}
 
     def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
         """
@@ -603,44 +554,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         if converted:
             msg += f" {converted} were created as mplsLoopback before the failure; their deploy stays queued."
         return msg
-
-    def delete_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> None:
-        """
-        # Summary
-
-        Queue multiple loopback interfaces for deferred bulk removal and deployment. Each interface is queued for removal
-        via `remove_pending` and deployment via `deploy_pending`. No API calls are made until those methods are called
-        after `manage_state` completes.
-
-        ## Raises
-
-        None
-        """
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            name = self._delete_side_name(model_instance.interface_name, switch_id)
-            self._queue_remove(name, switch_id)
-            self._queue_deploy(name, switch_id)
-
-    def query_one(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Query a single loopback interface by name on a specific switch.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the query API request fails.
-        """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-        except Exception as e:
-            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
     @staticmethod
     def _is_managed_loopback(interface: object) -> bool:
