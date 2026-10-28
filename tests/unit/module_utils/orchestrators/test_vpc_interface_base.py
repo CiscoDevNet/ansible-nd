@@ -2199,6 +2199,39 @@ def test_vpc_interface_base_01120() -> None:
         instance.preflight(items)
 
 
+def test_vpc_interface_base_01130() -> None:
+    """
+    # Summary
+
+    Verify vPC does not gain the shared queued-remove `delete_bulk`: with `supports_bulk_delete = False` the `requires_bulk_support`
+    decorator on the inherited `delete_bulk` raises `AttributeError` before any request (vPC deletes immediately, one DELETE per interface).
+
+    ## Test
+
+    - `_StubVpcOrchestrator` is built with an empty response generator
+    - `delete_bulk([])` raises `AttributeError` naming `delete_bulk` and `supports_bulk_delete`
+    - No request is sent and nothing is queued for removal or deploy
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.delete_bulk()
+    - requires_bulk_support()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(gen_responses)
+
+    with pytest.raises(AttributeError, match=r"delete_bulk.*supports_bulk_delete"):
+        orchestrator.delete_bulk([])
+
+    assert orchestrator.rest_send.response_count == 0
+    assert orchestrator._pending_removes == []
+    assert orchestrator._pending_deploys == []
+
+
 def test_vpc_member_preflight_rejects_member_owned_by_another_vpc(monkeypatch) -> None:
     """A conflicting vPC parent must fail before its create reaches ND."""
 
