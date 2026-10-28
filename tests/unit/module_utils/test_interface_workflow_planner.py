@@ -256,6 +256,7 @@ def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
         "port_channel_routed",
         "port_channel_trunk_host",
         "subinterface_managed",
+        "subinterface_unmanaged",
         "svi",
         "vpc_access",
         "vpc_trunk_host",
