@@ -1096,8 +1096,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         Deletion strategy:
 
         1. **markDelete** all policy group IDs.
-        2. For any policy group whose markDelete result is not success:
-           direct ``DELETE /policyGroups/<id>``.  This is primarily a
+        2. After a complete, validated response, directly
+           ``DELETE /policyGroups/<id>`` only for requested IDs explicitly
+           reported failed. This is primarily a
            controller workaround for freeform/PYTHON failures, but the local
            fallback is driven by the controller's per-policy result rather
            than by a hardcoded template classification.
@@ -1107,6 +1108,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         Consolidating the deploy into one call avoids hitting the same
         switch twice when a batch mixes markDelete-eligible and
         direct-delete groups that share switches.
+
+        An unconfirmed acknowledgement stops fallback and deployment. Distinct
+        unambiguous requested successes remain recorded for failure reporting.
 
         When ``deploy=False``, markDelete (and direct DELETE for failures)
         is performed without the trailing switch deploy.
@@ -1152,43 +1156,19 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             log.debug("delete_bulk: Step 1 - markDelete for policy_ids=%s", policy_ids)
             mark_result = self._mark_delete(policy_ids)
             log.debug("delete_bulk: markDelete response=%s", mark_result)
-            # Preserve explicit successes even if a later malformed item makes
-            # the existing parser raise. Its response semantics stay unchanged.
-            if isinstance(mark_result, dict) and isinstance(mark_result.get("policyGroups"), list):
-                requested_policy_ids = set(policy_ids)
-                for item in mark_result["policyGroups"]:
-                    if (
-                        isinstance(item, dict)
-                        and isinstance(item.get("policyId"), str)
-                        and item["policyId"] in requested_policy_ids
-                        and str(item.get("status", "")).lower() == "success"
-                    ):
-                        self._accepted_changes.append({"operation": "delete", "policy_id": item["policyId"]})
-
-            # Inspect 207 response for per-policy failures
-            mark_succeeded = []
-            mark_failed_ids = []
-            mark_failure_messages: list[str] = []
-            if isinstance(mark_result, dict):
-                policies_response = mark_result.get("policyGroups", [])
-                failed_set = set()
-                for p in policies_response:
-                    pid = p.get("policyId", "")
-                    status = str(p.get("status", "")).lower()
-                    if status != "success":
-                        failed_set.add(pid)
-                        mark_failed_ids.append(pid)
-                        msg = p.get("message") or "unknown error"
-                        mark_failure_messages.append(f"{pid}: {msg}")
-                mark_succeeded = [pid for pid in policy_ids if pid not in failed_set]
-                # If empty response, treat all as succeeded (ambiguous)
-                if not policies_response and policy_ids:
-                    mark_succeeded = list(policy_ids)
-            else:
-                mark_succeeded = list(policy_ids)
-
+            # Classify the whole batch before accepting a success or using any
+            # response ID in a DELETE path. Identical echoes are harmless;
+            # conflicting/malformed outcomes cannot confirm that ID's removal.
+            mark_succeeded, mark_failed_ids, mark_failure_messages, validation_errors = self._classify_mark_delete_response(policy_ids, mark_result)
             recorded_delete_ids = {change["policy_id"] for change in self._accepted_changes if change["operation"] == "delete"}
             self._accepted_changes.extend({"operation": "delete", "policy_id": pid} for pid in mark_succeeded if pid not in recorded_delete_ids)
+            if validation_errors:
+                raise ValueError(
+                    "Invalid markDelete response: "
+                    + "; ".join(validation_errors)
+                    + ". Outcomes are unconfirmed except for explicitly acknowledged requested successes; "
+                    "the controller may have applied the request. No fallback or deployment was sent for this batch."
+                )
 
             if mark_failure_messages:
                 # Log the reason at WARNING so the cause of the direct-DELETE
@@ -1204,7 +1184,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 mark_failed_ids,
             )
 
-            # Step 2: Direct DELETE fallback for markDelete failures.
+            # Step 2: Direct DELETE fallback for validated explicit failures.
             # TODO(4.2.1): Workaround — switch_freeform-type policies fail
             # markDelete on ND; we fall back to direct DELETE /policyGroups/<id>.
             # Remove once ND supports markDelete for these templates natively.
@@ -1266,6 +1246,57 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         self._apply_endpoint_params(ep)
         payload = {"policyIds": policy_ids}
         return self._request(path=ep.path, verb=ep.verb, data=payload)
+
+    @staticmethod
+    def _classify_mark_delete_response(policy_ids: list[str], result: object) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Correlate complete per-group outcomes before any follow-up mutation.
+
+        Completeness is per unique requested ID, retaining first response order.
+        Identical success/failed echoes normalize to one outcome. A conflicting
+        or malformed outcome invalidates that ID, while distinct acknowledged
+        successes remain available for accepted-progress failure reporting.
+        """
+        requested = dict.fromkeys(policy_ids)
+        outcomes: dict[str, str | None] = {}
+        messages: dict[str, str] = {}
+        errors: list[str] = []
+        if not isinstance(result, dict) or not isinstance(result.get("policyGroups"), list):
+            errors.append("expected an object containing a policyGroups list")
+            rows = []
+        else:
+            rows = result["policyGroups"]
+        for index, item in enumerate(rows):
+            if not isinstance(item, dict):
+                errors.append(f"policyGroups[{index}] must be an object")
+                continue
+            policy_id = item.get("policyId")
+            if not isinstance(policy_id, str) or not policy_id.strip():
+                errors.append(f"policyGroups[{index}] has no usable policyId")
+                continue
+            if policy_id not in requested:
+                errors.append(f"policyGroups[{index}] contains unrequested policyId {policy_id!r}")
+                continue
+            raw_status = item.get("status")
+            status = raw_status.strip().lower() if isinstance(raw_status, str) else None
+            if status not in ("success", "failed"):
+                outcomes[policy_id] = None
+                errors.append(f"policyGroups[{index}] has unrecognized status {raw_status!r} for {policy_id!r}")
+                continue
+            if policy_id not in outcomes:
+                outcomes[policy_id] = status
+                messages[policy_id] = str(item.get("message") or "unknown error")
+            elif outcomes[policy_id] is not None and outcomes[policy_id] != status:
+                outcomes[policy_id] = None
+                errors.append(f"conflicting statuses for policyId {policy_id!r}")
+        missing = [policy_id for policy_id in requested if policy_id not in outcomes]
+        if missing:
+            errors.append(f"missing acknowledgements for policy group IDs {missing!r}")
+        unconfirmed = [policy_id for policy_id in requested if outcomes.get(policy_id) is None]
+        if unconfirmed:
+            errors.append(f"unconfirmed policy group IDs {unconfirmed!r}")
+        succeeded = [policy_id for policy_id, status in outcomes.items() if status == "success"]
+        failed = [policy_id for policy_id, status in outcomes.items() if status == "failed"]
+        return succeeded, failed, [f"{policy_id}: {messages[policy_id]}" for policy_id in failed], errors
 
     def _switch_deploy(self, switch_ids: list[str]) -> ResponseType:
         """POST /switchActions/deploy to deploy config to specific switches.

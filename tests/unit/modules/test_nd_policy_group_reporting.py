@@ -73,6 +73,136 @@ class RejectingController(Controller):
         return super().request(verb, path, payload)
 
 
+class MarkDeleteAcknowledgementController(RejectingController):
+    """Return selected markDelete bodies while retaining independent actual state."""
+
+    def __init__(self, groups, body, *, accepted_ids=(), acknowledgement_at=1):
+        super().__init__(groups)
+        self.body = deepcopy(body)
+        self.mark_accepted_ids = list(accepted_ids)
+        self.acknowledgement_at = acknowledgement_at
+        self.mark_calls = 0
+
+    def request(self, verb, path, payload):
+        if verb == "POST" and path.endswith("/markDelete"):
+            self.mark_calls += 1
+            if self.mark_calls == self.acknowledgement_at:
+                self.calls.append((verb, path, deepcopy(payload)))
+                for policy_id in self.mark_accepted_ids:
+                    self.groups.pop(policy_id, None)
+                return {"RETURN_CODE": 207, "METHOD": verb, "REQUEST_PATH": path, "MESSAGE": "Multi-Status", "DATA": deepcopy(self.body)}
+        if verb == "DELETE":
+            self.calls.append((verb, path, deepcopy(payload)))
+            self.groups.pop(path.rsplit("/", 1)[-1], None)
+            return {"RETURN_CODE": 204, "METHOD": verb, "REQUEST_PATH": path, "MESSAGE": "No Content", "DATA": None}
+        return super().request(verb, path, payload)
+
+
+@pytest.mark.parametrize("anonymous", [False, True])
+@pytest.mark.parametrize(
+    "body,accepted_ids",
+    [
+        ({"policyGroups": [{"policyId": "POLICY-GROUP-FOREIGN", "status": "failed"}]}, []),
+        ({"policyGroups": []}, []),
+        ([], []),
+        ({"policyGroups": [{"policyId": GROUP_ID, "status": "success"}]}, [GROUP_ID]),
+        ({"policyGroups": [{"policyId": GROUP_ID, "status": "success"}, None]}, [GROUP_ID]),
+        (
+            {
+                "policyGroups": [
+                    {"policyId": GROUP_ID, "status": "success"},
+                    {"policyId": GROUP_ID, "status": "failed"},
+                    {"policyId": SECOND_ID, "status": "success"},
+                ]
+            },
+            [SECOND_ID],
+        ),
+        (
+            {
+                "policyGroups": [
+                    {"policyId": GROUP_ID, "status": "success"},
+                    {"policyId": GROUP_ID, "status": None},
+                    {"policyId": SECOND_ID, "status": "success"},
+                ]
+            },
+            [SECOND_ID],
+        ),
+        ({"policyGroups": [{"policyId": GROUP_ID, "status": "notExecuted"}]}, []),
+    ],
+    ids=["foreign-failed", "empty", "non-object-body", "incomplete", "malformed-row", "conflicting-duplicate", "malformed-duplicate", "unknown-status"],
+)
+def test_group_delete_unconfirmed_response_retains_only_known_progress(invoke, anonymous, body, accepted_ids):
+    """A malformed response cannot mutate foreign IDs or report unknown targets removed."""
+    foreign_id = "POLICY-GROUP-FOREIGN"
+    records = [
+        group(description=None if anonymous else "Group A"),
+        group(SECOND_ID, description=None if anonymous else "Group B"),
+        group(foreign_id, description="Foreign"),
+    ]
+    controller = MarkDeleteAcknowledgementController(records, body, accepted_ids=accepted_ids)
+    original = deepcopy(controller.groups)
+
+    result = invoke(controller, [{"name": GROUP_ID}, {"name": SECOND_ID}], state="deleted", deploy=True)
+
+    assert result["failed"] is True
+    assert result["changed"] is bool(accepted_ids)
+    assert "markDelete response" in result["msg"] and "unconfirmed" in result["msg"].lower()
+    assert "controller may have applied" in result["msg"].lower()
+    assert [call[0] for call in controller.writes()] == ["POST"]
+    assert controller.writes()[0][2] == {"policyIds": [GROUP_ID, SECOND_ID]}
+    assert len([call for call in controller.calls if call[0] == "GET"]) == 1
+    assert controller.groups == {pid: value for pid, value in original.items() if pid not in accepted_ids}
+    if anonymous:
+        assert [item["policy_id"] for item in result["direct_actions"]["deleted"]] == accepted_ids
+    else:
+        before = {item["policy_id"]: item for item in result["before"]}
+        after = {item["policy_id"]: item for item in result["after"]}
+        assert set(before) == set(original)
+        assert set(after) == set(original) - set(accepted_ids)
+        assert all(after[pid] == before[pid] for pid in after)
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_group_delete_invalid_later_bucket_preserves_earlier_accepted_delete(invoke, deploy):
+    """Unknown later ordinary deletion does not erase an accepted anonymous bucket."""
+    controller = MarkDeleteAcknowledgementController([group(), group(SECOND_ID, description="Ordinary")], {"policyGroups": []}, acknowledgement_at=2)
+
+    result = invoke(controller, [{"name": GROUP_ID}, {"name": SECOND_ID}], state="deleted", deploy=deploy)
+
+    assert result["failed"] is True and result["changed"] is True
+    assert set(controller.groups) == {SECOND_ID}
+    assert [item["policy_id"] for item in result["direct_actions"]["deleted"]] == [GROUP_ID]
+    assert [item["policy_id"] for item in result["before"]] == [SECOND_ID]
+    assert [item["policy_id"] for item in result["after"]] == [SECOND_ID]
+    assert [call[0] for call in controller.writes()] == ["POST"] * (3 if deploy else 2)
+    assert len(controller.deployments()) == int(deploy)
+    assert "unconfirmed" in result["msg"].lower()
+
+
+@pytest.mark.parametrize("anonymous", [False, True])
+def test_group_delete_complete_failed_echo_falls_back_once_with_204(invoke, anonymous):
+    """Valid complete responses retain the native PYTHON/direct204 workaround."""
+    body = {
+        "policyGroups": [
+            {"policyId": SECOND_ID, "status": " SUCCESS "},
+            {"policyId": GROUP_ID, "status": " Failed ", "message": "PYTHON template"},
+            {"policyId": GROUP_ID, "status": "failed"},
+        ]
+    }
+    controller = MarkDeleteAcknowledgementController(
+        [group(description=None if anonymous else "Group A"), group(SECOND_ID, description=None if anonymous else "Group B")], body, accepted_ids=[SECOND_ID]
+    )
+
+    result = invoke(controller, [{"name": GROUP_ID}, {"name": SECOND_ID}], state="deleted", deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.groups == {}
+    assert [call[0] for call in controller.writes()] == ["POST", "DELETE", "POST"]
+    assert controller.writes("DELETE")[0][1].endswith("/policyGroups/" + GROUP_ID)
+    assert controller.deployments()[0][2] == {"switchIds": ["SERIAL_A", "SERIAL_B"]}
+
+
 @pytest.mark.parametrize("use_existing_id", [False, True])
 def test_group_forced_create_check_mode_preview(invoke, use_existing_id):
     """Forced-create dry runs expose validated intent without an allocated ID."""
