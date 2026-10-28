@@ -10,21 +10,25 @@
 """
 Base orchestrator for port-channel interface modules on Nexus Dashboard.
 
-This module provides `PortChannelBaseOrchestrator`, which implements shared CRUD operations
-for all port-channel interface types (accessPoHost/iosXeAccessPoHost, trunkPoHost/iosXeTrunkPoHost,
-etc.) via the ND Manage Interfaces API. Type-specific orchestrators inherit from this base and
-provide their own `model_class` and `_managed_policy_types()`, which name both the NX-OS and the
-IOS-XE policy type for their interface flavor (issues #536/#537).
+This module provides `PortChannelBaseOrchestrator`, the shared base for all port-channel interface types
+(accessPoHost/iosXeAccessPoHost, trunkPoHost/iosXeTrunkPoHost, etc.) on the ND Manage Interfaces API. Type-specific
+orchestrators inherit from this base and provide their own `model_class` and `_managed_policy_types()`, which name both
+the NX-OS and the IOS-XE policy type for their interface flavor (issues #536/#537).
 
-Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch
-resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific functionality:
-- Standard remove-based deletion (port-channels are virtual interfaces and are deletable); IOS-XE port-channels are queued under
-  their switch-canonical `Port-channel<N>` spelling so ND generates the switch-side deletion (`_delete_side_name`)
-- Fabric-wide `query_all()` filtered by `interfaceType: "portChannel"` and per-type policy filtering
+CRUD (`create`, `update`, `delete`, `delete_bulk`, `create_bulk`, `query_one`, `query_all`) comes from the shared templates on
+`NDBaseInterfaceOrchestrator` (issue #348), together with deploy queuing, fabric validation and switch resolution. This class
+sets `query_interface_type = "portChannel"` and fills the template hooks with port-channel-specific behavior:
+- `_before_update` / `_on_update_accepted` / `_after_update_accepted`: IOS-XE removed-member detach preview and the
+  accepted-write evidence (`_accepted_post_write_model`) the failure path reports
+- `_delete_side_name` / `_prepare_delete_context`: remove-based deletion (port-channels are virtual and deletable); IOS-XE
+  port-channels are queued under their switch-canonical `Port-channel<N>` spelling so ND generates the switch-side deletion
+- `_managed_records`: adds the policy-less IOS-XE port-channels the user explicitly named under `state: deleted`
+- `_prepare_bulk_item`: the inherited `create_bulk` sends one POST per `(switch_id, policy_type)` group, so an NX-OS and an
+  IOS-XE port-channel on the same switch never share a batch (issue #409); this hook retains each item's member deploy context
+
+It also adds:
 - A member-already-in-use `preflight()` that rejects, before any write, a port-channel whose member ethernet is
   already owned by a different port-channel (issue #369)
-- `create_bulk()` groups port-channels by `(switch_id, policy_type)` via `bulk_create_groups` and sends one POST
-  per group, so an NX-OS and an IOS-XE port-channel on the same switch never share a batch (issue #409)
 - An IOS-XE member-mode `preflight()` that rejects, before any write, an `iosXeAccessPoHost`/`iosXeTrunkPoHost`
   member whose current intent policy does not already match the port-channel mode (issues #536/#537)
 
@@ -85,9 +89,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     Supports configuring port-channels across multiple switches in a single task. Each config item includes a
     `switch_ip` that is resolved to a `switchId` via `FabricContext`.
 
-    Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` queues port-channels for
-    bulk removal via `interfaceActions/remove` and bulk deploy. Call `remove_pending` and `deploy_pending` after
-    all mutations are complete.
+    CRUD is inherited from the `NDBaseInterfaceOrchestrator` templates: `create` and `update` queue deploys for bulk execution;
+    `delete` queues port-channels for bulk removal via `interfaceActions/remove` and bulk deploy. Call `remove_pending` and
+    `deploy_pending` after all mutations are complete.
 
     ## Raises
 
@@ -110,6 +114,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
+    query_interface_type: ClassVar[str] = "portChannel"
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -317,90 +322,97 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         return members(current_policy) == members(desired_policy) == ()
 
-    def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Create a port-channel interface configuration. Resolves `switch_ip` from the model instance, injects `switchId`,
-        and wraps the payload in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the create API request fails.
-        """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            request_body = {"interfaces": [payload]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-            self._prepare_deploy_context(model_instance, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
-
     def update(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
         # Summary
 
-        Update a port-channel interface configuration. Resolves `switch_ip` from the model instance, injects `switchId`
-        into the payload. Queues the parent and any proven IOS-XE member detach for later bulk execution via `deploy_pending`.
+        Update a port-channel interface configuration. Clears `_accepted_post_write_model` before anything else, then runs the shared
+        `NDBaseInterfaceOrchestrator.update` template, whose `_before_update`, `_on_update_accepted` and `_after_update_accepted` hooks
+        carry the IOS-XE removed-member bookkeeping and the accepted-write evidence.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the update API request fails.
+        - `Update failed for <identifier>: ...` via the base template if any step fails, including the member preview after the PUT.
         """
         self._accepted_post_write_model = None
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            previous_model = kwargs.get("previous_model")
-            removed_members = self._removed_xe_members(model_instance, switch_id, previous_model)
-            if previous_model is not None:
-                self._prepare_deploy_context(previous_model, switch_id)
-                if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
-                    self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
-            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-            # The PUT is accepted before the optional member preview. Preserve
-            # that evidence even if the later read-only preview fails.
-            self._accepted_post_write_model = model_instance
-            self._prepare_deploy_context(model_instance, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
-            if self.deploy or getattr(self, "workflow_deploy_requested", False):
+        return super().update(model_instance, **kwargs)
+
+    def _before_update(self, model_instance: ModelType, switch_id: str, previous_model: ModelType | None) -> list[str]:
+        """
+        # Summary
+
+        Hook called by the base `update` template after the switch is resolved and before the PUT is built. Computes the IOS-XE members the
+        update removes and, when `previous_model` is given, retains the previous parent/member deploy context and queues a preview-derived
+        discovery when neither the previous nor the proposed port-channel has members. Returns the removed members, which the template hands
+        to `_after_update_accepted` as `context`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_removed_xe_members`, `_prepare_deploy_context` or `_queue_preview_derived_discovery`; the template wraps it as
+          `Update failed for <identifier>: ...`.
+        """
+        removed_members = self._removed_xe_members(model_instance, switch_id, previous_model)
+        if previous_model is not None:
+            self._prepare_deploy_context(previous_model, switch_id)
+            if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+        return removed_members
+
+    def _on_update_accepted(self, model_instance: ModelType, switch_id: str) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook called by the base `update` template immediately after the PUT is accepted and before `_prepare_deploy_context` /
+        `_queue_deploy`. Records `model_instance` as `_accepted_post_write_model` so a later failure in this `update` is still reported as an
+        accepted write.
+
+        ## Raises
+
+        None
+        """
+        # The PUT is accepted before the optional member preview. Preserve
+        # that evidence even if the later read-only preview fails.
+        self._accepted_post_write_model = model_instance
+
+    def _after_update_accepted(self, model_instance: ModelType, switch_id: str, context: Any) -> None:
+        """
+        # Summary
+
+        Hook called by the base `update` template after the parent deploy is queued, with the removed IOS-XE members returned by
+        `_before_update` as `context`. When a deploy is requested (by the task or the workflow) it previews and queues the removed members; if
+        that preview fails it reads the port-channel back and records the observed intent as `_accepted_post_write_model`. Clears
+        `_accepted_post_write_model` on success.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the member preview fails, whether or not the authoritative readback succeeds; the template wraps it as
+          `Update failed for <identifier>: ...`.
+        """
+        if self.deploy or getattr(self, "workflow_deploy_requested", False):
+            try:
+                self._preview_and_queue_removed_xe_members(model_instance, switch_id, context)
+            except Exception as preview_error:
                 try:
-                    self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed_members)
-                except Exception as preview_error:
-                    try:
-                        observed = self.query_one(model_instance)
-                        if (
-                            not isinstance(observed, Mapping)
-                            or str(observed.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
-                        ):
-                            raise RuntimeError("exact interface identity was not returned")
-                        if observed.get("switchId") not in (None, switch_id):
-                            raise RuntimeError("exact switch identity was not returned")
-                        self._accepted_post_write_model = self.model_class.from_response(
-                            {**observed, "interfaceName": model_instance.interface_name, "switchIp": model_instance.switch_ip}
-                        )
-                    except Exception as readback_error:
-                        raise RuntimeError(
-                            f"Member preview failed after the port-channel PUT was accepted: {preview_error}; "
-                            f"authoritative readback failed: {readback_error}"
-                        ) from preview_error
-                    raise RuntimeError("Member preview failed after the port-channel PUT was accepted; current ND intent was read back.") from preview_error
-            self._accepted_post_write_model = None
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+                    observed = self.query_one(model_instance)
+                    if not isinstance(observed, Mapping) or str(observed.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold():
+                        raise RuntimeError("exact interface identity was not returned")
+                    if observed.get("switchId") not in (None, switch_id):
+                        raise RuntimeError("exact switch identity was not returned")
+                    self._accepted_post_write_model = self.model_class.from_response(
+                        {**observed, "interfaceName": model_instance.interface_name, "switchIp": model_instance.switch_ip}
+                    )
+                except Exception as readback_error:
+                    raise RuntimeError(
+                        f"Member preview failed after the port-channel PUT was accepted: {preview_error}; authoritative readback failed: {readback_error}"
+                    ) from preview_error
+                raise RuntimeError("Member preview failed after the port-channel PUT was accepted; current ND intent was read back.") from preview_error
+        self._accepted_post_write_model = None
 
     def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
         """Retain the same parent/member deployment scope as a singular update."""
@@ -411,75 +423,23 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
         self._prepare_deploy_context(model_instance, switch_id)
 
-    def delete(self, model_instance: ModelType, **kwargs) -> None:
+    def _prepare_delete_context(self, model_instance: ModelType, name: str, switch_id: str) -> None:
         """
         # Summary
 
-        Queue a port-channel interface for deferred bulk removal via `remove_pending` and bulk deploy via
-        `deploy_pending`. The remove deletes the port-channel from ND's config; the deploy pushes that removal
-        to the switch and reverts member interfaces to their fabric default configuration.
-
-        No API calls are made until `remove_pending` and `deploy_pending` are called after all mutations are complete.
+        Hook called by the base `delete` template (and so by `delete_bulk`) after `_delete_side_name` resolves `name` and before the pair is
+        queued for removal and deploy. Retains the parent/member deploy context and, when the port-channel has no members, queues a
+        preview-derived discovery under the delete-side `name`.
 
         ## Raises
 
         ### RuntimeError
 
-        - Via `_resolve_switch_id` if no switch matches `model_instance.switch_ip` in the fabric.
+        - Propagated from `_prepare_deploy_context` or `_queue_preview_derived_discovery`.
         """
-        switch_id = self._resolve_switch_id(model_instance.switch_ip)
-        name = self._delete_side_name(model_instance)
         self._prepare_deploy_context(model_instance, switch_id)
         if not self._proposed_members(model_instance):
             self._queue_preview_derived_discovery(name, switch_id)
-        self._queue_remove(name, switch_id)
-        self._queue_deploy(name, switch_id)
-
-    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Create multiple port-channel interfaces in bulk. Groups by `(switch_id, policy_type)` (`bulk_create_groups`, issue #409) and
-        sends one POST per group with the group's port-channels in the `interfaces` array. Deploys are queued per item after each
-        accepted POST, so an earlier accepted group's deploys survive a later group's failure (the module's failure-path finalizer ships
-        them). Inside a group that fails with a mixed 207, the items the controller accepted are still queued (`_post_bulk_create_group`).
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If any create API request fails, including a 207 Multi-Status response with a failed `DATA.results[]` item (detected by
-          `NdV1Strategy.is_success` via `_request`).
-        """
-        try:
-            groups = self.bulk_create_groups(model_instances)
-            results = []
-            for group_key, items in groups.items():
-                results.append(self._post_bulk_create_group(group_key, items))
-            return results
-        except Exception as e:
-            raise RuntimeError(f"Bulk create failed: {e}") from e
-
-    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> None:
-        """
-        # Summary
-
-        Queue multiple port-channel interfaces for deferred bulk removal and deployment. Each port-channel is queued
-        for removal via `remove_pending` and deployment via `deploy_pending`. No API calls are made until those methods
-        are called after `manage_state` completes.
-
-        ## Raises
-
-        None
-        """
-        for model_instance in model_instances:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            name = self._delete_side_name(model_instance)
-            self._prepare_deploy_context(model_instance, switch_id)
-            if not self._proposed_members(model_instance):
-                self._queue_preview_derived_discovery(name, switch_id)
-            self._queue_remove(name, switch_id)
-            self._queue_deploy(name, switch_id)
 
     @staticmethod
     def _delete_side_name(model_instance: ModelType) -> str:
@@ -1067,65 +1027,23 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self._validate_pending_absent_delete(refreshed, name, switch_id)
         return super().reconcile_absent_deletes(model_instances) or would_reissue
 
-    def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
+    def _managed_records(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
         """
         # Summary
 
-        Query a single port-channel interface by name on a specific switch.
+        Hook called by the base `query_all` template once per switch. Returns the base managed port-channel records, followed by the
+        policy-less IOS-XE port-channel records the user explicitly named under `state: deleted` (`_requested_policy_less_records`), each
+        stamped with `switchIp`. The unfiltered port-channel list is re-read from the `_switch_interfaces` cache, so no request is added.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the query API request fails.
+        - Via `_switch_interfaces` if the interface-list API request fails.
         """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-        except Exception as e:
-            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
-
-    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Validate the fabric context and query interfaces, filtering for port-channel interfaces with policy types
-        managed by this orchestrator (as defined by `_managed_policy_types()`).
-
-        The set of switches queried is determined by `_switches_to_query`: fabric-wide for `state: overridden`,
-        and limited to switches named in the user config for all other states.
-
-        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
-
-        Each switch's interface list is read through the shared `_switch_interfaces` cache, so the unfiltered inventory
-        (including member ethernets and port-channels of other policy types) stays available to `preflight` without a
-        second fetch.
-
-        Each returned interface dict is enriched with a `switch_ip` field so that the model can be constructed
-        with the composite identifier `(switch_ip, interface_name)`.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
-        - If the query API request fails.
-        """
-        managed_types = self._managed_policy_types()
-        try:
-            self.validate_prerequisites()
-            all_port_channels = []
-            for switch_ip, switch_id in self._switches_to_query().items():
-                interfaces = list(self._switch_interfaces(switch_id).values())
-                port_channels = [iface for iface in interfaces if iface.get("interfaceType") == "portChannel"]
-                managed = [iface for iface in port_channels if self._policy_of(iface).get("policyType") in managed_types]
-                managed.extend(self._requested_policy_less_records(port_channels, switch_ip))
-                for iface in managed:
-                    iface["switchIp"] = switch_ip
-                all_port_channels.extend(managed)
-            return all_port_channels
-        except Exception as e:
-            raise RuntimeError(f"Query all failed: {e}") from e
+        records = super()._managed_records(switch_ip, switch_id, managed_types)
+        port_channels = [iface for iface in self._switch_interfaces(switch_id).values() if iface.get("interfaceType") == "portChannel"]
+        extra = self._requested_policy_less_records(port_channels, switch_ip)
+        for iface in extra:
+            iface["switchIp"] = switch_ip
+        return records + extra
