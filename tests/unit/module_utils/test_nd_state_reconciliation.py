@@ -1,4 +1,5 @@
-# Copyright: (c) 2026, Cisco Systems, Inc.
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Request-level and resource-level evidence must remain independent."""
 
