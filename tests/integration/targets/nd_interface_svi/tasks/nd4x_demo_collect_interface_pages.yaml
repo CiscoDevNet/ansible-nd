@@ -1,0 +1,78 @@
+---
+- name: "ND4X PAGINATION: Read interface page"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ nd4x_interface_fabric_name }}/switches/{{
+      nd4x_interface_switch.switchId }}/interfaces?max={{
+      nd4x_interface_page_size }}&offset={{ nd4x_interface_offset }}
+    method: get
+  register: nd4x_interface_page_response
+  changed_when: false
+
+- name: "ND4X PAGINATION: Validate interface page"
+  ansible.builtin.assert:
+    that:
+      - not nd4x_interface_page_response.failed | default(false) | bool
+      - nd4x_interface_page_response.status | int == 200
+      - nd4x_interface_page_response.jsondata is mapping
+      - nd4x_interface_page_response.jsondata.interfaces is defined
+      - nd4x_interface_page_response.jsondata.interfaces is sequence
+      - nd4x_interface_page_response.jsondata.interfaces is not string
+      - nd4x_interface_page_response.jsondata.interfaces is not mapping
+      - nd4x_interface_page_response.jsondata.interfaces | length <= nd4x_interface_page_size
+    fail_msg: >-
+      Interface inventory page {{ nd4x_interface_page_number }} for switch
+      {{ nd4x_interface_switch.switchId }} did not return a valid interfaces
+      collection.
+
+- name: "ND4X PAGINATION: Save the complete switch inventory"
+  ansible.builtin.set_fact:
+    nd4x_paginated_interface_inventory: >-
+      {{
+        nd4x_paginated_interface_inventory
+        + [
+            {
+              'item': nd4x_interface_switch,
+              'status': nd4x_interface_page_response.status,
+              'failed': false,
+              'current': {
+                'interfaces': nd4x_interface_rows
+                  + nd4x_interface_page_response.jsondata.interfaces
+              },
+              'jsondata': {
+                'interfaces': nd4x_interface_rows
+                  + nd4x_interface_page_response.jsondata.interfaces
+              }
+            }
+          ]
+      }}
+  when: nd4x_interface_page_response.jsondata.interfaces | length < nd4x_interface_page_size
+
+- name: "ND4X PAGINATION: Reject an incomplete inventory at the page limit"
+  ansible.builtin.assert:
+    that:
+      - false
+    fail_msg: >-
+      Interface inventory for switch {{ nd4x_interface_switch.switchId }}
+      reached the maximum of {{ nd4x_interface_max_pages }} pages without a
+      final short page.
+  when:
+    - nd4x_interface_page_response.jsondata.interfaces | length == nd4x_interface_page_size
+    - nd4x_interface_page_number | int + 1 >= nd4x_interface_max_pages | int
+
+# This must remain the final task in the file. Every recursive level registers
+# the page response under the same name; a parent level must not execute more
+# tasks after the child returns and overwrites that registered value.
+- name: "ND4X PAGINATION: Continue to the next interface page"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_collect_interface_pages.yaml
+  vars:
+    nd4x_interface_offset: >-
+      {{ nd4x_interface_offset | int + nd4x_interface_page_size | int }}
+    nd4x_interface_page_number: >-
+      {{ nd4x_interface_page_number | int + 1 }}
+    nd4x_interface_rows: >-
+      {{ nd4x_interface_rows + nd4x_interface_page_response.jsondata.interfaces }}
+  when:
+    - nd4x_interface_page_response.jsondata.interfaces | length == nd4x_interface_page_size
+    - nd4x_interface_page_number | int + 1 < nd4x_interface_max_pages | int
