@@ -252,6 +252,7 @@ def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
         "ethernet_access",
         "ethernet_routed",
         "ethernet_trunk_host",
+        "loopback",
         "port_channel_access",
         "port_channel_routed",
         "port_channel_trunk_host",
