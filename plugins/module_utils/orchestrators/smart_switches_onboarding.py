@@ -274,7 +274,9 @@ class SmartSwitchOnboardingOrchestrator(NDBaseOrchestrator[SmartSwitchOnboarding
         if body is not None and body != {}:
             return MutationResult(protocol_errors=("Expected bodyless bulk deboarding HTTP 202; final effects are unknown",))
         return MutationResult(
-            tuple(MutationResourceOutcome(key, MutationOutcome.SUCCEEDED, evidence=({"http_status": 202, "match": "bulk_request_completion"},)) for key in keys)
+            tuple(
+                MutationResourceOutcome(key, MutationOutcome.SUCCEEDED, evidence=({"http_status": 202, "match": "bulk_request_completion"},)) for key in keys
+            )
         )
 
     def update(self, model_instance: SmartSwitchOnboardingModel, **kwargs) -> MutationResult:

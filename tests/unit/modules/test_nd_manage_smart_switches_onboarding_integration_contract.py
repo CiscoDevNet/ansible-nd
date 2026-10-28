@@ -9,24 +9,30 @@ from pathlib import Path
 from copy import deepcopy
 
 import pytest
-import yaml
 from ansible.errors import AnsibleError
 from ansible.parsing.dataloader import DataLoader
 from ansible import template as ansible_template
-
+from ansible.utils.unsafe_proxy import wrap_var
 
 TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_manage_smart_switches_onboarding"
 
 
+def load_tasks(path: Path) -> list[dict]:
+    """Preserve template trust only for task YAML owned by this test suite."""
+    trust = getattr(ansible_template, "trust_as_template", lambda value: value)
+    return DataLoader().load(trust(path.read_text(encoding="utf-8")), file_name=str(path))
+
+
 def task_named(file_name, name):
-    tasks = yaml.safe_load((TARGET / "tasks" / "helpers" / file_name).read_text())
+    tasks = load_tasks(TARGET / "tasks" / "helpers" / file_name)
     return next(task for task in tasks if task["name"] == name)
 
 
 def render(expression, variables):
-    # Newer ansible-core requires an explicit trust marker for test-loaded text.
-    trust = getattr(ansible_template, "trust_as_template", lambda value: value)
-    return ansible_template.Templar(loader=DataLoader(), variables=variables).template(trust(expression))
+    if isinstance(expression, str):
+        trust = getattr(ansible_template, "trust_as_template", lambda value: value)
+        expression = trust(expression)
+    return ansible_template.Templar(loader=DataLoader(), variables=variables).template(expression)
 
 
 def assert_conditions(task, variables):
@@ -46,9 +52,25 @@ def inventory_row(identifier="a", *, integration="", alias="additionalData"):
 
 def test_inventory_does_not_include_a_fact_rebuilding_task_for_each_row():
     path = TARGET / "tasks" / "helpers" / "inventory_page.yaml"
-    tasks = yaml.safe_load(path.read_text())
+    tasks = load_tasks(path)
     assert not any("loop" in task and "ansible.builtin.include_tasks" in task for task in tasks)
     assert all("loop" not in task for task in tasks if "ansible.builtin.set_fact" in task)
+
+
+@pytest.mark.parametrize("field", ["mapping", "sequence"])
+def test_render_task_containers_preserves_native_values_and_input(tmp_path, field):
+    path = tmp_path / "tasks.yaml"
+    path.write_text('- mapping:\n    ids: "{{ requested_ids }}"\n  sequence:\n    - ids: "{{ requested_ids }}"\n', encoding="utf-8")
+    value = load_tasks(path)[0][field]
+    original = deepcopy(value)
+    expected = {"ids": [1, 2]}
+    assert render(value, {"requested_ids": [1, 2]}) == (expected if field == "mapping" else [expected])
+    assert value == original
+
+
+def test_render_preserves_untrusted_controller_text():
+    controller_result = {"message": wrap_var("{{ 6 * 7 }}")}
+    assert render("{{ controller_result }}", {"controller_result": controller_result}) == {"message": "{{ 6 * 7 }}"}
 
 
 @pytest.mark.parametrize(
@@ -172,7 +194,7 @@ def test_inventory_wrapper_requires_a_successful_unambiguous_collection(status, 
 
 
 def test_optional_controller_cases_cover_recovery_without_reonboarding_successes():
-    tasks = yaml.safe_load((TARGET / "tasks" / "controller_failures.yaml").read_text())
+    tasks = load_tasks(TARGET / "tasks" / "controller_failures.yaml")
     variables = {
         "ss_a": "a",
         "ss_b": "b",
