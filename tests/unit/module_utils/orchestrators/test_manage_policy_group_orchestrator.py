@@ -1893,9 +1893,8 @@ def test_manage_policy_group_orchestrator_00750() -> None:
     """
     # Summary
 
-    When ``markDelete`` returns an empty ``policyGroups`` list the
-    orchestrator treats every requested ID as succeeded (ambiguous response
-    is interpreted permissively).
+    An empty ``markDelete`` acknowledgement cannot confirm the requested
+    deletion or trigger subsequent fallback/deployment requests.
 
     ## Classes and Methods
 
@@ -1906,9 +1905,9 @@ def test_manage_policy_group_orchestrator_00750() -> None:
     instance = _make_orchestrator(rest_send, deploy=False)
     models = [_build_pg_model(policy_id="P1", switch_ids=["SN1"])]
 
-    result = instance.delete_bulk(models)
-
-    assert result == {"policyIds": ["P1"], "status": "success"}
+    with pytest.raises(Exception, match="markDelete response.*unconfirmed"):
+        instance.delete_bulk(models)
+    assert instance.accepted_changes == []
 
 
 @pytest.mark.parametrize(
@@ -1922,25 +1921,24 @@ def test_manage_policy_group_orchestrator_00750() -> None:
                 {"policyId": "P1", "status": "Success"},
             ],
             [],
-            ["P3", "P2", "P2", "P1"],
+            ["P3", "P2", "P1"],
         ),
         (
             [
-                {"policyId": "UNREQUESTED", "status": "success"},
                 {"policyId": "P3", "status": "success"},
                 {"policyId": "P1", "status": "failed", "message": "first retry"},
                 {"policyId": "P2", "status": "SUCCESS"},
                 {"policyId": "P1", "status": "failed", "message": "second retry"},
             ],
-            ["P1", "P1"],
-            ["P3", "P2", "P1", "P1"],
+            ["P1"],
+            ["P3", "P2", "P1"],
         ),
-        ([], [], ["P2", "P1", "P2", "P3"]),
+        ([{"policyId": pid, "status": "success"} for pid in ("P2", "P1", "P3")], [], ["P2", "P1", "P3"]),
     ],
-    ids=["reordered-successes", "duplicate-fallbacks", "legacy-empty-response"],
+    ids=["reordered-successes", "identical-failed-echoes", "one-ack-per-unique-request"],
 )
 def test_delete_bulk_preserves_order_duplicates_and_requested_membership(mark_items, fallback_ids, accepted_ids):
-    """Membership indexes cannot reorder requests, collapse retries, or accept unrelated IDs."""
+    """Preserve request order/repeats while normalizing benign response echoes."""
     requested_ids = ["P2", "P1", "P2", "P3"]
     members = {"P1": ["SN1"], "P2": ["SN2", "SN3"], "P3": ["SN3", "SN4"]}
     responses = [_resp({"policyGroups": mark_items}, method="POST")]
@@ -1958,6 +1956,103 @@ def test_delete_bulk_preserves_order_duplicates_and_requested_membership(mark_it
     assert len(results._tasks) == 2 + len(fallback_ids)
     assert results._tasks[-1].payload == {"switchIds": ["SN1", "SN2", "SN3", "SN4"]}
     assert instance.accepted_changes == [{"operation": "delete", "policy_id": pid} for pid in accepted_ids]
+
+
+@pytest.mark.parametrize(
+    "body,accepted_ids",
+    [
+        (None, []),
+        ([], []),
+        ("unexpected", []),
+        ({}, []),
+        ({"policyGroups": None}, []),
+        ({"policyGroups": {}}, []),
+        ({"policyGroups": []}, []),
+        ({"policyGroups": [{"policyId": "FOREIGN", "status": "failed"}]}, []),
+        ({"policyGroups": [{"policyId": "FOREIGN", "status": "success"}]}, []),
+        (
+            {"policyGroups": [{"policyId": "P1", "status": "failed"}, {"policyId": "FOREIGN", "status": "success"}, {"policyId": "P2", "status": "success"}]},
+            ["P2"],
+        ),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}]}, ["P1"]),
+        ({"policyGroups": [{"policyId": "P1", "status": " SUCCESS "}, None]}, ["P1"]),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}, {"policyId": [], "status": "failed"}]}, ["P1"]),
+        ({"policyGroups": [{"status": "failed"}]}, []),
+        ({"policyGroups": [{"policyId": " ", "status": "failed"}]}, []),
+        ({"policyGroups": [{"policyId": " P1 ", "status": "success"}]}, []),
+        ({"policyGroups": [{"policyId": "P1"}]}, []),
+        ({"policyGroups": [{"policyId": "P1", "status": 1}]}, []),
+        ({"policyGroups": [{"policyId": "P1", "status": "notExecuted"}]}, []),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}, {"policyId": "P1", "status": "failed"}, {"policyId": "P2", "status": "success"}]}, ["P2"]),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}, {"policyId": "P1", "status": None}, {"policyId": "P2", "status": "success"}]}, ["P2"]),
+    ],
+    ids=[
+        "null",
+        "list",
+        "string",
+        "missing-envelope",
+        "null-envelope",
+        "mapping-envelope",
+        "empty",
+        "foreign-failed",
+        "foreign-success",
+        "foreign-row-blocks-valid-fallback",
+        "missing-sibling",
+        "non-object-after-success",
+        "non-string-id",
+        "missing-id",
+        "blank-id",
+        "padded-id",
+        "missing-status",
+        "non-string-status",
+        "unknown-status",
+        "conflicting-duplicate",
+        "malformed-duplicate",
+    ],
+)
+def test_delete_bulk_rejects_unconfirmed_acknowledgements_before_followup(body, accepted_ids):
+    """Response anomalies retain only distinct confirmed requested effects."""
+    response = _resp(method="POST", return_code=207)
+    response["DATA"] = body
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([response]), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid, switch_ids=[pid + "-switch"]) for pid in ("P1", "P2")]
+
+    with pytest.raises(Exception, match="markDelete response.*unconfirmed"):
+        instance.delete_bulk(models)
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].payload == {"policyIds": ["P1", "P2"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": pid} for pid in accepted_ids]
+
+
+def test_delete_bulk_preserves_failed_python_fallback_with_empty_204():
+    """A complete failed acknowledgement can fall back to DELETE's valid204."""
+    responses = [
+        _resp(
+            {
+                "policyGroups": [
+                    {"policyId": "P2", "status": " SUCCESS "},
+                    {"policyId": "P1", "status": " FaIlEd ", "message": "PYTHON template"},
+                    {"policyId": "P1", "status": "failed"},
+                ]
+            },
+            method="POST",
+            return_code=207,
+        ),
+        _resp(method="DELETE", return_code=204),
+        _resp({"switchIds": []}, method="POST"),
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send(responses), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid, switch_ids=[pid + "-switch"]) for pid in ("P1", "P2", "P1")]
+
+    assert instance.delete_bulk(models) == {"policyIds": ["P1", "P2", "P1"], "status": "success"}
+    assert [task.verb for task in results._tasks] == ["POST", "DELETE", "POST"]
+    assert results._tasks[0].payload == {"policyIds": ["P1", "P2", "P1"]}
+    assert results._tasks[1].path.endswith("/policyGroups/P1")
+    assert results._tasks[2].payload == {"switchIds": ["P1-switch", "P2-switch"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": "P2"}, {"operation": "delete", "policy_id": "P1"}]
 
 
 @pytest.mark.parametrize("malformed_item", [None, {"policyId": [], "status": "failed"}], ids=["non-object-item", "non-string-id"])
