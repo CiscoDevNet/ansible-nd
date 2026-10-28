@@ -206,7 +206,7 @@ import logging
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.smart_switches_onboarding import SmartSwitchOnboardingModel
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine

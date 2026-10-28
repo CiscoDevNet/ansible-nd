@@ -16,9 +16,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.requests import SmartSwitchDeboardEntry, SmartSwitchDeboardRequestModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.responses import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.smart_switches_onboarding import (
+    SmartSwitchDeboardEntry,
+    SmartSwitchDeboardRequestModel,
+    SmartSwitchOnboardingModel,
     SmartSwitchOnboardingResultEntry,
     SmartSwitchOnboardingResultsModel,
 )

@@ -11,7 +11,7 @@ import yaml
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.smart_switches_onboarding import SmartSwitchOnboardingModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_smart_switches_onboarding as smart_module
 from ansible_collections.cisco.nd.tests.unit.module_utils.smart_switches_onboarding_helpers import orchestrator, page, response, row

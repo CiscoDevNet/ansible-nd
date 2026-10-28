@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.smart_switches_onboarding import (
+    SmartSwitchDeboardRequestModel,
+    SmartSwitchOnboardingModel,
+    SmartSwitchOnboardingResultsModel,
+)
 
 
 def test_payload_alias_and_identity_exact():
@@ -55,8 +59,6 @@ def test_model_package_initializer_is_empty():
 
 
 def test_result_wrapper_aliases_and_independent_defaults():
-    from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.responses import SmartSwitchOnboardingResultsModel
-
     parsed = SmartSwitchOnboardingResultsModel.model_validate(
         {"successResults": [{"name": " A ", "status": "futureStatus"}], "failureResults": [{"name": "b", "message": "refused"}]}
     )
@@ -73,15 +75,11 @@ def test_result_wrapper_aliases_and_independent_defaults():
 @pytest.mark.parametrize("side", ["successResults", "failureResults"])
 @pytest.mark.parametrize("invalid", [None, {}, "not-an-array", [{"name": 12}], [{"name": "a", "status": 12}], [{"name": "a", "message": []}]])
 def test_result_wrapper_rejects_malformed_lists_or_entries(side, invalid):
-    from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.responses import SmartSwitchOnboardingResultsModel
-
     with pytest.raises(ValueError):
         SmartSwitchOnboardingResultsModel.model_validate({side: invalid})
 
 
 def test_deboard_request_has_only_exact_switch_identifiers():
-    from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.requests import SmartSwitchDeboardRequestModel
-
     payload = {"smartSwitchIntegrations": [{"switchId": " A "}, {"switchId": "b"}]}
     model = SmartSwitchDeboardRequestModel.model_validate(payload)
     assert model.model_dump(by_alias=True) == payload

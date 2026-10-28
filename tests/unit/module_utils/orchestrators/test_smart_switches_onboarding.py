@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.association import SmartSwitchOnboardingModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_onboarding.smart_switches_onboarding import SmartSwitchOnboardingModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation import MutationOutcome
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.smart_switches_onboarding import SmartSwitchOnboardingResponseAdapter
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
