@@ -101,7 +101,6 @@ options:
         - When a C(POLICY-GROUP-*) ID is provided, the module queries the controller to resolve it
           to its corresponding template and description. The exact ID remains authoritative for
           matching, comparison, updates, and deletion, even when another group shares those values.
-        - For C(merged) and C(deleted), surrounding whitespace is removed from a consumed ID before lookup.
         - Without an ID, description/template matching selects the newest matching record,
           except when O(state=deleted) also supplies O(config[].switch_ids) to select by active membership.
         - For C(merged), if the ID is not found on the controller, the module fails with an error.
@@ -123,27 +122,19 @@ options:
         description:
         - The unique policy group ID assigned by the controller (e.g., C(POLICY-GROUP-123456)).
         - Populated automatically in C(state=gathered) output to support round-trip operations.
-        - When provided together with O(config[].name) as a template name and
-          O(config[].description),
-          this field is used as the authoritative key for ID-based resolution, bypassing the
-          composite (description, template_name) lookup.
+        - When O(config[].name) is a template name, this ID is authoritative for selecting
+          the policy group.
         - This is B(not) an alias for O(config[].name).
         - Use snake-case O(config[].policy_id). C(policyId) is not an alias.
         - Optional for C(merged) and C(deleted).
-        - In these states, a non-null value must use the case-sensitive C(POLICY-GROUP-) prefix
-          followed by a non-empty suffix. Surrounding whitespace is removed. Null is treated as
-          omitted; an empty or whitespace-only explicit ID is rejected.
         - Not used as a C(state=gathered) filter. To gather one policy group by ID,
           set O(config[].name) to the C(POLICY-GROUP-*) value.
-        - ID-based updates for no-description groups or description changes bypass
-          the normal composite-key state machine and are returned under
-          C(direct_actions), not normal C(before)/C(after).
-        - When an ID-based C(merged) update changes the group's description, the request
-          bypasses the composite-key merge state machine and is sent as a direct
-          C(PUT /policyGroups/{policy_id}) payload. Always include the intended
-          O(config[].switch_ids) on these entries — B(omitting O(config[].switch_ids) on a direct-ID PUT
-          will replace the group's member set with an empty list), removing the policy
-          group from every switch it previously covered.
+        - ID-based updates to groups without descriptions, or updates that change a group's
+          description, are reported under C(direct_actions). Groups with descriptions are
+          also included in the applicable C(before) and C(after) results.
+        - When changing a group's description by ID in C(merged), include the complete
+          intended O(config[].switch_ids). B(Omitting O(config[].switch_ids) removes all
+          existing members from the group).
         type: str
       description:
         description:
@@ -209,8 +200,9 @@ options:
         - O(config[].description) is not required when this is V(true).
         - Only applicable when O(state=merged).
         - Ignored when O(state=deleted); retaining this flag in cleanup config never creates a group.
-        - Force-created groups are reported explicitly under C(force_created).
-          Normal snapshots retain the existing inventory selection behavior.
+        - Groups requested with this flag are listed under the C(force_created) return value.
+          Use that list to inspect each additional creation; C(before) and C(after) can
+          collapse groups that share the same description and template.
         type: bool
         default: false
   ticket_id:
@@ -259,6 +251,35 @@ notes:
 - The module is validation-first but B(not) a rollback transaction. Input validation
   and duplicate checks run before write operations. After controller writes begin,
   later API or deploy failures can leave earlier successful operations in place.
+- B(Additional-creation results.) C(force_created) is a list of dictionaries
+  returned for additional creations processed or previewed with
+  O(config[].create_additional_policy=true) in O(state=merged). It lists each
+  creation separately, including groups that share a description and template.
+- Each C(force_created) entry contains C(template_name), C(switch_ids), the
+  effective C(priority) (500 when omitted), and C(create_additional_policy).
+  C(description) and C(template_inputs) are included when available. In normal
+  execution, C(policy_id) is included when returned by the controller; it is
+  omitted from creation previews in check mode.
+- B(ID-targeted operation results.) C(direct_actions) is a dictionary containing
+  C(updated) and C(deleted) lists of group dictionaries. It reports operations on
+  groups without descriptions and description-changing updates by ID. Other
+  ID-targeted operations can use the normal C(before) and C(after) results.
+- C(direct_actions.updated) contains effective configurations for changed groups,
+  including C(policy_id). Already-matching groups are omitted, including when
+  O(deploy=true) requests deployment without an update. C(direct_actions.deleted)
+  contains resolved deletion targets, including C(policy_id). Either list can be empty.
+- These result entries use snake-case group fields such as C(policy_id),
+  C(template_name), C(description), C(switch_ids), C(priority), and
+  C(template_inputs). Optional fields can be omitted; deletion entries contain
+  the resolved deletion configuration rather than a complete gathered record.
+- C(force_created) and C(direct_actions) supplement C(before) and C(after).
+  Normal snapshots can collapse groups with the same description and template,
+  and can omit groups without descriptions. Targets with descriptions can also
+  appear in the applicable snapshots.
+- In check mode, these lists describe planned changes without sending mutation
+  or deployment requests. C(direct_actions) entries retain the existing target
+  IDs. During normal execution, known accepted changes remain reportable if a
+  later operation fails.
 - "B(Ghost-record cleanup for PYTHON content-type templates:)"
 - After a direct C(DELETE) of a PYTHON content-type policy group,
   the controller internally creates a transient C(switch_freeform_config) artifact
@@ -1908,9 +1929,8 @@ def main():
                 result["changed"] = True
                 result["pending_deleted_cleanup"] = pending_cleanup
 
-        # Surface force-created items as a dedicated key so they're visible
-        # even though identifier collisions prevent them from appearing in
-        # the state-machine's before/after.
+        # Surface every force-created item explicitly; ordinary snapshots
+        # retain their existing inventory selection and may omit duplicates.
         if force_created:
             result["changed"] = True
             created = {change["model"]: change for change in orchestrator.accepted_changes if change["operation"] == "create"}
@@ -1923,8 +1943,8 @@ def main():
                 else:
                     item.pop("policy_id", None)
                 result["force_created"].append(item)
-        # Surface direct-action results (no-description groups managed by ID).
-        # These bypass the state machine, so they don't show up in before/after.
+        # Surface direct-action details independently of snapshot visibility.
+        # Described targets are retained in applicable before/after snapshots.
         if direct_action_items:
             if any(direct_actions_result.values()):
                 result["changed"] = True
