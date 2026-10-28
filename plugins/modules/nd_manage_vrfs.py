@@ -75,6 +75,10 @@ options:
       - External Connectivity and VXLAN External fabrics support VRF definitions
         with C(vrf_name) and optional C(vrf_description) only. Attachments and
         VXLAN-specific properties are not supported.
+      - On ND 4.2.1, External VRFs support name-only creation, unchanged reconciliation,
+        gathering, and deletion. Managed descriptions and in-place definition updates
+        require ND 4.3.1 or later and a detectable controller version.
+      - Unsupported External updates fail before workflow writes.
     type: list
     elements: dict
     required: true
@@ -162,6 +166,7 @@ options:
       vrf_description:
         description:
           - Description of the VRF (max 255 characters), including External VRF definitions.
+          - For External VRFs, setting or clearing this option requires ND 4.3.1 or later.
           - For External VRFs, omission preserves the description in C(merged)
             and clears it in C(replaced) or C(overridden). An empty string
             explicitly clears the description.

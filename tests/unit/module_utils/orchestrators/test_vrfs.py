@@ -1016,6 +1016,8 @@ class _McfgTopDownStrategy:
 
 
 class _RestSend:
+    controller_version = "4.3.1.175"
+
     def __init__(self, params):
         self.params = params
         self.response_current = {}
@@ -1119,6 +1121,7 @@ def test_external_vrf_explicit_description_clear_converges(external_vrf_inventor
         rest_send=RestSend(params),
         strategy=StandaloneVrfStrategy(fabric_name="AK-EXT", fabric_data={"management": {"type": current["vrfType"]}}),
     )
+    orchestrator.rest_send.controller_version = "4.3.1.175"
     calls = []
 
     def request(**kwargs):
@@ -1165,6 +1168,7 @@ def test_external_vrf_definition_payload_and_readback_are_schema_shaped(vrf_type
     model = VrfDataModel.from_config(transformed)
     orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
     object.__setattr__(orchestrator, "strategy", _EndpointStrategy())
+    object.__setattr__(orchestrator, "rest_send", _RestSend({}))
     raw = {
         "fabricName": "EXT",
         "vrfName": "EXT_BLUE",
@@ -1280,6 +1284,49 @@ def test_external_vrf_create_and_update_include_fabric_identity(vrf_type, descri
     assert calls[1]["path"] == "/api/v1/manage/fabrics/AK_EXT/vrfs/EXT_BLUE"
     assert calls[1]["verb"] == HttpVerbEnum.PUT
     assert calls[1]["data"] == expected
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize(
+    "version,supported",
+    [("4.2.1.10", False), ("4.3.0.9", False), ("4.3.1.0", True), ("4.3.1.175", True), ("4.4.1.1", True), (None, False), ("invalid", False), ("4.3", False)],
+)
+@pytest.mark.parametrize("description", [{}, {"description": "probe"}, {"description": ""}])
+@pytest.mark.parametrize("updating", [False, True])
+def test_external_vrf_direct_writes_enforce_release_support(*, vrf_type, version, supported, description, updating):
+    orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
+    orchestrator.rest_send.controller_version = version
+    model = VrfDataModel.from_config({"fabricName": "FAB", "vrfName": "BLUE", "vrfType": vrf_type, **description})
+    calls = []
+    object.__setattr__(orchestrator, "_request", lambda **kwargs: calls.append(kwargs) or {})
+    if not supported and (updating or description):
+        with pytest.raises(Exception, match=r"requires ND 4\.3\.1 or later"):
+            orchestrator.update(model) if updating else orchestrator.create_bulk([model])
+        assert not calls
+    else:
+        orchestrator.update(model) if updating else orchestrator.create_bulk([model])
+        assert len(calls) == 1
+        assert calls[0]["verb"] == (HttpVerbEnum.PUT if updating else HttpVerbEnum.POST)
+
+
+def test_external_vrf_release_check_reuses_cached_version_and_skips_unneeded_lookup():
+    rest_send = RestSend({})
+    versions = []
+
+    def get_version():
+        versions.append("lookup")
+        return "4.3.1.175"
+
+    rest_send._sender = SimpleNamespace(get_version=get_version)
+    orchestrator = NDVrfOrchestrator(rest_send=rest_send, strategy=StandaloneVrfStrategy(fabric_name="ISN"))
+    name_only = VrfDataModel.from_config({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": "externalConnectivity"})
+    vxlan = VrfDataModel.from_config({"fabricName": "FAB", "vrfName": "BLUE", "vrfType": "vxlanIbgp"})
+    orchestrator.validate_external_vrf_write(name_only)
+    orchestrator.validate_external_vrf_write(vxlan, updating=True)
+    assert not versions
+    for _index in range(3):
+        orchestrator.validate_external_vrf_write(name_only, updating=True)
+    assert versions == ["lookup"]
 
 
 def test_vrfs_00010_transform_standalone_config_to_schema_payload():

@@ -1082,8 +1082,39 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         payload["fabricData"] = {}
         return payload
 
-    def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
+    def validate_external_vrf_write(self, model_instance: NDVrfModel, *, updating: bool = False) -> None:
+        """
+        # Summary
+
+        Require a controller with readable descriptions and working External VRF updates.
+
+        ## Raises
+
+        ### ValueError
+
+        - If an External description or update requires an unsupported or unknown controller release.
+        """
+        if model_instance.vrf_type not in _EXTERNAL_VRF_TYPES or (not updating and "description" not in model_instance.model_fields_set):
+            return
+        version = self.rest_send.controller_version
+        try:
+            release = tuple(int(part) for part in (version or "").split(".")[:3])
+        except ValueError:
+            release = ()
+        # TODO(4.2.1) external-vrf-update-500-description-not-echoed
+        # ND 4.2.1 omits even nonempty descriptions from GET and rejects External PUT with HTTP 500.
+        # Lab evidence on 4.3.1.175 confirms readable descriptions and successful updates for both types.
+        if len(release) < 3 or release < (4, 3, 1):
+            operation = "an in-place update" if updating else "vrf_description"
+            raise ValueError(
+                f"External VRF '{model_instance.vrf_name}': {operation} requires ND 4.3.1 or later (detected: {version or 'unknown'}). "
+                "ND 4.2.1 does not return descriptions and cannot update External VRFs in place; "
+                "omit vrf_description for name-only creation/reconciliation."
+            )
+
+    def _create_or_update_payload(self, model_instance: NDVrfModel, *, updating: bool = False) -> dict[str, Any]:
         if model_instance.vrf_type in _EXTERNAL_VRF_TYPES:
+            self.validate_external_vrf_write(model_instance, updating=updating)
             payload = model_instance.to_payload()
             return {key: payload[key] for key in ("fabricName", "vrfName", "vrfType", "description") if key in payload}
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
@@ -1145,7 +1176,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 vrf_name=vrf_name,
             )
             endpoint_path = endpoint.path
-            payload = self._create_or_update_payload(model_instance)
+            payload = self._create_or_update_payload(model_instance, updating=True)
             if self.strategy.is_child:
                 payload = {key: value for key, value in payload.items() if key in ("fabricName", "vrfName", "vrfType", "fabricData")}
             return self._request(

@@ -345,14 +345,22 @@ class VrfWorkflowCoordinator:
             proposed.core_data = {**core, "v6VrfRouteMap": core.get("vrfRouteMap", "FABRIC-RMAP-REDIST-SUBNET")}
 
     def _resolve_standalone_vrf_intent(self, sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
-        """Validate effective VXLAN definitions while keeping merged intent sparse."""
+        """Validate effective definitions and release support while keeping merged intent sparse."""
         fabric_default = self._fabric_l3vni_default(strategy)
         for entry in entries:
             identifier = (entry["vrf_name"], strategy.fabric_name)
             proposed = sm.proposed.get(identifier)
-            if proposed is None or proposed.vrf_type not in (VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+            if proposed is None:
                 continue
             current = sm.existing.get(identifier)
+            if proposed.vrf_type in (VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value):
+                sm.model_orchestrator.validate_external_vrf_write(
+                    proposed,
+                    updating=current is not None and sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "changed",
+                )
+                continue
+            if proposed.vrf_type not in (VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+                continue
 
             self._resolve_l3vni_mode(proposed, current, entry, fabric_default)
 
