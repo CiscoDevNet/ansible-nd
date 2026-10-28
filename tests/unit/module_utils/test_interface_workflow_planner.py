@@ -241,7 +241,8 @@ def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
     """Adapters with a managed-policy API cannot drift from their standalone orchestrator."""
     checked = set()
     for resource_type, adapter in INTERFACE_FAMILY_ADAPTERS.items():
-        if not hasattr(adapter.orchestrator_class, "_managed_policy_types"):
+        # NDBaseInterfaceOrchestrator defines a raising `_managed_policy_types` (issue #348); only a family override is a managed-policy API.
+        if getattr(adapter.orchestrator_class, "_managed_policy_types", None) in (None, NDBaseInterfaceOrchestrator._managed_policy_types):
             continue
         orchestrator = adapter.orchestrator_class.__new__(adapter.orchestrator_class)
         assert adapter.policy_types == frozenset(orchestrator._managed_policy_types())

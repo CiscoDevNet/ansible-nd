@@ -16,7 +16,7 @@ Uses `_StubInterfaceOrchestrator`, a minimal concrete subclass, to satisfy `NDBa
 Pydantic field requirements without coupling these tests to any per-feature orchestrator.
 """
 
-# pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines
+# pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines,unused-argument
 # pylint: disable=use-implicit-booleaness-not-comparison
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -41,10 +41,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesListGet,
     EpManageInterfacesPost,
     EpManageInterfacesPut,
+    EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LoopbackInterfaceModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
     BulkCreateGroupKey,
@@ -3759,3 +3763,520 @@ def test_base_interface_01140() -> None:
 
     assert "port-channel120" not in str(exc_info.value)
     assert len(instance.rest_send.responses) == 2
+
+
+# =============================================================================
+# Test: shared CRUD templates (issue #348)
+# =============================================================================
+
+_CRUD_SWITCH_IP = "192.168.12.151"
+_CRUD_SWITCH_ID = "FDO12345ABC"
+_CRUD_INTERFACES_PATH = f"/api/v1/manage/fabrics/fabric_1/switches/{_CRUD_SWITCH_ID}/interfaces"
+
+
+class _StubCrudOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that relies on the base `NDBaseInterfaceOrchestrator` CRUD templates (issue #348) for every operation."""
+
+    query_interface_type = "loopback"
+    supports_bulk_create = True
+    supports_bulk_delete = True
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def _managed_policy_types(self) -> set[str]:
+        return {"loopback"}
+
+
+class _StubCrudNoBulkOrchestrator(_StubCrudOrchestrator):
+    """CRUD stub with both bulk flags disabled, used to verify the templates keep `requires_bulk_support`."""
+
+    supports_bulk_create = False
+    supports_bulk_delete = False
+
+
+class _StubCrudNoQueryTypeOrchestrator(_StubCrudOrchestrator):
+    """CRUD stub that forgets to set `query_interface_type`."""
+
+    query_interface_type = ""
+
+
+class _StubCrudNoManagedTypesOrchestrator(_StubInterfaceOrchestrator):  # pylint: disable=abstract-method
+    """CRUD stub that sets `query_interface_type` but does not override `_managed_policy_types`."""
+
+    query_interface_type = "loopback"
+
+
+def _patch_switch_resolution(monkeypatch) -> None:
+    """Resolve every `switch_ip` to `_CRUD_SWITCH_ID` without a request, for every stub derived from `_StubInterfaceOrchestrator`."""
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: _CRUD_SWITCH_ID)
+
+
+def _loopback_item(interface_name: str = "loopback10") -> LoopbackInterfaceModel:
+    """Return a validated NX-OS loopback model whose `to_payload()` carries a policy body."""
+    return LoopbackInterfaceModel.from_config(
+        {
+            "switch_ip": _CRUD_SWITCH_IP,
+            "interface_name": interface_name,
+            "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "loopback", "admin_state": True}}},
+        }
+    )
+
+
+def _crud_response(return_code: int, method: str, path: str, data, message: str = "OK") -> dict:
+    """Return one synthetic controller response for the CRUD template tests."""
+    return {"RETURN_CODE": return_code, "METHOD": method, "REQUEST_PATH": path, "MESSAGE": message, "DATA": data}
+
+
+def _crud_instance(responses, cls=_StubCrudOrchestrator):
+    """Build a CRUD stub over a `RestSend` that replays `responses`."""
+    return cls(rest_send=_build_rest_send(ResponseGenerator(iter(responses))))
+
+
+def test_crud_template_create_posts_wrapped_payload_and_queues_deploy(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `create` posts the model payload, stamped with `switchId`, inside an `interfaces` array to the per-switch
+    interfaces endpoint and queues a deploy for the interface.
+
+    ## Test
+
+    - POST returns 200
+    - The committed payload is `{"interfaces": [payload_with_switchId]}`, sent as POST to the switch interfaces path
+    - `_pending_deploys` holds the interface pair
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.create()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([_crud_response(200, "POST", _CRUD_INTERFACES_PATH, {})])
+    model = _loopback_item()
+    expected = model.to_payload()
+    expected["switchId"] = _CRUD_SWITCH_ID
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert instance.rest_send.committed_payload == {"interfaces": [expected]}
+    assert instance.rest_send.verb == HttpVerbEnum.POST
+    assert instance.rest_send.path == _CRUD_INTERFACES_PATH
+    assert instance._pending_deploys == [("loopback10", _CRUD_SWITCH_ID)]
+
+
+def test_crud_template_create_calls_decorate_then_prepare_in_order(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `create` runs `_decorate_write_payload` before the request and `_prepare_deploy_context` after it, and that the
+    decorated payload is the one sent.
+
+    ## Test
+
+    - `_decorate_write_payload`, `_request` and `_prepare_deploy_context` are replaced with recorders
+    - Call order is decorate, request, prepare
+    - The request body carries the key added by the decorator
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.create()
+    - NDBaseInterfaceOrchestrator._decorate_write_payload()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([])
+    calls: list[str] = []
+    sent: list[dict] = []
+
+    def decorate(payload, model_instance, switch_id):
+        calls.append("decorate")
+        payload["decorated"] = switch_id
+
+    def request(path, verb, data=None, **kwargs):
+        calls.append("request")
+        sent.append(data)
+        return {}
+
+    def prepare(model_instance, switch_id):
+        calls.append("prepare")
+
+    monkeypatch.setattr(instance, "_decorate_write_payload", decorate)
+    monkeypatch.setattr(instance, "_request", request)
+    monkeypatch.setattr(instance, "_prepare_deploy_context", prepare)
+
+    with does_not_raise():
+        instance.create(_loopback_item())
+
+    assert calls == ["decorate", "request", "prepare"]
+    assert sent[0]["interfaces"][0]["decorated"] == _CRUD_SWITCH_ID
+    assert sent[0]["interfaces"][0]["switchId"] == _CRUD_SWITCH_ID
+
+
+def test_crud_template_create_failure_wraps_and_queues_nothing(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a failed create is wrapped as `Create failed for <identifier>: ...` and queues no deploy.
+
+    ## Test
+
+    - POST returns 500
+    - `RuntimeError` starts with `Create failed for `
+    - `_pending_deploys` is empty
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.create()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([_crud_response(500, "POST", _CRUD_INTERFACES_PATH, {"message": "boom"}, "Internal Server Error")])
+
+    with pytest.raises(RuntimeError, match=r"^Create failed for .*: "):
+        instance.create(_loopback_item())
+
+    assert instance._pending_deploys == []
+
+
+def test_crud_template_update_hook_order_and_context(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `update` runs its hooks in the documented order and hands the `_before_update` context to `_after_update_accepted`.
+
+    ## Test
+
+    - Every hook, `_request`, `_prepare_deploy_context` and `_queue_deploy` record their call
+    - Order is before, request, on_accepted, prepare, queue, after
+    - `_after_update_accepted` receives `"ctx"`; `_before_update` receives `previous_model`; the PUT path names the interface
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.update()
+    - NDBaseInterfaceOrchestrator._before_update()
+    - NDBaseInterfaceOrchestrator._on_update_accepted()
+    - NDBaseInterfaceOrchestrator._after_update_accepted()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([])
+    calls: list[str] = []
+    seen: dict = {}
+    previous = _loopback_item()
+
+    def before(model_instance, switch_id, previous_model):
+        calls.append("before")
+        seen["previous"] = previous_model
+        return "ctx"
+
+    def request(path, verb, data=None, **kwargs):
+        calls.append("request")
+        seen["path"] = path
+        seen["verb"] = verb
+        seen["data"] = data
+        return {}
+
+    def on_accepted(model_instance, switch_id):
+        calls.append("on_accepted")
+
+    def prepare(model_instance, switch_id):
+        calls.append("prepare")
+
+    original_queue = instance._queue_deploy
+
+    def queue(interface_name, switch_id):
+        calls.append("queue")
+        original_queue(interface_name, switch_id)
+
+    def after(model_instance, switch_id, context):
+        calls.append("after")
+        seen["context"] = context
+
+    monkeypatch.setattr(instance, "_before_update", before)
+    monkeypatch.setattr(instance, "_request", request)
+    monkeypatch.setattr(instance, "_on_update_accepted", on_accepted)
+    monkeypatch.setattr(instance, "_prepare_deploy_context", prepare)
+    monkeypatch.setattr(instance, "_queue_deploy", queue)
+    monkeypatch.setattr(instance, "_after_update_accepted", after)
+
+    with does_not_raise():
+        instance.update(_loopback_item(), previous_model=previous)
+
+    assert calls == ["before", "request", "on_accepted", "prepare", "queue", "after"]
+    assert seen["context"] == "ctx"
+    assert seen["previous"] is previous
+    assert seen["path"].endswith("/interfaces/loopback10")
+    assert seen["verb"] == HttpVerbEnum.PUT
+    assert seen["data"]["switchId"] == _CRUD_SWITCH_ID
+    assert "interfaces" not in seen["data"]
+    assert instance._pending_deploys == [("loopback10", _CRUD_SWITCH_ID)]
+
+
+def test_crud_template_update_after_hook_failure_keeps_deploy_queued(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a failure in `_after_update_accepted` is wrapped as `Update failed for <identifier>: ...` while the accepted PUT's deploy stays
+    queued for the failure-path finalizer.
+
+    ## Test
+
+    - PUT returns 200; `_after_update_accepted` raises `RuntimeError("preview")`
+    - `RuntimeError` matches `^Update failed for .*: preview$`
+    - `_pending_deploys` still holds the interface pair
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.update()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([_crud_response(200, "PUT", f"{_CRUD_INTERFACES_PATH}/loopback10", {})])
+
+    def after(model_instance, switch_id, context):
+        raise RuntimeError("preview")
+
+    monkeypatch.setattr(instance, "_after_update_accepted", after)
+
+    with pytest.raises(RuntimeError, match=r"^Update failed for .*: preview$"):
+        instance.update(_loopback_item())
+
+    assert instance._pending_deploys == [("loopback10", _CRUD_SWITCH_ID)]
+
+
+def test_crud_template_delete_uses_delete_side_name_and_delete_context(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `delete` queues the `_delete_side_name` spelling for remove and deploy after running `_prepare_delete_context`, and
+    sends no request.
+
+    ## Test
+
+    - `_delete_side_name` returns `Loopback10`; `_prepare_delete_context` records its arguments
+    - `_pending_removes` and `_pending_deploys` both hold `("Loopback10", switch_id)`
+    - No response was recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.delete()
+    - NDBaseInterfaceOrchestrator._delete_side_name()
+    - NDBaseInterfaceOrchestrator._prepare_delete_context()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([])
+    model = _loopback_item()
+    recorded: list[tuple] = []
+
+    monkeypatch.setattr(instance, "_delete_side_name", lambda model_instance: "Loopback10")
+    monkeypatch.setattr(instance, "_prepare_delete_context", lambda model_instance, name, switch_id: recorded.append((model_instance, name, switch_id)))
+
+    with does_not_raise():
+        result = instance.delete(model)
+
+    assert result is None
+    assert recorded == [(model, "Loopback10", _CRUD_SWITCH_ID)]
+    assert instance._pending_removes == [("Loopback10", _CRUD_SWITCH_ID)]
+    assert instance._pending_deploys == [("Loopback10", _CRUD_SWITCH_ID)]
+    assert instance.rest_send.response_count == 0
+
+
+def test_crud_template_delete_bulk_is_the_delete_loop_and_respects_flag(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `delete_bulk` queues every model exactly as `delete` would, and stays gated by `supports_bulk_delete`.
+
+    ## Test
+
+    - Two models: both pairs land in `_pending_removes` and `_pending_deploys`, with the default delete-side name
+    - A stub with `supports_bulk_delete = False` raises `AttributeError`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.delete_bulk()
+    - NDBaseInterfaceOrchestrator._delete_side_name()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _crud_instance([])
+
+    with does_not_raise():
+        instance.delete_bulk([_loopback_item("loopback10"), _loopback_item("loopback20")])
+
+    expected = [("loopback10", _CRUD_SWITCH_ID), ("loopback20", _CRUD_SWITCH_ID)]
+    assert instance._pending_removes == expected
+    assert instance._pending_deploys == expected
+    assert instance.rest_send.response_count == 0
+
+    disabled = _crud_instance([], cls=_StubCrudNoBulkOrchestrator)
+    with pytest.raises(AttributeError, match=r"supports_bulk_delete"):
+        disabled.delete_bulk([_loopback_item()])
+
+
+def test_crud_template_create_bulk_groups_and_wraps(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `create_bulk` posts one request per bulk-create group, stays gated by `supports_bulk_create`, and wraps a mixed 207
+    as `Bulk create failed: ...` while the accepted item stays queued for deploy.
+
+    ## Test
+
+    - Two models on one switch: one POST carrying both payloads; both pairs queued
+    - A stub with `supports_bulk_create = False` raises `AttributeError`
+    - Mixed 207 (loopback10 success, loopback20 failed): `RuntimeError` names the accepted item; only loopback10 is queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    _patch_switch_resolution(monkeypatch)
+    success = {"results": [{"name": "loopback10", "status": "success"}, {"name": "loopback20", "status": "success"}]}
+    instance = _crud_instance([_crud_response(207, "POST", _CRUD_INTERFACES_PATH, success, "Multi-Status")])
+
+    with does_not_raise():
+        result = instance.create_bulk([_loopback_item("loopback10"), _loopback_item("loopback20")])
+
+    assert len(result) == 1
+    assert instance.rest_send.response_count == 1
+    assert [item["interfaceName"] for item in instance.rest_send.committed_payload["interfaces"]] == ["loopback10", "loopback20"]
+    assert instance._pending_deploys == [("loopback10", _CRUD_SWITCH_ID), ("loopback20", _CRUD_SWITCH_ID)]
+
+    disabled = _crud_instance([], cls=_StubCrudNoBulkOrchestrator)
+    with pytest.raises(AttributeError, match=r"supports_bulk_create"):
+        disabled.create_bulk([_loopback_item()])
+
+    mixed = {"results": [{"name": "loopback10", "status": "success"}, {"name": "loopback20", "status": "failed", "message": "rejected"}]}
+    partial = _crud_instance([_crud_response(207, "POST", _CRUD_INTERFACES_PATH, mixed, "Multi-Status")])
+
+    with pytest.raises(RuntimeError, match=r"(?s)^Bulk create failed: .*accepted \['loopback10'\]"):
+        partial.create_bulk([_loopback_item("loopback10"), _loopback_item("loopback20")])
+
+    assert partial._pending_deploys == [("loopback10", _CRUD_SWITCH_ID)]
+
+
+def test_crud_template_query_one_path_and_wrap(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `query_one` GETs the per-interface path and wraps a failure as `Query failed for <identifier>: ...`.
+
+    ## Test
+
+    - GET 200: the request path names the interface and the verb is GET
+    - GET 404 (no `not_found_ok`): `RuntimeError` starts with `Query failed for `
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.query_one()
+    """
+    _patch_switch_resolution(monkeypatch)
+    path = f"{_CRUD_INTERFACES_PATH}/loopback10"
+    instance = _crud_instance(
+        [
+            _crud_response(200, "GET", path, {"interfaceName": "loopback10"}),
+            _crud_response(404, "GET", path, {}, "Not Found"),
+        ]
+    )
+
+    with does_not_raise():
+        instance.query_one(_loopback_item())
+
+    assert instance.rest_send.path == path
+    assert instance.rest_send.verb == HttpVerbEnum.GET
+
+    with pytest.raises(RuntimeError, match=r"^Query failed for .*: "):
+        instance.query_one(_loopback_item())
+
+
+def test_crud_template_query_all_filters_and_leaves_cache_pristine(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the base `query_all` keeps only records whose `interfaceType` is `query_interface_type` and whose policy type is managed, and
+    stamps `switchIp` on a shallow copy so the cached record stays untouched.
+
+    ## Test
+
+    - Cache holds loopback/loopback, loopback/underlayLoopback and ethernet/trunkHost on one switch
+    - Only the loopback/loopback record is returned, with `switchIp`
+    - The cached record has no `switchIp` key and is not the returned object
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._managed_records()
+    - NDBaseInterfaceOrchestrator._policy_type_of()
+    """
+    instance = _crud_instance([])
+
+    def record(name: str, interface_type: str, policy_type: str) -> dict:
+        return {
+            "interfaceName": name,
+            "interfaceType": interface_type,
+            "configData": {"networkOS": {"policy": {"policyType": policy_type}}},
+        }
+
+    inventory = {
+        "loopback10": record("loopback10", "loopback", "loopback"),
+        "loopback0": record("loopback0", "loopback", "underlayLoopback"),
+        "ethernet1/1": record("Ethernet1/1", "ethernet", "trunkHost"),
+    }
+    _seed_shared_inventory(instance, _CRUD_SWITCH_ID, inventory)
+    monkeypatch.setattr(instance, "_switches_to_query", lambda: {_CRUD_SWITCH_IP: _CRUD_SWITCH_ID})
+    monkeypatch.setattr(_StubCrudOrchestrator, "validate_prerequisites", lambda self: None)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    cached = instance._switch_interfaces_cache[_CRUD_SWITCH_ID]["loopback10"]
+    assert result == [{**inventory["loopback10"], "switchIp": _CRUD_SWITCH_IP}]
+    assert "switchIp" not in cached
+    assert result[0] is not cached
+    assert instance.rest_send.response_count == 0
+
+
+def test_crud_template_query_all_requires_query_interface_type() -> None:
+    """
+    # Summary
+
+    Verify the base `query_all` refuses a subclass that left `query_interface_type` empty, before the `Query all failed` wrap.
+
+    ## Test
+
+    - Stub with `query_interface_type = ""`
+    - `RuntimeError` names `query_interface_type` and does not start with `Query all failed`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.query_all()
+    """
+    instance = _crud_instance([], cls=_StubCrudNoQueryTypeOrchestrator)
+
+    with pytest.raises(RuntimeError, match=r"query_interface_type") as exc_info:
+        instance.query_all()
+
+    assert not str(exc_info.value).startswith("Query all failed")
+    assert instance.rest_send.response_count == 0
+
+
+def test_crud_template_query_all_surfaces_not_implemented_managed_types() -> None:
+    """
+    # Summary
+
+    Verify the base `query_all` surfaces the base `_managed_policy_types` `NotImplementedError` unwrapped.
+
+    ## Test
+
+    - Stub sets `query_interface_type` but does not override `_managed_policy_types`
+    - `NotImplementedError` matches `Subclasses must implement _managed_policy_types`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator._managed_policy_types()
+    """
+    instance = _crud_instance([], cls=_StubCrudNoManagedTypesOrchestrator)
+
+    with pytest.raises(NotImplementedError, match=r"Subclasses must implement _managed_policy_types"):
+        instance.query_all()
+
+    assert instance.rest_send.response_count == 0
