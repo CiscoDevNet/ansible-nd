@@ -102,7 +102,7 @@
           - merged_standard.second_run_result.changed == false
           - merged_standard.nd_query_results | length == 1
 
-    - name: "MERGED IDEMPOTENT: Re-apply standard community list in check mode"
+    - name: "MERGED IDEMPOTENT: Re-apply standard community list predictively and normally"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_manage_community_list
         state: merged
@@ -123,7 +123,7 @@
         check_mode_queries: "{{ nd4x_community_list_check_mode_queries }}"
       register: merged_standard_check_mode_reapply
 
-    - name: "MERGED IDEMPOTENT: Verify check-mode reapply was unchanged"
+    - name: "MERGED IDEMPOTENT: Verify predictive and normal reapply were unchanged"
       ansible.builtin.assert:
         that:
           - merged_standard_check_mode_reapply.check_mode_result.changed == false

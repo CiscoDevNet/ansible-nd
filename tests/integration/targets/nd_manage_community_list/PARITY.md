@@ -12,7 +12,7 @@ part of the normal target suite and can be opted out with `--skip-tags nd4x_demo
 | Reject a standard entry with neither community numbers nor a well-known flag | `tasks/validation.yaml` | `nd4x_demo_negative.yaml` | Fully covered; harness check-mode-only failure with the original validation-reason assertion |
 | Create a standard community list in check and normal mode | `tasks/merged.yaml` | `MERGED CREATE` in `nd4x_demo_merged.yaml` | Harness predictive, apply, idempotency, returned-state, and REST assertions |
 | Create an expanded community list | `tasks/merged.yaml` | `MERGED CREATE` in `nd4x_demo_merged.yaml` | Harness predictive, apply, idempotency, returned-state, and REST assertions |
-| Re-apply the standard list in check and normal mode | `tasks/merged.yaml` | Explicit check-mode reapply with predictive and normal no-change assertions plus automatic idempotency phase in the standard merged scenario | Fully covered |
+| Re-apply the standard list in check and normal mode | `tasks/merged.yaml` | Explicit predictive check-mode reapply followed by a normal no-change apply, plus automatic idempotency phase in the standard merged scenario | Fully covered |
 | Replace standard community-list entries in check and normal mode | `tasks/replaced.yaml` | `REPLACED UPDATE` in `nd4x_demo_replaced.yaml` | Harness predictive, apply, idempotency, returned-state, and REST assertions |
 | Re-apply replaced configuration | `tasks/replaced.yaml` | Automatic idempotency phase in the replaced scenario | Implemented by harness lifecycle |
 | Delete standard and expanded lists with name-only configuration | `tasks/deleted.yaml` | `DELETED` in `nd4x_demo_deleted.yaml` | Harness predictive, apply, idempotency, returned-state, and expected-404 REST assertions |
