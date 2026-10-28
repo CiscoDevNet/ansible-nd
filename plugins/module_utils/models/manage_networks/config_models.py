@@ -710,13 +710,26 @@ class NetworkParentConfigModel(NetworkConfigModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _discard_child_only_top_level_fields(cls, data: Any) -> Any:
+    def _validate_child_only_top_level_fields(cls, data: Any, info: ValidationInfo) -> Any:
+        """Reject misplaced child options in writes; ignore them in selectors.
+
+        ## Raises
+
+        ### ValueError
+
+        - A child-only property is supplied at parent scope for a write.
+        """
         if not isinstance(data, dict):
             return data
         filtered = dict(data)
+        misplaced = []
         for field in PARENT_CHILD_ONLY_NETWORK_FIELDS:
-            filtered.pop(field, None)
-            filtered.pop(cls.model_fields[field].alias, None)
+            value = filtered.pop(field, None)
+            alias_value = filtered.pop(cls.model_fields[field].alias, None)
+            if value is not None or alias_value is not None:
+                misplaced.append(field)
+        if misplaced and (info.context or {}).get("state") not in ("gathered", "deleted"):
+            raise ValueError("Child-only properties must be set under child_fabric_config on parent fabrics: " + ", ".join(misplaced))
         return filtered
 
     @model_validator(mode="after")

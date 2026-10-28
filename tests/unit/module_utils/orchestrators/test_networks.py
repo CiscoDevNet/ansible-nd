@@ -2986,8 +2986,23 @@ def test_network_msd_child_only_options_remain_in_module_union(field, value):
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+def test_parent_network_accepts_omitted_child_options_after_argspec_defaults(state, strategy_cls):
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_module_argument_spec()}})
+    accepted = validator.validate({"config": [{"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}]})
+    assert not accepted.error_messages
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlan", "members": []})
+    coordinator = NetworkWorkflowCoordinator(module=_Module({"state": state}), strategy=strategy)
+
+    assert coordinator._parse_config(accepted.validated_parameters["config"], NetworkParentConfigModel, state) == [
+        {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", "deploy": True, "deploy_type": "switch"}
+    ]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 @pytest.mark.parametrize("fabric_type", ["multisite_parent", "multicluster_parent"])
-def test_parent_trm_input_is_filtered_before_network_write(state, fabric_type):
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_parent_trm_input_is_rejected_before_network_write(state, fabric_type, check_mode):
     strategy_cls = MultisiteParentNetworkStrategy if fabric_type == "multisite_parent" else MulticlusterParentNetworkStrategy
     strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlanIbgp", "members": []})
     module = _Module(
@@ -2997,6 +3012,11 @@ def test_parent_trm_input_is_filtered_before_network_write(state, fabric_type):
             "config": [{"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", "trm_enable": True, "igmp_version": 3, "ipv6_trm": False}],
         }
     )
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": network_module_argument_spec()}})
+    accepted = validator.validate({"config": module.params["config"]})
+    assert not accepted.error_messages
+    module.params["config"] = accepted.validated_parameters["config"]
+    module.check_mode = check_mode
     coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
     received = []
 
@@ -3006,26 +3026,24 @@ def test_parent_trm_input_is_filtered_before_network_write(state, fabric_type):
 
     coordinator._run_state_machine_with_attachments = record_parent_config
 
-    result = coordinator._handle_parent_workflow(dict(module.params), fabric_type)
+    with pytest.raises(AssertionError, match="must be set under child_fabric_config"):
+        coordinator._handle_parent_workflow(dict(module.params), fabric_type)
 
-    assert result["changed"] is False
-    assert received == [{"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}]
+    assert not received
 
 
 @pytest.mark.parametrize("fabric_type", ["multisite_parent", "multicluster_parent"])
-def test_parent_trm_only_merged_entry_has_no_definition_intent(fabric_type):
+def test_parent_trm_only_merged_entry_is_rejected_before_layer_inference(fabric_type):
     strategy_cls = MultisiteParentNetworkStrategy if fabric_type == "multisite_parent" else MulticlusterParentNetworkStrategy
     strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlanIbgp", "members": []})
     coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), strategy)
 
-    parsed = coordinator._parse_config(
-        [{"network_name": "N", "trm_enable": True, "igmp_version": 3, "ipv6_trm": False}],
-        NetworkParentConfigModel,
-        "merged",
-    )
-
-    assert parsed == [{"network_name": "N"}]
-    assert not NDNetworkOrchestrator.has_network_definition_intent(parsed[0])
+    with pytest.raises(AssertionError, match="must be set under child_fabric_config"):
+        coordinator._parse_config(
+            [{"network_name": "N", "trm_enable": True, "igmp_version": 3, "ipv6_trm": False}],
+            NetworkParentConfigModel,
+            "merged",
+        )
 
 
 def test_parent_gathered_output_omits_child_only_trm_options():

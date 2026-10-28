@@ -67,6 +67,10 @@ options:
         list to provide per-child-fabric overrides. The parent-level
         C(attach), C(deploy), and C(deploy_type) options are applied only on
         the parent fabric and are not sent to child fabrics.
+      - On MSD and MCFG parents, child-only properties must be placed under
+        C(child_fabric_config). Supplying them at the top level is rejected for
+        V(merged), V(replaced), V(overridden), and V(staged). These properties
+        are ignored in top-level V(gathered) and V(deleted) selectors.
       - For child fabrics targeted directly, only C(state=gathered) is supported.
       - External Connectivity and VXLAN External fabrics support VRF definitions
         with C(vrf_name) and optional C(vrf_description) only. Attachments and

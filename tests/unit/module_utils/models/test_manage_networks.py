@@ -20,6 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkSwitchesListModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    PARENT_CHILD_ONLY_NETWORK_FIELDS,
     NetworkChildConfigModel,
     NetworkConfigModel,
     NetworkInterfaceConfigModel,
@@ -210,7 +211,6 @@ def test_network_child_dependencies_require_child_enablement(parent_feature, chi
         "network_name": "N",
         "layer": "layer3",
         "vrf_name": "BLUE",
-        parent_feature: True,
         "child_fabric_config": [{"fabric_name": "site1", child_field: value}],
     }
     with pytest.raises(ValidationError, match="requires netflow_enable=true on the child"):
@@ -249,33 +249,27 @@ def test_network_child_dependencies_require_child_enablement(parent_feature, chi
         ("gatewayOnBorder", False),
     ],
 )
-@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged", "gathered", "deleted"])
 @pytest.mark.parametrize("fabric_type", ["multisite_parent", "multicluster_parent"])
-def test_parent_network_discards_child_only_top_level_options(field, value, state, fabric_type):
+def test_parent_network_validates_child_only_top_level_options(field, value, state, fabric_type):
     input_config = {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", field: value}
-    model = NetworkParentConfigModel.from_config(input_config, context={"state": state, "fabric_type": fabric_type})
+    context = {"state": state, "fabric_type": fabric_type}
+    if state in ("gathered", "deleted"):
+        model = NetworkParentConfigModel.from_config(input_config, context=context)
+        assert model.to_config(exclude_unset=True) == {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}
+    else:
+        with pytest.raises(ValidationError, match="must be set under child_fabric_config"):
+            NetworkParentConfigModel.from_config(input_config, context=context)
 
     assert input_config[field] == value
-    assert model.to_config(exclude_unset=True) == {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}
 
 
-def test_msd_parent_network_keeps_child_options_when_top_level_values_are_discarded():
+def test_msd_parent_network_keeps_valid_child_options():
     model = NetworkParentConfigModel.from_config(
         {
             "network_name": "N",
             "layer": "layer3",
             "vrf_name": "BLUE",
-            "x_connect": True,
-            "multicast_group_address": "239.1.1.2",
-            "dhcp_servers": [{"server_address": "192.0.2.2"}],
-            "loopback_id": 100,
-            "trm_enable": False,
-            "igmp_version": 2,
-            "ipv6_trm": False,
-            "netflow_enable": False,
-            "vlan_netflow_monitor": "PARENT_MON",
-            "interface_netflow_monitor": "PARENT_INT",
-            "gateway_on_border": False,
             "child_fabric_config": [
                 {
                     "fabric_name": "site1",
@@ -307,7 +301,7 @@ def test_msd_parent_network_keeps_child_options_when_top_level_values_are_discar
     assert child["gateway_on_border"] is True
 
 
-def test_mcfg_parent_network_discards_child_only_top_level_options():
+def test_parent_network_reports_all_misplaced_fields():
     input_config = {
         "network_name": "N",
         "layer": "layer3",
@@ -324,9 +318,25 @@ def test_mcfg_parent_network_discards_child_only_top_level_options():
         "interface_netflow_monitor": "INT_MON",
         "gateway_on_border": True,
     }
-    model = NetworkParentConfigModel.from_config(input_config, context={"fabric_type": "multicluster_parent"})
+    with pytest.raises(ValidationError, match="must be set under child_fabric_config") as error:
+        NetworkParentConfigModel.from_config(input_config, context={"state": "merged"})
 
-    assert model.to_config(exclude_unset=True) == {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE"}
+    message = error.value.errors()[0]["msg"]
+    assert all(field in message for field in PARENT_CHILD_ONLY_NETWORK_FIELDS)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_parent_network_does_not_reject_omitted_child_option_defaults(state):
+    config = {"network_name": "N", "layer": "layer2", **dict.fromkeys(PARENT_CHILD_ONLY_NETWORK_FIELDS)}
+    model = NetworkParentConfigModel.from_config(config, context={"state": state})
+    assert model.netflow_enable is False
+    assert model.to_config(exclude_unset=True) == {"network_name": "N", "layer": "layer2"}
+
+
+@pytest.mark.parametrize("field,value", [("dhcp_servers", []), ("vlan_netflow_monitor", "")])
+def test_parent_network_rejects_explicit_empty_child_options(field, value):
+    with pytest.raises(ValidationError, match="must be set under child_fabric_config"):
+        NetworkParentConfigModel.from_config({"network_name": "N", field: value}, context={"state": "merged"})
 
 
 @pytest.mark.parametrize(

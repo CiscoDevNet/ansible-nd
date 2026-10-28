@@ -16,6 +16,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -25,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import (
     OperationType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
+    PARENT_CHILD_ONLY_VRF_FIELDS,
     VrfChildConfigModel,
     VrfConfigModel,
     VrfParentConfigModel,
@@ -293,19 +295,12 @@ def test_parent_route_map_fallback_respects_sparse_and_authoritative_states(stat
     assert effective.to_payload()["coreData"]["v6VrfRouteMap"] == expected
 
 
-def test_parent_rd_id_and_child_only_values_split_for_msd_and_mcfg():
-    from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import PARENT_CHILD_ONLY_VRF_FIELDS
-
+def test_parent_rd_id_and_valid_child_values_split_for_msd_and_mcfg():
     for is_multicluster in (False, True):
         config = {
             "vrf_name": "BLUE",
             "vrf_id": 50001,
             "route_distinguisher_id": 73,
-            "trm_enable": True,
-            "adv_host_routes": True,
-            "netflow_enable": False,
-            "bgp_password": "aabbccdd",
-            "bgp_passwd_encrypt": "type6",
             "child_fabric_config": [{"fabric_name": "AK-VXLAN", "adv_host_routes": True, "trm_enable": True}],
         }
         parent = VrfParentConfigModel.from_config(config).to_config(exclude_unset=True)
@@ -318,18 +313,53 @@ def test_parent_rd_id_and_child_only_values_split_for_msd_and_mcfg():
         assert "fabricData" not in payload
 
 
-def test_parent_child_only_aliases_and_explicit_false_are_discarded():
-    model = VrfParentConfigModel.from_config(
-        {
-            "vrfName": "BLUE",
-            "trmEnable": True,
-            "advHostRoutes": False,
-            "l3vniWoVlan": True,
-            "childFabricConfig": [{"fabric_name": "AK-VXLAN", "advHostRoutes": False}],
-        }
-    )
-    config = model.to_config(exclude_unset=True)
-    assert config == {"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "AK-VXLAN", "adv_host_routes": False}]}
+@pytest.mark.parametrize("field", PARENT_CHILD_ONLY_VRF_FIELDS)
+@pytest.mark.parametrize("wire_keys", [False, True])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged", "gathered", "deleted"])
+def test_parent_vrf_validates_child_only_top_level_options(field, wire_keys, state):
+    key = VrfChildConfigModel.model_fields.get(field).alias if wire_keys else field
+    config = {"vrf_name": "BLUE", key: False}
+    if state in ("gathered", "deleted"):
+        model = VrfParentConfigModel.from_config(config, context={"state": state})
+        assert field not in model.to_config(exclude_unset=True)
+    else:
+        with pytest.raises(ValidationError, match="must be set under child_fabric_config") as error:
+            VrfParentConfigModel.from_config(config, context={"state": state})
+        assert field in error.value.errors()[0]["msg"]
+    assert config[key] is False
+
+
+def test_parent_vrf_reports_all_misplaced_fields_and_keeps_nested_false():
+    config = {
+        "vrfName": "BLUE",
+        "trmEnable": True,
+        "advHostRoutes": False,
+        "l3vniWoVlan": True,
+        "childFabricConfig": [{"fabric_name": "AK-VXLAN", "advHostRoutes": False}],
+    }
+    with pytest.raises(ValidationError, match="must be set under child_fabric_config") as error:
+        VrfParentConfigModel.from_config(config, context={"state": "merged"})
+    message = error.value.errors()[0]["msg"]
+    assert all(field in message for field in ("trm_enable", "adv_host_routes", "l3vni_wo_vlan"))
+    for key in ("trmEnable", "advHostRoutes", "l3vniWoVlan"):
+        config.pop(key)
+    model = VrfParentConfigModel.from_config(config, context={"state": "merged"})
+    assert model.to_config(exclude_unset=True)["child_fabric_config"] == [{"fabric_name": "AK-VXLAN", "adv_host_routes": False}]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_parent_vrf_does_not_reject_argspec_defaults(state):
+    spec = {**vrf_parent_argument_spec(), **vrf_standalone_argument_spec()}
+    accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": spec}}).validate({"config": [{"vrf_name": "BLUE"}]})
+    assert not accepted.error_messages
+    parsed = VrfParentConfigModel.from_config(accepted.validated_parameters["config"][0], context={"state": state}).to_config(exclude_unset=True)
+    assert not set(PARENT_CHILD_ONLY_VRF_FIELDS) & parsed.keys()
+
+
+@pytest.mark.parametrize("field,value", [("import_mvpn_rt", []), ("rp_address", "")])
+def test_parent_vrf_rejects_explicit_empty_child_options(field, value):
+    with pytest.raises(ValidationError, match="must be set under child_fabric_config"):
+        VrfParentConfigModel.from_config({"vrf_name": "BLUE", field: value}, context={"state": "merged"})
 
 
 @pytest.mark.parametrize("action", ["enforcedPermit", "enforcedDeny"])
@@ -1550,6 +1580,10 @@ def test_vrf_child_dependencies_do_not_inherit_parent_only_input(feature, child_
     if feature == "netflow_enable":
         config["nf_monitor"] = "PARENT_MON"
 
+    with pytest.raises(ValidationError, match="must be set under child_fabric_config"):
+        VrfParentConfigModel.from_config(config)
+    config.pop(feature)
+    config.pop("nf_monitor", None)
     child = VrfParentConfigModel.from_config(config).child_fabric_config[0]
     assert getattr(child, feature) is None
     config["child_fabric_config"][0][feature] = True

@@ -50,6 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
     vrf_parent_argument_spec,
+    vrf_standalone_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
@@ -62,6 +63,28 @@ class _Module:
 
     def fail_json(self, **kwargs):
         raise AssertionError(kwargs)
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_parent_vrf_rejects_misplaced_input_before_any_state_machine(strategy_cls, state, check_mode, monkeypatch):
+    spec = {**vrf_parent_argument_spec(), **vrf_standalone_argument_spec()}
+    accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": spec}}).validate(
+        {"config": [{"vrf_name": "BLUE", "trm_enable": False}]}
+    )
+    assert not accepted.error_messages
+    module = _Module({"fabric_name": "PARENT", "state": state, "config": accepted.validated_parameters["config"]}, check_mode=check_mode)
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlan", "members": []})
+    coordinator = VrfWorkflowCoordinator(module=module, strategy=strategy)
+    calls = []
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", lambda *_args, **_kwargs: calls.append("parent"))
+    monkeypatch.setattr(coordinator, "_run_child_task", lambda *_args, **_kwargs: calls.append("child"))
+
+    with pytest.raises(AssertionError, match="must be set under child_fabric_config"):
+        coordinator._handle_parent_workflow(dict(module.params), strategy.fabric_type)
+
+    assert not calls
 
 
 class _AttachmentCoordinator:
@@ -223,14 +246,13 @@ class _ParentStrategy:
         }
 
 
-def test_vrf_parent_parse_requires_child_trm_for_mvpn_targets():
-    """Parent TRM input cannot satisfy a member-only prerequisite."""
+def test_vrf_parent_parse_accepts_child_trm_for_mvpn_targets():
+    """Member-only prerequisites are supplied in the child configuration."""
     coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
     parsed = coordinator._parse_config(
         [
             {
                 "vrf_name": "BLUE",
-                "trm_enable": True,
                 "child_fabric_config": [{"fabric_name": "AK-VXLAN", "trm_enable": True, "import_mvpn_rt": ["65000:1"]}],
             }
         ],
@@ -1407,16 +1429,16 @@ def test_vrf_workflow_coordinator_00003_child_rejects_direct_attach():
         raise AssertionError("child attach was not rejected")
 
 
-def test_vrf_parent_filters_child_only_fields_for_msd_and_mcfg():
+def test_vrf_parent_rejects_child_only_fields_for_msd_and_mcfg():
     """Both parent topologies use the same typed ownership rule."""
     for strategy in (_ParentStrategy(), _McfgParentStrategy()):
         coordinator = VrfWorkflowCoordinator(_Module({}), strategy)
-        parsed = coordinator._parse_config(
-            [{"vrf_name": "BLUE", "vrf_id": 50001, "adv_host_routes": True, "trm_enable": True, "netflow_enable": False}],
-            VrfParentConfigModel,
-            "merged",
-        )
-        assert parsed == [{"vrf_name": "BLUE", "vrf_id": 50001}]
+        with pytest.raises(AssertionError, match="must be set under child_fabric_config"):
+            coordinator._parse_config(
+                [{"vrf_name": "BLUE", "vrf_id": 50001, "adv_host_routes": True, "trm_enable": True, "netflow_enable": False}],
+                VrfParentConfigModel,
+                "merged",
+            )
 
 
 def test_vrf_workflow_coordinator_000038_attachment_match_treats_missing_extra_config_as_empty():
