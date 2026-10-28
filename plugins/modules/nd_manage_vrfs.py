@@ -58,6 +58,9 @@ options:
       - List of VRF definition configurations to manage.
       - Each element defines a VRF with identity, template, VLAN/SVI,
         routing, TRM, security, attachment, deployment, and other settings.
+      - Definition defaults described below apply to creation and replacement
+        where the property is applicable. In C(state=merged), omitted properties
+        of existing VRFs retain their current values.
       - On standalone fabrics, all VRF definition, attachment, and deployment
         options are applied directly to the target fabric.
       - On standalone fabrics, custom-template VRFs accept identity, VLAN ID,
@@ -152,8 +155,8 @@ options:
           - MTU for the VRF SVI interface (68-9216).
           - Not applicable when C(l3vni_wo_vlan=true).
           - Supported on standalone and parent VRF definitions.
+          - Defaults to C(9216) for definition creation and replacement.
         type: int
-        default: 9216
       l3vni_wo_vlan:
         description:
           - Configure L3VNI without VLAN/SVI.
@@ -172,13 +175,15 @@ options:
             explicitly clears the description.
         type: str
       loopback_route_tag:
-        description: Routing tag for loopback routes (0-4294967295); NX-OS only.
+        description:
+          - Routing tag for loopback routes (0-4294967295); NX-OS only.
+          - Defaults to C(12345) for definition creation and replacement.
         type: int
-        default: 12345
       redist_direct_rmap:
-        description: Route map for redistribute direct (IPv4).
+        description:
+          - Route map for redistribute direct (IPv4).
+          - Defaults to C(FABRIC-RMAP-REDIST-SUBNET) for definition creation and replacement.
         type: str
-        default: FABRIC-RMAP-REDIST-SUBNET
       v6_redist_direct_rmap:
         description:
           - Route map for redistribute direct (IPv6).
@@ -186,36 +191,43 @@ options:
           - A sparse C(merged) update retains an existing IPv6 map.
         type: str
       max_bgp_paths:
-        description: Maximum eBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
+        description:
+          - Maximum eBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
+          - Defaults to C(1) for definition creation and replacement.
         type: int
-        default: 1
       max_ibgp_paths:
-        description: Maximum iBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
+        description:
+          - Maximum iBGP multipaths (NX-OS 1-64; IOS-XE 1-32).
+          - Defaults to C(2) for definition creation and replacement.
         type: int
-        default: 2
       ipv6_linklocal_enable:
-        description: Enable IPv6 link-local on a VRF SVI; NX-OS only, not with C(l3vni_wo_vlan=true).
+        description:
+          - Enable IPv6 link-local on a VRF SVI; NX-OS only, not with C(l3vni_wo_vlan=true).
+          - Defaults to C(true) for definition creation and replacement.
         type: bool
-        default: true
       bgp_best_path_relax:
-        description: Enable BGP best-path AS-path multipath-relax on standalone or child VRFs; NX-OS only.
+        description:
+          - Enable BGP best-path AS-path multipath-relax on standalone or child VRFs; NX-OS only.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       bgp_log_neighbor_change:
-        description: Log BGP neighbor up/down events on standalone or child VRFs.
+        description:
+          - Log BGP neighbor up/down events on standalone or child VRFs.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       route_distinguisher_id:
         description: VRF route distinguisher ID (0-65535) on IOS XE standalone and parent fabrics. If omitted, ND generates one.
         type: int
       enable_vrf_vpn_route_leaking:
-        description: Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches of a standalone or child fabric.
+        description:
+          - Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches of a standalone or child fabric.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       disable_rt_auto:
-        description: Disable automatic route-target assignment.
+        description:
+          - Disable automatic route-target assignment.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       import_vpn_rt:
         description:
           - VPN import route targets.
@@ -246,34 +258,38 @@ options:
           - Requires TRM support to be enabled in fabric settings.
           - On standalone VRFs, an effective underlay multicast address is required; an internal RP also needs C(rp_address) and C(rp_loopback_id).
           - Not applicable on parent fabrics.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       ipv6_trm:
         description:
           - Enable IPv6 Tenant Routed Multicast on a standalone VRF; NX-OS only.
           - Requires IPv6 Tenant Routed Multicast in the fabric settings.
           - An effective underlay multicast address is required; an internal IPv6 RP also needs C(v6_rp_address) and C(rp_loopback_id).
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       no_rp:
-        description: No RP for TRM (SSM only). Requires C(trm_enable=true). Not applicable on parent fabrics.
+        description:
+          - No RP for TRM (SSM only). Requires C(trm_enable=true). Not applicable on parent fabrics.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       rp_external:
-        description: RP is external to the fabric. Requires C(trm_enable=true). Not applicable on parent fabrics.
+        description:
+          - RP is external to the fabric. Requires C(trm_enable=true). Not applicable on parent fabrics.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       rp_address:
         description: IPv4 RP address. Requires C(trm_enable=true). Not applicable on parent fabrics.
         type: str
       v6_no_rp:
-        description: Use IPv6 SSM without an RP. Requires C(ipv6_trm=true); incompatible with IPv6 RP settings.
+        description:
+          - Use IPv6 SSM without an RP. Requires C(ipv6_trm=true); incompatible with IPv6 RP settings.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       v6_rp_external:
-        description: IPv6 RP is external to the fabric. Requires C(ipv6_trm=true); NX-OS only.
+        description:
+          - IPv6 RP is external to the fabric. Requires C(ipv6_trm=true); NX-OS only.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       v6_rp_address:
         description: IPv6 RP address. Requires C(ipv6_trm=true); NX-OS only.
         type: str
@@ -290,13 +306,15 @@ options:
         description: Overlay IPv6 multicast group/prefix in CIDR notation. Requires C(ipv6_trm=true); NX-OS only.
         type: str
       mvpn_inter_as:
-        description: Use inter-AS MVPN routes when IPv4 or IPv6 TRM is enabled; IOS XE only.
+        description:
+          - Use inter-AS MVPN routes when IPv4 or IPv6 TRM is enabled; IOS XE only.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       trm_bgw_msite:
-        description: Enable IPv4/IPv6 TRM on border gateway multisite. Requires IPv4 or IPv6 TRM. Not applicable on parent fabrics.
+        description:
+          - Enable IPv4/IPv6 TRM on border gateway multisite. Requires IPv4 or IPv6 TRM. Not applicable on parent fabrics.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       import_mvpn_rt:
         description: MVPN import route targets; requires IPv4 or IPv6 TRM and NX-OS. Not applicable on parent fabrics.
         type: list
@@ -309,40 +327,45 @@ options:
         description:
           - Advertise /32 and /128 host routes to edge routers.
           - Not applicable on parent fabrics.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       adv_default_routes:
         description:
           - Advertise default route internally.
           - Not applicable on parent fabrics.
+          - Defaults to C(true) for definition creation and replacement.
         type: bool
-        default: true
       static_default_route:
         description:
           - Configure static default route.
           - Not applicable on parent fabrics.
+          - Defaults to C(true) for definition creation and replacement.
         type: bool
-        default: true
       bgp_allow_as_in:
-        description: Accept VRF Lite paths containing the local AS on standalone or child VRFs.
+        description:
+          - Accept VRF Lite paths containing the local AS on standalone or child VRFs.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       bgp_allow_as_in_num:
-        description: Allowed local-AS occurrences in the VRF Lite AS path (1-10); requires C(bgp_allow_as_in=true) on a child VRF.
+        description:
+          - Allowed local-AS occurrences in the VRF Lite AS path (1-10); requires C(bgp_allow_as_in=true) on a child VRF.
+          - Defaults to C(3) for definition creation and replacement.
         type: int
-        default: 3
       bgp_as_override:
-        description: Override matching AS in outbound VRF Lite routes on standalone or child VRFs.
+        description:
+          - Override matching AS in outbound VRF Lite routes on standalone or child VRFs.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       bgp_disable_peer_as_check:
-        description: Disable peer-AS check on outbound VRF Lite routes on standalone or child VRFs; NX-OS only.
+        description:
+          - Disable peer-AS check on outbound VRF Lite routes on standalone or child VRFs; NX-OS only.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       bgp_soft_reconfig_always:
-        description: Always permit inbound BGP soft reconfiguration on standalone or child VRFs.
+        description:
+          - Always permit inbound BGP soft reconfiguration on standalone or child VRFs.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       bgp_password:
         description:
           - VRF-Lite BGP neighbour password as a 4-32 character hexadecimal string.
@@ -360,8 +383,8 @@ options:
         description:
           - Enable VRF-Lite NetFlow; requires fabric and extension NetFlow enablement.
           - Not applicable on parent fabrics.
+          - Defaults to C(false) for definition creation and replacement.
         type: bool
-        default: false
       nf_monitor:
         description:
           - NX-OS NetFlow monitor; required when C(netflow_enable=true).
