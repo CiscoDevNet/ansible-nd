@@ -31,7 +31,7 @@
     nd4x_community_list_check_mode_queries:
       - name: Snapshot all community lists in the test fabric
         path: >-
-          /api/v1/manage/fabrics/{{ test_fabric_name }}/communityLists?max=100
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/communityLists
         expected_status: 200
         pagination:
           page_size: 100
