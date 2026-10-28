@@ -77,6 +77,7 @@
             - nd4x_demo
             - nd4x_demo_preflight
             - nd4x_demo_merged
+            - nd4x_demo_merged_fanout
             - nd4x_demo_replaced
             - nd4x_demo_overridden
             - nd4x_demo_deleted
@@ -89,6 +90,7 @@
         - nd4x_demo
         - nd4x_demo_preflight
         - nd4x_demo_merged
+        - nd4x_demo_merged_fanout
         - nd4x_demo_replaced
         - nd4x_demo_overridden
         - nd4x_demo_deleted
@@ -97,7 +99,7 @@
         - nd4x_demo_xe
         - nd4x_demo_xe_overridden
 
-    - name: Run merged state tests using the ND 4.x harness
+    - name: Run merged and fan-out state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_merged.yaml
         apply:
@@ -105,10 +107,12 @@
             - never
             - nd4x_demo
             - nd4x_demo_merged
+            - nd4x_demo_merged_fanout
       tags:
         - never
         - nd4x_demo
         - nd4x_demo_merged
+        - nd4x_demo_merged_fanout
       when: nd4x_supported | default(false) | bool
 
     - name: Run replaced state tests using the ND 4.x harness
