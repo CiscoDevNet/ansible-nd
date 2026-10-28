@@ -46,23 +46,17 @@ def test_pvlan_requires_enabled_dc_fabric(vlan_type, fabric_type):
     config = {"vlan_network_type": vlan_type}
     validate_fabric_features(_details(fabric_type), config, "Network", 0, "FAB")
     with pytest.raises(ValueError, match="requires private VLAN"):
-        validate_fabric_features(
-            _details(fabric_type, private_vlan=False), config, "Network", 0, "FAB"
-        )
+        validate_fabric_features(_details(fabric_type, private_vlan=False), config, "Network", 0, "FAB")
     details = _details(fabric_type)
     del details["management"]["privateVlan"]
     with pytest.raises(ValueError, match="cannot verify private VLAN"):
         validate_fabric_features(details, config, "Network", 0, "FAB")
 
 
-@pytest.mark.parametrize(
-    "fabric_type", ["vxlanCampus", "externalConnectivity", "unknown"]
-)
+@pytest.mark.parametrize("fabric_type", ["vxlanCampus", "externalConnectivity", "unknown"])
 def test_pvlan_rejects_non_dc_fabrics(fabric_type):
     with pytest.raises(ValueError, match="supported only on Data Center VXLAN"):
-        validate_fabric_features(
-            _details(fabric_type), {"vlan_network_type": "primary"}, "Network", 2, "FAB"
-        )
+        validate_fabric_features(_details(fabric_type), {"vlan_network_type": "primary"}, "Network", 2, "FAB")
 
 
 @pytest.mark.parametrize("resource", ["Network", "VRF"])
@@ -74,17 +68,11 @@ def test_pvlan_rejects_non_dc_fabrics(fabric_type):
         ("netflow_enable", "netflow", "NetFlow"),
     ],
 )
-def test_affirmative_features_require_fabric_settings(
-    resource, fabric_type, feature, flag, description
-):
+def test_affirmative_features_require_fabric_settings(resource, fabric_type, feature, flag, description):
     config = {feature: True}
     validate_fabric_features(_details(fabric_type), config, resource, 1, "FAB")
     details = _details(fabric_type)
-    target = (
-        details["management"]["netflowSettings"]
-        if feature == "netflow_enable"
-        else details["management"]
-    )
+    target = details["management"]["netflowSettings"] if feature == "netflow_enable" else details["management"]
     target[flag] = False
     with pytest.raises(ValueError, match=description):
         validate_fabric_features(details, config, resource, 1, "FAB")
@@ -149,9 +137,7 @@ def test_standalone_trm_external_and_no_rp_modes_allow_omitted_loopback():
         0,
         "FAB",
     )
-    validate_standalone_vrf_trm_requirements(
-        {"ipv6_trm": True, "v6_no_rp": True, "underlay_mcast_ip": "239.1.1.3"}, 0, "FAB"
-    )
+    validate_standalone_vrf_trm_requirements({"ipv6_trm": True, "v6_no_rp": True, "underlay_mcast_ip": "239.1.1.3"}, 0, "FAB")
 
 
 @pytest.mark.parametrize(
@@ -166,12 +152,8 @@ def test_standalone_trm_external_and_no_rp_modes_allow_omitted_loopback():
 )
 def test_effective_no_vlan_mode_rejects_sparse_svi_requests(field, value):
     with pytest.raises(ValueError, match=field):
-        validate_standalone_vrf_svi_requirements(
-            {"l3vni_wo_vlan": True}, {field: value}, 0, "FAB"
-        )
-    validate_standalone_vrf_svi_requirements(
-        {"l3vni_wo_vlan": True}, {"vrf_description": "new"}, 0, "FAB"
-    )
+        validate_standalone_vrf_svi_requirements({"l3vni_wo_vlan": True}, {field: value}, 0, "FAB")
+    validate_standalone_vrf_svi_requirements({"l3vni_wo_vlan": True}, {"vrf_description": "new"}, 0, "FAB")
 
 
 def test_sparse_svi_edit_is_rejected_against_existing_no_vlan_vrf():
@@ -179,9 +161,7 @@ def test_sparse_svi_edit_is_rejected_against_existing_no_vlan_vrf():
     proposed = _Model("BLUE", {"vrf_int_mtu": 9216})
     sm = _StateMachine(proposed, {"BLUE": current}, "changed")
     with pytest.raises(ValueError, match="vrf_int_mtu not applicable"):
-        preflight_feature_changes(
-            sm, "merged", lambda: _details(), "VRF", "FAB", standalone_vrf=True
-        )
+        preflight_feature_changes(sm, "merged", lambda: _details(), "VRF", "FAB", standalone_vrf=True)
     assert current.config == {"l3vni_wo_vlan": True, "vrf_description": "old"}
 
 
@@ -206,9 +186,7 @@ def test_sparse_enforced_action_uses_effective_fabric_security_setting():
     details = _details()
     details["management"]["securityGroupTag"] = False
     with pytest.raises(ValueError, match="requires security groups"):
-        preflight_feature_changes(
-            sm, "merged", lambda: details, "VRF", "FAB", standalone_vrf=True
-        )
+        preflight_feature_changes(sm, "merged", lambda: details, "VRF", "FAB", standalone_vrf=True)
     assert current.config["default_security_action"] == "unenforcedOrNone"
 
 
@@ -221,9 +199,7 @@ class _Model:
         return self.network_name
 
     def model_copy(self, deep=False):
-        return _Model(
-            self.network_name, deepcopy(self.config) if deep else dict(self.config)
-        )
+        return _Model(self.network_name, deepcopy(self.config) if deep else dict(self.config))
 
     def merge(self, other):
         self.config.update(other.config)
@@ -268,9 +244,7 @@ def test_sparse_merge_checks_effective_mode_without_mutating_inventory():
     proposed = _Model("BLUE", {"display_name": "NEW"})
     sm = _StateMachine(proposed, {"BLUE": current}, "changed")
     with pytest.raises(ValueError, match="requires private VLAN"):
-        preflight_feature_changes(
-            sm, "merged", lambda: _details(private_vlan=False), "Network", "FAB"
-        )
+        preflight_feature_changes(sm, "merged", lambda: _details(private_vlan=False), "Network", "FAB")
     assert current.config["display_name"] == "OLD"
 
 
@@ -282,9 +256,7 @@ def test_sparse_merge_checks_effective_mode_without_mutating_inventory():
         ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
     ],
 )
-def test_child_dependencies_reuse_the_feature_preflight_merge(
-    monkeypatch, prerequisite, dependent, value
-):
+def test_child_dependencies_reuse_the_feature_preflight_merge(monkeypatch, prerequisite, dependent, value):
     """Child dependency checks reuse one effective merge and skip unchanged writes."""
     current = _Model("BLUE", {prerequisite: True})
     proposed = _Model("BLUE", {dependent: value})
@@ -297,9 +269,7 @@ def test_child_dependencies_reuse_the_feature_preflight_merge(
         return original_merge(model, intent)
 
     monkeypatch.setattr(_Model, "merge", record_merge)
-    preflight_feature_changes(
-        sm, "merged", _details, "Network", "CHILD", child_network=True
-    )
+    preflight_feature_changes(sm, "merged", _details, "Network", "CHILD", child_network=True)
     assert len(merges) == 1
     assert current.config == {prerequisite: True}
 
@@ -307,31 +277,21 @@ def test_child_dependencies_reuse_the_feature_preflight_merge(
         raise AssertionError("Dependency validation must precede fabric retrieval")
 
     sm.existing = _Collection({}, "new")
-    with pytest.raises(
-        ValueError, match=rf"child_fabric_config\[CHILD\].*{prerequisite}=true"
-    ):
-        preflight_feature_changes(
-            sm, "merged", unexpected_details, "Network", "CHILD", child_network=True
-        )
+    with pytest.raises(ValueError, match=rf"child_fabric_config\[CHILD\].*{prerequisite}=true"):
+        preflight_feature_changes(sm, "merged", unexpected_details, "Network", "CHILD", child_network=True)
 
     sm.existing = _Collection({"BLUE": current}, "no_diff")
-    preflight_feature_changes(
-        sm, "merged", unexpected_details, "Network", "CHILD", child_network=True
-    )
+    preflight_feature_changes(sm, "merged", unexpected_details, "Network", "CHILD", child_network=True)
     assert len(merges) == 1
 
 
 def test_sparse_standalone_vrf_trm_inherits_existing_required_values():
-    current = _Model(
-        "BLUE", {"ipv6_trm": True, "v6_no_rp": True, "underlay_mcast_ip": "239.1.1.3"}
-    )
+    current = _Model("BLUE", {"ipv6_trm": True, "v6_no_rp": True, "underlay_mcast_ip": "239.1.1.3"})
     proposed = _Model("BLUE", {"ipv6_trm": True, "v6_no_rp": True})
     sm = _StateMachine(proposed, {"BLUE": current}, "changed")
     details = _details()
     details["management"]["tenantRoutedMulticastIpv6"] = True
-    preflight_feature_changes(
-        sm, "merged", lambda: details, "VRF", "FAB", standalone_vrf=True
-    )
+    preflight_feature_changes(sm, "merged", lambda: details, "VRF", "FAB", standalone_vrf=True)
     assert current.config["underlay_mcast_ip"] == "239.1.1.3"
 
 
@@ -372,9 +332,7 @@ def test_each_write_state_rejects_changed_feature_before_execution(state):
     proposed = _Model("BLUE", {"trm_enable": True})
     sm = _StateMachine(proposed, {}, "new")
     with pytest.raises(ValueError, match="trm_enable=true"):
-        preflight_feature_changes(
-            sm, state, lambda: _details(trm=False), "Network", "FAB"
-        )
+        preflight_feature_changes(sm, state, lambda: _details(trm=False), "Network", "FAB")
 
 
 def test_preflight_reads_public_flags_from_real_payload_models():
@@ -394,17 +352,12 @@ def test_preflight_reads_public_flags_from_real_payload_models():
             "fabric_data": {"trm_data": {"ipv4_trm": True}, "netflow": True},
         }
     )
-    assert {
-        key: network.to_gathered_config()[key]
-        for key in ("vlan_network_type", "trm_enable", "netflow_enable")
-    } == {
+    assert {key: network.to_gathered_config()[key] for key in ("vlan_network_type", "trm_enable", "netflow_enable")} == {
         "vlan_network_type": "primary",
         "trm_enable": True,
         "netflow_enable": True,
     }
-    assert {
-        key: vrf.to_gathered_config()[key] for key in ("trm_enable", "netflow_enable")
-    } == {
+    assert {key: vrf.to_gathered_config()[key] for key in ("trm_enable", "netflow_enable")} == {
         "trm_enable": True,
         "netflow_enable": True,
     }
@@ -448,7 +401,5 @@ def test_parent_checks_each_child_full_fabric_details():
 
     coordinator = Coordinator()
     with pytest.raises(ValueError, match="CHILD2.*trm_enable"):
-        preflight_workflow_features(
-            coordinator, sm, {"state": "merged"}, Strategy(), "Network"
-        )
+        preflight_workflow_features(coordinator, sm, {"state": "merged"}, Strategy(), "Network")
     assert resolver.calls == [("CHILD1", None), ("CHILD2", "REMOTE")]

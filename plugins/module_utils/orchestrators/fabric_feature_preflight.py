@@ -50,26 +50,18 @@ def validate_fabric_features(
     """
     management = details.get("management") if isinstance(details, dict) else None
     if not isinstance(management, dict):
-        raise ValueError(
-            f"Cannot validate {resource} features for fabric '{fabric_name}': full fabric management details are unavailable."
-        )
+        raise ValueError(f"Cannot validate {resource} features for fabric '{fabric_name}': full fabric management details are unavailable.")
 
     fabric_type = management.get("type") or details.get("type")
     prefix = f"config[{index}] on fabric '{fabric_name}'"
     vlan_type = config.get("vlan_network_type")
     if resource == "Network" and vlan_type in _PVLAN_TYPES:
         if fabric_type not in _DC_VXLAN_TYPES:
-            raise ValueError(
-                f"{prefix}: vlan_network_type '{vlan_type}' is supported only on Data Center VXLAN fabrics."
-            )
+            raise ValueError(f"{prefix}: vlan_network_type '{vlan_type}' is supported only on Data Center VXLAN fabrics.")
         if "privateVlan" not in management:
-            raise ValueError(
-                f"{prefix}: cannot verify private VLAN support because the fabric setting is absent."
-            )
+            raise ValueError(f"{prefix}: cannot verify private VLAN support because the fabric setting is absent.")
         if management.get("privateVlan") is not True:
-            raise ValueError(
-                f"{prefix}: vlan_network_type '{vlan_type}' requires private VLAN to be enabled in fabric settings."
-            )
+            raise ValueError(f"{prefix}: vlan_network_type '{vlan_type}' requires private VLAN to be enabled in fabric settings.")
 
     if fabric_type in _DC_VXLAN_TYPES | {_CAMPUS_TYPE}:
         if (
@@ -82,46 +74,28 @@ def validate_fabric_features(
             )
         ):
             if "securityGroupTag" not in management:
-                raise ValueError(
-                    f"{prefix}: cannot verify security group support because the fabric setting is absent."
-                )
+                raise ValueError(f"{prefix}: cannot verify security group support because the fabric setting is absent.")
             if management["securityGroupTag"] is not True:
-                raise ValueError(
-                    f"{prefix}: enforced default_security_action requires security groups to be enabled in fabric settings."
-                )
+                raise ValueError(f"{prefix}: enforced default_security_action requires security groups to be enabled in fabric settings.")
         if config.get("trm_enable") is True:
             if "tenantRoutedMulticast" not in management:
-                raise ValueError(
-                    f"{prefix}: cannot verify IPv4 TRM support because the fabric setting is absent."
-                )
+                raise ValueError(f"{prefix}: cannot verify IPv4 TRM support because the fabric setting is absent.")
             if management["tenantRoutedMulticast"] is not True:
-                raise ValueError(
-                    f"{prefix}: trm_enable=true requires IPv4 Tenant Routed Multicast to be enabled in fabric settings."
-                )
+                raise ValueError(f"{prefix}: trm_enable=true requires IPv4 Tenant Routed Multicast to be enabled in fabric settings.")
         if resource == "VRF" and config.get("ipv6_trm") is True:
             if "tenantRoutedMulticastIpv6" not in management:
-                raise ValueError(
-                    f"{prefix}: cannot verify IPv6 TRM support because the fabric setting is absent."
-                )
+                raise ValueError(f"{prefix}: cannot verify IPv6 TRM support because the fabric setting is absent.")
             if management["tenantRoutedMulticastIpv6"] is not True:
-                raise ValueError(
-                    f"{prefix}: ipv6_trm=true requires IPv6 Tenant Routed Multicast to be enabled in fabric settings."
-                )
+                raise ValueError(f"{prefix}: ipv6_trm=true requires IPv6 Tenant Routed Multicast to be enabled in fabric settings.")
         netflow = management.get("netflowSettings")
         if config.get("netflow_enable") is True:
             if not isinstance(netflow, dict) or "netflow" not in netflow:
-                raise ValueError(
-                    f"{prefix}: cannot verify NetFlow support because the fabric setting is absent."
-                )
+                raise ValueError(f"{prefix}: cannot verify NetFlow support because the fabric setting is absent.")
             if netflow["netflow"] is not True:
-                raise ValueError(
-                    f"{prefix}: netflow_enable=true requires NetFlow to be enabled in fabric settings."
-                )
+                raise ValueError(f"{prefix}: netflow_enable=true requires NetFlow to be enabled in fabric settings.")
 
 
-def validate_standalone_vrf_trm_requirements(
-    config: dict[str, Any], index: int, fabric_name: str
-) -> None:
+def validate_standalone_vrf_trm_requirements(config: dict[str, Any], index: int, fabric_name: str) -> None:
     """Validate conditional TRM controls against the effective standalone VRF."""
     ipv4 = config.get("trm_enable") is True
     ipv6 = config.get("ipv6_trm") is True
@@ -142,14 +116,10 @@ def validate_standalone_vrf_trm_requirements(
         if not config.get("v6_rp_external") and config.get("rp_loopback_id") is None:
             missing.append("rp_loopback_id")
     if missing:
-        raise ValueError(
-            f"{prefix}: TRM requires {', '.join(dict.fromkeys(missing))} for the selected RP mode."
-        )
+        raise ValueError(f"{prefix}: TRM requires {', '.join(dict.fromkeys(missing))} for the selected RP mode.")
 
 
-def validate_standalone_vrf_svi_requirements(
-    config: dict[str, Any], requested: dict[str, Any], index: int, fabric_name: str
-) -> None:
+def validate_standalone_vrf_svi_requirements(config: dict[str, Any], requested: dict[str, Any], index: int, fabric_name: str) -> None:
     """Reject SVI options explicitly requested for an effective no-VLAN VRF."""
     if config.get("l3vni_wo_vlan") is not True:
         return
@@ -162,9 +132,7 @@ def validate_standalone_vrf_svi_requirements(
     )
     invalid = [field for field in svi_fields if requested.get(field) is not None]
     if invalid:
-        raise ValueError(
-            f"config[{index}] on fabric '{fabric_name}': {', '.join(invalid)} not applicable when l3vni_wo_vlan=true."
-        )
+        raise ValueError(f"config[{index}] on fabric '{fabric_name}': {', '.join(invalid)} not applicable when l3vni_wo_vlan=true.")
 
 
 def preflight_feature_changes(
@@ -192,21 +160,11 @@ def preflight_feature_changes(
     if state in ("gathered", "deleted"):
         return
     for index, proposed in enumerate(sm.proposed):
-        name = (
-            getattr(proposed, "network_name", None)
-            if resource == "Network"
-            else getattr(proposed, "vrf_name", None)
-        )
-        if sm.existing.get_diff_config(
-            proposed, exclude_unset=state == "merged"
-        ) == "no_diff" and name not in (attachment_names or ()):
+        name = getattr(proposed, "network_name", None) if resource == "Network" else getattr(proposed, "vrf_name", None)
+        if sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "no_diff" and name not in (attachment_names or ()):
             continue
         current = sm.existing.get(proposed.get_identifier_value())
-        effective = (
-            current.model_copy(deep=True).merge(proposed)
-            if current is not None and state == "merged"
-            else proposed
-        )
+        effective = current.model_copy(deep=True).merge(proposed) if current is not None and state == "merged" else proposed
         config = effective.to_gathered_config()
         if child_network:
             try:
@@ -215,20 +173,13 @@ def preflight_feature_changes(
                 raise ValueError(f"child_fabric_config[{fabric_name}]: {exc}") from exc
         if standalone_vrf and resource == "VRF":
             validate_standalone_vrf_trm_requirements(config, index, fabric_name)
-            validate_standalone_vrf_svi_requirements(
-                config, proposed.to_gathered_config(), index, fabric_name
-            )
+            validate_standalone_vrf_svi_requirements(config, proposed.to_gathered_config(), index, fabric_name)
         if (
             (resource == "Network" and config.get("vlan_network_type") in _PVLAN_TYPES)
             or config.get("trm_enable") is True
             or (resource == "VRF" and config.get("ipv6_trm") is True)
             or config.get("netflow_enable") is True
-            or (
-                standalone_vrf
-                and resource == "VRF"
-                and config.get("default_security_action")
-                in ("enforcedPermit", "enforcedDeny")
-            )
+            or (standalone_vrf and resource == "VRF" and config.get("default_security_action") in ("enforcedPermit", "enforcedDeny"))
         ):
             validate_fabric_features(
                 get_details(),
@@ -262,12 +213,7 @@ def preflight_workflow_features(
     - If a requested feature is unavailable on the owning fabric.
     """
     target_key = "networkName" if resource == "Network" else "vrfName"
-    attach_names = {
-        payload[target_key]
-        for payload in coordinator.attachments.planned_attach_payloads(
-            current_attachments or {}, desired_attachments or {}
-        )
-    }
+    attach_names = {payload[target_key] for payload in coordinator.attachments.planned_attach_payloads(current_attachments or {}, desired_attachments or {})}
     resolver = getattr(coordinator, "_fabric_resolver", None)
     state = module_args.get("state", "merged")
 
@@ -275,18 +221,10 @@ def preflight_workflow_features(
         cached = fabric_data.get("manageFabricDetails")
         if cached:
             return cached
-        return (
-            resolver.get_fabric_details(name, fabric_data.get("clusterName"))
-            if resolver
-            else {}
-        )
+        return resolver.get_fabric_details(name, fabric_data.get("clusterName")) if resolver else {}
 
     if strategy.is_parent and strategy.child_fabric_members():
-        members = {
-            item["fabricName"]: item
-            for item in strategy.fabric_data.get("members", [])
-            if item.get("fabricName")
-        }
+        members = {item["fabricName"]: item for item in strategy.fabric_data.get("members", []) if item.get("fabricName")}
         for child_name in strategy.child_fabric_members():
             child_data = members.get(child_name, {})
             preflight_feature_changes(
@@ -333,9 +271,7 @@ def preflight_child_feature_tasks(
     for child_task in child_tasks.values():
         child_args = child_task["module_args"]
         child_strategy = child_task["strategy"]
-        sm, original_config, original_state = new_state_machine(
-            child_args, child_strategy
-        )
+        sm, original_config, original_state = new_state_machine(child_args, child_strategy)
         try:
             preflight(sm, child_args, child_strategy)
             child_task["preflight_state_machine"] = sm
