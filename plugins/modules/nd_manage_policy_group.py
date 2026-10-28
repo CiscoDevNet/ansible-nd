@@ -54,9 +54,12 @@ options:
       non-empty C(source). The module reads C(policySummary) with
       C(filter=policyId:*POLICY-GROUP-*) and matches hidden C(markDeleted=true) rows
       by requested ID as C(policyId), requested ID as generated-child C(source), or
-      exact description. Only matched pending-delete rows contribute switches to the
+      exact description with a proven original template. Only matched pending-delete rows contribute switches to the
       consolidated switch-level deploy target, so a mistyped or already-clean target
       does not deploy unless C(policySummary) contains a matching pending row.
+    - A generated pending row whose original template cannot be established is
+      skipped for template-based cleanup and reported under C(pending_deleted_cleanup.skipped).
+      Use the original group ID or generated row ID to target that cleanup explicitly.
     - For user-mentioned policy groups listed in O(config) whose desired state
       already matches the controller with no diff, switch-level deploy is still
       issued against the existing member switches so the user-expressed deploy
@@ -77,7 +80,9 @@ options:
       template name, O(config[].description) is also required unless
       O(config[].policy_id) is supplied or O(config[].create_additional_policy=true).
     - For C(deleted), O(config[].name) is required. A template name without
-      O(config[].description) expands to all active policy groups using that template.
+      O(config[].description) selects all active policy groups using that template,
+      including duplicate descriptions and groups without descriptions. With
+      O(deploy=true), cleanup also includes pending rows with a proven matching original template.
     - For C(gathered), entries are filters. They may use O(config[].name),
       O(config[].description), or both. See O(state) for the gathered filter matrix.
     type: list
@@ -96,8 +101,8 @@ options:
         - When a C(POLICY-GROUP-*) ID is provided, the module queries the controller to resolve it
           to its corresponding template and description. The exact ID remains authoritative for
           matching, comparison, updates, and deletion, even when another group shares those values.
-        - Without an ID, matching retains the existing description/template behavior. If duplicate
-          groups share that combination, the newest matching record is selected.
+        - Without an ID, description/template matching selects the newest matching record,
+          except when O(state=deleted) also supplies O(config[].switch_ids) to select by active membership.
         - For C(merged), if the ID is not found on the controller, the module fails with an error.
           Policy group IDs are server-generated and cannot be used to create new policy groups.
           Use a template name in O(config[].name) together with O(config[].description)
@@ -146,7 +151,8 @@ options:
           O(config[].create_additional_policy=true) is set. An explicit ID selects
           the existing group; forced creation bypasses composite-key idempotency.
         - For C(deleted), if provided with a template name, deletes the specific policy
-          group matching C(description, template_name). If omitted with a template name,
+          group matching C(description, template_name), with supplied O(config[].switch_ids)
+          used to disambiguate by active membership. If omitted with a template name,
           deletes all active policy groups using that template. Not required when
           O(config[].name) is a policy group ID.
         - For C(gathered), can be used by itself to gather all groups with that description,
@@ -158,8 +164,19 @@ options:
         - Each entry may be either a switch serial number (e.g. C(FDO25031SY4))
           or a management IPv4 address (e.g. C(10.122.84.58)). IPv4 addresses
           are transparently resolved to serial numbers by querying the fabric
-          switch inventory before the policy group is created or updated.
+          switch inventory before policy-group selection, creation or update.
           Serials and IPs may be freely mixed in the same list.
+        - For C(deleted) without an ID and with a description and template, a supplied
+          non-null list selects the group with exactly that active switch set.
+          Ordering and duplicates do not affect selection. An empty list, no matching
+          member set, multiple matching groups or a whitespace-only description
+          fails before deletion. Omitted or
+          null membership retains newest-match selection. Pending-deleted members
+          contribute to deployment, not membership selection.
+        - An explicit group ID remains authoritative regardless of this list.
+          When deleting by ID with O(deploy=true), deployment
+          includes its resolved active and pending members and any supplied switch IDs.
+          The group is deleted as a whole; switch IDs do not select members to delete.
         type: list
         elements: str
       priority:
@@ -680,12 +697,49 @@ def _validate_template_inputs_in_buckets(
     return failures
 
 
+def _is_template_only_delete(entry):
+    """Classify broad intent before normalization can erase a description."""
+    policy_id, _description = PolicyGroupOrchestrator._cleanup_identity(entry)
+    return bool(entry.get("name")) and not policy_id and not entry.get("description")
+
+
+def _coalesce_template_delete_config(config, existing_groups):
+    """Select each broad-plan ID once while retaining contributing cleanup targets."""
+    visible = [group for group in existing_groups if group.get("description")]
+    winners = PolicyGroupOrchestrator._deduplicate_groups(visible)
+    by_composite = {_group_identity(group.get("description"), group.get("templateName")): group for group in winners}
+    selected = {}
+    for entry in config:
+        policy_id = entry.get("policy_id")
+        if not policy_id:
+            winner = by_composite.get(_group_identity(entry.get("description"), entry.get("name")))
+            if not winner:
+                # Original intent is retained separately for pending cleanup.
+                continue
+            policy_id = winner.get("policyId")
+            if not isinstance(policy_id, str) or not policy_id.strip():
+                raise ValueError("Cannot plan template-wide deletion: a selected policy group has no usable policyId.")
+            entry = {
+                **entry,
+                "name": winner.get("templateName"),
+                "description": winner.get("description"),
+                "policy_id": policy_id,
+                "_existing_description": winner.get("description"),
+            }
+        if policy_id not in selected:
+            selected[policy_id] = dict(entry)
+        elif entry.get("switch_ids"):
+            selected[policy_id]["switch_ids"] = [*(selected[policy_id].get("switch_ids") or []), *entry["switch_ids"]]
+    return list(selected.values())
+
+
 def _resolve_config(config, existing_groups, state, module, log):
     """Resolve config entries for policy group ID and template-name-only cases.
 
     Handles three name patterns:
     1. POLICY-GROUP-* (direct ID): Resolves to (description, template_name) from existing.
-    2. Template name + description: Used as-is (normal composite key).
+    2. Template name + description: Normal composite key unless deleted with
+       supplied members, which select a unique matching active member set.
     3. Template name only (no description, deleted state): Expands to ALL existing
        policy groups with that template name.
 
@@ -703,16 +757,23 @@ def _resolve_config(config, existing_groups, state, module, log):
         Resolved list of config dicts with description and name populated.
     """
     log.debug("ENTER: _resolve_config() — %d entries, state=%s", len(config), state)
+    template_wide_delete = state == "deleted" and any(_is_template_only_delete(entry) for entry in config)
+    membership_delete = state == "deleted" and any(
+        entry.get("description") and entry.get("switch_ids") is not None and not PolicyGroupOrchestrator._cleanup_identity(entry)[0] for entry in config
+    )
 
     # Build lookup structures from existing groups
     by_policy_id = {}
     by_template_name = {}
+    by_composite = {}
     for group in existing_groups:
         pid = group.get("policyId", "")
         tname = group.get("templateName", "")
         desc = group.get("description", "")
         by_policy_id[pid] = group
-        by_template_name.setdefault(tname, []).append(group)
+        by_template_name.setdefault(tname.strip() if isinstance(tname, str) else tname, []).append(group)
+        if membership_delete and desc:
+            by_composite.setdefault(_group_identity(desc, tname), []).append(group)
 
     log.debug(
         "_resolve_config: %d existing groups, %d unique IDs, %d unique templates",
@@ -801,6 +862,9 @@ def _resolve_config(config, existing_groups, state, module, log):
 
         elif not description and state == "deleted":
             # Template name only — expand to ALL existing with that template
+            name = name.strip()
+            if not name:
+                module.fail_json(msg=f"config[{idx}]: a template-only deletion requires a non-empty template name.")
             matching = by_template_name.get(name, [])
             if matching:
                 log.info(
@@ -816,11 +880,61 @@ def _resolve_config(config, existing_groups, state, module, log):
                     name,
                 )
             for group in matching:
+                policy_id = group.get("policyId")
+                if not isinstance(policy_id, str) or not policy_id.strip():
+                    module.fail_json(msg=f"config[{idx}]: template-only deletion matched a group without a usable policyId for template {name!r}.")
                 resolved_entry = dict(entry)
                 resolved_entry["name"] = name
                 resolved_entry["description"] = group.get("description", "")
+                resolved_entry["policy_id"] = policy_id
+                resolved_entry["_existing_description"] = group.get("description", "")
                 resolved.append(resolved_entry)
             # If no matches, nothing to delete — skip silently
+
+        elif state == "deleted" and description and not explicit_pgid and entry.get("switch_ids") is not None:
+            # Supplied membership identifies a described group; omitted/null
+            # retains legacy newest-match selection. Use only active inventory
+            # members, leaving pending removals to the deletion deploy context.
+            selector = PolicyGroupCreate.from_config({"name": name, "description": description, "switch_ids": entry["switch_ids"]})
+            if not selector.description:
+                module.fail_json(changed=False, msg=f"config[{idx}]: description must contain non-whitespace characters for membership-based deletion.")
+            if not selector.switch_ids:
+                module.fail_json(
+                    changed=False, msg=f"config[{idx}]: switch_ids must be non-empty when selecting a group for deletion by description and template."
+                )
+            matching = by_composite.get((selector.description, selector.template_name), [])
+            if not matching:
+                # Keep absent-pair intent for the existing pending cleanup path.
+                resolved.append(entry)
+                continue
+            requested_members = set(selector.switch_ids)
+            member_matches = []
+            for group in matching:
+                active_members = PolicyGroupCreate.from_config({"name": name, "switch_ids": PolicyGroupOrchestrator._record_switch_ids(group)}).switch_ids
+                if set(active_members) == requested_members:
+                    member_matches.append(group)
+            matching_ids = [group.get("policyId") for group in member_matches or matching]
+            if len(member_matches) != 1:
+                reason = "matches multiple groups" if member_matches else "does not match any group's full active membership"
+                module.fail_json(
+                    changed=False,
+                    msg=f"config[{idx}]: switch_ids {reason} for description {selector.description!r}, template {selector.template_name!r}; "
+                    f"candidate policy group IDs: {matching_ids!r}. Use an exact policy group ID to select the target explicitly.",
+                )
+            selected = member_matches[0]
+            policy_id = selected.get("policyId")
+            if not isinstance(policy_id, str) or not policy_id.strip():
+                module.fail_json(changed=False, msg=f"config[{idx}]: membership-based deletion matched a group without a usable policyId.")
+            resolved.append(
+                {
+                    **entry,
+                    "name": selected.get("templateName"),
+                    "description": selected.get("description"),
+                    "policy_id": policy_id,
+                    "_existing_description": selected.get("description"),
+                    "switch_ids": selector.switch_ids,
+                }
+            )
 
         else:
             # Normal case: name + description provided
@@ -831,6 +945,9 @@ def _resolve_config(config, existing_groups, state, module, log):
                 description,
             )
             resolved.append(entry)
+
+    if template_wide_delete:
+        resolved = _coalesce_template_delete_config(resolved, existing_groups)
 
     log.debug(
         "EXIT: _resolve_config() — %d entries resolved from %d input",
@@ -863,6 +980,35 @@ def _prepare_execution_config(config, existing_groups):
         if policy_id:
             entry = {**entry, "execution_key": ("policy_id", policy_id)}
         prepared.append(entry)
+    return prepared
+
+
+def _prepare_direct_delete_config(config, existing_groups, deployment_targets=None):
+    """Retain exact-ID active and proven pending deletion targets.
+
+    Use the inventory already read for resolution. Preserve explicit cleanup
+    targets, their order and duplicates; append only missing current members.
+    Validate the entire batch before any deletion, including in check mode.
+    """
+    by_policy_id = {group.get("policyId"): group for group in existing_groups or []}
+    prepared = []
+    for entry in config:
+        policy_id = entry["policy_id"]
+        switch_ids = list(entry.get("switch_ids") or [])
+        included = set(switch_ids)
+        current_members = PolicyGroupOrchestrator._record_switch_ids(by_policy_id.get(policy_id, {}))
+        if deployment_targets is not None:
+            current_members = [*current_members, *deployment_targets.get(policy_id, [])]
+        for switch_id in current_members:
+            if switch_id not in included:
+                switch_ids.append(switch_id)
+                included.add(switch_id)
+        if not any(isinstance(switch_id, str) and switch_id.strip() for switch_id in switch_ids):
+            raise ValueError(
+                f"Cannot deploy deletion of policy group {policy_id!r}: no switch_ids are available "
+                "from the resolved group or config. Provide switch_ids or use deploy=false to stage deletion."
+            )
+        prepared.append({**entry, "switch_ids": switch_ids})
     return prepared
 
 
@@ -942,7 +1088,7 @@ def _format_execution_error(message, execution_config, execution_groups):
 
 
 def _pending_cleanup_candidates(config, existing_groups, log):
-    """Return delete+deploy entries absent from the active policy-group view.
+    """Return absent targets and template-wide intents for pending cleanup.
 
     The active view excludes ``markDeleted`` and ``source`` artifacts.  If a
     delete target is missing there, the orchestrator checks policySummary for a
@@ -950,7 +1096,7 @@ def _pending_cleanup_candidates(config, existing_groups, log):
     """
     active_policy_ids = {group.get("policyId") for group in existing_groups if group.get("policyId")}
     active_composites = {(group.get("description"), group.get("templateName")) for group in existing_groups if group.get("templateName")}
-    active_templates = {group.get("templateName") for group in existing_groups if group.get("templateName")}
+    normalized_active_composites = {_group_identity(description, name) for description, name in active_composites}
 
     candidates = []
     for index, entry in enumerate(config or []):
@@ -970,7 +1116,12 @@ def _pending_cleanup_candidates(config, existing_groups, log):
             continue
 
         if description:
-            if (description, name) in active_composites:
+            active_pair = (
+                _group_identity(description, name) in normalized_active_composites
+                if entry.get("switch_ids") is not None
+                else (description, name) in active_composites
+            )
+            if active_pair:
                 continue
             log.info(
                 "config[%d]: policy group '%s' description '%s' absent from active view; checking policySummary for pending-delete cleanup.",
@@ -981,15 +1132,29 @@ def _pending_cleanup_candidates(config, existing_groups, log):
             candidates.append(entry)
             continue
 
-        if name and name not in active_templates:
+        if name:
             log.info(
-                "config[%d]: template '%s' absent from active view; checking policySummary for pending-delete cleanup.",
+                "config[%d]: checking all pending-delete cleanup rows for template '%s', including when active groups remain.",
                 index,
                 name,
             )
             candidates.append(entry)
 
     return candidates
+
+
+def _surface_unresolved_pending_cleanup(result, skipped, module):
+    """Expose only unprovable-template skips without changing ordinary no-op output."""
+    if not skipped:
+        return
+    cleanup = result.setdefault("pending_deleted_cleanup", {})
+    cleanup["skipped"] = deepcopy(skipped)
+    for item in skipped:
+        module.warn(
+            "Pending policy-group cleanup was skipped because its original template could not be established. "
+            f"Use the exact policy group ID {item.get('policy_group_id')!r} to clean up "
+            f"{item.get('matched_policy_ids', [])!r}."
+        )
 
 
 def _handle_gathered_state(orchestrator, config, log):
@@ -1389,6 +1554,7 @@ def main():
 
     state = module.params.get("state")
     config = module.params.get("config") or []
+    template_wide_delete = state == "deleted" and any(_is_template_only_delete(entry) for entry in config)
 
     # Config is mandatory for merged and deleted states.
     # For gathered, it is optional (no config = fetch all).
@@ -1427,7 +1593,7 @@ def main():
 
     # Cross-entry duplicate validation: (description, template_name) must be
     # unique within the config to prevent ambiguous state machine operations.
-    if state in ("merged", "deleted") and config:
+    if state in ("merged", "deleted") and config and not template_wide_delete:
         seen_keys = {}
         for idx, entry in enumerate(config):
             name = entry.get("name", "") or ""
@@ -1438,15 +1604,23 @@ def main():
             desc = entry.get("description", "")
             if not desc:
                 continue
-            key = (desc, name)
+            # Deleted membership selection must not turn normalized duplicate
+            # proposals into independently selected IDs. Merged keeps its
+            # existing duplicate-validation timing.
+            key = _group_identity(desc, name) if state == "deleted" else (desc, name)
             if key in seen_keys:
+                previous = config[seen_keys[key]]
+                failure_details = {}
+                if state == "deleted" and (desc, name) != (previous.get("description", ""), previous.get("name", "") or ""):
+                    failure_details["changed"] = False
                 module.fail_json(
                     msg=(
                         f"config[{idx}]: Duplicate (description, name) combination found: "
                         f"description='{desc}', name='{name}'. "
                         f"First occurrence at config[{seen_keys[key]}]. "
                         "Each policy group must be uniquely identified within the config."
-                    )
+                    ),
+                    **failure_details,
                 )
             seen_keys[key] = idx
 
@@ -1459,6 +1633,8 @@ def main():
     direct_actions_result = {"updated": [], "deleted": []}
     execution_config = []
     execution_groups = []
+    delete_deployment_targets = {}
+    unresolved_pending_skips = []
 
     try:
         log.info(
@@ -1488,6 +1664,8 @@ def main():
             ticket_id=module.params.get("ticket_id"),
             cluster_name=module.params.get("cluster_name"),
         )
+        if template_wide_delete:
+            orchestrator._require_complete_summary = True
 
         # Resolve any switch_ids entries that are IPv4 addresses to serial
         # numbers via the fabric inventory.  This is a no-op (no API call)
@@ -1522,15 +1700,23 @@ def main():
         if config and state in ("merged", "deleted"):
             existing_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
             original_groups = deepcopy(existing_groups)
+            resolved_config = _resolve_config(config, existing_groups, state, module, log)
             if state == "deleted" and pending_deleted_cleanup_config:
+                for entry in pending_deleted_cleanup_config:
+                    if _is_template_only_delete(entry):
+                        # A pending-only selector has no active model to
+                        # validate its caller cleanup targets. Deleted intent
+                        # does not use template inputs or other writable fields.
+                        PolicyGroupCreate.from_config({"name": entry["name"], "switch_ids": entry.get("switch_ids") or []})
+                delete_deployment_targets = orchestrator.prepare_delete_deploy_targets(resolved_config, existing_groups)
                 cleanup_candidates = _pending_cleanup_candidates(
                     pending_deleted_cleanup_config,
                     existing_groups,
                     log,
                 )
                 if cleanup_candidates:
-                    orchestrator.schedule_pending_deleted_cleanup(cleanup_candidates)
-            resolved_config = _resolve_config(config, existing_groups, state, module, log)
+                    scheduled = orchestrator.schedule_pending_deleted_cleanup(cleanup_candidates)
+                    unresolved_pending_skips = [item for item in scheduled.get("skipped", []) if item.get("reason_code") == "unresolved_original_template"]
             module.params["config"] = resolved_config
 
         # Partition resolved entries into three buckets:
@@ -1575,6 +1761,9 @@ def main():
                     len(direct_action_items),
                 )
             log.info("Normal state machine items: %d", len(normal_config))
+
+        if state == "deleted" and module.params["deploy"] and direct_action_items:
+            direct_action_items = _prepare_direct_delete_config(direct_action_items, existing_groups, delete_deployment_targets)
 
         # Pre-flight template-input schema validation across every bucket
         # destined for a POST/PUT.  No-op for state=deleted (body never
@@ -1717,6 +1906,8 @@ def main():
                 result["changed"] = True
             result["direct_actions"] = direct_actions_result
 
+        _surface_unresolved_pending_cleanup(result, unresolved_pending_skips, module)
+
         if template_input_validation_failures:
             result["failed"] = True
             result["template_input_validation_failed"] = template_input_validation_failures
@@ -1760,6 +1951,7 @@ def main():
             force_preview=force_created,
             direct_previews=direct_actions_result,
         )
+        _surface_unresolved_pending_cleanup(result, unresolved_pending_skips, module)
         module.fail_json(msg=message, **result)
 
     except Exception as e:
@@ -1781,6 +1973,7 @@ def main():
             force_preview=force_created,
             direct_previews=direct_actions_result,
         )
+        _surface_unresolved_pending_cleanup(fail_kwargs, unresolved_pending_skips, module)
         if module.params.get("output_level") == "debug":
             fail_kwargs["traceback"] = tb_str
 

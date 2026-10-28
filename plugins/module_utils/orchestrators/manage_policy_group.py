@@ -142,6 +142,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     # ``_invalidate_cache``.
     _raw_cache: list | None = PrivateAttr(default=None)
     _policy_summary_cache: list | None = PrivateAttr(default=None)
+    _require_complete_summary: bool = PrivateAttr(default=False)
+    _delete_deploy_targets: dict[str, set[str]] = PrivateAttr(default_factory=dict)
+    _active_delete_policy_ids: set[str] = PrivateAttr(default_factory=set)
     _pending_delete_switch_ids: set[str] | None = PrivateAttr(default=None)
     _pending_delete_wants: list[dict] | None = PrivateAttr(default=None)
     _accepted_changes: list[dict] = PrivateAttr(default_factory=list)
@@ -370,8 +373,41 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         self._apply_endpoint_params(ep, with_ticket=False)
         ep.lucene_params.max = 10000
         ep.lucene_params.filter = "policyId:*POLICY-GROUP-*"
-        result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-        policies = result.get("policies", []) if isinstance(result, dict) else []
+        policies = []
+        seen_policy_ids: set[str] = set()
+        offset = 0
+        previous_remaining = None
+        while True:
+            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+            page = (result.get("policies") or []) if isinstance(result, dict) else []
+            if not self._require_complete_summary:
+                policies = page
+                break
+            if not isinstance(page, list):
+                raise ValueError("policySummary policies must be a list")
+            policies.extend(page)
+            page_ids = {row.get("policyId") for row in page if isinstance(row, dict) and row.get("policyId")}
+            if page_ids & seen_policy_ids:
+                raise ValueError("Cannot safely delete all template groups: policySummary pagination repeated policy IDs")
+            seen_policy_ids.update(page_ids)
+            meta = (result.get("meta") or {}) if isinstance(result, dict) else {}
+            counts = (meta.get("counts") or {}) if isinstance(meta, dict) else {}
+            remaining = counts.get("remaining") if isinstance(counts, dict) else None
+            if not isinstance(counts, dict) or "remaining" not in counts:
+                if len(page) >= ep.lucene_params.max:
+                    raise ValueError("Cannot safely delete all template groups: policySummary pagination metadata is missing")
+                break
+            if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < 0:
+                raise ValueError("Cannot safely delete all template groups: invalid policySummary remaining count")
+            if previous_remaining is not None and remaining >= previous_remaining:
+                raise ValueError("Cannot safely delete all template groups: policySummary remaining count did not decrease")
+            previous_remaining = remaining
+            if remaining == 0:
+                break
+            if not page or not page_ids:
+                raise ValueError("Cannot safely delete all template groups: policySummary pagination made no progress")
+            offset += len(page)
+            ep.lucene_params.offset = offset
         raw = [self._summary_to_policy_group(policy) for policy in (policies or []) if isinstance(policy, dict) and self._is_policy_group_summary(policy)]
         self._policy_summary_cache = raw
         return list(raw)
@@ -501,6 +537,31 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         policy_group_id = name if name.startswith("POLICY-GROUP-") else entry.get("policy_id")
         return policy_group_id, entry.get("description")
 
+    def prepare_delete_deploy_targets(self, config_entries: list[dict], active_groups: list[dict]) -> dict[str, list[str]]:
+        """Keep exact-ID cleanup membership separate from active configuration.
+
+        Read only the inventory already cached before mutation. Pending members
+        can belong to a mixed parent row or an exactly source-linked child; they
+        must never be put back into gathered membership or merged PUT payloads.
+        """
+        if not self.deploy:
+            self._delete_deploy_targets = {}
+            self._active_delete_policy_ids = set()
+            return {}
+        targets = {row["policyId"]: set(self._record_switch_ids(row)) for row in active_groups if row.get("policyId")}
+        for row in self._policy_summary_cache or []:
+            pending_ids = row.get("_deletedSwitchIds") or (self._record_switch_ids(row) if row.get("markDeleted") else [])
+            for policy_id in (row.get("policyId"), row.get("source")):
+                if policy_id in targets:
+                    targets[policy_id].update(pending_ids)
+        for entry in config_entries:
+            policy_id, _description = self._cleanup_identity(entry)
+            if policy_id in targets:
+                targets[policy_id].update(self._entry_switch_ids(entry))
+        self._delete_deploy_targets = targets
+        self._active_delete_policy_ids = {self._cleanup_identity(entry)[0] for entry in config_entries} & targets.keys()
+        return {policy_id: sorted(switch_ids, key=str) for policy_id, switch_ids in targets.items()}
+
     def schedule_pending_deleted_cleanup(self, config_entries: list[dict]) -> dict:
         """Queue switch cleanup for markDeleted rows hidden from active view."""
         summary = {
@@ -514,9 +575,15 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         if not self.deploy:
             return summary
 
+        rows = self._query_policy_summary_groups()
+        parents = {row.get("policyId"): row for row in rows if row.get("policyId")}
         for index, entry in enumerate(config_entries):
-            matches = self._pending_deleted_matches(entry)
-            if len(matches) > 1 and not self._cleanup_identity(entry)[0]:
+            unresolved = []
+            matches = self._pending_deleted_matches(entry, unresolved=unresolved, parents=parents)
+            summary["skipped"].extend({"index": index, "entry": dict(entry), **item} for item in unresolved)
+            policy_group_id, description = self._cleanup_identity(entry)
+            logical_ids = {match.get("source") or match.get("policyId") for match in matches}
+            if len(logical_ids) > 1 and not policy_group_id and description:
                 summary["skipped"].append(
                     {
                         "index": index,
@@ -541,7 +608,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             for match in matches:
                 matched_policy_ids.append(match.get("policyId"))
                 switch_ids.extend(match.get("_deletedSwitchIds") or match.get("switchIds") or self._record_switch_ids(match))
-            if not switch_ids:
+            if not policy_group_id and not description:
+                switch_ids.extend(self._entry_switch_ids(entry))
+            elif not switch_ids:
                 switch_ids = self._entry_switch_ids(entry)
             if not switch_ids:
                 summary["skipped"].append(
@@ -567,25 +636,62 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
 
         return summary
 
-    def _pending_deleted_matches(self, entry: dict) -> list[dict]:
+    def _pending_deleted_matches(self, entry: dict, *, unresolved: list | None = None, parents: dict | None = None) -> list[dict]:
         """Return markDeleted summary rows matching a cleanup entry.
 
         A requested policy-group ID can match either the hidden row's own
         ``policyId`` (for callers that provide the generated child/pending row
         ID) or its ``source`` (for callers that provide the original ID).
-        Description matching is a fallback for delete intents that did not carry
-        a controller ID.
+        No-ID selectors must prove the original template. Generated children
+        can use a different template, so use their known parent when present;
+        an orphan requires an exact ID rather than a description-only guess.
         """
         policy_group_id, description = self._cleanup_identity(entry)
+        raw_template = entry.get("name") or ""
+        template_name = raw_template
+        template_name = template_name.strip() if isinstance(template_name, str) else None
+        if raw_template and not template_name and not policy_group_id:
+            return []
+        rows = self._query_policy_summary_groups()
+        if parents is None:
+            parents = {row.get("policyId"): row for row in rows if row.get("policyId")}
         matches: list[dict] = []
-        for group in self._query_policy_summary_groups():
-            if not group.get("markDeleted", False):
+        for group in rows:
+            if not group.get("markDeleted", False) and not group.get("_deletedSwitchIds"):
                 continue
             if policy_group_id:
                 if group.get("policyId") == policy_group_id or group.get("source") == policy_group_id:
                     matches.append(group)
                 continue
-            if description and group.get("description") == description:
+            if not template_name:
+                # Preserve the direct helper's legacy description-only API;
+                # module delete requests always provide a name.
+                if description and group.get("description") == description:
+                    matches.append(group)
+                continue
+            owner = group
+            if group.get("source"):
+                owner = parents.get(group["source"])
+                if not owner or owner.get("source") or not isinstance(owner.get("templateName"), str) or not owner["templateName"].strip():
+                    if unresolved is not None and template_name and (not description or group.get("description") == description):
+                        unresolved.append(
+                            {
+                                "reason_code": "unresolved_original_template",
+                                "reason": "original template unavailable for pending-delete row; use policy group ID",
+                                "policy_group_id": (group["source"] if str(group["source"]).startswith("POLICY-GROUP-") else group.get("policyId")),
+                                "matched_policy_ids": [group.get("policyId")],
+                            }
+                        )
+                    continue
+            owner_template = owner.get("templateName")
+            if not isinstance(owner_template, str) or owner_template.strip() != template_name:
+                continue
+            if description:
+                if owner.get("description") == description:
+                    matches.append(group)
+            elif template_name and owner.get("policyId") not in self._active_delete_policy_ids:
+                # Linked cleanup for an active template-wide target is carried
+                # by its exact-ID delete context, not an independent queue.
                 matches.append(group)
         return matches
 
@@ -1034,8 +1140,12 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             # Build switch_ids lookup for switch-level deploy
             switch_ids_by_policy: dict[str, list[str]] = {}
             for m in model_instances:
-                if m.policy_id and m.switch_ids:
-                    switch_ids_by_policy[m.policy_id] = list(m.switch_ids)
+                if m.policy_id:
+                    switch_ids = list(m.switch_ids or [])
+                    if self.deploy:
+                        switch_ids.extend(self._delete_deploy_targets.get(m.policy_id, ()))
+                    if switch_ids:
+                        switch_ids_by_policy[m.policy_id] = switch_ids
             log.debug("delete_bulk: switch_ids_by_policy=%s", switch_ids_by_policy)
 
             # Step 1: Attempt markDelete for all policy groups
