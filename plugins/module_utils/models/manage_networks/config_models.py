@@ -581,6 +581,16 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         context = info.context or {}
         read_only_or_delete = context.get("state") in ("deleted", "gathered")
+        if not read_only_or_delete and context.get("default_network_type") == NetworkType.EXTERNAL_CONNECTIVITY.value:
+            supported = {"network_name", "network_id", "vlan_id", "vlan_name", "layer", "vrf_name", "attach", "deploy", "deploy_type"}
+            unsupported = self.model_fields_set - supported
+            if self.layer not in (None, NetworkLayer.LAYER2.value):
+                unsupported.add("layer")
+            if self.vrf_name not in (None, "NA"):
+                unsupported.add("vrf_name")
+            invalid = sorted(field for field in unsupported if getattr(self, field, None) is not None)
+            if invalid:
+                raise ValueError("External Networks support only L2 definitions; unsupported properties: " + ", ".join(invalid))
         if not read_only_or_delete and self.x_connect and self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value):
             raise ValueError("x_connect is only valid for layer2 networks")
         if not read_only_or_delete and (

@@ -14,14 +14,16 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from copy import deepcopy
+from typing import Literal
 from unittest.mock import patch
 
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs import vrf_data_models
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import vrf_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
@@ -41,6 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_vrf import (
     MultisiteParentVrfStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.child_vrf import ChildVrfStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
     VrfConfigModel,
     VrfParentConfigModel,
@@ -295,9 +298,15 @@ def child_vrf_trm_controller(monkeypatch):
     "field,value",
     [("rp_address", "10.0.0.1"), ("v6_rp_address", "2001:db8::1"), ("rp_loopback_id", 6), ("import_mvpn_rt", ["65000:1"])],
 )
-def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(strategy_cls, state, field, value, child_vrf_trm_controller):
+@pytest.mark.parametrize("concrete_child_type", [None, "vxlanIbgp", "vxlanEbgp"])
+def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
+    strategy_cls, state, field, value, child_vrf_trm_controller, concrete_child_type, monkeypatch
+):
     """Sparse TRM edits pass parent parsing and cached child validation without restating toggles."""
     controller = child_vrf_trm_controller
+    if concrete_child_type:
+        monkeypatch.setitem(vrf_data_models._VRF_MODEL_BY_TYPE, concrete_child_type, _ConcreteVxlanVrfModel)
+        controller["inventory"][0]["vrfType"] = concrete_child_type
     multicluster = strategy_cls is MulticlusterParentVrfStrategy
     member = {
         "fabricName": "c1",
@@ -325,6 +334,7 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(str
 
     payload = controller["writes"][0]
     assert set(payload) == {"fabricName", "vrfName", "vrfType", "fabricData"}
+    assert payload["vrfType"] == (concrete_child_type or "vxlanIbgp")
     public = VrfDataModel.from_response(controller["inventory"][0]).to_gathered_config()
     assert public[field] == value
     assert public["trm_enable"] is True
@@ -333,6 +343,45 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(str
     assert controller["inventory"][0]["vrfId"] == 50000
     assert controller["inventory"][0]["vlanId"] == 2001
     assert all("rp_address" not in task["config"][0] and "trm_enable" not in task["config"][0] for task in controller["parents"])
+
+
+class _ConcreteVxlanVrfModel(VrfDataModel):
+    """Exercise future concrete dispatch without changing the shipping registry."""
+
+    vrf_type: Literal["vxlan", "vxlanIbgp", "vxlanEbgp"] = Field(alias="vrfType")
+
+
+@pytest.mark.parametrize("multicluster", [False, True])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("vrf_type", ["vxlan", "vxlanIbgp", "vxlanEbgp"])
+def test_sparse_new_child_type_uses_cached_fabric_context(multicluster, state, vrf_type, child_vrf_trm_controller, monkeypatch):
+    controller = child_vrf_trm_controller
+    controller["inventory"] = []
+    monkeypatch.setitem(vrf_data_models._VRF_MODEL_BY_TYPE, vrf_type, _ConcreteVxlanVrfModel)
+    strategy = ChildVrfStrategy(
+        fabric_name="c1",
+        fabric_data={"management": {"type": vrf_type}},
+        cluster_name="cluster1" if multicluster else None,
+    )
+    config = [{"vrf_name": "BLUE", "bgp_log_neighbor_change": False}]
+    module = _Module({"fabric_name": "c1", "state": state, "config": config, "output_level": "info"}, check_mode=True)
+    coordinator = VrfWorkflowCoordinator(module, strategy)
+    sm, original_config, original_state = coordinator._new_state_machine(module.params)
+    try:
+        proposed = sm.proposed.get(("BLUE", "c1"))
+        assert isinstance(proposed, _ConcreteVxlanVrfModel)
+        assert proposed.to_payload(exclude_unset=True) == {
+            "fabricName": "c1",
+            "vrfName": "BLUE",
+            "vrfType": vrf_type,
+            "fabricData": {"bgpLogNeighborChange": False},
+        }
+        assert sm.output.format()["proposed"][0]["vrf_type"] == vrf_type
+        assert controller["queries"] == [("c1", multicluster)]
+        assert controller["writes"] == []
+    finally:
+        coordinator._restore_state_machine_params(original_config, original_state)
+    assert module.params["config"] is config
 
 
 @pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])

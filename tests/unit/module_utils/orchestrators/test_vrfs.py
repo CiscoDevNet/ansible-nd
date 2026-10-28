@@ -55,6 +55,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argumen
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
     MulticlusterParentVrfStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.standalone_vrf import StandaloneVrfStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import (
     Results,
 )
@@ -923,6 +925,131 @@ def _orchestrator_for_request_tests(params, is_child=False, is_multicluster=Fals
     return instance
 
 
+@pytest.fixture(params=["externalConnectivity", "vxlanExternal"])
+def external_vrf_inventory(request):
+    """Actual AK-EXT stored shape, including an omitted optional description."""
+    return [
+        {"fabricName": "AK-EXT", "vrfName": "MyVRF_50000", "vrfType": request.param, "vrfStatus": "notApplicable", "description": "VRFDESc"},
+        {
+            "fabricName": "AK-EXT",
+            "vrfName": "ND_EXT_VRF_20261028",
+            "vrfType": request.param,
+            "vrfStatus": "notApplicable",
+            "description": "ND_EXT_INITIAL",
+        },
+        {"fabricName": "AK-EXT", "vrfName": "ND_EXT_VRF_BARE_20261028", "vrfType": request.param, "vrfStatus": "notApplicable"},
+    ]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+@pytest.mark.parametrize("name_count", [1, 2])
+def test_external_vrf_discovery_uses_one_supported_query(external_vrf_inventory, state, name_count):
+    requested = external_vrf_inventory[1 : 1 + name_count]
+    orchestrator = _orchestrator_for_request_tests({"state": state, "config": [{"vrf_name": item["vrfName"]} for item in requested]})
+    orchestrator.strategy.fabric_name = "AK-EXT"
+    orchestrator.strategy.fabric_data = {"management": {"type": requested[0]["vrfType"]}}
+    paths = []
+
+    def request(**kwargs):
+        paths.append(kwargs["path"])
+        if "filter=" in kwargs["path"]:
+            assert kwargs["path"] == "/api/v1/manage/fabrics/AK-EXT/vrfs?filter=vrfName%3AND_EXT_VRF_20261028"
+            return {"meta": {"counts": {"remaining": 0, "total": 1}}, "vrfs": requested}
+        return {"meta": {"counts": {"remaining": 0, "total": 3}}, "vrfs": external_vrf_inventory}
+
+    object.__setattr__(orchestrator, "_request", request)
+    assert orchestrator.query_all() == requested
+    assert len(paths) == 1
+    if name_count > 1:
+        assert paths == ["/api/v1/manage/fabrics/AK-EXT/vrfs?offset=0&max=10000"]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_vrf_multi_name_repeat_and_delete_use_existing_inventory(external_vrf_inventory, state, check_mode):
+    config = [
+        {"vrf_name": "ND_EXT_VRF_20261028", "vrf_description": "ND_EXT_INITIAL"},
+        {"vrf_name": "ND_EXT_VRF_BARE_20261028"},
+    ]
+    params = {"state": state, "config": config, "output_level": "normal"}
+    orchestrator = NDVrfOrchestrator(
+        rest_send=RestSend(params),
+        strategy=StandaloneVrfStrategy(fabric_name="AK-EXT", fabric_data={"management": {"type": external_vrf_inventory[0]["vrfType"]}}),
+    )
+    calls = []
+
+    def request(**kwargs):
+        calls.append(kwargs)
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            assert kwargs["path"] == "/api/v1/manage/fabrics/AK-EXT/vrfs?offset=0&max=10000"
+            return {"meta": {"counts": {"remaining": 0, "total": 3}}, "vrfs": external_vrf_inventory}
+        assert state == "deleted"
+        assert kwargs["path"] == "/api/v1/manage/fabrics/AK-EXT/vrfActions/remove"
+        assert kwargs["data"] == {"vrfNames": ["ND_EXT_VRF_20261028", "ND_EXT_VRF_BARE_20261028"]}
+        return {}
+
+    object.__setattr__(orchestrator, "_request", request)
+    parsed = [VrfConfigModel.from_config(entry, context={"state": state}).to_config() for entry in config]
+    sm = NDStateMachine(
+        module=SimpleNamespace(params=params, check_mode=check_mode),
+        model_orchestrator=orchestrator,
+        config=orchestrator.prepare_config_data(parsed),
+    )
+    sm.manage_state()
+    assert sm.output.format()["changed"] is (state == "deleted")
+    assert len(calls) == (2 if state == "deleted" and not check_mode else 1)
+    assert len(sm.before) == 2
+
+
+@pytest.mark.parametrize("observed_description", [{}, {"description": None}, {"description": ""}])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_vrf_explicit_description_clear_converges(external_vrf_inventory, observed_description, state, check_mode):
+    current = {**external_vrf_inventory[-1], **observed_description}
+    config = [{"vrf_name": current["vrfName"], "vrf_description": ""}]
+    params = {"state": state, "config": config, "output_level": "normal"}
+    orchestrator = NDVrfOrchestrator(
+        rest_send=RestSend(params),
+        strategy=StandaloneVrfStrategy(fabric_name="AK-EXT", fabric_data={"management": {"type": current["vrfType"]}}),
+    )
+    calls = []
+
+    def request(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["verb"] == HttpVerbEnum.GET, "An already-cleared description must not cause a write"
+        return {"meta": {"counts": {"remaining": 0, "total": 1}}, "vrfs": [current]}
+
+    object.__setattr__(orchestrator, "_request", request)
+    sm = NDStateMachine(
+        module=SimpleNamespace(params=params, check_mode=check_mode), model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(config)
+    )
+    sm.manage_state()
+    assert sm.output.format()["changed"] is False
+    assert len(calls) == 1
+    proposed = sm.proposed.get((current["vrfName"], "AK-EXT"))
+    assert orchestrator._create_or_update_payload(proposed)["description"] == ""
+    observed = VrfDataModel.from_response(current)
+    assert observed.to_payload().get("description") == observed_description.get("description")
+    assert observed.to_gathered_config().get("vrf_description") == observed_description.get("description")
+
+
+def test_external_vrf_description_comparison_preserves_clear_and_sparse_intent(external_vrf_inventory):
+    current = VrfDataModel.from_response(external_vrf_inventory[1])
+    sparse = VrfDataModel.from_config({"fabric_name": "AK-EXT", "vrf_name": current.vrf_name, "vrf_type": current.vrf_type})
+    clear = VrfDataModel.from_config({**sparse.to_config(), "description": ""})
+
+    assert current.get_diff(sparse, exclude_unset=True)
+    assert not current.get_diff(sparse, exclude_unset=False)
+    assert "description" not in sparse.to_diff_dict(exclude_unset=True)
+    assert "description" not in sparse.to_payload()
+    assert current.model_copy(deep=True).merge(sparse).description == "ND_EXT_INITIAL"
+    for exclude_unset in (False, True):
+        assert not current.get_diff(clear, exclude_unset=exclude_unset)
+    assert current.model_copy(deep=True).merge(clear).to_payload()["description"] == ""
+    vxlan = VrfDataModel.from_config({"fabric_name": "VXLAN", "vrf_name": "BLUE", "vrf_type": "vxlanIbgp"})
+    assert "description" not in vxlan.to_diff_dict()
+
+
 @pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
 def test_external_vrf_definition_payload_and_readback_are_schema_shaped(vrf_type):
     fabric_data = {"manageFabricDetails": {"management": {"type": vrf_type}}}
@@ -1779,16 +1906,17 @@ def test_child_vrf_disabling_ipv6_trm_clears_inherited_rp(vrf_type):
     assert effective.get_diff(proposed, exclude_unset=True) is True
 
 
-def test_vrfs_00080_query_all_scopes_targeted_state_reads():
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_vrfs_00080_query_all_scopes_targeted_state_reads(state):
     """
     # Summary
 
-    Verify targeted states only query current VRFs named in config instead of
-    reading every VRF in the fabric.
+    Verify targeted multi-name reads select only requested VRFs from one
+    inventory read, without using the controller's broken OR filter.
     """
     orchestrator = _orchestrator_for_request_tests(
         {
-            "state": "replaced",
+            "state": state,
             "config": [
                 {"vrf_name": "ansible-vrf-b"},
                 {"vrf_name": "ansible-vrf-a"},
@@ -1815,7 +1943,7 @@ def test_vrfs_00080_query_all_scopes_targeted_state_reads():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=10000&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
     ]
 
 
@@ -1876,12 +2004,12 @@ def test_vrf_query_all_encodes_reserved_filter_characters_once():
     ]
 
 
-def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
+@pytest.mark.parametrize("paginated", [False, True])
+def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter(paginated):
     """
     # Summary
 
-    Verify multi-name VRF reads use a scoped Lucene filter below the threshold
-    and exact-filter the response in module code.
+    Verify multi-name VRF reads exact-filter one unfiltered inventory response.
     """
     orchestrator = _orchestrator_for_request_tests(
         {
@@ -1896,12 +2024,15 @@ def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
 
     def request(**kwargs):
         requested_paths.append(kwargs["path"])
+        if paginated and "offset=0" in kwargs["path"]:
+            return {"vrfs": [{"vrfName": "ansible-vrf-other"}], "meta": {"counts": {"remaining": 2, "total": 3}}}
         return {
             "vrfs": [
                 {"vrfName": "ansible-vrf-b"},
                 {"vrfName": "ansible-vrf-a"},
-                {"vrfName": "ansible-vrf-other"},
             ]
+            + ([] if paginated else [{"vrfName": "ansible-vrf-other"}]),
+            "meta": {"counts": {"remaining": 0, "total": 3}},
         }
 
     object.__setattr__(orchestrator, "_request", request)
@@ -1911,8 +2042,8 @@ def test_vrfs_00081a_query_all_scoped_multi_name_uses_unfiltered_local_filter():
         {"vrfName": "ansible-vrf-a"},
     ]
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?max=10000&filter=%28vrfName%3Aansible-vrf-a%20OR%20vrfName%3Aansible-vrf-b%29",
-    ]
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000",
+    ] + (["/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=1&max=10000"] if paginated else [])
 
 
 def test_vrfs_00081b_mcfg_parent_scoped_query_uses_unfiltered_read_and_local_filter():
@@ -1959,7 +2090,7 @@ def test_vrfs_00081b_mcfg_parent_scoped_query_uses_unfiltered_read_and_local_fil
     assert requested_paths == ["/api/v1/oneManage/manage/fabrics/MCFG_FAB/vrfs?offset=0&max=10000"]
 
 
-def test_vrfs_00082_query_all_uses_unfiltered_read_at_scoped_threshold():
+def test_vrfs_00082_query_all_uses_one_inventory_for_larger_name_sets():
     """
     # Summary
 
@@ -1984,7 +2115,8 @@ def test_vrfs_00082_query_all_uses_unfiltered_read_at_scoped_threshold():
     assert requested_paths == ["/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=10000"]
 
 
-def test_vrfs_00083_query_all_unfiltered_walks_paginated_results():
+@pytest.mark.parametrize("metadata_key,requested_page_size", [("metadata", 200), ("meta", 10000)])
+def test_vrfs_00083_query_all_unfiltered_walks_paginated_results(metadata_key, requested_page_size):
     """
     # Summary
 
@@ -1998,7 +2130,7 @@ def test_vrfs_00083_query_all_unfiltered_walks_paginated_results():
         }
     )
     original_page_size = NDVrfOrchestrator.unfiltered_query_page_size
-    NDVrfOrchestrator.unfiltered_query_page_size = 200
+    NDVrfOrchestrator.unfiltered_query_page_size = requested_page_size
     requested_paths = []
 
     def request(**kwargs):
@@ -2006,16 +2138,16 @@ def test_vrfs_00083_query_all_unfiltered_walks_paginated_results():
         if "offset=0" in kwargs["path"]:
             return {
                 "vrfs": [{"vrfName": f"ansible-vrf-{index:03d}"} for index in range(200)],
-                "metadata": {"counts": {"total": 500, "remaining": 300}},
+                metadata_key: {"counts": {"total": 500, "remaining": 300}},
             }
         if "offset=200" in kwargs["path"]:
             return {
                 "vrfs": [{"vrfName": f"ansible-vrf-{index:03d}"} for index in range(200, 400)],
-                "metadata": {"counts": {"total": 500, "remaining": 100}},
+                metadata_key: {"counts": {"total": 500, "remaining": 100}},
             }
         return {
             "vrfs": [{"vrfName": f"ansible-vrf-{index:03d}"} for index in range(400, 500)],
-            "metadata": {"counts": {"total": 500, "remaining": 0}},
+            metadata_key: {"counts": {"total": 500, "remaining": 0}},
         }
 
     object.__setattr__(orchestrator, "_request", request)
@@ -2027,9 +2159,9 @@ def test_vrfs_00083_query_all_unfiltered_walks_paginated_results():
 
     assert len(result) == 500
     assert requested_paths == [
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max=200",
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=200&max=200",
-        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=400&max=200",
+        f"/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=0&max={requested_page_size}",
+        f"/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=200&max={requested_page_size}",
+        f"/api/v1/manage/fabrics/AK-VXLAN/vrfs?offset=400&max={requested_page_size}",
     ]
 
 

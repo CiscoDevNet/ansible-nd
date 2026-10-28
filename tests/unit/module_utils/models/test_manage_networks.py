@@ -55,6 +55,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     DefaultL2DataModel,
     DefaultL2FabricDataModel,
     DefaultL3DataModel,
+    ExternalConnectivityNetworkModel,
+    ExternalL2DataModel,
     NetworkBaseModel,
     NetworkCreateRequestModel,
     NetworkListResponseModel,
@@ -736,9 +738,7 @@ def test_layer2_x_connect_and_read_only_selectors_remain_valid(state):
 )
 def test_layer2_rejects_remaining_l3_only_fields(field, value, dependencies):
     with pytest.raises(ValidationError, match="layer2 networks") as error:
-        NetworkConfigModel.from_config(
-            {"network_name": "USERS", "layer": "layer2", field: value, **dependencies}, context={"state": "merged"}
-        )
+        NetworkConfigModel.from_config({"network_name": "USERS", "layer": "layer2", field: value, **dependencies}, context={"state": "merged"})
     assert field in str(error.value)
 
 
@@ -1122,6 +1122,91 @@ def test_manage_network_config_models_00318() -> None:
     assert explicit_l2.layer == "layer2"
     assert attachment_only.layer is None
     assert secondary_pvlan.layer == "layer2"
+
+
+@pytest.mark.parametrize("model_cls", [NetworkConfigModel, NetworkParentConfigModel])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+def test_external_ui_definition_derives_layer2(model_cls, state):
+    model = model_cls.from_config(
+        {"network_name": "n", "vlan_id": 2454, "vlan_name": "AK_VLANEXT"},
+        context={"state": state, "default_network_type": "externalConnectivity"},
+    )
+    assert model.layer == "layer2"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("layer", "layer3"),
+        ("layer", "layer2WithVrf"),
+        ("vrf_name", "V"),
+        ("vrfName", "V"),
+        ("gateway_ipv4_address", "10.0.0.1/24"),
+        ("gatewayIpv4Address", "10.0.0.1/24"),
+        ("gateway_ipv6_address", "2001:db8::1/64"),
+        ("secondary_gateway_ipv4_collection", []),
+        ("secondary_gateway_ipv6_collection", []),
+        ("mtu", 9216),
+        ("arp_suppression", False),
+        ("vlan_intf_desc", "SVI"),
+        ("routing_tag", 12345),
+        ("dhcp_servers", []),
+        ("loopback_id", 0),
+        ("igmp_version", 3),
+        ("trm_enable", False),
+        ("ipv6_trm", False),
+        ("netflow_enable", False),
+        ("vlan_netflow_monitor", "MON"),
+        ("interface_netflow_monitor", "MON"),
+        ("gateway_on_border", False),
+        ("x_connect", False),
+        ("multicast_group_address", "239.1.1.1"),
+        ("vlan_network_type", "primary"),
+        ("primary_network_id", 30000),
+        ("display_name", "OTHER"),
+        ("network_type", "user_defined"),
+    ],
+)
+def test_external_rejects_non_ui_definition_fields(state, field, value):
+    with pytest.raises(ValidationError, match="External Networks support only L2 definitions"):
+        NetworkConfigModel.from_config(
+            {"network_name": "n", "vlan_id": 2454, field: value},
+            context={"state": state, "default_network_type": "externalConnectivity", "defer_omitted_layer": state == "merged"},
+        )
+
+
+@pytest.mark.parametrize("state", ["gathered", "deleted"])
+def test_external_selectors_do_not_require_ui_creation_fields(state):
+    model = NetworkConfigModel.from_config({"network_name": "n"}, context={"state": state, "default_network_type": "externalConnectivity"})
+    assert model.network_name == "n"
+    assert model.vlan_id is None
+
+
+def test_external_controller_readback_replays_without_vxlan_defaults():
+    row = {
+        "networkMode": "layer2",
+        "vlanId": 2454,
+        "displayName": "MyNetwork_30000",
+        "networkStatus": "notApplicable",
+        "networkName": "MyNetwork_30000",
+        "networkId": 30000,
+        "networkType": "externalConnectivity",
+        "l2Data": {"vlanName": "AK_VLANEXT"},
+        "fabricName": "AK-EXT",
+        "vrfName": "NA",
+    }
+    existing = NDConfigCollection.from_api_response([row], NetworkBaseModel).get("MyNetwork_30000")
+    assert isinstance(existing, ExternalConnectivityNetworkModel)
+    assert isinstance(existing.l2_data, ExternalL2DataModel)
+    assert existing.l3_data is None
+    assert existing.to_payload() == {key: value for key, value in row.items() if key not in {"networkMode", "displayName", "networkStatus"}}
+    replay = NetworkConfigModel.from_config(existing.to_gathered_config(), context={"state": "replaced", "default_network_type": "externalConnectivity"})
+    assert replay.layer == "layer2"
+    assert replay.vlan_id == 2454
+    assert replay.vlan_name == "AK_VLANEXT"
+    changed_identity = NetworkBaseModel.from_config({"network_name": "MyNetwork_30000", "network_type": "externalConnectivity", "network_id": 30001})
+    assert not existing.get_diff(changed_identity, exclude_unset=True)
 
 
 def test_manage_network_attachment_models_00320() -> None:

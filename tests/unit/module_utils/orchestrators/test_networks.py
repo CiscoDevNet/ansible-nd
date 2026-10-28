@@ -2500,13 +2500,13 @@ class _LayerValidationNetworkOrchestrator(NDNetworkOrchestrator):
         return {}
 
 
-def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=StandaloneNetworkStrategy, network_type="vxlanIbgp"):
+def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=StandaloneNetworkStrategy, network_type="vxlanIbgp", state="merged"):
     strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": network_type})
-    module = _Module({"state": "merged", "config": config, "output_level": "normal"})
+    module = _Module({"state": state, "config": config, "output_level": "normal"})
     module.check_mode = check_mode
     coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
-    parsed = coordinator._parse_config(_validated_network_config(config), strategy.config_model_cls, "merged")
-    orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": "merged"}), strategy=strategy, inventory=inventory)
+    parsed = coordinator._parse_config(_validated_network_config(config), strategy.config_model_cls, state)
+    orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy, inventory=inventory)
     sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
     return coordinator, sm, parsed, orchestrator
 
@@ -2528,7 +2528,7 @@ def test_external_network_three_field_definition_defaults_to_layer2(state, check
 
     payload = orchestrator._create_or_update_payload(sm.sent.get("EXTERNAL_NET"))
     assert payload["networkType"] == "externalConnectivity"
-    assert payload["networkMode"] == "layer2"
+    assert sm.sent.get("EXTERNAL_NET").layer == "layer2"
     assert payload["vrfName"] == "NA"
     assert payload["vlanId"] == 2984
     assert payload["l2Data"]["vlanName"] == "EXTERNAL_VLAN"
@@ -2537,24 +2537,83 @@ def test_external_network_three_field_definition_defaults_to_layer2(state, check
     assert len(orchestrator.written_payloads) == (0 if check_mode else 1)
 
 
-def test_external_sparse_merged_update_preserves_existing_layer3():
-    entry = {"network_name": "EXTERNAL_NET", "vlan_name": "UPDATED"}
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_ui_definition_converges_against_controller_readback(state, check_mode):
+    config = [{"network_name": "n", "vlan_id": 2454, "vlan_name": "AK_VLANEXT"}]
+    inventory = []
+    for repeat in (False, True):
+        coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+            config, inventory, check_mode, network_type="externalConnectivity", state=state
+        )
+        coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+        sm.manage_state()
+
+        assert sm.output.format()["changed"] is not repeat
+        assert len(orchestrator.written_payloads) == (0 if check_mode or repeat else 1)
+        assert orchestrator.query_count == 1
+        if not repeat:
+            payload = orchestrator._create_or_update_payload(sm.sent.get("n"))
+            assert payload == {
+                "fabricName": "fab1",
+                "networkName": "n",
+                "networkType": "externalConnectivity",
+                "vlanId": 2454,
+                "vrfName": "NA",
+                "l2Data": {"vlanName": "AK_VLANEXT"},
+            }
+            inventory = [{**payload, "networkMode": "layer2", "networkId": 30000, "displayName": "n", "networkStatus": "notApplicable"}]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_vlan_name_update_preserves_controller_identity_and_converges(state, check_mode):
+    entry = {"network_name": "EXTERNAL_NET", "vlan_name": "UPDATED", "vlan_id": 2454}
+    if state == "merged":
+        entry.pop("vlan_id")
     existing = {
         "fabricName": "fab1",
         "networkName": "EXTERNAL_NET",
         "networkType": "externalConnectivity",
-        "networkMode": "layer3",
-        "vrfName": "TENANT",
+        "networkMode": "layer2",
+        "vrfName": "NA",
+        "networkId": 30000,
+        "displayName": "EXTERNAL_NET",
+        "vlanId": 2454,
         "l2Data": {"vlanName": "OLD"},
     }
-    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [existing], False, network_type="externalConnectivity")
-    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
-    assert sm.proposed.get("EXTERNAL_NET").layer == "layer3"
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [existing], check_mode, network_type="externalConnectivity", state=state)
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
     sm.manage_state()
-    payload = orchestrator.written_payloads[0]
-    assert payload["networkMode"] == "layer3"
-    assert payload["vrfName"] == "TENANT"
-    assert payload["l2Data"]["vlanName"] == "UPDATED"
+    payload = orchestrator._create_or_update_payload(sm.sent.get("EXTERNAL_NET"))
+    assert payload["vrfName"] == "NA"
+    assert payload["l2Data"] == {"vlanName": "UPDATED"}
+    assert "l3Data" not in payload
+    assert "vlanNetworkType" not in payload
+    assert payload["vlanId"] == 2454
+    assert len(orchestrator.written_payloads) == (0 if check_mode else 1)
+    assert orchestrator.query_count == 1
+
+    readback = {**existing, "l2Data": {"vlanName": "UPDATED"}}
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [readback], check_mode, network_type="externalConnectivity", state=state)
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    sm.manage_state()
+    assert sm.output.format()["changed"] is False
+    assert orchestrator.written_payloads == []
+    assert orchestrator.query_count == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_create_requires_vlan_before_any_write(state, check_mode):
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+        [{"network_name": "n", "vlan_name": "VLAN"}], [], check_mode, network_type="externalConnectivity", state=state
+    )
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    with pytest.raises(NDStateMachineError, match="vlan_id is required when creating External Networks"):
+        sm.manage_state()
+    assert not orchestrator.written_payloads
+    assert orchestrator.query_count == 1
 
 
 def test_external_network_three_field_repeat_is_idempotent():
@@ -3199,10 +3258,11 @@ def test_network_query_all_unfiltered_reads_500_networks_with_explicit_page_size
     assert requested_paths == ["/api/v1/manage/fabrics/fab1/networks?offset=0&max=10000"]
 
 
-def test_network_query_all_unfiltered_walks_paginated_results():
+@pytest.mark.parametrize("metadata_key,requested_page_size", [("metadata", 200), ("meta", 10000)])
+def test_network_query_all_unfiltered_walks_paginated_results(metadata_key, requested_page_size):
     orchestrator = _orchestrator()
     original_page_size = NDNetworkOrchestrator.unfiltered_query_page_size
-    NDNetworkOrchestrator.unfiltered_query_page_size = 200
+    NDNetworkOrchestrator.unfiltered_query_page_size = requested_page_size
     requested_paths = []
 
     def request(**kwargs):
@@ -3210,16 +3270,16 @@ def test_network_query_all_unfiltered_walks_paginated_results():
         if "offset=0" in kwargs["path"]:
             return {
                 "networks": [{"networkName": f"NET_{index:03d}"} for index in range(200)],
-                "metadata": {"counts": {"total": 500, "remaining": 300}},
+                metadata_key: {"counts": {"total": 500, "remaining": 300}},
             }
         if "offset=200" in kwargs["path"]:
             return {
                 "networks": [{"networkName": f"NET_{index:03d}"} for index in range(200, 400)],
-                "metadata": {"counts": {"total": 500, "remaining": 100}},
+                metadata_key: {"counts": {"total": 500, "remaining": 100}},
             }
         return {
             "networks": [{"networkName": f"NET_{index:03d}"} for index in range(400, 500)],
-            "metadata": {"counts": {"total": 500, "remaining": 0}},
+            metadata_key: {"counts": {"total": 500, "remaining": 0}},
         }
 
     object.__setattr__(orchestrator, "_request", request)
@@ -3231,9 +3291,9 @@ def test_network_query_all_unfiltered_walks_paginated_results():
 
     assert len(result) == 500
     assert requested_paths == [
-        "/api/v1/manage/fabrics/fab1/networks?offset=0&max=200",
-        "/api/v1/manage/fabrics/fab1/networks?offset=200&max=200",
-        "/api/v1/manage/fabrics/fab1/networks?offset=400&max=200",
+        f"/api/v1/manage/fabrics/fab1/networks?offset=0&max={requested_page_size}",
+        f"/api/v1/manage/fabrics/fab1/networks?offset=200&max={requested_page_size}",
+        f"/api/v1/manage/fabrics/fab1/networks?offset=400&max={requested_page_size}",
     ]
 
 

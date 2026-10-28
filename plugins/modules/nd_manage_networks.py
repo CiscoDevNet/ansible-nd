@@ -85,7 +85,10 @@ options:
           - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
           - New Networks and authoritative states require enough context to derive the layer. Layer 3 and Layer 2 with VRF require C(vrf_name).
           - Layer 2 with VRF requires fabric Security Groups and MAC segmentation.
-          - On External fabrics, a new Network defaults to Layer 2 when C(layer) is omitted.
+          - External fabrics support only Layer 2 definitions. Omitted C(layer) resolves to Layer 2.
+          - External definition options are C(network_name), C(vlan_id), optional C(vlan_name), and optional C(network_id).
+          - ND assigns the External Network ID when C(network_id) is omitted during creation.
+          - External Networks require C(vlan_id) on creation. VRF, gateway, PVLAN, and other feature settings are not supported.
           - Layer 2 Networks do not accept L3-only properties such as gateways, MTU, and ARP suppression.
         type: str
         choices: [ layer2, layer2WithVrf, layer3 ]

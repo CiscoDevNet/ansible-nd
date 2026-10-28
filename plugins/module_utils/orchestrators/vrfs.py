@@ -116,7 +116,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     enrich_mcfg_parent_from_children: bool = False
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
-    scoped_query_threshold: ClassVar[int] = 5
     unfiltered_query_page_size: ClassVar[int] = 10000
 
     def model_post_init(self, __context) -> None:
@@ -174,7 +173,11 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _default_vrf_type(self) -> str:
         """Return the standard VRF type derived from resolved fabric details."""
-        fabric_data = self.strategy.fabric_data if self.strategy else {}
+        return self.default_vrf_type(self.strategy.fabric_data if self.strategy else {})
+
+    @staticmethod
+    def default_vrf_type(fabric_data: dict[str, Any] | None) -> str:
+        """Return the standard VRF type from cached fabric details."""
         for key in ("vrf_type", "vrfType", "managementType"):
             if isinstance(fabric_data, dict) and fabric_data.get(key):
                 return fabric_data[key]
@@ -636,15 +639,11 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         scoped_vrf_names = [name for name in dict.fromkeys(vrf_names) if name]
         if not scoped_vrf_names:
             return []
-        if self._is_mcfg_parent():
-            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
-        if len(scoped_vrf_names) >= self.scoped_query_threshold:
+        # TODO(4.3.1) vrf-multi-name-filter: Manage returns no matches for fielded OR filters, including VXLAN VRFs.
+        if self._is_mcfg_parent() or len(scoped_vrf_names) > 1:
             return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
 
         try:
-            if len(scoped_vrf_names) > 1:
-                return self._query_all_scoped(scoped_vrf_names)
-
             endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
             if hasattr(endpoint, "endpoint_params"):
                 endpoint.endpoint_params.filter = self._vrf_name_filter(scoped_vrf_names)
@@ -660,61 +659,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         except Exception:
             return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
 
-    def _query_all_scoped(self, vrf_names: list[str]) -> ResponseType:
-        """GET selected VRFs with a single batched filter."""
-        vrfs: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        ordered_names = list(dict.fromkeys(vrf_names))
-        self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
-        return self._enrich_mcfg_parent_vrfs_from_children(vrfs)
-
     @staticmethod
     def _filter_query_items_by_name(items: list[Any], vrf_names: list[str]) -> list[Any]:
         requested = set(vrf_names)
         return [item for item in items or [] if not isinstance(item, dict) or (item.get("vrfName") or item.get("vrf_name")) in requested]
-
-    def _query_all_scoped_batch(self, vrf_names: list[str]) -> list[dict[str, Any]]:
-        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-        if hasattr(endpoint, "endpoint_params"):
-            endpoint.endpoint_params.filter = self._vrf_name_filter(vrf_names)
-            endpoint.endpoint_params.max = self.unfiltered_query_page_size if len(vrf_names) > 1 else 1
-        result = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
-        if isinstance(result, dict):
-            return result.get("vrfs") or result.get("items") or []
-        return result or []
-
-    def _query_all_scoped_one(self, vrf_name: str) -> list[dict[str, Any]]:
-        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-        if hasattr(endpoint, "endpoint_params"):
-            endpoint.endpoint_params.filter = self._vrf_name_filter([vrf_name])
-        result = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
-        if isinstance(result, dict):
-            return result.get("vrfs") or result.get("items") or []
-        return result or []
-
-    def _append_scoped_vrf_items(
-        self,
-        vrfs: list[dict[str, Any]],
-        seen: set[str],
-        items: list[dict[str, Any]],
-        requested_names: list[str],
-    ) -> None:
-        requested = set(requested_names)
-        for item in items or []:
-            item_name = item.get("vrfName") or item.get("vrf_name") if isinstance(item, dict) else None
-            if item_name and item_name in requested and item_name not in seen:
-                vrfs.append(self._normalize_query_vrf_item(item))
-                seen.add(item_name)
 
     def _query_all_unfiltered(self) -> ResponseType:
         """GET all VRFs without a filter fallback."""
@@ -761,7 +709,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if not isinstance(result, dict):
             return False
 
-        metadata = result.get("metadata") or {}
+        metadata = result.get("metadata") or result.get("meta") or {}
         counts = metadata.get("counts") or {}
         remaining = self._safe_int(counts.get("remaining"))
         if remaining is not None:

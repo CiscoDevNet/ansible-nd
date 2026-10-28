@@ -286,6 +286,13 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if network_type == NetworkType.USER_DEFINED.value:
             return transformed
 
+        if network_type == NetworkType.EXTERNAL_CONNECTIVITY.value:
+            transformed.update(layer=NetworkLayer.LAYER2.value, vrf_name="NA")
+            vlan_name = self._value(config, "vlan_name", "vlanName")
+            if vlan_name is not None:
+                transformed["l2_data"] = {"vlanName": vlan_name}
+            return transformed
+
         vlan_network_type = self._normalize_vlan_network_type(transformed.get("vlan_network_type"))
         if self.is_pvlan_network_type(vlan_network_type) and self._is_mcfg_parent():
             raise ValueError("vlan_network_type primary, community, and isolated are not supported on Multicluster parent fabrics")
@@ -459,10 +466,28 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         return True
 
     def preflight_create(self, model_instances: Sequence[NDNetworkModel]) -> None:
-        """Require enough layer context before creating new Network definitions."""
-        missing_layer = [model.network_name for model in model_instances if getattr(model, "layer", None) is None]
+        """
+        # Summary
+
+        Require a layer and, for External Networks, a VLAN before creation.
+
+        ## Raises
+
+        ### ValueError
+
+        - A new Network lacks its layer or a new External Network lacks its VLAN ID.
+        """
+        missing_layer = []
+        missing_vlan = []
+        for model in model_instances:
+            if getattr(model, "layer", None) is None:
+                missing_layer.append(model.network_name)
+            if model.network_type == NetworkType.EXTERNAL_CONNECTIVITY.value and model.vlan_id is None:
+                missing_vlan.append(model.network_name)
         if missing_layer:
             raise ValueError("layer is required when creating new networks: " + ", ".join(str(name) for name in missing_layer))
+        if missing_vlan:
+            raise ValueError("vlan_id is required when creating External Networks: " + ", ".join(missing_vlan))
 
     def prepare_config_data(self, raw_config):
         if not isinstance(raw_config, list):
@@ -688,7 +713,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if not isinstance(result, dict):
             return False
 
-        metadata = result.get("metadata") or {}
+        metadata = result.get("metadata") or result.get("meta") or {}
         counts = metadata.get("counts") or {}
         remaining = self._safe_int(counts.get("remaining"))
         if remaining is not None:

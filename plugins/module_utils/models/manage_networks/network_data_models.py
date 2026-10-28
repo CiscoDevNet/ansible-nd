@@ -131,6 +131,13 @@ class DefaultL2DataModel(NDNestedModel):
     fabric_data: DefaultL2FabricDataModel | None = Field(default=None, alias="fabricData")
 
 
+class ExternalL2DataModel(NDNestedModel):
+    """UI-supported VLAN data for External connectivity Networks."""
+
+    identifiers: ClassVar[list[str]] = []
+    vlan_name: str | None = Field(default=None, alias="vlanName")
+
+
 class VxlanL3FabricDataModel(NDNestedModel):
     """VXLAN L3 fabric-specific data."""
 
@@ -732,9 +739,15 @@ class AciNetworkModel(VxlanAciNetworkModel):
 
 
 class ExternalConnectivityNetworkModel(NetworkBaseModel):
-    """External connectivity network model."""
+    """External L2 definitions with controller-generated identity metadata."""
 
+    exclude_from_diff: ClassVar[set[str]] = NetworkBaseModel.exclude_from_diff | {"display_name"}
+    config_exclude_fields: ClassVar[set[str]] = NetworkBaseModel.config_exclude_fields | {"display_name"}
+    payload_exclude_fields: ClassVar[set[str]] = NetworkBaseModel.payload_exclude_fields | {"display_name", "layer"}
+    reverse_diff_exclude: ClassVar[set[str]] = NetworkBaseModel.reverse_diff_exclude | {"networkId"}
     network_type: Literal[NetworkType.EXTERNAL_CONNECTIVITY] = Field(default=NetworkType.EXTERNAL_CONNECTIVITY, alias="networkType")
+    vlan_network_type: VlanNetworkType | None = Field(default=None, alias="vlanNetworkType")
+    l2_data: ExternalL2DataModel | None = Field(default=None, alias="l2Data")
 
 
 class VxlanExternalNetworkModel(NetworkBaseModel):
@@ -753,6 +766,7 @@ _NETWORK_MODEL_BY_TYPE = {
     NetworkType.ROUTED.value: RoutedNetworkModel,
     NetworkType.AIML_ROUTED.value: AimlRoutedNetworkModel,
     NetworkType.CLASSIC_LAN_ENHANCED.value: ClassicLanEnhancedNetworkModel,
+    NetworkType.EXTERNAL_CONNECTIVITY.value: ExternalConnectivityNetworkModel,
     NetworkType.USER_DEFINED.value: CustomNetworkModel,
 }
 

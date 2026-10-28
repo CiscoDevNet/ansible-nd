@@ -155,7 +155,11 @@ options:
           - Not applicable on parent fabrics.
         type: bool
       vrf_description:
-        description: Description of the VRF (max 255 characters), including External VRF definitions.
+        description:
+          - Description of the VRF (max 255 characters), including External VRF definitions.
+          - For External VRFs, omission preserves the description in C(merged)
+            and clears it in C(replaced) or C(overridden). An empty string
+            explicitly clears the description.
         type: str
       loopback_route_tag:
         description: Routing tag for loopback routes (0-4294967295); NX-OS only.

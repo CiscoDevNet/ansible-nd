@@ -24,6 +24,7 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -471,6 +472,8 @@ class VrfDataModel(NDBaseModel):
     ``coreData`` and ``fabricData`` are captured as typed nested models
     (``VxlanCoreData``, ``VxlanFabricInstance``) for the standard VXLAN
     variant; for other types they are accepted as free-form dicts.
+    Config and response factories select ``ExternalVrfDataModel`` for the
+    External types so their empty-description default stays type-specific.
     """
 
     identifiers: ClassVar[list[str]] = ["vrf_name", "fabric_name"]
@@ -593,6 +596,24 @@ class VrfDataModel(NDBaseModel):
         if v not in VrfType.choices():
             raise ValueError(f"vrfType must be one of {VrfType.choices()}, got: {v}")
         return v
+
+    @classmethod
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "VrfDataModel":
+        """Select the concrete VRF model from the prepared configuration's type."""
+        if cls is VrfDataModel:
+            model_cls = _VRF_MODEL_BY_TYPE.get(ansible_config.get("vrf_type") or ansible_config.get("vrfType"))
+            if model_cls is not None:
+                return model_cls.from_config(ansible_config, **kwargs)
+        return super().from_config(ansible_config, **kwargs)
+
+    @classmethod
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "VrfDataModel":
+        """Select the same concrete VRF model for controller readback."""
+        if cls is VrfDataModel:
+            model_cls = _VRF_MODEL_BY_TYPE.get(response.get("vrfType") or response.get("vrf_type"))
+            if model_cls is not None:
+                return model_cls.from_response(response, **kwargs)
+        return super().from_response(response, **kwargs)
 
     @classmethod
     def get_argument_spec(cls) -> dict[str, Any]:
@@ -839,6 +860,39 @@ class VrfDataModel(NDBaseModel):
         return v
 
 
+class ExternalVrfDataModel(VrfDataModel):
+    """External VRF state with an empty description as its canonical default."""
+
+    vrf_type: Literal[VrfType.EXTERNAL_CONNECTIVITY, VrfType.VXLAN_EXTERNAL] = Field(alias="vrfType")
+    # TODO(4.3.1) external-vrf-get-omits-empty-description: ND omits a cleared description from GET.
+    description: str = Field(default="", max_length=255, description="Description of the External VRF")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_null_read_description(cls, data: Any, info: Any) -> Any:
+        """Treat defensive null readback as an omitted empty description."""
+        if (info.context or {}).get("mode") == "response" and isinstance(data, dict) and "description" in data and data["description"] is None:
+            data = dict(data)
+            data.pop("description")
+        return data
+
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Keep omitted defaults out of writes while retaining explicit clears."""
+        kwargs.setdefault("exclude_unset", True)
+        return super().to_payload(**kwargs)
+
+    def to_config(self, **kwargs) -> dict[str, Any]:
+        """Preserve observed field presence in public and gathered output."""
+        kwargs.setdefault("exclude_unset", True)
+        return super().to_config(**kwargs)
+
+
+_VRF_MODEL_BY_TYPE = {
+    VrfType.EXTERNAL_CONNECTIVITY.value: ExternalVrfDataModel,
+    VrfType.VXLAN_EXTERNAL.value: ExternalVrfDataModel,
+}
+
+
 class VrfCreateRequestModel(NDBaseModel):
     """
     Request body for creating one or more VRFs in the specified fabric.
@@ -958,6 +1012,7 @@ class VrfPreInformationResponseModel(NDBaseModel):
 
 
 __all__ = [
+    "ExternalVrfDataModel",
     "L4l7ServiceData",
     "Metadata",
     "MetadataCounts",

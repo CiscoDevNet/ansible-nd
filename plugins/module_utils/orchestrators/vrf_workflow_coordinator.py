@@ -370,13 +370,18 @@ class VrfWorkflowCoordinator:
 
     @staticmethod
     def _validate_child_vrf_intent(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
-        """Validate child feature dependencies against the one cached GET."""
+        """Resolve sparse child types and validate dependencies from cached state."""
         for entry in entries:
             identifier = (entry["vrf_name"], strategy.fabric_name)
             proposed = sm.proposed.get(identifier)
             if proposed is None:
                 continue
             current = sm.existing.get(identifier)
+            if "vrf_type" not in proposed.model_fields_set:
+                model_data = proposed.to_payload(exclude_unset=True)
+                model_data["vrfType"] = (current.vrf_type if current is not None else None) or NDVrfOrchestrator.default_vrf_type(strategy.fabric_data)
+                proposed = VrfDataModel.from_config(model_data, context={"state": state})
+                sm.proposed.replace(proposed)
             effective = current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
             public = effective.to_gathered_config()
             child_fields = set(getattr(VrfChildConfigModel, "model_fields", {}))
