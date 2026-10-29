@@ -10,8 +10,8 @@ module: nd_manage_networks
 version_added: "2.0.0"
 short_description: Manages Network definitions on Cisco Nexus Dashboard.
 description:
-  - Manages Network definitions on Cisco Nexus Dashboard across standalone,
-    Multisite (MSD), and Multicluster (MCFG) fabric topologies.
+  - Manages Network definitions on Cisco Nexus Dashboard across standalone
+    fabrics, Fabric groups, and Multi-cluster Fabric groups.
   - This module manages Network definitions, parent or standalone Network switch
     attachments, and optional deployment of pending Network changes.
   - Supported Network definition properties include identity, VLAN, gateway,
@@ -20,8 +20,8 @@ description:
     templates internally.
   - Automatically detects fabric type from the ND API and routes to the
     appropriate workflow without requiring extra user input.
-  - For parent fabrics (MSD / MCFG), supports child-fabric coordination via the
-    C(child_fabric_config) parameter inside each Network definition.
+  - For Fabric groups and Multi-cluster Fabric groups, supports child-fabric
+    coordination via C(child_fabric_config) inside each Network definition.
   - Child fabrics only permit C(state=gathered) when targeted directly; all
     write operations must be driven through the parent fabric.
 author:
@@ -68,7 +68,7 @@ options:
         to provide per-child-fabric overrides. The parent-level C(attach),
         C(deploy), and C(deploy_type) options are applied only on the parent
         fabric and are not sent to child fabrics.
-      - On MSD and MCFG parents, child-only properties must be placed under
+      - On Fabric groups and Multi-cluster Fabric groups, child-only properties must be placed under
         C(child_fabric_config). Supplying them at the top level is rejected for
         V(merged), V(replaced), V(overridden), and V(staged). These properties
         are ignored in top-level V(gathered) and V(deleted) selectors.
@@ -120,9 +120,9 @@ options:
           - C(switch) deploys the selected Networks on the switches affected by
             this attachment operation when switch identifiers are available.
           - C(network) deploys the pending Network changes for this Network.
-          - Standalone and MSD attachment removals and Network deletion use
-            the selected Network scope, not whole-switch deployment.
-          - MCFG parent deployment uses the OneManage Network endpoint and
+          - On standalone fabrics and Fabric groups, attachment removals and Network deletion
+            use the selected Network scope, not whole-switch deployment.
+          - Deployment for Multi-cluster Fabric groups uses the OneManage Network endpoint and
             retains affected switch identifiers regardless of C(deploy_type).
           - Network deletion waits for detach deployment before removal.
         type: str
@@ -231,13 +231,14 @@ options:
       network_id:
         description:
           - Network segment ID.
-          - An omitted ID preserves the existing standalone or MSD Network identity, including in C(replaced), C(overridden), and C(staged).
+          - An omitted ID preserves the existing Network identity on standalone fabrics and Fabric groups,
+            including in C(replaced), C(overridden), and C(staged).
         type: int
       vlan_id:
         description:
           - VLAN ID.
-          - Omission preserves the observed existing VLAN ID on standalone Networks and MSD or MCFG parent definitions,
-            including under C(replaced), C(overridden), and C(staged).
+          - Omission preserves the observed existing VLAN ID on standalone Networks and parent definitions in
+            Fabric groups or Multi-cluster Fabric groups, including under C(replaced), C(overridden), and C(staged).
           - No VLAN ID is inferred when the controller does not return one. Attachment VLAN IDs are managed separately.
         type: int
       vlan_network_type:
@@ -247,7 +248,7 @@ options:
           - C(primary) supports Layer 2 and Layer 3. When its layer is derived, VRF or L3-specific properties select Layer 3
             and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
-          - C(primary), C(community), and C(isolated) are not supported on MCFG parent fabrics.
+          - C(primary), C(community), and C(isolated) are not supported on Multi-cluster Fabric groups.
           - Private VLAN Networks require Data Center VXLAN with EVPN overlay and private VLAN enabled.
           - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
           - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous) attachment interface modes.
@@ -352,7 +353,7 @@ options:
         type: bool
       child_fabric_config:
         description:
-          - Per-child-fabric override entries for MSD and MCFG parent fabrics.
+          - Per-child-fabric override entries for Fabric groups and Multi-cluster Fabric groups.
           - Each entry targets a child member fabric and may override its
             fabric-instance multicast, DHCP, TRM, and NetFlow settings.
           - Omitted fields are not explicitly changed on the child.
@@ -521,10 +522,10 @@ EXAMPLES = r"""
         vlan_id: 2102
         deploy: false
 
-# MSD parent fabric - create Network with child fabric overrides
+# Fabric group - create Network with child fabric overrides
 - name: Create Network on a parent fabric with child fabric overrides
   cisco.nd.nd_manage_networks:
-    fabric_name: msd_parent
+    fabric_name: fabric_group
     state: merged
     config:
       - network_name: Network_PARENT
@@ -693,20 +694,20 @@ workflow:
   type: str
 parent_fabric:
   description:
-    - Parent fabric result for MSD or MCFG parent workflows that execute child
+    - Parent fabric result for Fabric groups or Multi-cluster Fabric groups that execute child
       fabric tasks.
     - Contains the same state-machine and API trace fields as a standalone
       result, plus C(fabric_name).
   returned: when a parent workflow processes one or more child fabrics
   type: dict
   sample:
-    fabric_name: MSD_FABRIC
+    fabric_name: FABRIC_GROUP
     changed: true
     before: []
     after: []
 child_fabrics:
   description:
-    - Per-child-fabric results for MSD or MCFG parent workflows.
+    - Per-child-fabric results for Fabric groups or Multi-cluster Fabric groups.
     - Each entry contains the same state-machine and API trace fields as a
       standalone result, plus C(fabric_name).
   returned: when a parent workflow processes one or more child fabrics

@@ -10,15 +10,15 @@ module: nd_manage_vrfs
 version_added: "2.0.0"
 short_description: Manages VRF definitions on Cisco Nexus Dashboard.
 description:
-  - Manages VRF definitions on Cisco Nexus Dashboard across standalone,
-    Multisite (MSD), and Multicluster (MCFG) fabric topologies.
+  - Manages VRF definitions on Cisco Nexus Dashboard across standalone
+    fabrics, Fabric groups, and Multi-cluster Fabric groups.
   - This module manages VRF definitions, parent or standalone VRF switch
     attachments, and optional deployment of pending VRF changes.
   - Supported VRF definition properties include identity, custom templates,
     VLAN/SVI, security group defaults, TRM, routing, netflow, and route targets.
   - Automatically detects fabric type from the ND API and routes to the
     appropriate workflow without requiring extra user input.
-  - For parent fabrics (MSD / MCFG), supports child-fabric coordination
+  - For Fabric groups and Multi-cluster Fabric groups, supports child-fabric coordination
     via the C(child_fabric_config) parameter inside each VRF definition.
   - Child fabrics only permit C(state=gathered) when targeted directly;
     all write operations must be driven through the parent fabric.
@@ -70,7 +70,7 @@ options:
         list to provide per-child-fabric overrides. The parent-level
         C(attach), C(deploy), and C(deploy_type) options are applied only on
         the parent fabric and are not sent to child fabrics.
-      - On MSD and MCFG parents, child-only properties must be placed under
+      - On Fabric groups and Multi-cluster Fabric groups, child-only properties must be placed under
         C(child_fabric_config). Supplying them at the top level is rejected for
         V(merged), V(replaced), V(overridden), and V(staged). These properties
         are ignored in top-level V(gathered) and V(deleted) selectors.
@@ -138,8 +138,8 @@ options:
       vlan_id:
         description:
           - VLAN ID for the VRF SVI (2-4094).
-          - Omission preserves the observed existing VLAN ID on standalone VRFs and MSD or MCFG parent definitions,
-            including under C(replaced), C(overridden), and C(staged).
+          - Omission preserves the observed existing VLAN ID on standalone VRFs and parent definitions in
+            Fabric groups or Multi-cluster Fabric groups, including under C(replaced), C(overridden), and C(staged).
           - No VLAN ID is inferred when the controller does not return one.
           - Not used when C(l3vni_wo_vlan=true).
           - Supported on standalone and parent VRF definitions; child fabrics
@@ -488,7 +488,7 @@ options:
                 elements: str
       child_fabric_config:
         description:
-          - Per-child-fabric override entries for MSD and MCFG parent fabrics.
+          - Per-child-fabric override entries for Fabric groups and Multi-cluster Fabric groups.
           - Each entry targets a child member fabric and may override
             editable Advanced toggles, IPv4/IPv6 TRM, MVPN route targets, and
             VRF Lite advertising, BGP, and NetFlow settings.
@@ -683,10 +683,10 @@ EXAMPLES = r"""
           VRF_NAME: VRF_CUSTOM
           VRF_ID: "50030"
 
-# MSD parent fabric - create VRF with child fabric-instance overrides
-- name: Create VRF on MSD parent with per-child fabric-instance overrides
+# Fabric group - create VRF with child fabric-instance overrides
+- name: Create VRF on a Fabric group with per-child fabric-instance overrides
   cisco.nd.nd_manage_vrfs:
-    fabric_name: msd_parent
+    fabric_name: fabric_group
     state: merged
     config:
       - vrf_name: VRF_BLUE
@@ -711,10 +711,10 @@ EXAMPLES = r"""
             bgp_password: abcdef12
             bgp_passwd_encrypt: 3des
 
-# MCFG parent fabric - create VRF with child fabric-instance overrides
-- name: Create VRF on MCFG parent with child fabric overrides
+# Multi-cluster Fabric group - create VRF with child fabric-instance overrides
+- name: Create VRF on a Multi-cluster Fabric group with child fabric overrides
   cisco.nd.nd_manage_vrfs:
-    fabric_name: mcfg_parent
+    fabric_name: multi_cluster_fabric_group
     state: merged
     config:
       - vrf_name: VRF_GREEN
@@ -879,20 +879,20 @@ workflow:
   type: str
 parent_fabric:
   description:
-    - Parent fabric result for MSD or MCFG parent workflows that execute child
+    - Parent fabric result for Fabric groups or Multi-cluster Fabric groups that execute child
       fabric tasks.
     - Contains the same state-machine and API trace fields as a standalone
       result.
   returned: when a parent workflow processes one or more child fabrics
   type: dict
   sample:
-    fabric_name: MSD_FABRIC
+    fabric_name: FABRIC_GROUP
     changed: true
     before: []
     after: []
 child_fabrics:
   description:
-    - Per-child-fabric results for MSD or MCFG parent workflows.
+    - Per-child-fabric results for Fabric groups or Multi-cluster Fabric groups.
     - Each entry contains the same state-machine and API trace fields as a
       standalone result, plus C(fabric_name).
   returned: when a parent workflow processes one or more child fabrics
