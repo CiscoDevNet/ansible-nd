@@ -113,7 +113,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     # Strategy is injected at construction time by nd_manage_vrfs.py / VrfFabricResolver.
     strategy: BaseVrfStrategy | None = None
     trace_hook: Callable[..., None] | None = None
-    enrich_mcfg_parent_from_children: bool = False
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     unfiltered_query_page_size: ClassVar[int] = 10000
@@ -654,8 +653,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 operation_type=OperationType.QUERY,
             )
             if isinstance(result, dict):
-                return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or []))
-            return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result))
+                return self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or [])
+            return self._normalize_query_vrf_items(result)
         except Exception:
             return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
 
@@ -690,7 +689,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 break
             offset += len(page_items)
 
-        return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(vrfs))
+        return self._normalize_query_vrf_items(vrfs)
 
     @staticmethod
     def _vrf_items_from_query_result(result: Any) -> list[dict[str, Any]]:
@@ -791,106 +790,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _is_mcfg_parent(self) -> bool:
         return bool(getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False))
-
-    def _child_vrf_records_for_mcfg_parent(self) -> dict[str, dict[str, Any]]:
-        """Read child VRFs so parent output can include fabric-instance fields omitted by top-down."""
-        if not self._is_mcfg_parent():
-            return {}
-        members = (self.strategy.fabric_data or {}).get("members") or []
-        if not members:
-            return {}
-
-        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_resolver import (
-            VrfFabricResolver,
-        )
-
-        fabric_fields = (
-            "advertiseHostRoute",
-            "advertiseDefaultRoute",
-            "configureStaticDefaultRoute",
-        )
-        records_by_name: dict[str, dict[str, Any]] = {}
-        conflicts_by_name: dict[str, set[str]] = {}
-        for member in members:
-            child_fabric_name = member.get("fabricName")
-            if not child_fabric_name:
-                continue
-            child_strategy = VrfFabricResolver.strategy_from_fabric_details(child_fabric_name, member)
-            endpoint = child_strategy.vrfs_get_cls()()
-            endpoint.fabric_name = child_strategy.fabric_name
-            child_strategy.configure_endpoint(endpoint)
-            try:
-                result = self._request(
-                    path=endpoint.path,
-                    verb=endpoint.verb,
-                    not_found_ok=True,
-                    operation_type=OperationType.QUERY,
-                )
-            except Exception:
-                continue
-
-            if isinstance(result, dict):
-                child_items = result.get("vrfs") or result.get("items") or []
-            else:
-                child_items = result or []
-            for item in child_items:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get("vrfName") or item.get("vrf_name")
-                if not name:
-                    continue
-                child_fabric_data = item.get("fabricData") or item.get("fabric_data") or {}
-                if not isinstance(child_fabric_data, dict):
-                    continue
-                aggregate = records_by_name.setdefault(name, {"fabricData": {}})
-                aggregate_fabric_data = aggregate["fabricData"]
-                conflicts = conflicts_by_name.setdefault(name, set())
-                for field in fabric_fields:
-                    if field in conflicts or field not in child_fabric_data:
-                        continue
-                    value = child_fabric_data[field]
-                    if field not in aggregate_fabric_data:
-                        aggregate_fabric_data[field] = value
-                    elif aggregate_fabric_data[field] != value:
-                        aggregate_fabric_data.pop(field, None)
-                        conflicts.add(field)
-        return records_by_name
-
-    def _enrich_mcfg_parent_vrfs_from_children(self, items: list[Any]) -> list[Any]:
-        if not self._is_mcfg_parent() or not items:
-            return items
-        if not getattr(self, "enrich_mcfg_parent_from_children", False):
-            return items
-
-        child_records = self._child_vrf_records_for_mcfg_parent()
-        if not child_records:
-            return items
-
-        fabric_fields = (
-            "advertiseHostRoute",
-            "advertiseDefaultRoute",
-            "configureStaticDefaultRoute",
-        )
-        enriched: list[Any] = []
-        for item in items:
-            if not isinstance(item, dict):
-                enriched.append(item)
-                continue
-            child_record = child_records.get(item.get("vrfName") or item.get("vrf_name"))
-            child_fabric_data = child_record.get("fabricData") if isinstance(child_record, dict) else None
-            if not isinstance(child_fabric_data, dict):
-                enriched.append(item)
-                continue
-
-            parent_item = dict(item)
-            parent_fabric_data = dict(parent_item.get("fabricData") or {})
-            for field in fabric_fields:
-                if field not in parent_fabric_data and field in child_fabric_data:
-                    parent_fabric_data[field] = child_fabric_data[field]
-            if parent_fabric_data:
-                parent_item["fabricData"] = parent_fabric_data
-            enriched.append(parent_item)
-        return enriched
 
     @staticmethod
     def _top_down_bool(value: Any) -> bool | None:
@@ -1065,7 +964,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         payload = model_instance.to_payload()
         payload["fabricName"] = self.strategy.fabric_name
         payload.setdefault("vrfType", self._default_vrf_type())
-        payload.pop("vlanId", None)
         payload.pop("tenantName", None)
 
         core_data = dict(payload.get("coreData") or {})

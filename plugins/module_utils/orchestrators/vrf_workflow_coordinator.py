@@ -64,6 +64,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ValidationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.utils import prune_to_spec
 
 
 class VrfWorkflowCoordinator:
@@ -330,16 +331,21 @@ class VrfWorkflowCoordinator:
             entry["l3vni_wo_vlan"] = mode
 
     @staticmethod
-    def _resolve_parent_route_map_fallback(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
-        """Apply the parent IPv4 route-map fallback only when it is authoritative."""
+    def _resolve_parent_vrf_intent(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
+        """Preserve existing identity and apply the authoritative parent route-map fallback."""
         for entry in entries:
-            if "v6_redist_direct_rmap" in entry:
-                continue
             identifier = (entry["vrf_name"], strategy.fabric_name)
             proposed = sm.proposed.get(identifier)
+            current = sm.existing.get(identifier)
+            if proposed is not None and proposed.vrf_id is None and current is not None and current.vrf_id is not None:
+                proposed.vrf_id = current.vrf_id
+            if state != "merged" and proposed is not None and proposed.vlan_id is None and current is not None and current.vlan_id is not None:
+                proposed.vlan_id = current.vlan_id
+            if "v6_redist_direct_rmap" in entry:
+                continue
             if proposed is None or proposed.vrf_type not in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
                 continue
-            if state == "merged" and sm.existing.get(identifier) is not None:
+            if state == "merged" and current is not None:
                 continue
             core = proposed.core_data if isinstance(proposed.core_data, dict) else {}
             proposed.core_data = {**core, "v6VrfRouteMap": core.get("vrfRouteMap", "FABRIC-RMAP-REDIST-SUBNET")}
@@ -353,6 +359,8 @@ class VrfWorkflowCoordinator:
             if proposed is None:
                 continue
             current = sm.existing.get(identifier)
+            if proposed.vrf_id is None and current is not None and current.vrf_id is not None:
+                proposed.vrf_id = current.vrf_id
             if proposed.vrf_type in (VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value):
                 sm.model_orchestrator.validate_external_vrf_write(
                     proposed,
@@ -363,6 +371,14 @@ class VrfWorkflowCoordinator:
                 continue
 
             self._resolve_l3vni_mode(proposed, current, entry, fabric_default)
+            if (
+                state != "merged"
+                and proposed.vlan_id is None
+                and current is not None
+                and current.vlan_id is not None
+                and (proposed.fabric_data or {}).get("l3VniWithoutVlan") is not True
+            ):
+                proposed.vlan_id = current.vlan_id
 
             core = proposed.core_data if isinstance(proposed.core_data, dict) else {}
             current_core = current.core_data if current is not None and isinstance(current.core_data, dict) else {}
@@ -411,6 +427,8 @@ class VrfWorkflowCoordinator:
                 model_data["vrfType"] = (current.vrf_type if current is not None else None) or NDVrfOrchestrator.default_vrf_type(strategy.fabric_data)
                 proposed = VrfDataModel.from_config(model_data, context={"state": state})
                 sm.proposed.replace(proposed)
+            if proposed.vrf_id is None and current is not None and current.vrf_id is not None:
+                proposed.vrf_id = current.vrf_id
             if proposed.vrf_type in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
                 cls._resolve_l3vni_mode(proposed, current, entry, fabric_default)
             effective = current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
@@ -571,6 +589,10 @@ class VrfWorkflowCoordinator:
         )
         self._trace("parent_state_machine_end", changed=parent_result.get("changed"), failed=parent_result.get("failed"))
 
+        if state == "gathered" and isinstance(parent_result.get("gathered"), list):
+            parent_spec = self.strategy.get_argument_spec()
+            parent_result["gathered"] = [prune_to_spec(item, parent_spec) for item in parent_result["gathered"]]
+
         if parent_result.get("changed") and not self.module.check_mode:
             for child_task in child_tasks_dict.values():
                 child_task.pop("preflight_state_machine", None)
@@ -716,13 +738,10 @@ class VrfWorkflowCoordinator:
 
             rest_send_params = dict(self.module.params)
             rest_send = self._new_rest_send(rest_send_params)
-            enrich_mcfg_parent_from_children = state == "gathered"
-
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=active_strategy,
                 trace_hook=self._trace,
-                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
@@ -736,7 +755,7 @@ class VrfWorkflowCoordinator:
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
             if state in ("merged", "replaced", "overridden", "staged"):
                 if active_strategy.is_parent:
-                    self._resolve_parent_route_map_fallback(sm, module_args.get("config") or [], "replaced" if state == "staged" else state, active_strategy)
+                    self._resolve_parent_vrf_intent(sm, module_args.get("config") or [], "replaced" if state == "staged" else state, active_strategy)
                 elif active_strategy.is_child:
                     self._validate_child_vrf_intent(sm, module_args.get("config") or [], "replaced" if state == "staged" else state, active_strategy)
                 elif not active_strategy.is_child:
@@ -860,14 +879,11 @@ class VrfWorkflowCoordinator:
             rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
-            state = module_args.get("state", "merged")
-            enrich_mcfg_parent_from_children = state == "gathered"
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=strategy,
                 results=results,
                 trace_hook=self._trace,
-                enrich_mcfg_parent_from_children=enrich_mcfg_parent_from_children,
             )
             return orchestrator, results
         finally:

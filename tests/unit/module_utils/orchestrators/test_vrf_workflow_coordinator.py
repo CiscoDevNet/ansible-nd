@@ -3751,8 +3751,8 @@ def test_vrf_scoped_query_result_shapes(response, expected):
     assert coordinator._query_current_vrfs_by_names({"state": "deleted"}, coordinator.strategy, ["BLUE"]) == expected
 
 
-@pytest.mark.parametrize("state,expected_enrichment", [("merged", False), ("gathered", True)])
-def test_vrf_orchestrator_creation_enriches_mcfg_only_for_gathered(state, expected_enrichment, monkeypatch):
+@pytest.mark.parametrize("state", ["merged", "gathered"])
+def test_vrf_orchestrator_creation_keeps_parent_queries_at_parent_scope(state, monkeypatch):
     from types import SimpleNamespace
 
     coordinator = VrfWorkflowCoordinator(_Module({"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}), _StandaloneStrategy())
@@ -3760,7 +3760,8 @@ def test_vrf_orchestrator_creation_enriches_mcfg_only_for_gathered(state, expect
 
     class Orchestrator:
         def __init__(self, **kwargs):
-            calls.append(kwargs["enrich_mcfg_parent_from_children"])
+            assert "enrich_mcfg_parent_from_children" not in kwargs
+            calls.append(kwargs["strategy"])
 
         @staticmethod
         def prepare_config_data(config):
@@ -3774,7 +3775,7 @@ def test_vrf_orchestrator_creation_enriches_mcfg_only_for_gathered(state, expect
     sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": []})
     assert sm is snapshot
     coordinator._restore_state_machine_params(original_config, original_state)
-    assert calls == [expected_enrichment, expected_enrichment]
+    assert calls == [coordinator.strategy, coordinator.strategy]
     assert coordinator.module.params == {"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}
 
 

@@ -91,7 +91,10 @@ options:
         type: str
         required: true
       vrf_id:
-        description: L3 VNI (VRF segment ID), 1-16777214.
+        description:
+          - L3 VNI (VRF segment ID), 1-16777214.
+          - When omitted for an existing VRF, preserves its ID in every write state.
+          - When omitted on creation, ND allocates the ID.
         type: int
       vrf_template_name:
         description:
@@ -135,6 +138,9 @@ options:
       vlan_id:
         description:
           - VLAN ID for the VRF SVI (2-4094).
+          - Omission preserves the observed existing VLAN ID on standalone VRFs and MSD or MCFG parent definitions,
+            including under C(replaced), C(overridden), and C(staged).
+          - No VLAN ID is inferred when the controller does not return one.
           - Not used when C(l3vni_wo_vlan=true).
           - Supported on standalone and parent VRF definitions; child fabrics
             inherit the parent value and cannot override it through

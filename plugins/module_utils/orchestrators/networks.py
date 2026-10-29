@@ -1025,7 +1025,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         payload["fabricName"] = self.strategy.fabric_name
         payload.setdefault("networkType", self._default_network_type())
         payload.setdefault("displayName", model_instance.network_name)
-        payload.pop("vlanId", None)
         network_mode = payload.pop("layer", None)
         if network_mode:
             payload["networkMode"] = network_mode

@@ -672,7 +672,7 @@ class NetworkWorkflowCoordinator:
         """
         # Summary
 
-        Resolve operational-only definitions and sparse merged layers from cached inventory in one pass.
+        Resolve operational-only definitions, existing identity, and sparse merged layers from cached inventory in one pass.
 
         ## Raises
 
@@ -687,23 +687,27 @@ class NetworkWorkflowCoordinator:
         if state in ("gathered", "deleted"):
             return
         for entry in config:
+            name = entry["network_name"]
+            current = sm.existing.get(name)
             if not NDNetworkOrchestrator.has_network_definition_intent(entry):
-                name = entry["network_name"]
-                current = sm.existing.get(name)
                 if current is None:
                     raise NDStateMachineError(f"Network '{name}' must already exist for an operational-only task.")
                 if getattr(current, "is_unsupported_policy", False):
                     raise NDStateMachineError(current.describe_unsupported_policy() + "; this module cannot modify it.")
                 sm.proposed.replace(current.model_copy(deep=True))
                 continue
+            proposed = sm.proposed.get(name)
+            if state in ("replaced", "overridden", "staged") and not strategy.is_child and current is not None:
+                if not strategy.is_multicluster and proposed.network_id is None and current.network_id is not None:
+                    proposed.network_id = current.network_id
+                if proposed.vlan_id is None and current.vlan_id is not None:
+                    proposed.vlan_id = current.vlan_id
             if state != "merged" or strategy.is_child or not NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
                 continue
-            current = sm.existing.get(entry["network_name"])
             context = {"state": "merged", "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
             if current is not None:
                 context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
             validated = strategy.config_model_cls.from_config(entry, context=context)
-            proposed = sm.proposed.get(entry["network_name"])
             if validated.layer is not None:
                 proposed.layer = validated.layer
                 if current is None and validated.layer == NetworkLayer.LAYER2.value and proposed.vrf_name is None:

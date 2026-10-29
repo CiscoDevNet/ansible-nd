@@ -269,7 +269,7 @@ def test_parent_route_map_fallback_uses_ipv4_for_new_vrf():
     proposed = VrfDataModel.from_config(_transform(config, is_parent=True))
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel), proposed=NDConfigCollection(VrfDataModel, [proposed]))
     strategy = SimpleNamespace(fabric_name="AK-VXLAN")
-    VrfWorkflowCoordinator._resolve_parent_route_map_fallback(sm, [config], "merged", strategy)
+    VrfWorkflowCoordinator._resolve_parent_vrf_intent(sm, [config], "merged", strategy)
     payload = proposed.to_payload()
     assert payload["coreData"]["vrfRouteMap"] == "CUSTOM-V4"
     assert payload["coreData"]["v6VrfRouteMap"] == "CUSTOM-V4"
@@ -279,7 +279,7 @@ def test_mcfg_parent_route_map_fallback_uses_ipv4_for_new_vrf():
     config = VrfParentConfigModel.from_config({"vrf_name": "BLUE", "redist_direct_rmap": "CUSTOM-V4"}).to_config(exclude_unset=True)
     proposed = VrfDataModel.from_config(_transform(config, is_parent=True, is_multicluster=True, fabric_data={"managementType": "vxlan"}))
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel), proposed=NDConfigCollection(VrfDataModel, [proposed]))
-    VrfWorkflowCoordinator._resolve_parent_route_map_fallback(sm, [config], "merged", SimpleNamespace(fabric_name="AK-VXLAN"))
+    VrfWorkflowCoordinator._resolve_parent_vrf_intent(sm, [config], "merged", SimpleNamespace(fabric_name="AK-VXLAN"))
     assert proposed.to_payload()["coreData"]["v6VrfRouteMap"] == "CUSTOM-V4"
 
 
@@ -291,7 +291,7 @@ def test_parent_route_map_fallback_respects_sparse_and_authoritative_states(stat
         {"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vrfType": "vxlanIbgp", "coreData": {"vrfRouteMap": "OLD-V4", "v6VrfRouteMap": "OLD-V6"}}
     )
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel, [current]), proposed=NDConfigCollection(VrfDataModel, [proposed]))
-    VrfWorkflowCoordinator._resolve_parent_route_map_fallback(sm, [config], state, SimpleNamespace(fabric_name="AK-VXLAN"))
+    VrfWorkflowCoordinator._resolve_parent_vrf_intent(sm, [config], state, SimpleNamespace(fabric_name="AK-VXLAN"))
     effective = current.model_copy(deep=True).merge(proposed) if state == "merged" else proposed
     assert effective.to_payload()["coreData"]["v6VrfRouteMap"] == expected
 
@@ -2471,121 +2471,6 @@ def test_vrfs_00088_mcfg_parent_infers_l3vni_without_vlan_from_top_down_empty_vl
     assert normalized["fabricData"]["configureStaticDefaultRoute"] is True
 
 
-def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs():
-    """
-    MCFG parent template-config records may omit fabric-instance booleans; child
-    fabric records remain the source of truth for those fields.
-    """
-    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
-    object.__setattr__(
-        orchestrator,
-        "strategy",
-        _McfgTopDownStrategy(
-            {
-                "members": [
-                    {
-                        "fabricName": "nac-msd-fabric1",
-                        "fabricState": "member",
-                        "clusterName": "ND42-REL",
-                    }
-                ]
-            }
-        ),
-    )
-    object.__setattr__(orchestrator, "enrich_mcfg_parent_from_children", True)
-    requested_paths = []
-
-    def request(**kwargs):
-        requested_paths.append(kwargs["path"])
-        return {
-            "vrfs": [
-                {
-                    "vrfName": "ansible-nd-vrf-mcfg-a",
-                    "fabricData": {
-                        "advertiseHostRoute": True,
-                        "advertiseDefaultRoute": False,
-                        "configureStaticDefaultRoute": False,
-                    },
-                }
-            ]
-        }
-
-    object.__setattr__(orchestrator, "_request", request)
-
-    enriched = orchestrator._enrich_mcfg_parent_vrfs_from_children(
-        [
-            {
-                "fabricName": "MCFG_FAB",
-                "vrfName": "ansible-nd-vrf-mcfg-a",
-                "fabricData": {
-                    "l3VniWithoutVlan": False,
-                },
-            }
-        ]
-    )
-
-    assert requested_paths == ["/api/v1/manage/fabrics/nac-msd-fabric1/vrfs?clusterName=ND42-REL"]
-    assert enriched[0]["fabricData"] == {
-        "l3VniWithoutVlan": False,
-        "advertiseHostRoute": True,
-        "advertiseDefaultRoute": False,
-        "configureStaticDefaultRoute": False,
-    }
-
-
-def test_vrfs_00089a_mcfg_parent_does_not_enrich_child_fields_unless_requested():
-    """
-    MCFG child-read enrichment is a gathered-output concern. Write-state query
-    normalization must not pull child-only fields into parent diff input.
-    """
-    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
-    object.__setattr__(
-        orchestrator,
-        "strategy",
-        _McfgTopDownStrategy(
-            {
-                "members": [
-                    {
-                        "fabricName": "nac-msd-fabric1",
-                        "fabricState": "member",
-                        "clusterName": "ND42-REL",
-                    }
-                ]
-            }
-        ),
-    )
-    object.__setattr__(orchestrator, "enrich_mcfg_parent_from_children", False)
-    requested_paths = []
-
-    def request(**kwargs):
-        requested_paths.append(kwargs["path"])
-        return {
-            "vrfs": [
-                {
-                    "vrfName": "ansible-nd-vrf-mcfg-a",
-                    "fabricData": {
-                        "advertiseHostRoute": True,
-                    },
-                }
-            ]
-        }
-
-    object.__setattr__(orchestrator, "_request", request)
-
-    item = {
-        "fabricName": "MCFG_FAB",
-        "vrfName": "ansible-nd-vrf-mcfg-a",
-        "fabricData": {
-            "l3VniWithoutVlan": False,
-        },
-    }
-
-    enriched = orchestrator._enrich_mcfg_parent_vrfs_from_children([item])
-
-    assert requested_paths == []
-    assert enriched == [item]
-
-
 def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():
     """
     # Summary
@@ -2816,6 +2701,7 @@ def test_vrfs_00096_mcfg_parent_bulk_create_uses_onemanage_schema_payload():
                 },
                 "fabricData": {},
                 "vrfId": 50000,
+                "vlanId": 3123,
             }
         ]
     }

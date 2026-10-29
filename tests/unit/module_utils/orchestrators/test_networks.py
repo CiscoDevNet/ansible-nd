@@ -2514,6 +2514,171 @@ def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=
     return coordinator, sm, parsed, orchestrator
 
 
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
+@pytest.mark.parametrize("layer", ["layer2", "layer3"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_omitted_existing_network_id_converges_and_retains_real_definition_changes(state, strategy_cls, network_type, layer, check_mode):
+    state = crud_module_args({"state": state})["state"]
+    entry = {"network_name": "N", "layer": layer, "display_name": "OLD", "deploy": False}
+    if layer == "layer3":
+        entry.update(vrf_name="BLUE", gateway_ipv4_address="192.0.2.1/24")
+    baseline = _layer_validation_state_machine([entry], [], False, strategy_cls, network_type, state)[1]
+    readback = baseline.proposed.get("N").to_payload()
+    readback["networkMode"] = readback.pop("layer", layer)
+    readback["networkId"] = 30000
+    for update in (False, True):
+        if update:
+            entry["display_name"] = "NEW"
+        for repeat in (False, True):
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [readback], check_mode, strategy_cls, network_type, state)
+            original_intent = deepcopy(parsed)
+            coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+            if state == "merged":
+                assert "network_id" not in sm.proposed.get("N").model_fields_set
+            else:
+                assert sm.proposed.get("N").network_id == 30000
+            sm.manage_state()
+            changed = update and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert sm.output.format()["after"][0]["network_id"] == 30000
+            assert sm.before.get("N").network_id == 30000
+            assert parsed == original_intent
+            assert orchestrator.query_count == 1
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            if changed:
+                sent = sm.sent.get("N")
+                assert sent.network_id == 30000
+                payload = orchestrator._create_or_update_payload(sent)
+                assert payload["networkId"] == 30000
+                assert payload["displayName"] == "NEW"
+                readback["displayName"] = "NEW"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("requested_vlan", [None, 2302])
+def test_network_id_preservation_keeps_vlan_omission_and_explicit_update_semantics(state, strategy_cls, network_type, check_mode, requested_vlan):
+    state = crud_module_args({"state": state})["state"]
+    entry = {"network_name": "N", "layer": "layer2", "deploy": False}
+    baseline = _layer_validation_state_machine([entry], [], False, strategy_cls, network_type, state)[1]
+    readback = baseline.proposed.get("N").to_payload()
+    readback.update(networkId=30000, vlanId=2301, networkMode=readback.pop("layer", "layer2"))
+    if requested_vlan is not None:
+        entry["vlan_id"] = requested_vlan
+    expected_vlan = 2301 if requested_vlan is None else requested_vlan
+    for repeat in (False, True):
+        coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [readback], check_mode, strategy_cls, network_type, state)
+        coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+        sm.manage_state()
+        changed = expected_vlan != 2301 and not repeat
+        assert sm.output.format()["changed"] is changed
+        assert sm.existing.get("N").network_id == 30000
+        assert sm.existing.get("N").vlan_id == expected_vlan
+        assert orchestrator.query_count == 1
+        assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+        if changed:
+            payload = orchestrator._create_or_update_payload(sm.sent.get("N"))
+            assert payload["networkId"] == 30000
+            assert payload.get("vlanId") == expected_vlan
+        readback.pop("vlanId", None)
+        if expected_vlan is not None:
+            readback["vlanId"] = expected_vlan
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+def test_network_id_resolution_does_not_invent_new_ids_or_override_explicit_ids(state, strategy_cls):
+    state = crud_module_args({"state": state})["state"]
+    entry = {"network_name": "N", "layer": "layer2", "deploy": False}
+    for exists, current_id, requested_id in ((False, None, None), (True, None, None), (True, 30000, 30001), (False, None, 30001)):
+        readback = [{"networkName": "N", "networkType": "vxlanIbgp", "networkMode": "layer2", "networkId": current_id}] if exists else []
+        config = {**entry, **({"network_id": requested_id} if requested_id is not None else {})}
+        coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([config], readback, True, strategy_cls, state=state)
+        coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+        assert sm.proposed.get("N").network_id == requested_id
+        assert orchestrator.query_count == 1
+        assert orchestrator.written_payloads == []
+
+
+@pytest.mark.parametrize("scope", ["mcfg", "msd_child", "mcfg_child"])
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+def test_network_id_resolution_leaves_deferred_and_child_scopes_unchanged(scope, state):
+    strategy = (
+        MulticlusterParentNetworkStrategy(fabric_name="fab1")
+        if scope == "mcfg"
+        else ChildNetworkStrategy(fabric_name="fab1", cluster_name="C1" if scope == "mcfg_child" else None)
+    )
+    proposed = SimpleNamespace(network_id=None, vlan_id=None)
+    snapshot = SimpleNamespace(existing={"N": SimpleNamespace(network_id=30000, vlan_id=2301)}, proposed={"N": proposed})
+    NetworkWorkflowCoordinator._resolve_proposed_networks(snapshot, [{"network_name": "N", "layer": "layer2"}], state, strategy)
+    assert proposed.network_id is None
+    assert proposed.vlan_id == (2301 if scope == "mcfg" else None)
+
+
+@pytest.mark.parametrize("state", ["gathered", "deleted"])
+def test_network_id_resolution_does_not_change_read_or_delete_selectors(state):
+    proposed = SimpleNamespace(network_id=None)
+    snapshot = SimpleNamespace(existing={"N": SimpleNamespace(network_id=30000)}, proposed={"N": proposed})
+    NetworkWorkflowCoordinator._resolve_proposed_networks(snapshot, [{"network_name": "N"}], state, StandaloneNetworkStrategy(fabric_name="fab1"))
+    assert proposed.network_id is None
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize(
+    "strategy_cls,network_type",
+    [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan"), (MulticlusterParentNetworkStrategy, "vxlan")],
+)
+@pytest.mark.parametrize("layer", ["layer2", "layer3"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_omitted_network_vlan_survives_comparison_and_unrelated_update(state, strategy_cls, network_type, layer, check_mode):
+    state = crud_module_args({"state": state})["state"]
+    entry = {"network_name": "N", "network_id": 30000, "layer": layer, "display_name": "OLD", "deploy": False}
+    if layer == "layer3":
+        entry.update(vrf_name="BLUE", gateway_ipv4_address="192.0.2.1/24")
+    baseline = _layer_validation_state_machine([entry], [], False, strategy_cls, network_type, state)[1]
+    readback = baseline.proposed.get("N").to_payload()
+    readback.update(networkMode=readback.pop("layer", layer), vlanId=2301)
+    for update in (False, True):
+        if update:
+            entry["display_name"] = "NEW"
+        for repeat in (False, True):
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [readback], check_mode, strategy_cls, network_type, state)
+            original_intent = deepcopy(parsed)
+            coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+            if state == "merged":
+                assert "vlan_id" not in sm.proposed.get("N").model_fields_set
+            sm.manage_state()
+            changed = update and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert sm.output.format()["after"][0]["vlan_id"] == 2301
+            assert sm.before.get("N").vlan_id == 2301
+            assert parsed == original_intent
+            assert orchestrator.query_count == 1
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            if changed:
+                payload = orchestrator._create_or_update_payload(sm.sent.get("N"))
+                assert payload["vlanId"] == 2301
+                assert payload["displayName"] == "NEW"
+                readback["displayName"] = "NEW"
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("exists", [False, True])
+def test_network_vlan_retention_does_not_invent_a_missing_vlan(state, strategy_cls, exists):
+    state = crud_module_args({"state": state})["state"]
+    network_type = "vxlan" if strategy_cls is not StandaloneNetworkStrategy else "vxlanIbgp"
+    config = [{"network_name": "N", "network_id": 30000, "layer": "layer2", "deploy": False}]
+    readback = [{"networkName": "N", "networkType": network_type, "networkMode": "layer2", "networkId": 30000}] if exists else []
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(config, readback, True, strategy_cls, network_type, state)
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    assert sm.proposed.get("N").vlan_id is None
+    assert "vlanId" not in orchestrator._create_or_update_payload(sm.proposed.get("N"))
+    assert orchestrator.query_count == 1
+
+
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
 @pytest.mark.parametrize("layer", ["layer2", "layer3"])
 @pytest.mark.parametrize("check_mode", [False, True])

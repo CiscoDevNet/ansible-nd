@@ -229,10 +229,16 @@ options:
             description: Additional free-form CLI configuration for this attachment.
             type: str
       network_id:
-        description: Network segment ID.
+        description:
+          - Network segment ID.
+          - An omitted ID preserves the existing standalone or MSD Network identity, including in C(replaced), C(overridden), and C(staged).
         type: int
       vlan_id:
-        description: VLAN ID.
+        description:
+          - VLAN ID.
+          - Omission preserves the observed existing VLAN ID on standalone Networks and MSD or MCFG parent definitions,
+            including under C(replaced), C(overridden), and C(staged).
+          - No VLAN ID is inferred when the controller does not return one. Attachment VLAN IDs are managed separately.
         type: int
       vlan_network_type:
         description:
