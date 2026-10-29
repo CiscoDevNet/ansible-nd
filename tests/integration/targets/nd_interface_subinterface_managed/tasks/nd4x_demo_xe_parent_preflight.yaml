@@ -1,0 +1,153 @@
+---
+# Fail closed before the XE harness cleans up or changes its parent port. ND
+# reports port-channel membership in operData and fabric links in the separate
+# links endpoint, so both sources must be checked.
+- name: "XE PARENT PREFLIGHT: Require explicit opt-in for the dedicated test port"
+  ansible.builtin.assert:
+    that:
+      - nd4x_subinterface_managed_xe_tests_enabled | bool
+      - test_xe_switch_ip | length > 0
+      - xe_parent | length > 0
+    fail_msg: >-
+      The IOS-XE harness changes its configured parent port. Set
+      nd_subinterface_managed_xe_tests_enabled=true only when nd_test_xe_parent_interface identifies
+      the dedicated test host port on nd_test_xe_switch_ip.
+
+- name: "XE PARENT PREFLIGHT: Read the configured switch interface inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+    method: get
+  register: nd4x_xe_parent_interfaces_result
+  changed_when: false
+
+- name: "XE PARENT PREFLIGHT: Read the fabric links"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/links?fabricName={{ test_xe_fabric_name }}"
+    method: get
+  register: nd4x_xe_parent_links_result
+  changed_when: false
+
+- name: "XE PARENT PREFLIGHT: Read the switch running configuration"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/diff"
+    method: get
+  register: nd4x_xe_parent_diff_result
+  changed_when: false
+
+- name: "XE PARENT PREFLIGHT: Normalize the inventory snapshots"
+  ansible.builtin.set_fact:
+    nd4x_xe_parent_interfaces: >-
+      {{ nd4x_xe_parent_interfaces_result.current.interfaces
+         | default(nd4x_xe_parent_interfaces_result.jsondata.interfaces | default([], true), true) }}
+    nd4x_xe_parent_links: >-
+      {{ nd4x_xe_parent_links_result.current.links
+         | default(nd4x_xe_parent_links_result.jsondata.links | default([], true), true) }}
+    nd4x_xe_parent_diff_configs: >-
+      {{ nd4x_xe_parent_diff_result.current.diffConfigs
+         | default(nd4x_xe_parent_diff_result.jsondata.diffConfigs | default([], true), true) }}
+    nd4x_xe_reserved_subinterface_names: >-
+      {{ nd4x_xe_reserved_subinterface_ids | map('string')
+         | map('regex_replace', '^', xe_parent ~ '.') | list }}
+
+- name: "XE PARENT PREFLIGHT: Require complete interface, link, and diff snapshots"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_parent_interfaces is sequence
+      - nd4x_xe_parent_interfaces is not string
+      - nd4x_xe_parent_interfaces | selectattr('interfaceName', 'defined') | list | length == nd4x_xe_parent_interfaces | length
+      - nd4x_xe_parent_interfaces | selectattr('interfaceType', 'defined') | list | length == nd4x_xe_parent_interfaces | length
+      - nd4x_xe_parent_interfaces | length < 500
+      - nd4x_xe_parent_links is sequence
+      - nd4x_xe_parent_links is not string
+      - nd4x_xe_parent_links | selectattr('srcSwitchId', 'defined') | list | length == nd4x_xe_parent_links | length
+      - nd4x_xe_parent_links | selectattr('srcInterfaceName', 'defined') | list | length == nd4x_xe_parent_links | length
+      - nd4x_xe_parent_links | selectattr('dstSwitchId', 'defined') | list | length == nd4x_xe_parent_links | length
+      - nd4x_xe_parent_links | selectattr('dstInterfaceName', 'defined') | list | length == nd4x_xe_parent_links | length
+      - nd4x_xe_parent_diff_configs is sequence
+      - nd4x_xe_parent_diff_configs is not string
+      - nd4x_xe_parent_diff_configs | selectattr('runningConfig', 'defined') | list | length == nd4x_xe_parent_diff_configs | length
+    fail_msg: >-
+      Cannot safely run the IOS-XE harness: ND did not return complete interface, fabric-link, and
+      running-configuration inventories for {{ test_xe_fabric_name }} / {{ xe_parent }}.
+
+- name: "XE PARENT PREFLIGHT: Resolve and validate the documented fabric-default parent"
+  vars:
+    matching_parents: >-
+      {{ nd4x_xe_parent_interfaces
+         | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+         | list }}
+    parent_record: "{{ matching_parents | first | default({}) }}"
+    parent_policy: >-
+      {{ parent_record.configData.networkOS.policy | default({}, true) }}
+    parent_policy_normalized: >-
+      {{ parent_policy | dict2items
+         | rejectattr('key', 'equalto', 'description')
+         | list | items2dict }}
+    expected_default_policy:
+      policyType: iosXeTrunkHost
+      adminState: true
+      allowedVlans: none
+      bpduGuard: default
+      mtu: 1500
+      speed: auto
+  ansible.builtin.assert:
+    that:
+      - matching_parents | length == 1
+      - parent_record.interfaceType == 'ethernet'
+      - parent_record.operData.mode | default('') == 'trunk'
+      - parent_record.operData.portChannelId is defined
+      - parent_record.operData.portChannelId is number
+      - parent_record.operData.portChannelId | int < 1
+      - parent_policy_normalized == expected_default_policy
+      - parent_policy.description | default('') == ''
+    fail_msg: >-
+      Refusing to change {{ xe_parent }} on {{ test_xe_switch_ip }}. It must be a plain Ethernet host port
+      in the documented fabric-default IOS-XE trunk-host state (admin up, default policy values), and ND
+      must confirm it is not a port-channel member. Found {{ matching_parents | length }} matching parent records.
+
+- name: "XE PARENT PREFLIGHT: Require that the parent is not a fabric-link endpoint"
+  vars:
+    parent_links: >-
+      {{ nd4x_xe_parent_links
+         | selectattr('srcSwitchId', 'equalto', nd4x_xe_switch_id)
+         | selectattr('srcInterfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+         | list
+         + nd4x_xe_parent_links
+         | selectattr('dstSwitchId', 'equalto', nd4x_xe_switch_id)
+         | selectattr('dstInterfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - parent_links | length == 0
+    fail_msg: >-
+      Refusing to change {{ xe_parent }} on {{ test_xe_switch_ip }} because it is an endpoint of a fabric link.
+
+- name: "XE PARENT PREFLIGHT: Require all reserved subinterface IDs to be unused"
+  vars:
+    inventory_names: >-
+      {{ nd4x_xe_parent_interfaces
+         | map(attribute='interfaceName')
+         | map('lower')
+         | list }}
+    reserved_names_normalized: "{{ nd4x_xe_reserved_subinterface_names | map('lower') | list }}"
+  ansible.builtin.assert:
+    that:
+      - inventory_names | intersect(reserved_names_normalized) | length == 0
+    fail_msg: >-
+      Refusing to use the IOS-XE harness subinterface IDs {{ nd4x_xe_reserved_subinterface_names | join(', ') }}:
+      at least one ID already exists in ND's interface inventory.
+
+- name: "XE PARENT PREFLIGHT: Require no reserved subinterface in running configuration"
+  vars:
+    running_config: >-
+      {{ nd4x_xe_parent_diff_configs
+         | map(attribute='runningConfig')
+         | join('\n') }}
+  ansible.builtin.assert:
+    that:
+      - running_config is not search('(?im)^\\s*interface\\s+' ~ (item | regex_escape) ~ '\\s*$')
+    fail_msg: >-
+      Refusing to use reserved subinterface {{ item }} because it already appears in the switch running configuration.
+  loop: "{{ nd4x_xe_reserved_subinterface_names }}"
+  loop_control:
+    label: "{{ item }}"

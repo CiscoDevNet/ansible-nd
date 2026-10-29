@@ -1,0 +1,411 @@
+---
+- name: "XE HARNESS SETUP: Reset parent-port teardown guard"
+  ansible.builtin.set_fact:
+    nd4x_xe_setup_started: false
+
+- name: "XE HARNESS SETUP: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: nd4x_xe_switch_inventory
+
+- name: "XE HARNESS SETUP: Resolve the Catalyst switch ID"
+  vars:
+    matches: >-
+      {{
+        nd4x_xe_switch_inventory.current.switches
+        | default(nd4x_xe_switch_inventory.jsondata.switches | default([]))
+        | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip)
+        | list
+      }}
+  ansible.builtin.set_fact:
+    nd4x_xe_switch_matches: "{{ matches }}"
+
+- name: "XE HARNESS SETUP: Require exactly one Catalyst switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_switch_matches | length == 1
+    fail_msg: >-
+      Expected exactly one switch with fabricManagementIp {{ test_xe_switch_ip }} in fabric
+      {{ test_xe_fabric_name }}, but found {{ nd4x_xe_switch_matches | length }}.
+
+- name: "XE HARNESS SETUP: Record current Catalyst switch ID"
+  ansible.builtin.set_fact:
+    nd4x_xe_switch_id: "{{ nd4x_xe_switch_matches[0].switchId }}"
+
+- name: "XE HARNESS SETUP: Initialize IOS-XE fabric snapshots"
+  ansible.builtin.set_fact:
+    nd4x_xe_fabric_check_mode_queries: []
+
+- name: "XE HARNESS SETUP: Build a full interface snapshot for every Catalyst-fabric switch"
+  ansible.builtin.set_fact:
+    nd4x_xe_fabric_check_mode_queries: >-
+      {{
+        nd4x_xe_fabric_check_mode_queries
+        + [
+            {
+              'name': 'Snapshot managed interfaces on switch '
+                ~ (item.fabricManagementIp | default(item.switchId)),
+              'path': '/api/v1/manage/fabrics/'
+                ~ test_xe_fabric_name
+                ~ '/switches/'
+                ~ item.switchId
+                ~ '/interfaces?max=500&offset=0&sort=interfaceName:asc',
+              'expected_status': 200,
+              'unordered_paths': ['/interfaces'],
+              'ignore_keys': ['operData']
+            }
+          ]
+      }}
+  loop: "{{ nd4x_xe_switch_inventory.current.switches | default(nd4x_xe_switch_inventory.jsondata.switches | default([])) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default(item.switchId) }}"
+
+- name: "XE HARNESS SETUP: Guard the parent port and reserved subinterface IDs"
+  ansible.builtin.include_tasks: nd4x_demo_xe_parent_preflight.yaml
+
+- name: "XE HARNESS SETUP: Mark the guarded setup as started"
+  ansible.builtin.set_fact:
+    nd4x_xe_setup_started: true
+
+- name: "XE HARNESS SETUP: Remove only the reserved harness subinterfaces"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd4x_output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config: "{{ nd4x_subif_xe_cleanup }}"
+    config_actions:
+      deploy: true
+    state: deleted
+
+- name: "XE HARNESS SETUP: Convert the parent port to an IOS-XE routed host and deploy it"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd4x_output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_parent_routed }}"
+    config_actions:
+      deploy: true
+    state: merged
+
+- name: "XE HARNESS SETUP: Wait until ND discovers the parent as routed"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+    method: get
+  register: nd4x_xe_parent_discovery
+  until: >-
+    nd4x_xe_parent_discovery.current.interfaces | default([])
+    | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+    | selectattr('operData.mode', 'defined')
+    | selectattr('operData.mode', 'equalto', 'routed')
+    | list | length == 1
+  retries: 18
+  delay: 10
+
+- name: "XE NEGATIVE HARNESS: Reject NX-OS-only MTU on an IOS-XE subinterface"
+  cisco.nd.nd_interface_subinterface_managed: &nd4x_xe_bad_mtu
+    output_level: "{{ nd4x_output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ nd4x_subif_xe_203_bad_mtu }}"
+    state: merged
+  check_mode: true
+  register: nd4x_xe_bad_mtu
+  ignore_errors: true
+
+- name: "XE NEGATIVE HARNESS: Reject NX-OS-only MTU in normal mode"
+  cisco.nd.nd_interface_subinterface_managed: *nd4x_xe_bad_mtu
+  register: nd4x_xe_bad_mtu_normal
+  ignore_errors: true
+
+- name: "XE NEGATIVE HARNESS: Verify check-mode and normal-mode refusals name the field"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_bad_mtu is failed
+      - "'mtu' in nd4x_xe_bad_mtu.msg"
+      - nd4x_xe_bad_mtu_normal is failed
+      - "'mtu' in nd4x_xe_bad_mtu_normal.msg"
+
+- name: "XE MERGED HARNESS: Create explicit and inferred IOS-XE subinterface policies"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_interface_subinterface_managed
+    state: merged
+    common_args:
+      output_level: "{{ nd4x_output_level }}"
+      fabric_name: "{{ test_xe_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+    config:
+      - "{{ nd4x_subif_xe_200 }}"
+      - "{{ nd4x_subif_xe_201_shut }}"
+      - "{{ nd4x_subif_xe_204_inferred }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+    nd_queries:
+      - name: Validate the IOS-XE policies
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.policyType"
+            equals: iosXeSubinterface
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
+            equals: 10.99.200.1
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6"
+            equals: "2001:db8:200::1"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6Prefix"
+            equals: 64
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.policyType"
+            equals: iosXeSubinterfaceShutNoshut
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.adminState"
+            equals: false
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.204')].configData.networkOS.policy.policyType"
+            equals: iosXeSubinterface
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.204')].configData.networkOS.policy.ip"
+            equals: 10.99.204.1
+  register: nd4x_xe_merged
+
+- name: "XE MERGED HARNESS: Verify explicit and inferred returned policy types"
+  vars:
+    subif200: >-
+      {{
+        nd4x_xe_merged.first_run_result.after
+        | selectattr('interface_name', 'equalto', xe_parent ~ '.200')
+        | first
+      }}
+    subif201: >-
+      {{
+        nd4x_xe_merged.first_run_result.after
+        | selectattr('interface_name', 'equalto', xe_parent ~ '.201')
+        | first
+      }}
+    subif204: >-
+      {{
+        nd4x_xe_merged.first_run_result.after
+        | selectattr('interface_name', 'equalto', xe_parent ~ '.204')
+        | first
+      }}
+  ansible.builtin.assert:
+    that:
+      - subif200.config_data.network_os.network_os_type == 'ios-xe'
+      - subif200.config_data.network_os.policy.policy_type == 'iosXeSubinterface'
+      - subif200.config_data.network_os.policy.ip == '10.99.200.1'
+      - subif200.config_data.network_os.policy.ipv6 == '2001:db8:200::1'
+      - subif200.config_data.network_os.policy.ipv6_prefix == 64
+      - subif201.config_data.network_os.policy.policy_type == 'iosXeSubinterfaceShutNoshut'
+      - subif201.config_data.network_os.policy.admin_state == false
+      - subif204.config_data.network_os.network_os_type == 'ios-xe'
+      - subif204.config_data.network_os.policy.policy_type == 'iosXeSubinterface'
+      - subif204.config_data.network_os.policy.ip == '10.99.204.1'
+      - nd4x_xe_merged.second_run_result.changed == false
+
+- name: "XE MERGED HARNESS: Verify a converged check-mode reapply predicts no change"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_interface_subinterface_managed
+    state: merged
+    common_args:
+      output_level: "{{ nd4x_output_level }}"
+      fabric_name: "{{ test_xe_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+    config:
+      - "{{ nd4x_subif_xe_200 }}"
+      - "{{ nd4x_subif_xe_201_shut }}"
+      - "{{ nd4x_subif_xe_204_inferred }}"
+    expected:
+      check_mode:
+        changed: false
+        failed: false
+      apply:
+        changed: false
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+  register: nd4x_xe_merged_noop
+
+- name: "XE MERGED HARNESS: Verify the converged predictive no-op"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_merged_noop.first_run_result.changed == false
+      - nd4x_xe_merged_noop.second_run_result.changed == false
+
+- name: "XE MERGED HARNESS: Update the IOS-XE subinterface"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_interface_subinterface_managed
+    state: merged
+    common_args:
+      output_level: "{{ nd4x_output_level }}"
+      fabric_name: "{{ test_xe_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+    config:
+      - "{{ nd4x_subif_xe_200_updated }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+    nd_queries:
+      - name: Validate the updated IOS-XE address
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.description"
+            equals: "ND4X harness updated IOS-XE subinterface 200"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
+            equals: 10.99.200.2
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6"
+            equals: "2001:db8:200::1"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6Prefix"
+            equals: 64
+  register: nd4x_xe_updated
+
+- name: "XE MERGED HARNESS: Verify updated IPv4 configuration"
+  vars:
+    subif200: >-
+      {{
+        nd4x_xe_updated.first_run_result.after
+        | selectattr('interface_name', 'equalto', xe_parent ~ '.200')
+        | first
+      }}
+  ansible.builtin.assert:
+    that:
+      - subif200.config_data.network_os.policy.ip == '10.99.200.2'
+      - subif200.config_data.network_os.policy.description == 'ND4X harness updated IOS-XE subinterface 200'
+      - subif200.config_data.network_os.policy.ipv6 == '2001:db8:200::1'
+      - subif200.config_data.network_os.policy.ipv6_prefix == 64
+      - nd4x_xe_updated.second_run_result.changed == false
+
+- name: "XE REPLACED HARNESS: Restore .200 to its base config"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_interface_subinterface_managed
+    state: replaced
+    common_args:
+      output_level: "{{ nd4x_output_level }}"
+      fabric_name: "{{ test_xe_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+    config:
+      - "{{ nd4x_subif_xe_200 }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+    nd_queries:
+      - name: Validate the restored IOS-XE base address fields
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
+            equals: 10.99.200.1
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6"
+            equals: "2001:db8:200::1"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6Prefix"
+            equals: 64
+  register: nd4x_xe_replaced
+
+- name: "XE REPLACED HARNESS: Verify no change for an identical replacement"
+  vars:
+    subif200: >-
+      {{ nd4x_xe_replaced.first_run_result.after
+         | selectattr('interface_name', 'equalto', xe_parent ~ '.200')
+         | first }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_replaced.first_run_result.changed == true
+      - subif200.config_data.network_os.policy.ip == '10.99.200.1'
+      - subif200.config_data.network_os.policy.ipv6 == '2001:db8:200::1'
+      - subif200.config_data.network_os.policy.ipv6_prefix == 64
+      - nd4x_xe_replaced.second_run_result.changed == false
+
+- name: "XE HARNESS: Wait until ND has discovered all reserved subinterfaces"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+    method: get
+  register: nd4x_xe_subif_discovery
+  until: >-
+    nd4x_xe_subif_discovery.current.interfaces | default([])
+    | selectattr('interfaceName', 'in', [xe_parent ~ '.200', xe_parent ~ '.201', xe_parent ~ '.204'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 3
+  retries: 60
+  delay: 10
+
+- name: "XE DELETED HARNESS: Delete all managed IOS-XE subinterfaces"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_interface_subinterface_managed
+    state: deleted
+    common_args:
+      output_level: "{{ nd4x_output_level }}"
+      fabric_name: "{{ test_xe_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        # Legacy coverage submits the interface name in lowercase; the model should canonicalize it for ND.
+        interface_name: "{{ (xe_parent ~ '.200') | lower }}"
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: "{{ (xe_parent ~ '.201') | lower }}"
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: "{{ (xe_parent ~ '.204') | lower }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
+    nd_queries:
+      - name: Verify IOS-XE harness subinterfaces were removed
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')]"
+            exists: false
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')]"
+            exists: false
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.204')]"
+            exists: false
+  register: nd4x_xe_deleted
+
+- name: "XE DELETED HARNESS: Verify returned resource absence"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_deleted.first_run_result.after | selectattr('interface_name', 'in', [xe_parent ~ '.200', xe_parent ~ '.201', xe_parent ~ '.204']) | list | length == 0
+      - nd4x_xe_deleted.second_run_result.changed == false
