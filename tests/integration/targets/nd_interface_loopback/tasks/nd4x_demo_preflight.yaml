@@ -53,6 +53,10 @@
                 ~ '/interfaces'
               ),
               'expected_status': 200,
+              'pagination': {
+                'page_size': 500,
+                'collection_key': 'interfaces'
+              },
               'unordered_paths': ['/interfaces'],
               'ignore_keys': ['operData']
             }

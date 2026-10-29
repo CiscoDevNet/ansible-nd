@@ -51,6 +51,9 @@
               /api/v1/manage/fabrics/{{ test_fabric_name
               }}/switches/{{ test_switch_id }}/interfaces
             expected_status: 200
+            pagination:
+              page_size: 500
+              collection_key: interfaces
             unordered_paths: [/interfaces]
             ignore_keys:
               - operData
@@ -119,6 +122,9 @@
               /api/v1/manage/fabrics/{{ test_fabric_name
               }}/switches/{{ test_switch_id }}/interfaces
             expected_status: 200
+            pagination:
+              page_size: 500
+              collection_key: interfaces
             unordered_paths: [/interfaces]
             ignore_keys:
               - operData
@@ -193,6 +199,9 @@
               /api/v1/manage/fabrics/{{ test_fabric_name
               }}/switches/{{ test_switch_id }}/interfaces
             expected_status: 200
+            pagination:
+              page_size: 500
+              collection_key: interfaces
             unordered_paths: [/interfaces]
             ignore_keys:
               - operData
