@@ -2514,6 +2514,168 @@ def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=
     return coordinator, sm, parsed, orchestrator
 
 
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("layer", ["layer2", "layer3"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.175"])
+def test_mcfg_parent_empty_l2_readback_repeats_without_writes_and_keeps_real_updates(state, layer, check_mode, controller_version):
+    entry = {"network_name": "N", "network_id": 30000, "layer": layer, "deploy": False}
+    readback = {
+        "fabricName": "fab1",
+        "networkName": "N",
+        "displayName": "N",
+        "networkType": "vxlan",
+        "networkMode": layer,
+        "networkId": 30000,
+        "vlanNetworkType": "normal",
+        "vrfName": "NA",
+        "l2Data": {},
+        "l3Data": {"routingTag": 12345, "secondaryGatewayIpv4Collection": []},
+    }
+    if layer == "layer3":
+        entry.update(vrf_name="BLUE", gateway_ipv4_address="192.0.2.1/24")
+        readback.update(vrfName="BLUE", l3Data={"gatewayIpv4Address": "192.0.2.1/24", "mtu": 9216, "arpSuppression": False})
+    for update in (False, True):
+        if update:
+            entry["gateway_ipv4_address" if layer == "layer3" else "display_name"] = "192.0.2.254/24" if layer == "layer3" else "UPDATED"
+        for repeat in (False, True):
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+                [entry], [readback], check_mode, strategy_cls=MulticlusterParentNetworkStrategy, network_type="vxlan", state=state
+            )
+            orchestrator.rest_send.controller_version = controller_version
+            coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+            sm.manage_state()
+            changed = update and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            assert orchestrator.query_count == 1
+            if changed:
+                readback = deepcopy(readback)
+                if layer == "layer3":
+                    readback["l3Data"]["gatewayIpv4Address"] = "192.0.2.254/24"
+                else:
+                    readback["displayName"] = "UPDATED"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("layer", ["layer2", "layer3"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_generated_multicast_omission_converges_and_unrelated_updates_still_apply(state, strategy_cls, layer, check_mode):
+    entry = {"network_name": "N", "network_id": 30000, "layer": layer, "deploy": False}
+    readback = {
+        "fabricName": "fab1",
+        "networkName": "N",
+        "displayName": "N",
+        "networkType": "vxlanIbgp",
+        "networkMode": layer,
+        "networkId": 30000,
+        "vlanNetworkType": "normal",
+        "vrfName": "NA",
+        "l2Data": {"xConnect": False, "disableRtAuto": False, "fabricData": {"enableIr": False, "multicastGroup": "239.1.1.77"}},
+        "l3Data": {"arpSuppression": False, "fabricData": {"netflow": False, "gatewayOnBorder": False, "ipv4Trm": False, "ipv6Trm": False}},
+    }
+    if layer == "layer3":
+        entry.update(vrf_name="BLUE", gateway_ipv4_address="192.0.2.1/24")
+        readback["vrfName"] = "BLUE"
+        readback["l3Data"].update(gatewayIpv4Address="192.0.2.1/24", mtu=9216)
+    effective_state = crud_module_args({"state": state})["state"]
+    for update in (False, True):
+        if update:
+            entry["vlan_name"] = "NEW_NAME"
+        for repeat in (False, True):
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+                [entry], [readback], check_mode, strategy_cls=strategy_cls, state=effective_state
+            )
+            coordinator._resolve_proposed_networks(sm, parsed, effective_state, orchestrator.strategy)
+            sm.manage_state()
+            changed = update and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            assert orchestrator.query_count == 1
+            assert sm.before.get("N").to_gathered_config()["multicast_group_address"] == "239.1.1.77"
+            if orchestrator.written_payloads:
+                payload = orchestrator.written_payloads[0]
+                assert payload["l2Data"]["vlanName"] == "NEW_NAME"
+                if effective_state == "merged" and not orchestrator.strategy.is_parent:
+                    assert payload["l2Data"]["fabricData"]["multicastGroup"] == "239.1.1.77"
+                else:
+                    assert "multicastGroup" not in payload["l2Data"].get("fabricData", {})
+            if changed:
+                readback = deepcopy(readback)
+                readback["l2Data"]["vlanName"] = "NEW_NAME"
+
+
+@pytest.mark.parametrize("parent_state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("parent_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_child_multicast_omission_and_explicit_change_follow_parent_sparse_contract(parent_state, parent_cls, check_mode):
+    parent = parent_cls(fabric_name="parent", fabric_data={"managementType": "vxlan" if parent_cls is MulticlusterParentNetworkStrategy else "vxlanIbgp"})
+    strategy = ChildNetworkStrategy(
+        fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"}, cluster_name="cluster1" if parent.is_multicluster else None
+    )
+    readback = {
+        "fabricName": "fab1",
+        "networkName": "N",
+        "networkType": "vxlanIbgp",
+        "networkMode": "layer2",
+        "networkId": 30000,
+        "vrfName": "NA",
+        "l2Data": {"xConnect": False, "fabricData": {"multicastGroup": "239.1.1.77"}},
+    }
+    for requested_group in (None, "239.1.1.78"):
+        child = {"fabric_name": "fab1", "x_connect": False}
+        if requested_group is not None:
+            child["multicast_group_address"] = requested_group
+        parent_config = parent.config_model_cls.from_config({"network_name": "N", "child_fabric_config": [child]}, context={"state": parent_state}).to_config(
+            exclude_unset=True
+        )
+        entry = dict(parent_config["child_fabric_config"][0])
+        entry.pop("fabric_name")
+        entry["network_name"] = "N"
+        args = parent.build_child_task_args("fab1", [entry], parent_state)
+        assert args["state"] == "merged"
+        for repeat in (False, True):
+            module = _Module({**args, "output_level": "normal"})
+            module.check_mode = check_mode
+            coordinator = NetworkWorkflowCoordinator(module, strategy)
+            parsed = args["config"]
+            orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": args["state"]}), strategy=strategy, inventory=[readback])
+            sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
+            coordinator._resolve_proposed_networks(sm, parsed, args["state"], strategy)
+            sm.manage_state()
+            changed = requested_group is not None and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            assert orchestrator.query_count == 1
+            if orchestrator.written_payloads:
+                assert orchestrator.written_payloads[0]["l2Data"]["fabricData"]["multicastGroup"] == requested_group
+            if changed:
+                readback = deepcopy(readback)
+                readback["l2Data"]["fabricData"]["multicastGroup"] = requested_group
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("value", [None, ""])
+def test_null_or_blank_public_multicast_is_omission_not_a_reset(state, value):
+    entry = {"network_name": "N", "network_id": 30000, "layer": "layer2", "multicast_group_address": value}
+    readback = {
+        "fabricName": "fab1",
+        "networkName": "N",
+        "networkType": "vxlanIbgp",
+        "networkMode": "layer2",
+        "networkId": 30000,
+        "vrfName": "NA",
+        "l2Data": {"xConnect": False, "fabricData": {"multicastGroup": "239.1.1.77"}},
+    }
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [readback], False, state=state)
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    sm.manage_state()
+    assert not sm.output.format()["changed"]
+    assert not orchestrator.written_payloads
+    assert orchestrator.query_count == 1
+
+
 @pytest.fixture
 def inactive_trm_network_readback():
     return {

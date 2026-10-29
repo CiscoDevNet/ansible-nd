@@ -708,6 +708,95 @@ def test_vxlan_collection_equivalence_handles_absent_nested_blocks_only_in_compa
     assert "l3Data" not in existing.to_payload()
 
 
+@pytest.mark.parametrize("existing_l2", [None, {}, {"xConnect": False}, {"vlanName": ""}, {"fabricData": {}}])
+@pytest.mark.parametrize("proposed_l2", [None, {}, {"xConnect": False}, {"vlanName": ""}, {"fabricData": {}}])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_mcfg_parent_default_l2_blocks_compare_equally_without_mutating_models(existing_l2, proposed_l2, exclude_unset):
+    current = {"networkName": "N", "networkType": "vxlan", "networkMode": "layer3"}
+    desired = dict(current)
+    if existing_l2 is not None:
+        current["l2Data"] = existing_l2
+    if proposed_l2 is not None:
+        desired["l2Data"] = proposed_l2
+    existing = NetworkBaseModel.from_response(current)
+    proposed = NetworkBaseModel.from_config(desired)
+    before = existing.to_payload()
+    intent = proposed.to_payload(exclude_unset=True)
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset)
+    assert proposed.get_diff(existing)
+    assert existing.to_payload() == before
+    assert proposed.to_payload(exclude_unset=True) == intent
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize(
+    "current_l2,desired_l2",
+    [
+        ({"vlanName": "OLD"}, {"vlanName": "NEW"}),
+        ({"vlanName": "OLD"}, {"vlanName": ""}),
+        ({"xConnect": True}, {"xConnect": False}),
+        ({"xConnect": False}, {"xConnect": True}),
+        ({"fabricData": {"multicastGroup": "239.1.1.1"}}, {"fabricData": {"multicastGroup": "239.1.1.2"}}),
+    ],
+)
+def test_mcfg_parent_comparison_retains_actionable_l2_values_and_clears(current_l2, desired_l2, exclude_unset):
+    existing = NetworkBaseModel.from_response({"networkName": "N", "networkType": "vxlan", "l2Data": current_l2})
+    proposed = NetworkBaseModel.from_config({"networkName": "N", "networkType": "vxlan", "l2Data": desired_l2})
+    assert not existing.get_diff(proposed, exclude_unset=exclude_unset)
+
+
+@pytest.mark.parametrize("l2_data", [{"vlanName": "OLD"}, {"xConnect": True}])
+def test_mcfg_parent_full_comparison_still_detects_omitted_nondefault_l2_values(l2_data):
+    existing = NetworkBaseModel.from_response({"networkName": "N", "networkType": "vxlan", "l2Data": l2_data})
+    proposed = NetworkBaseModel.from_config({"networkName": "N", "networkType": "vxlan"})
+    assert not existing.get_diff(proposed)
+    assert existing.get_diff(proposed, exclude_unset=True)
+
+
+@pytest.mark.parametrize("network_type", ["vxlan", "vxlanIbgp", "vxlanEbgp", "vxlanCampus", "aimlVxlanIbgp", "aimlVxlanEbgp"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize("desired_group", [None, "239.1.1.77", "239.1.1.78"])
+def test_vxlan_multicast_omission_preserves_controller_value_but_explicit_changes_remain_actionable(network_type, exclude_unset, desired_group):
+    existing = NetworkBaseModel.from_response(
+        {"networkName": "N", "networkType": network_type, "l2Data": {"xConnect": False, "fabricData": {"multicastGroup": "239.1.1.77"}}}
+    )
+    desired_l2 = {"xConnect": False}
+    if desired_group is not None:
+        desired_l2["fabricData"] = {"multicastGroup": desired_group}
+    proposed = NetworkBaseModel.from_config({"networkName": "N", "networkType": network_type, "l2Data": desired_l2})
+    before = existing.to_payload()
+    requested = proposed.to_payload(exclude_unset=True)
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset) is (desired_group != "239.1.1.78")
+    assert existing.to_payload() == before
+    assert proposed.to_payload(exclude_unset=True) == requested
+    assert existing.to_gathered_config()["multicast_group_address"] == "239.1.1.77"
+    assert requested["l2Data"].get("fabricData", {}).get("multicastGroup") == desired_group
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+def test_custom_network_multicast_omission_retains_raw_dictionary_comparison(exclude_unset):
+    existing = NetworkBaseModel.from_response({"networkName": "N", "networkType": "userDefined", "l2Data": {"fabricData": {"multicastGroup": "239.1.1.77"}}})
+    proposed = NetworkBaseModel.from_config({"networkName": "N", "networkType": "userDefined", "l2Data": {}})
+    assert existing.get_diff(proposed, exclude_unset=exclude_unset) is exclude_unset
+
+
+@pytest.mark.parametrize("network_type", ["vxlan", "vxlanIbgp", "vxlanEbgp", "vxlanCampus", "aimlVxlanIbgp", "aimlVxlanEbgp"])
+@pytest.mark.parametrize("reset_field", [{"vlanName": "OLD_NAME"}, {"xConnect": True}])
+def test_multicast_omission_policy_does_not_hide_other_l2_resets(network_type, reset_field):
+    current_l2 = {"xConnect": False, "fabricData": {"multicastGroup": "239.1.1.77"}, **reset_field}
+    existing = NetworkBaseModel.from_response({"networkName": "N", "networkType": network_type, "l2Data": current_l2})
+    proposed = NetworkBaseModel.from_config({"networkName": "N", "networkType": network_type, "l2Data": {"xConnect": False}})
+    assert not existing.get_diff(proposed)
+
+
+@pytest.mark.parametrize("network_type", ["vxlanIbgp", "vxlanEbgp", "vxlanCampus", "aimlVxlanIbgp", "aimlVxlanEbgp", "userDefined"])
+def test_mcfg_l2_comparison_defaults_do_not_apply_to_other_network_types(network_type):
+    absent = NetworkBaseModel.from_config({"networkName": "N", "networkType": network_type})
+    present = NetworkBaseModel.from_response({"networkName": "N", "networkType": network_type, "l2Data": {"xConnect": False}})
+    assert "l2Data" not in absent.to_diff_dict()
+    assert present.to_diff_dict()["l2Data"] == {"xConnect": False}
+
+
 def test_custom_network_comparison_does_not_apply_vxlan_collection_equivalence():
     """Verify raw custom schemas retain their own absent-versus-empty semantics."""
     existing = NetworkBaseModel.from_response({"networkName": "CUSTOM", "networkType": "userDefined", "l3Data": {}})

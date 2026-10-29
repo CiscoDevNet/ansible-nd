@@ -111,6 +111,8 @@ class DefaultL2FabricDataModel(NDNestedModel):
     )
 
     identifiers: ClassVar[list[str]] = []
+    # ND preserves omitted multicast values; explicit changes still use forward comparison.
+    reverse_diff_exclude: ClassVar[set[str]] = {"multicastGroup"}
     stretch: str | None = Field(default=None, description="Stretch border gateway list name")
     multicast_group: str | None = Field(default=None, alias="multicastGroup")
     ds_vni: int | None = Field(default=None, alias="dsVni")
@@ -642,12 +644,18 @@ class VxlanNetworkModel(NetworkBaseModel):
         Plain Layer 2 retains VLAN NetFlow settings but ignores Layer-3-only readback.
         ND omits cleared DHCP and secondary gateway collections from GET responses. Full comparison
         exports represent them as empty lists; sparse proposed exports retain only supplied fields.
+        Parent VXLAN full comparisons also normalize omitted L2 data to its empty defaults.
 
         ## Raises
 
         None
         """
         data = super().to_diff_dict(**kwargs)
+        if self.network_type == NetworkType.VXLAN.value and not kwargs.get("exclude_unset", False):
+            l2_data = data.setdefault("l2Data", {})
+            l2_data.setdefault("vlanName", "")
+            l2_data.setdefault("xConnect", False)
+            l2_data.setdefault("fabricData", {})
         if self.layer == NetworkLayer.LAYER2.value:
             l3_data = self.l3_data.to_layer2_payload(exclude_unset=kwargs.get("exclude_unset", False)) if self.l3_data is not None else {}
             if not kwargs.get("exclude_unset", False):

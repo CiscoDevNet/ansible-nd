@@ -314,7 +314,10 @@ options:
         description: Enable IPv6 Tenant Routed Multicast; not applicable on parent fabrics.
         type: bool
       multicast_group_address:
-        description: Multicast group address; not applicable on parent fabrics.
+        description:
+          - Multicast group address; not applicable on parent fabrics.
+          - When omitted, ND assigns the address on creation and preserves it on updates, including V(replaced), V(overridden), and V(staged).
+          - An empty string or YAML null is treated as omitted.
         type: str
       netflow_enable:
         description:
@@ -392,7 +395,10 @@ options:
             description: Enable IPv6 Tenant Routed Multicast.
             type: bool
           multicast_group_address:
-            description: Multicast group address.
+            description:
+              - Multicast group address.
+              - When omitted, preserves the child fabric's current address.
+              - An empty string or YAML null is treated as omitted.
             type: str
           netflow_enable:
             description: Enable NetFlow; requires child fabric NetFlow and NX-OS.
