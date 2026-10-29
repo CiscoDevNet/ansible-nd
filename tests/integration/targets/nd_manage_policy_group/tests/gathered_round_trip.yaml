@@ -99,7 +99,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        deploy: true
+        deploy: false
         config: "{{ our_gathered }}"
       register: result
       tags: gathered_round_trip
