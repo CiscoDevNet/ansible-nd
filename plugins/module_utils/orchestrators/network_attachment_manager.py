@@ -15,14 +15,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsNetworkAttachmentsQueryPost,
     EpManageFabricsNetworkAttachmentsValidateInterfacesPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
-    EpManageSwitchActionsDeployPost,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
     EpOneManageFabricsNetworkAttachmentsPost,
     EpOneManageFabricsNetworkAttachmentsQueryPost,
     EpOneManageFabricsNetworkAttachmentsValidateInterfacesPost,
-    EpOneManageFabricsSwitchActionsDeployPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
@@ -744,30 +740,33 @@ class NetworkAttachmentManager:
         strategy: BaseNetworkStrategy | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Build switch- or Network-scoped deploy requests for detach cleanup.
+        Build Network deploy requests for detach cleanup at the selected scope.
 
         Delete must deploy the detach/undeploy work before the Network delete is
         attempted, regardless of per-Network ``deploy``. Standalone and MSD
-        honor ``deploy_type``; MCFG parent uses OneManage Network deployment.
+        honor ``deploy_type`` without deploying unrelated switch configuration.
+        Switch scope includes Network names and affected switch IDs; Network
+        scope includes Network names. MCFG parent retains affected switch IDs.
         Never widen a missing switch target to an unscoped Network request.
         """
         deploy_types = deploy_type_by_network(config)
         mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
-        switch_ids: set[str] = set()
+        network_level: set[str] = set()
         network_groups: dict[tuple[str, ...], set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, target_switch_ids in (target_map or {}).items():
                 if not target_switch_ids:
                     continue
-                if mcfg_parent or deploy_types.get(network_name, "switch") == "network":
-                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
+                if deploy_types.get(network_name, "switch") == "network" and not mcfg_parent:
+                    network_level.add(network_name)
                 else:
-                    switch_ids.update(target_switch_ids)
-        payloads = [{"switchIds": sorted(switch_ids)}] if switch_ids else []
-        payloads.extend(
+                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
+        payloads = [
             NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(target_ids)).to_payload()
             for target_ids, names in sorted(network_groups.items())
-        )
+        ]
+        if network_level:
+            payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
         return payloads
 
     def build_pending_network_deploy_payloads(
@@ -825,49 +824,22 @@ class NetworkAttachmentManager:
 
         ### ValueError
 
-        - If detach deployment has no affected switch IDs.
-        - If an MCFG parent deploy has no Network names.
+        - If deployment has no Network names.
         """
-        if undeploy and not deploy_payload.get("switchIds"):
-            raise ValueError("Network detach undeploy requires affected switch IDs; unscoped fallback is not allowed.")
-        if strategy.is_multicluster and strategy.is_parent and not deploy_payload.get("networkNames"):
-            raise ValueError("MCFG parent Network deployment requires Network names.")
-        self._trace("network_attachment_deploy_start", deploy_payload=deploy_payload)
+        if not deploy_payload.get("networkNames"):
+            raise ValueError("Network deployment requires Network names.")
+        self._trace("network_attachment_deploy_start", deploy_payload=deploy_payload, undeploy=undeploy)
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
-        data = deploy_payload
-        switch_ids = deploy_payload.get("switchIds")
-        switch_deploy = bool(undeploy and switch_ids and not deploy_payload.get("networkNames") and not (strategy.is_multicluster and strategy.is_parent))
-        if switch_deploy:
-            endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if strategy.is_multicluster and strategy.is_parent else EpManageSwitchActionsDeployPost
-            endpoint = orchestrator._make_endpoint(endpoint_cls)
-            data = {"switchIds": switch_ids}
-        else:
-            endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
-        response = orchestrator._request(
+        endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
+        orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
-            data=data,
+            data=deploy_payload,
             operation_type=OperationType.UPDATE,
         )
-        if switch_deploy and undeploy:
-            self._raise_on_failed_switch_deploy(response)
         trace = self.coordinator._finalize_api_trace(results)
         self._trace("network_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
         return trace
-
-    @staticmethod
-    def _raise_on_failed_switch_deploy(response: Any) -> None:
-        """Reject an explicit per-switch failure in a multi-status deploy response."""
-        entries = response.get("switchIds") if isinstance(response, dict) else response if isinstance(response, list) else []
-        failures = []
-        for entry in entries or []:
-            if not isinstance(entry, dict):
-                continue
-            status = str(entry.get("status", "")).lower()
-            if status not in {"success", "notexecuted", "completed", "started"}:
-                failures.append(f"{entry.get('switchId', '?')}: {entry.get('message') or status}")
-        if failures:
-            raise RuntimeError(f"Switch undeploy failed: {'; '.join(failures)}")
 
     def wait_for_attachments_delete_ready(
         self,

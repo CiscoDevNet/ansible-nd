@@ -114,14 +114,13 @@ options:
       deploy_type:
         description:
           - Scope of Network deployment and undeployment.
-          - C(switch) deploys only the switches affected by this Network
-            attachment operation when switch identifiers are available.
+          - C(switch) deploys the selected Networks on the switches affected by
+            this attachment operation when switch identifiers are available.
           - C(network) deploys the pending Network changes for this Network.
           - Standalone and MSD attachment removals and Network deletion use
-            the selected scope. C(switch) also deploys other pending changes
-            on the affected switches.
-          - MCFG parent deployment uses the OneManage Network endpoint
-            regardless of C(deploy_type).
+            the selected Network scope, not whole-switch deployment.
+          - MCFG parent deployment uses the OneManage Network endpoint and
+            retains affected switch identifiers regardless of C(deploy_type).
           - Network deletion waits for detach deployment before removal.
         type: str
         choices: [ switch, network ]
