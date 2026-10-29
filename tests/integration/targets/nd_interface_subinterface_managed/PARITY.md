@@ -4,7 +4,7 @@ The legacy scenarios in `tasks/merged.yaml`, `tasks/replaced.yaml`,
 `tasks/overridden.yaml`, `tasks/deleted.yaml`, `tasks/xe.yaml`, and
 `tasks/xe_teardown.yaml` remain unchanged. Harness cases are separate and
 opt-in under the `nd4x_demo` tag family. The mappings below describe the
-current harness implementation; “gap” means the harness does not yet assert
+current harness implementation; "gap" means the harness does not yet assert
 the corresponding legacy behavior.
 
 ## Legacy-to-harness case map
@@ -22,7 +22,7 @@ the corresponding legacy behavior.
 | `replaced.yaml`: replace `.3` with a stripped-down configuration and reapply | `nd4x_demo_replaced.yaml`: seed `.21`, replace it, then verify idempotency | Covered with a different reserved ID. Replacement description/IP are checked in returned state and REST; redirects are checked in returned state. |
 | `overridden.yaml`: retain Ethernet `.2` and Port-channel `.5`, update both, remove `.3` and `.4`, then reapply | `nd4x_demo_overridden.yaml`: retain/update Ethernet `.20` and Port-channel `.23`, remove the other reserved Ethernet subinterfaces | Covered with different reserved IDs. The harness checks returned membership, updated retained values, REST state, idempotency, and full-fabric preflight/postflight scope. |
 | `deleted.yaml`: delete `.2` in check and normal mode, verify absence, and repeat | `nd4x_demo_deleted.yaml`: seed/delete `.22`, verify returned and REST absence, and verify idempotency | Covered with a different reserved ID through harness check/apply/idempotency phases. |
-| `deleted.yaml`: final cleanup of `.2`–`.5` and verify no configured test entries remain | `nd4x_demo_merged.yaml`, `nd4x_demo_replaced.yaml`, `nd4x_demo_deleted.yaml`, and `nd4x_demo_overridden.yaml`: scenario `always` cleanup of reserved harness entries | Cleanup behavior is present. Unlike the legacy final cleanup task, the harness does not make a separate assertion over the cleanup task’s returned state. |
+| `deleted.yaml`: final cleanup of `.2`–`.5` and verify no configured test entries remain | `nd4x_demo_merged.yaml`, `nd4x_demo_replaced.yaml`, `nd4x_demo_deleted.yaml`, and `nd4x_demo_overridden.yaml`: scenario `always` cleanup of reserved harness entries | Cleanup behavior is present. Unlike the legacy final cleanup task, the harness does not make a separate assertion over the cleanup task's returned state. |
 | `xe.yaml`: resolve switch, clean reserved entries, make parent routed, and wait for discovery | `nd4x_demo_xe.yaml` plus `nd4x_demo_xe_parent_preflight.yaml` | Covered with stronger guards: explicit XE opt-in, exact fabric-default trunk-host starting state, complete interface/link/diff snapshots, no fabric-link endpoint or port-channel membership, and free reserved IDs. |
 | `xe.yaml`: reject IOS-XE `mtu` in check and normal mode | `nd4x_demo_xe.yaml`: reject `mtu` in check and normal mode | Covered. Both calls must fail and name the unsupported `mtu` field. |
 | `xe.yaml`: create `.100` and `.101` together (inferred `iosXeSubinterface` and explicit `iosXeSubinterfaceShutNoshut`), verify fields and policy types | `nd4x_demo_xe.yaml`: create `.200`, `.201`, and `.204`; `.200` is explicit, `.201` uses shut/noshut, and `.204` infers the subinterface policy | Covered with different reserved IDs. Policy types, lifecycle behavior, and `.200` IPv6 address/prefix are asserted in returned state and REST. |
@@ -33,7 +33,7 @@ the corresponding legacy behavior.
 | `xe.yaml`: overridden keeps `.100`/`.101`, removes `.102`, then reapply | `nd4x_demo_xe_overridden.yaml`: keeps `.200`/`.201`, removes `.202`, then verifies idempotency | Covered with different IDs. The harness also checks full-fabric scope before and after override. |
 | `xe.yaml`: delete `.100`/`.101` using lower-case interface names; verify absence and repeat | `nd4x_demo_xe.yaml`: delete `.200`, `.201`, and `.204` using lower-case interface names; verify canonical returned and REST absence and idempotency | Covered with different IDs. The harness submits lower-case names and verifies the canonical resources are absent. |
 | `xe.yaml`: verify `.100`–`.102` are absent from running configuration | `nd4x_demo_xe.yaml` delete assertions and `nd4x_demo_xe_teardown.yaml` running-config wait | Covered for harness-reserved `.200`–`.204`; teardown waits for every reserved name to leave running configuration. |
-| `xe_teardown.yaml`: remove remaining test subinterfaces and reset parent to fabric-default trunk host, including after failure | `nd4x_demo_xe_teardown.yaml`, invoked from the harness scenario’s `always` section | Covered with a stricter precondition. Teardown re-reads the parent and links, and proceeds only if the port is still the verified default or has the exact routed-host policy created by this harness. |
+| `xe_teardown.yaml`: remove remaining test subinterfaces and reset parent to fabric-default trunk host, including after failure | `nd4x_demo_xe_teardown.yaml`, invoked from the harness scenario's `always` section | Covered with a stricter precondition. Teardown re-reads the parent and links, and proceeds only if the port is still the verified default or has the exact routed-host policy created by this harness. |
 
 ## Intentional exceptions
 
@@ -51,7 +51,7 @@ the corresponding legacy behavior.
   `nd_subinterface_managed_destructive_tests_enabled=true` and a complete
   fabric-wide inventory proving that every managed subinterface is inside the
   reserved scope. The postflight verifies the fabric-wide result. This is an
-  intentional additional safety gate for the module’s fabric-wide behavior.
+  intentional additional safety gate for the module's fabric-wide behavior.
 - Harness state phases are driven through `nd4x_module_test`; setup and cleanup
   use direct module calls around those phases. The harness also verifies ND
   REST state where applicable, so the task layout differs from the direct
