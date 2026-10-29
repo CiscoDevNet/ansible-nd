@@ -152,7 +152,7 @@
     check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
     nd_queries:
       - name: Validate the IOS-XE policies
-            path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
         method: get
         expected_status: 200
         expect:
@@ -266,7 +266,7 @@
     check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
     nd_queries:
       - name: Validate the updated IOS-XE address
-            path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
         method: get
         expected_status: 200
         expect:
@@ -321,7 +321,7 @@
     check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
     nd_queries:
       - name: Validate the restored IOS-XE base address fields
-            path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
         method: get
         expected_status: 200
         expect:
@@ -392,7 +392,7 @@
     check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
     nd_queries:
       - name: Verify IOS-XE harness subinterfaces were removed
-            path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
         method: get
         expected_status: 200
         expect:
