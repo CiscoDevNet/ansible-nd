@@ -346,11 +346,11 @@ class NetworkChildConfigModel(NDNestedModel):
             raise ValueError("netflow monitor fields require netflow_enable=true: " + ", ".join(configured))
 
     @classmethod
-    def validate_feature_dependencies(cls, config: dict[str, Any]) -> None:
+    def validate_feature_dependencies(cls, requested: dict[str, Any], effective: dict[str, Any]) -> None:
         """
         # Summary
 
-        Validate child feature prerequisites in the effective public configuration.
+        Validate requested dependent fields against effective feature flags.
 
         ## Raises
 
@@ -358,11 +358,11 @@ class NetworkChildConfigModel(NDNestedModel):
 
         - IGMP or NetFlow monitors are configured without their enabled feature.
         """
-        cls._validate_igmp_trm_binding(igmp_version=config.get("igmp_version"), trm_enable=config.get("trm_enable"))
+        cls._validate_igmp_trm_binding(igmp_version=requested.get("igmp_version"), trm_enable=effective.get("trm_enable"))
         cls._validate_netflow_monitor_bindings(
-            netflow_enable=config.get("netflow_enable"),
-            vlan_netflow_monitor=config.get("vlan_netflow_monitor"),
-            interface_netflow_monitor=config.get("interface_netflow_monitor"),
+            netflow_enable=effective.get("netflow_enable"),
+            vlan_netflow_monitor=requested.get("vlan_netflow_monitor"),
+            interface_netflow_monitor=requested.get("interface_netflow_monitor"),
         )
 
     def validate_layer(self, layer: str | None) -> None:
@@ -599,8 +599,8 @@ class NetworkConfigModel(NDBaseModel):
             and not (self.vrf_name or context.get("existing_vrf_name"))
         ):
             raise ValueError("vrf_name is required for layer3 and layer2WithVrf networks")
-        self._check_trm_rules()
-        self._check_netflow_rules()
+        self._check_trm_rules(defer_omitted=context.get("state") == "merged")
+        self._check_netflow_rules(defer_omitted=context.get("state") == "merged")
         self._check_vlan_network_type_rules()
         self._check_attachment_interface_modes()
         if not read_only_or_delete and self.layer == NetworkLayer.LAYER2.value:
@@ -613,18 +613,21 @@ class NetworkConfigModel(NDBaseModel):
                 raise ValueError("layer2 networks do not support L3 properties: " + ", ".join(sorted(rejected_fields)))
         return self
 
-    def _check_trm_rules(self) -> None:
+    def _check_trm_rules(self, *, defer_omitted: bool = False) -> None:
+        if defer_omitted and "trm_enable" not in self.model_fields_set:
+            return
         NetworkChildConfigModel._validate_igmp_trm_binding(
             igmp_version=self.igmp_version,
             trm_enable=self.trm_enable,
         )
 
-    def _check_netflow_rules(self) -> None:
-        NetworkChildConfigModel._validate_netflow_monitor_bindings(
-            netflow_enable=self.netflow_enable,
-            vlan_netflow_monitor=self.vlan_netflow_monitor,
-            interface_netflow_monitor=self.interface_netflow_monitor,
-        )
+    def _check_netflow_rules(self, *, defer_omitted: bool = False) -> None:
+        if not defer_omitted or "netflow_enable" in self.model_fields_set:
+            NetworkChildConfigModel._validate_netflow_monitor_bindings(
+                netflow_enable=self.netflow_enable,
+                vlan_netflow_monitor=self.vlan_netflow_monitor,
+                interface_netflow_monitor=self.interface_netflow_monitor,
+            )
         if self.interface_netflow_monitor is not None and self.layer == NetworkLayer.LAYER2.value:
             raise ValueError("interface_netflow_monitor is not valid for layer2 networks")
 

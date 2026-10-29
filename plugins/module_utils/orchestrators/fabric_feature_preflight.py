@@ -145,11 +145,15 @@ def preflight_feature_changes(
     attachment_names: set[str] | None = None,
     standalone_vrf: bool = False,
     child_network: bool = False,
+    requested_config: list[dict[str, Any]] | None = None,
 ) -> None:
     """
     # Summary
 
     Check effective feature dependencies and fabric settings using the state machine's inventory snapshot.
+
+    Parsed requested entries follow proposal order, preserving intent when an
+    operational-only proposal has been resolved to an existing definition.
 
     ## Raises
 
@@ -161,16 +165,24 @@ def preflight_feature_changes(
         return
     for index, proposed in enumerate(sm.proposed):
         name = getattr(proposed, "network_name", None) if resource == "Network" else getattr(proposed, "vrf_name", None)
-        if sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "no_diff" and name not in (attachment_names or ()):
+        unchanged = sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "no_diff" and name not in (attachment_names or ())
+        if unchanged and resource != "Network":
             continue
         current = sm.existing.get(proposed.get_identifier_value())
-        effective = current.model_copy(deep=True).merge(proposed) if current is not None and state == "merged" else proposed
+        if unchanged:
+            effective = current
+        else:
+            effective = current.model_copy(deep=True).merge(proposed) if current is not None and state == "merged" else proposed
         config = effective.to_gathered_config()
-        if child_network:
+        if resource == "Network":
+            requested = requested_config[index] if requested_config is not None else proposed.to_gathered_config(exclude_unset=True)
             try:
-                NetworkChildConfigModel.validate_feature_dependencies(config)
+                NetworkChildConfigModel.validate_feature_dependencies(requested, config)
             except ValueError as exc:
-                raise ValueError(f"child_fabric_config[{fabric_name}]: {exc}") from exc
+                prefix = f"child_fabric_config[{fabric_name}]" if child_network else f"config[{index}] on fabric '{fabric_name}'"
+                raise ValueError(f"{prefix}: {exc}") from exc
+        if unchanged:
+            continue
         if standalone_vrf and resource == "VRF":
             validate_standalone_vrf_trm_requirements(config, index, fabric_name)
             validate_standalone_vrf_svi_requirements(config, proposed.to_gathered_config(), index, fabric_name)
@@ -234,6 +246,7 @@ def preflight_workflow_features(
                 resource,
                 child_name,
                 attachment_names=attach_names,
+                requested_config=module_args.get("config"),
             )
     else:
         preflight_feature_changes(
@@ -245,6 +258,7 @@ def preflight_workflow_features(
             attachment_names=attach_names,
             standalone_vrf=resource == "VRF",
             child_network=resource == "Network" and strategy.is_child,
+            requested_config=module_args.get("config"),
         )
 
 

@@ -61,6 +61,9 @@ options:
         PVLAN, attachment, deployment, and other settings.
       - On standalone fabrics, all Network definition, attachment, and deployment
         options are applied directly to the target fabric.
+      - In V(merged), supplied IGMP or NetFlow monitor settings use existing
+        TRM or NetFlow enablement when the corresponding flag is omitted.
+        This applies at the same standalone or child-fabric scope.
       - For parent fabrics, each item may include a C(child_fabric_config) list
         to provide per-child-fabric overrides. The parent-level C(attach),
         C(deploy), and C(deploy_type) options are applied only on the parent

@@ -386,6 +386,30 @@ def test_network_parent_merged_child_dependencies_defer_omitted_prerequisites(pr
         NetworkParentConfigModel.from_config(config, context={"state": "merged", "defer_omitted_layer": True})
 
 
+@pytest.mark.parametrize(
+    "prerequisite,dependent,value",
+    [
+        ("trm_enable", "igmp_version", 3),
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
+    ],
+)
+def test_standalone_merged_dependencies_defer_only_omitted_prerequisites(prerequisite, dependent, value):
+    config = {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", dependent: value}
+    model = NetworkConfigModel.from_config(config, context={"state": "merged"})
+    assert getattr(model, dependent) == value
+    assert prerequisite not in model.to_config(exclude_unset=True)
+    for state in ("replaced", "overridden", "staged"):
+        with pytest.raises(ValidationError, match=f"{prerequisite}=true"):
+            NetworkConfigModel.from_config(config, context={"state": state})
+
+    config[prerequisite] = False
+    with pytest.raises(ValidationError, match=f"{prerequisite}=true"):
+        NetworkConfigModel.from_config(config, context={"state": "merged"})
+    config[prerequisite] = True
+    assert getattr(NetworkConfigModel.from_config(config, context={"state": "merged"}), prerequisite) is True
+
+
 @pytest.mark.parametrize("state", ["gathered", "deleted"])
 def test_network_read_only_and_deleted_skip_child_feature_prerequisites(state):
     config = {"network_name": "N", "child_fabric_config": [{"fabric_name": "site1", "igmp_version": 3}]}

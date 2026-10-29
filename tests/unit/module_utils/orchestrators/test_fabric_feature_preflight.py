@@ -161,7 +161,7 @@ def test_sparse_svi_edit_is_rejected_against_existing_no_vlan_vrf():
     proposed = _Model("BLUE", {"vrf_int_mtu": 9216})
     sm = _StateMachine(proposed, {"BLUE": current}, "changed")
     with pytest.raises(ValueError, match="vrf_int_mtu not applicable"):
-        preflight_feature_changes(sm, "merged", lambda: _details(), "VRF", "FAB", standalone_vrf=True)
+        preflight_feature_changes(sm, "merged", _details, "VRF", "FAB", standalone_vrf=True)
     assert current.config == {"l3vni_wo_vlan": True, "vrf_description": "old"}
 
 
@@ -205,7 +205,7 @@ class _Model:
         self.config.update(other.config)
         return self
 
-    def to_gathered_config(self):
+    def to_gathered_config(self, **kwargs):
         return self.config
 
 
@@ -283,6 +283,51 @@ def test_child_dependencies_reuse_the_feature_preflight_merge(monkeypatch, prere
     sm.existing = _Collection({"BLUE": current}, "no_diff")
     preflight_feature_changes(sm, "merged", unexpected_details, "Network", "CHILD", child_network=True)
     assert len(merges) == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("child_network", [False, True])
+def test_unrequested_inactive_network_dependencies_do_not_block_changes(state, child_network):
+    current = _Model("BLUE", {"igmp_version": 2, "trm_enable": False, "netflow_enable": False, "vlan_netflow_monitor": "OLD"})
+    proposed = _Model("BLUE", {"gateway_on_border": True})
+    sm = _StateMachine(proposed, {"BLUE": current}, "changed")
+    preflight_feature_changes(sm, state, _details, "Network", "FAB", child_network=child_network)
+    assert current.config["trm_enable"] is False
+    assert current.config["igmp_version"] == 2
+
+
+@pytest.mark.parametrize("status", ["no_diff", "changed"])
+@pytest.mark.parametrize("child_network", [False, True])
+@pytest.mark.parametrize(
+    "prerequisite,dependent,value",
+    [
+        ("trm_enable", "igmp_version", 2),
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON"),
+    ],
+)
+def test_requested_dependency_is_rejected_even_when_equal_to_inactive_readback(status, child_network, prerequisite, dependent, value):
+    current = _Model("BLUE", {prerequisite: False, dependent: value})
+    proposed = _Model("BLUE", {dependent: value})
+    sm = _StateMachine(proposed, {"BLUE": current}, status)
+    with pytest.raises(ValueError, match=f"{prerequisite}=true"):
+        preflight_feature_changes(sm, "merged", _details, "Network", "FAB", child_network=child_network)
+
+
+@pytest.mark.parametrize("child_network", [False, True])
+def test_operational_network_snapshot_is_not_dependency_intent(child_network):
+    current = _Model("BLUE", {"igmp_version": 2, "trm_enable": False})
+    sm = _StateMachine(current, {"BLUE": current}, "no_diff")
+    preflight_feature_changes(
+        sm,
+        "merged",
+        _details,
+        "Network",
+        "FAB",
+        child_network=child_network,
+        requested_config=[{"network_name": "BLUE"}],
+        attachment_names={"BLUE"},
+    )
 
 
 def test_sparse_standalone_vrf_trm_inherits_existing_required_values():

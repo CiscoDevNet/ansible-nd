@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from types import SimpleNamespace
@@ -1437,7 +1439,7 @@ def test_sparse_parent_child_feature_preflight_uses_cached_effective_state(
 
 @pytest.mark.parametrize("parent_state", ["merged", "replaced", "overridden"])
 @pytest.mark.parametrize("prerequisite,dependent,value", [("trm_enable", "igmp_version", 3), ("netflow_enable", "vlan_netflow_monitor", "MON")])
-def test_child_feature_disable_rejects_existing_dependency_before_parent_write(
+def test_child_feature_disable_allows_unrequested_inactive_dependency(
     monkeypatch, parent_state, prerequisite, dependent, value, child_network_feature_fabric_data
 ):
     strategy = MultisiteParentNetworkStrategy(fabric_name="parent", fabric_data={"managementType": "vxlanIbgp"})
@@ -1456,8 +1458,8 @@ def test_child_feature_disable_rejects_existing_dependency_before_parent_write(
     )
     child_task = {"fabric": "child1", "module_args": {"state": "merged", "config": [entry]}, "strategy": child_strategy}
     monkeypatch.setattr(coordinator, "_new_state_machine", lambda *_args: (sm, [], parent_state))
-    with pytest.raises(NDStateMachineError, match=f"{dependent} requires {prerequisite}=true|netflow monitor fields require {prerequisite}=true"):
-        coordinator._preflight_child_feature_tasks({"child1": child_task}, parent_state)
+    coordinator._preflight_child_feature_tasks({"child1": child_task}, parent_state)
+    assert getattr(existing.l3_data.fabric_data, "ipv4_trm" if prerequisite == "trm_enable" else "netflow") is True
 
 
 @pytest.mark.parametrize("strategy_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
@@ -2510,6 +2512,106 @@ def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=
     orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy, inventory=inventory)
     sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
     return coordinator, sm, parsed, orchestrator
+
+
+@pytest.fixture
+def inactive_trm_network_readback():
+    return {
+        "fabricName": "fab1",
+        "networkName": "N",
+        "networkId": 30000,
+        "networkType": "vxlanIbgp",
+        "networkMode": "layer3",
+        "vrfName": "BLUE",
+        "l3Data": {
+            "gatewayIpv4Address": "192.0.2.1/24",
+            "mtu": 9216,
+            "arpSuppression": False,
+            "fabricData": {"igmpVersion": 2, "ipv4Trm": False, "netflow": False, "gatewayOnBorder": False},
+        },
+    }
+
+
+@pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.175"])
+def test_unrelated_network_update_with_inactive_trm_readback_converges(topology, check_mode, controller_version, inactive_trm_network_readback):
+    fabric_data = {"managementType": "vxlanIbgp"}
+    if topology == "standalone":
+        strategy = StandaloneNetworkStrategy(fabric_name="fab1", fabric_data=fabric_data)
+        parent_strategy = strategy
+    else:
+        strategy = ChildNetworkStrategy(fabric_name="fab1", fabric_data=fabric_data, cluster_name="cluster1" if topology == "mcfg" else None)
+        parent_cls = MultisiteParentNetworkStrategy if topology == "msd" else MulticlusterParentNetworkStrategy
+        parent_strategy = parent_cls(fabric_name="parent", fabric_data=fabric_data)
+    module = _Module({"state": "merged", "config": [], "output_level": "normal"})
+    module.check_mode = check_mode
+    coordinator = NetworkWorkflowCoordinator(module, parent_strategy)
+    entry = {"network_name": "N", "gateway_on_border": True}
+    if topology == "standalone":
+        parsed = coordinator._parse_config(_validated_network_config([entry]), strategy.config_model_cls, "merged")
+    else:
+        parent_entry = {"network_name": "N", "child_fabric_config": [{"fabric_name": "fab1", "gateway_on_border": True}]}
+        parent = coordinator._parse_config([parent_entry], parent_strategy.config_model_cls, "merged")[0]
+        child = dict(parent["child_fabric_config"][0])
+        child.pop("fabric_name")
+        parsed = [{"network_name": "N", **child}]
+    inventory = [inactive_trm_network_readback]
+    for repeat in (False, True):
+        rest_send = RestSend({"state": "merged"})
+        rest_send.controller_version = controller_version
+        orchestrator = _LayerValidationNetworkOrchestrator(rest_send=rest_send, strategy=strategy, inventory=inventory)
+        sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", strategy)
+        coordinator._preflight_fabric_features(sm, {"state": "merged", "config": parsed}, strategy)
+        sm.manage_state()
+        assert sm.output.format()["changed"] is not repeat
+        assert orchestrator.query_count == 1
+        assert len(orchestrator.written_payloads) == (1 if not repeat and not check_mode else 0)
+        if not repeat:
+            fabric = sm.sent.get("N").l3_data.fabric_data
+            assert fabric.gateway_on_border is True
+            assert fabric.igmp_version == 2
+            assert fabric.ipv4_trm is False
+            assert sm.before.get("N").l3_data.fabric_data.gateway_on_border is False
+            inventory = deepcopy(inventory)
+            inventory[0]["l3Data"]["fabricData"]["gatewayOnBorder"] = True
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "prerequisite,dependent,value,wire_flag,wire_dependent",
+    [
+        ("trm_enable", "igmp_version", 3, "ipv4Trm", "igmpVersion"),
+        ("netflow_enable", "vlan_netflow_monitor", "VLAN_MON", "netflow", "l2NetflowMonitor"),
+        ("netflow_enable", "interface_netflow_monitor", "INTF_MON", "netflow", "l3NetflowMonitor"),
+    ],
+)
+def test_standalone_sparse_feature_dependency_inherits_enabled_state_and_rejects_disabled_noop(
+    check_mode, prerequisite, dependent, value, wire_flag, wire_dependent, inactive_trm_network_readback, child_network_feature_fabric_data
+):
+    inventory = [inactive_trm_network_readback]
+    inventory[0]["l3Data"]["fabricData"][wire_flag] = True
+    config = [{"network_name": "N", dependent: value}]
+    for repeat in (False, True):
+        coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(config, inventory, check_mode)
+        orchestrator.strategy.fabric_data.update(child_network_feature_fabric_data)
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+        coordinator._preflight_fabric_features(sm, {"state": "merged", "config": parsed}, orchestrator.strategy)
+        sm.manage_state()
+        assert sm.output.format()["changed"] is not repeat
+        assert orchestrator.query_count == 1
+        assert len(orchestrator.written_payloads) == (1 if not repeat and not check_mode else 0)
+        inventory = deepcopy(inventory)
+        inventory[0]["l3Data"]["fabricData"][wire_dependent] = value
+
+    inventory[0]["l3Data"]["fabricData"][wire_flag] = False
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(config, inventory, check_mode)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    with pytest.raises(NDStateMachineError, match=f"{prerequisite}=true"):
+        coordinator._preflight_fabric_features(sm, {"state": "merged", "config": parsed}, orchestrator.strategy)
+    assert orchestrator.query_count == 1
+    assert orchestrator.written_payloads == []
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
@@ -5612,7 +5714,7 @@ def test_merged_attachment_omitted_interfaces_preserve_existing_bindings(check_m
     }
     current = {("N", "SW1"): current_row}
     module_args = {"state": "merged", "config": parsed}
-    for _ in range(2):
+    for unused_repeat in range(2):
         desired = manager.desired_attachment_map(module_args, strategy)
         assert "interfaces" not in desired[("N", "SW1")]
         assert manager.apply_phase(module_args, strategy, "post", desired=desired, current=current, attachment_details=[current_row]) == {}
