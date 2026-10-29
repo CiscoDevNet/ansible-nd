@@ -861,8 +861,7 @@ class ActionModule(ActionBase):
                     remaining = self._snapshot_remaining(current, query_result)
                     if remaining is not None and remaining > 0:
                         raise AnsibleActionFail(
-                            "Check-mode snapshot query %s reports %s remaining records but pagination is not configured"
-                            % (query_label, remaining)
+                            "Check-mode snapshot query %s reports %s remaining records but pagination is not configured" % (query_label, remaining)
                         )
                     first_current = current
                     break
