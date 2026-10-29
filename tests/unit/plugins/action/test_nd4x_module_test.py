@@ -495,10 +495,7 @@ def test_paginated_check_mode_snapshot_detects_change_on_second_page(action_plug
         "collection_key": "interfaces",
         "max_pages": 2,
     }
-    first_page = [
-        {"interfaceName": "Ethernet1/%s" % index, "description": "unchanged"}
-        for index in range(1, 501)
-    ]
+    first_page = [{"interfaceName": "Ethernet1/%s" % index, "description": "unchanged"} for index in range(1, 501)]
     second_page_before = [{"interfaceName": "Ethernet1/501", "description": "before"}]
     second_page_after = [{"interfaceName": "Ethernet1/501", "description": "after"}]
 
