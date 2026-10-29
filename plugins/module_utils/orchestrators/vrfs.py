@@ -76,6 +76,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 
 NDVrfModel = VrfDataModel
 _EXTERNAL_VRF_TYPES = frozenset({VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value})
+_BGP_KEY_TYPE_NUMBERS = {"3des": 3, "type6": 6, "type7": 7}
+_BGP_KEY_TYPE_NAMES = {number: name for name, number in _BGP_KEY_TYPE_NUMBERS.items()}
 
 
 class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
@@ -749,6 +751,24 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
         return expression
 
+    @staticmethod
+    def _normalize_manage_vrf_bgp(item: Any) -> Any:
+        """Keep numeric BGP readback in the same string form as public intent."""
+        if not isinstance(item, dict):
+            return item
+        fabric_data = item.get("fabricData")
+        if isinstance(fabric_data, dict):
+            normalized = {}
+            key_type = fabric_data.get("bgpPasswordKeyType")
+            if isinstance(key_type, int) and key_type in _BGP_KEY_TYPE_NAMES:
+                normalized["bgpPasswordKeyType"] = _BGP_KEY_TYPE_NAMES[key_type]
+            password = fabric_data.get("bgpPassword")
+            if isinstance(password, int) and not isinstance(password, bool):
+                normalized["bgpPassword"] = str(password)
+            if normalized:
+                return dict(item, fabricData={**fabric_data, **normalized})
+        return item
+
     def _normalize_query_vrf_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
             return item
@@ -786,7 +806,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         return normalized
 
     def _normalize_query_vrf_items(self, items: Any) -> list[Any]:
-        return [self._normalize_query_vrf_item(item) for item in (items or [])]
+        return [self._normalize_manage_vrf_bgp(self._normalize_query_vrf_item(item)) for item in (items or [])]
 
     def _is_mcfg_parent(self) -> bool:
         return bool(getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False))
@@ -1010,6 +1030,26 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 "omit vrf_description for name-only creation/reconciliation."
             )
 
+    def _manage_api_vrf_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Convert canonical BGP key names only for the ND 4.2 request contract."""
+        fabric_data = payload.get("fabricData")
+        if not isinstance(fabric_data, dict):
+            return payload
+        key_type = fabric_data.get("bgpPasswordKeyType")
+        if not isinstance(key_type, str) or key_type not in _BGP_KEY_TYPE_NUMBERS:
+            return payload
+        version = self.rest_send.controller_version
+        if not isinstance(version, str):
+            return payload
+        try:
+            release = tuple(int(part) for part in version.split(".")[:3])
+        except ValueError:
+            release = ()
+        # Unknown releases retain the existing string representation.
+        if len(release) < 3 or release[:2] != (4, 2):
+            return payload
+        return dict(payload, fabricData=dict(fabric_data, bgpPasswordKeyType=_BGP_KEY_TYPE_NUMBERS[key_type]))
+
     def _create_or_update_payload(self, model_instance: NDVrfModel, *, updating: bool = False) -> dict[str, Any]:
         if model_instance.vrf_type in _EXTERNAL_VRF_TYPES:
             self.validate_external_vrf_write(model_instance, updating=updating)
@@ -1029,7 +1069,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                     "ipv6LinkLocal",
                 ):
                     core_data.pop(field, None)
-        return payload
+        return self._manage_api_vrf_payload(payload)
 
     # ── Create ────────────────────────────────────────────────────
 

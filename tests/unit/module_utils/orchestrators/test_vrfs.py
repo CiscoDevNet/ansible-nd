@@ -13,6 +13,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -918,7 +919,7 @@ def test_standalone_sparse_merged_nested_payload_retains_omitted_values():
     assert NDConfigCollection(VrfDataModel, [readback]).get_diff_config(proposed, exclude_unset=True) == "no_diff"
 
 
-@pytest.mark.parametrize("key_type", [3, 7, "3", "7"])
+@pytest.mark.parametrize("key_type", [3, 6, 7, "3", "6", "7"])
 def test_vrf_numeric_bgp_key_types_are_rejected(key_type):
     with pytest.raises(ValidationError, match="bgp_passwd_encrypt must be 3des, type6, or type7"):
         VrfConfigModel.from_config(
@@ -1032,6 +1033,100 @@ def _orchestrator_for_request_tests(params, is_child=False, is_multicluster=Fals
     )
     object.__setattr__(instance, "rest_send", _RestSend(params))
     return instance
+
+
+@pytest.mark.parametrize("key_type,number", [("3des", 3), ("type6", 6), ("type7", 7)])
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.175", "5.0.1.1", None, "unknown", "4.2", "4.2.bad", 42])
+@pytest.mark.parametrize("is_child,is_multicluster", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_vrf_bgp_key_type_is_converted_only_at_the_request_boundary(key_type, number, version, is_child, is_multicluster, operation):
+    orchestrator = _orchestrator_for_request_tests({"state": "merged"}, is_child=is_child, is_multicluster=is_multicluster)
+    orchestrator.rest_send.controller_version = version
+    model = VrfDataModel.from_config(_transform({"vrf_name": "BLUE", "bgp_password": "aabbccdd", "bgp_passwd_encrypt": key_type}, is_child=is_child))
+    original = model.model_dump()
+    calls = []
+    object.__setattr__(orchestrator, "_request", lambda **kwargs: calls.append(kwargs) or {})
+
+    getattr(orchestrator, operation)(model)
+
+    assert len(calls) == 1
+    assert calls[0]["verb"] == (HttpVerbEnum.PUT if is_child or operation == "update" else HttpVerbEnum.POST)
+    payload = calls[0]["data"] if is_child or operation == "update" else calls[0]["data"]["vrfs"][0]
+    assert payload["fabricData"]["bgpPasswordKeyType"] == (number if version == "4.2.1.10" else key_type)
+    assert payload["fabricData"]["bgpPassword"] == "aabbccdd"
+    assert model.model_dump() == original
+    assert model.to_gathered_config()["bgp_passwd_encrypt"] == key_type
+
+
+@pytest.mark.parametrize("key_type,number", [("3des", 3), ("type6", 6), ("type7", 7)])
+@pytest.mark.parametrize("numeric", [False, True])
+@pytest.mark.parametrize("password", ["aabbccdd", 11223344])
+@pytest.mark.parametrize("is_multicluster", [False, True])
+@pytest.mark.parametrize("scoped", [False, True])
+def test_vrf_bgp_readback_is_canonical_and_replayable_without_mutating_the_response(key_type, number, numeric, password, is_multicluster, scoped):
+    params = {"state": "merged" if scoped else "gathered", "config": [{"vrf_name": "BLUE"}] if scoped else []}
+    orchestrator = _orchestrator_for_request_tests(params, is_multicluster=is_multicluster)
+    raw = {
+        "fabricName": "AK-VXLAN",
+        "vrfName": "BLUE",
+        "vrfType": "vxlanIbgp",
+        "fabricData": {"bgpPassword": password, "bgpPasswordKeyType": number if numeric else key_type},
+    }
+    snapshot = deepcopy(raw)
+    object.__setattr__(orchestrator, "_request", lambda **_kwargs: {"vrfs": [raw]})
+
+    response = orchestrator.query_all()[0]
+
+    assert raw == snapshot
+    assert response["fabricData"]["bgpPasswordKeyType"] == key_type
+    gathered = VrfDataModel.from_response(response).to_gathered_config()
+    assert gathered["bgp_password"] == str(password)
+    assert VrfConfigModel.from_config(gathered).bgp_passwd_encrypt == key_type
+    proposed = VrfDataModel.from_config(_transform({"vrf_name": "BLUE", "bgp_password": str(password), "bgp_passwd_encrypt": key_type}))
+    current = VrfDataModel.from_response(response)
+    assert current.get_diff(proposed, exclude_unset=True)
+
+
+@pytest.mark.parametrize(
+    "fabric_data", [None, {}, {"bgpPassword": "aabbccdd"}, {"bgpPasswordKeyType": None}, {"bgpPasswordKeyType": "3"}, {"bgpPasswordKeyType": 8}]
+)
+def test_vrf_bgp_conversion_does_not_invent_or_coerce_omitted_or_unknown_key_types(fabric_data):
+    orchestrator = _orchestrator_for_request_tests({"state": "merged"})
+    orchestrator.rest_send.controller_version = "4.2.1.10"
+    raw = {"vrfName": "BLUE", **({"fabricData": fabric_data} if fabric_data is not None else {})}
+    snapshot = deepcopy(raw)
+    assert orchestrator._normalize_query_vrf_items([raw]) == [snapshot]
+    assert orchestrator._manage_api_vrf_payload(raw) == snapshot
+    assert raw == snapshot
+
+
+@pytest.mark.parametrize("number,name", [(3, "3des"), (6, "type6"), (7, "type7")])
+def test_vrf_bgp_template_readback_is_normalized_after_multicluster_shape_expansion(number, name):
+    orchestrator = _orchestrator_for_request_tests({"state": "gathered"})
+    object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+    raw = {"vrfName": "BLUE", "vrfTemplateConfig": json.dumps({"bgpPassword": "aabbccdd", "bgpPasswordKeyType": str(number)})}
+    snapshot = deepcopy(raw)
+    normalized = orchestrator._normalize_query_vrf_items([raw])[0]
+    assert raw == snapshot
+    assert normalized["fabricData"]["bgpPasswordKeyType"] == name
+    assert normalized["vrfTemplateConfig"]["bgpPasswordKeyType"] == str(number)
+
+
+def test_vrf_bgp_serialization_reuses_existing_connection_version_cache():
+    versions = []
+
+    def get_version():
+        versions.append("read")
+        return "4.2.1.10"
+
+    runtime = RestSend({"state": "merged"})
+    runtime.sender = SimpleNamespace(path="", verb="GET", payload=None, response={}, commit=lambda: None, get_version=get_version)
+    orchestrator = NDVrfOrchestrator(rest_send=runtime, strategy=StandaloneVrfStrategy(fabric_name="FAB"))
+    payload = {"vrfName": "BLUE", "fabricData": {"bgpPasswordKeyType": "type6"}}
+    for _attempt in range(3):
+        assert orchestrator._manage_api_vrf_payload(payload)["fabricData"]["bgpPasswordKeyType"] == 6
+    assert versions == ["read"]
+    assert payload["fabricData"]["bgpPasswordKeyType"] == "type6"
 
 
 @pytest.fixture(params=["externalConnectivity", "vxlanExternal"])

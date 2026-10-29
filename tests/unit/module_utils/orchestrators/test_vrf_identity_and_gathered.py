@@ -29,7 +29,7 @@ def _strategy(topology):
     return cls(fabric_name="FAB", fabric_data={"managementType": "vxlan" if topology == "mcfg" else "vxlanIbgp", "members": members})
 
 
-def _coordinator(monkeypatch, strategy, state, observed, *, check=False):
+def _coordinator(monkeypatch, strategy, state, observed, *, check=False, version=None):
     def fail_json(**kwargs):
         raise AssertionError(kwargs)
 
@@ -45,7 +45,13 @@ def _coordinator(monkeypatch, strategy, state, observed, *, check=False):
         return {"vrfs": deepcopy(observed), "meta": {"counts": {"remaining": 0, "total": len(observed)}}} if kwargs["verb"].value == "GET" else {}
 
     monkeypatch.setattr(NDVrfOrchestrator, "_request", request)
-    monkeypatch.setattr(coordinator, "_new_rest_send", lambda params: RestSend(params))
+
+    def rest_send(params):
+        runtime = RestSend(params)
+        runtime.controller_version = version
+        return runtime
+
+    monkeypatch.setattr(coordinator, "_new_rest_send", rest_send)
     return coordinator, calls
 
 
@@ -74,6 +80,41 @@ def _manage(coordinator, intent, state):
         return sm
     finally:
         coordinator._restore_state_machine_params(original_config, original_state)
+
+
+@pytest.mark.parametrize("topology", ["standalone", "msd_child", "mcfg_child"])
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("key_type,number", [("3des", 3), ("type6", 6), ("type7", 7)])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_bgp_pair_and_sparse_updates_converge_through_actual_state_preparation(monkeypatch, topology, version, key_type, number, state):
+    strategy = _strategy(topology)
+    observed = _readback(strategy)
+    observed.setdefault("fabricData", {}).update(bgpPassword="aabbccdd", bgpPasswordKeyType=number if version.startswith("4.2.") else key_type)
+    if strategy.is_child:
+        observed["vrfType"] = "vxlanIbgp"
+    intent = {"vrf_name": "BLUE", "bgp_password": "aabbccdd", "bgp_passwd_encrypt": key_type}
+    for change in ({}, {"bgp_password": "11223344"}, {"bgp_passwd_encrypt": "type7"}, {"bgp_log_neighbor_change": True}):
+        intent.update(change)
+        sparse = state == "merged" or strategy.is_child
+        entry = {"vrf_name": "BLUE", **change} if sparse and change else dict(intent)
+        changed = bool(change) and not (change == {"bgp_passwd_encrypt": "type7"} and key_type == "type7")
+        for check, expected in ((True, changed), (False, changed), (False, False), (True, False)):
+            coordinator, calls = _coordinator(monkeypatch, strategy, state, [observed], check=check, version=version)
+            sm = _manage(coordinator, entry, state)
+            assert sm.output.format()["changed"] is expected
+            assert sum(call["verb"].value == "GET" for call in calls) == 1
+            writes = [call for call in calls if call["verb"].value != "GET"]
+            assert len(writes) == int(expected and not check)
+            gathered = sm.existing.get(("BLUE", "FAB")).to_gathered_config()
+            assert gathered["bgp_passwd_encrypt"] == intent["bgp_passwd_encrypt"]
+            if writes:
+                payload = writes[0]["data"]
+                wire_key = {"3des": 3, "type6": 6, "type7": 7}[intent["bgp_passwd_encrypt"]] if version.startswith("4.2.") else intent["bgp_passwd_encrypt"]
+                assert payload["fabricData"]["bgpPasswordKeyType"] == wire_key
+                assert payload["fabricData"]["bgpPassword"] == intent["bgp_password"]
+                observed = {**observed, **deepcopy(payload)}
+                if version.startswith("4.2.") and intent["bgp_password"].isdigit():
+                    observed["fabricData"]["bgpPassword"] = int(intent["bgp_password"])
 
 
 @pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg", "msd_child", "mcfg_child"])
