@@ -1,0 +1,738 @@
+---
+# Edge cases retained from the original merged.yaml suite. These are kept
+# separate from the baseline create/idempotency flow so each mutable scenario
+# can restore vpc100 before the next state transition.
+
+- name: "MERGED OWNERSHIP GUARD: Confirm candidate fixtures are absent"
+  block:
+    - name: "MERGED OWNERSHIP GUARD: Read peer 1 interfaces"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces
+        method: get
+      register: nd4x_vpc_conflict_fixture_inventory
+      changed_when: false
+
+    - name: "MERGED OWNERSHIP GUARD: Refuse occupied candidate fixtures"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_vpc_conflict_fixture_inventory.current.interfaces
+            | default([])
+            | selectattr('interfaceName', 'in', ['vpc198', 'vpc199'])
+            | list
+            | length == 0
+        fail_msg: >-
+          The merged ownership-guard fixtures vpc198/vpc199 are already
+          present on peer 1. They are not owned by this harness, so the
+          conflict cases will not run or delete them.
+
+    - name: "MERGED OWNERSHIP GUARD: Mark candidate fixtures safe to clean"
+      ansible.builtin.set_fact:
+        nd4x_vpc_conflict_fixture_safe_to_clean: true
+
+    - name: "MERGED OWNERSHIP GUARD: Reject one-sided conflict without deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc198
+            config_data:
+              network_os:
+                policy:
+                  access_vlan: 198
+                  peer1_port_channel_id: 198
+                  peer1_member_ports:
+                    - "{{ vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0] }}"
+                  peer2_port_channel_id: 198
+                  peer2_member_ports: []
+        expected:
+          check_mode:
+            changed: false
+            failed: true
+          apply:
+            changed: false
+            failed: true
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+      register: nd4x_vpc_one_sided_conflict
+
+    - name: "MERGED OWNERSHIP GUARD: Reject two-sided conflict with deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc199
+            config_data:
+              network_os:
+                policy:
+                  access_vlan: 199
+                  peer1_port_channel_id: 199
+                  peer1_member_ports:
+                    - "{{ vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0] }}"
+                  peer2_port_channel_id: 199
+                  peer2_member_ports:
+                    - "{{ vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0] }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: true
+          apply:
+            changed: false
+            failed: true
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+      register: nd4x_vpc_two_sided_conflict
+
+    - name: "MERGED OWNERSHIP GUARD: Verify local rejection and no candidate creation"
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_one_sided_conflict.check_mode_result.failed | bool
+          - not nd4x_vpc_one_sided_conflict.check_mode_result.changed | bool
+          - >-
+            'Preflight failed: Cannot configure vPC member(s)'
+            in nd4x_vpc_one_sided_conflict.check_mode_result.msg
+          - nd4x_vpc_one_sided_conflict.first_run_result.failed | bool
+          - not nd4x_vpc_one_sided_conflict.first_run_result.changed | bool
+          - >-
+            'Preflight failed: Cannot configure vPC member(s)'
+            in nd4x_vpc_one_sided_conflict.first_run_result.msg
+          - nd4x_vpc_one_sided_conflict.idempotency_attempts == 0
+          - nd4x_vpc_one_sided_conflict.nd_query_results | length == 0
+          - nd4x_vpc_two_sided_conflict.check_mode_result.failed | bool
+          - not nd4x_vpc_two_sided_conflict.check_mode_result.changed | bool
+          - >-
+            'Preflight failed: Cannot configure vPC member(s)'
+            in nd4x_vpc_two_sided_conflict.check_mode_result.msg
+          - nd4x_vpc_two_sided_conflict.first_run_result.failed | bool
+          - not nd4x_vpc_two_sided_conflict.first_run_result.changed | bool
+          - >-
+            'Preflight failed: Cannot configure vPC member(s)'
+            in nd4x_vpc_two_sided_conflict.first_run_result.msg
+          - nd4x_vpc_two_sided_conflict.idempotency_attempts == 0
+          - nd4x_vpc_two_sided_conflict.nd_query_results | length == 0
+
+    - name: "MERGED OWNERSHIP GUARD: Verify failed requests left fixtures absent"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces
+        method: get
+      register: nd4x_vpc_conflict_fixture_after
+      changed_when: false
+
+    - name: "MERGED OWNERSHIP GUARD: Assert no candidate residue"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_vpc_conflict_fixture_after.current.interfaces
+            | default([])
+            | selectattr('interfaceName', 'in', ['vpc198', 'vpc199'])
+            | list
+            | length == 0
+  always:
+    - name: "MERGED OWNERSHIP GUARD: Remove only harness-owned candidates"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc198
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc199
+        config_actions:
+          deploy: true
+        state: deleted
+      ignore_errors: true
+      when: nd4x_vpc_conflict_fixture_safe_to_clean | default(false) | bool
+
+    - name: "MERGED OWNERSHIP GUARD: Wait for candidate removal to converge"
+      ansible.builtin.pause:
+        seconds: 30
+      when: nd4x_vpc_conflict_fixture_safe_to_clean | default(false) | bool
+
+    - name: "MERGED OWNERSHIP GUARD: Query candidate cleanup result"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces
+        method: get
+      register: nd4x_vpc_conflict_fixture_cleanup_inventory
+      changed_when: false
+      when: nd4x_vpc_conflict_fixture_safe_to_clean | default(false) | bool
+
+    - name: "MERGED OWNERSHIP GUARD: Verify candidate fixtures are absent after cleanup"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_vpc_conflict_fixture_cleanup_inventory.current.interfaces
+            | default([])
+            | selectattr('interfaceName', 'in', ['vpc198', 'vpc199'])
+            | list
+            | length == 0
+        fail_msg: >-
+          A harness-owned ownership-guard candidate remains after cleanup.
+      when: nd4x_vpc_conflict_fixture_safe_to_clean | default(false) | bool
+
+- name: "MERGED ONE-SIDED MEMBER: Update one peer and restore the fixture"
+  block:
+    - name: "MERGED ONE-SIDED MEMBER: Remove only peer 2 membership"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc100
+            config_data:
+              network_os:
+                policy:
+                  peer2_member_ports: []
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+      register: nd4x_vpc_one_sided_parent
+
+    - name: "MERGED ONE-SIDED MEMBER: Wait for vPC membership convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "MERGED ONE-SIDED MEMBER: Query converged peer 1 vPC"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc100
+        method: get
+      register: nd4x_vpc_one_sided_peer1
+      changed_when: false
+
+    - name: "MERGED ONE-SIDED MEMBER: Query converged peer 2 vPC"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer2 }}/interfaces/vpc100
+        method: get
+      register: nd4x_vpc_one_sided_peer2
+      changed_when: false
+
+    - name: "MERGED ONE-SIDED MEMBER: Verify converged membership state"
+      vars:
+        parent_after: >-
+          {{
+            nd4x_vpc_one_sided_parent.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_one_sided_parent.first_run_result.changed | bool
+          - >-
+            parent_after.config_data.network_os.policy.peer1_member_ports
+            == vpc_access_baseline.config_data.network_os.policy.peer1_member_ports
+          - parent_after.config_data.network_os.policy.peer2_member_ports == []
+          - nd4x_vpc_one_sided_peer1.current.interfaceName == 'vpc100'
+          - nd4x_vpc_one_sided_peer2.current.interfaceName == 'vpc100'
+          - >-
+            nd4x_vpc_one_sided_peer1.current.configData.networkOS.policy.peer1MemberPorts
+            == vpc_access_baseline.config_data.network_os.policy.peer1_member_ports
+          - >-
+            nd4x_vpc_one_sided_peer1.current.configData.networkOS.policy
+            .get('peer2MemberPorts', []) | length == 0
+          - >-
+            nd4x_vpc_one_sided_peer2.current.configData.networkOS.policy
+            .get('peer2MemberPorts', []) | length == 0
+        fail_msg: >-
+          The one-sided membership update did not converge on both vPC peers.
+          Peer 1 must retain its member while peer 2 must have no member.
+
+    - name: "MERGED ONE-SIDED MEMBER: Disable the remaining peer 1 member"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: merged
+        idempotency: true
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_names:
+              - "{{ vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0] }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  admin_state: false
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+      register: nd4x_vpc_one_sided_member_down
+
+    - name: "MERGED ONE-SIDED MEMBER: Verify member update and idempotent replay"
+      vars:
+        parent_after: >-
+          {{
+            nd4x_vpc_one_sided_parent.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+        member_after: >-
+          {{
+            nd4x_vpc_one_sided_member_down.first_run_result.after
+            | selectattr(
+                'interface_name',
+                'equalto',
+                vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0]
+              )
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_one_sided_parent.first_run_result.changed | bool
+          - >-
+            parent_after.config_data.network_os.policy.peer1_member_ports
+            == vpc_access_baseline.config_data.network_os.policy.peer1_member_ports
+          - parent_after.config_data.network_os.policy.peer2_member_ports == []
+          - member_after.config_data.network_os.policy.admin_state == false
+          - nd4x_vpc_one_sided_member_down.check_mode_result.changed | bool
+          - nd4x_vpc_one_sided_member_down.first_run_result.changed | bool
+          - not nd4x_vpc_one_sided_member_down.second_run_result.changed | bool
+          - nd4x_vpc_one_sided_member_down.idempotency_attempts == 1
+
+    - name: "MERGED ONE-SIDED MEMBER: Restore member admin state"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_names:
+              - "{{ vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0] }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  admin_state: true
+        config_actions:
+          deploy: true
+        state: merged
+      register: nd4x_vpc_one_sided_member_restore
+
+    - name: "MERGED ONE-SIDED MEMBER: Restore both baseline member lists"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        config_actions:
+          deploy: true
+        state: merged
+      register: nd4x_vpc_one_sided_parent_restore
+
+    - name: "MERGED ONE-SIDED MEMBER: Verify baseline restoration"
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_one_sided_member_restore.changed | bool
+          - nd4x_vpc_one_sided_parent_restore.changed | bool
+  always:
+    - name: "MERGED ONE-SIDED MEMBER: Ensure member admin state is enabled"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_names:
+              - "{{ vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0] }}"
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  admin_state: true
+        config_actions:
+          deploy: true
+        state: merged
+      ignore_errors: true
+
+    - name: "MERGED ONE-SIDED MEMBER: Ensure baseline vpc100 member lists"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        config_actions:
+          deploy: true
+        state: merged
+      ignore_errors: true
+
+    - name: "MERGED ONE-SIDED MEMBER: Wait for fixture restoration"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "MERGED ONE-SIDED MEMBER: Query restored Ethernet member"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ test_switch_id_peer1 }}/interfaces/{{
+          vpc_access_baseline.config_data.network_os.policy.peer1_member_ports[0]
+          | replace('/', '%2F') }}
+        method: get
+      register: nd4x_vpc_one_sided_member_cleanup
+      changed_when: false
+
+    - name: "MERGED ONE-SIDED MEMBER: Query restored parent on both peers"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/switches/{{ item }}/interfaces/vpc100
+        method: get
+      loop:
+        - "{{ test_switch_id_peer1 }}"
+        - "{{ test_switch_id_peer2 }}"
+      loop_control:
+        label: "{{ item }}"
+      register: nd4x_vpc_one_sided_parent_cleanup
+      changed_when: false
+
+    - name: "MERGED ONE-SIDED MEMBER: Verify member and parent fixture restoration"
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_one_sided_member_cleanup.current.configData.networkOS.policy.adminState | bool
+          - >-
+            item.current.configData.networkOS.policy.peer1MemberPorts
+            == vpc_access_baseline.config_data.network_os.policy.peer1_member_ports
+          - >-
+            item.current.configData.networkOS.policy.peer2MemberPorts
+            == vpc_access_baseline.config_data.network_os.policy.peer2_member_ports
+        fail_msg: >-
+          The one-sided merged fixture was not fully restored on switch
+          {{ item.item }}. Check the Ethernet member and vPC cleanup results.
+      loop: "{{ nd4x_vpc_one_sided_parent_cleanup.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+- name: "MERGED EMPTY MEMBERS: Stage, deploy, and restore empty membership"
+  block:
+    - name: "MERGED EMPTY MEMBERS: Stage both peer lists empty"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc100
+            config_data:
+              network_os:
+                policy:
+                  peer1_member_ports: []
+                  peer2_member_ports: []
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+        nd_queries:
+          - name: Validate staged empty member lists
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.configData.networkOS.policy.peer1MemberPorts
+                equals: []
+              - jsonpath: $.current.configData.networkOS.policy.peer2MemberPorts
+                equals: []
+      register: nd4x_vpc_empty_staged
+
+    - name: "MERGED EMPTY MEMBERS: Verify staging and idempotent replay"
+      vars:
+        staged_vpc: >-
+          {{
+            nd4x_vpc_empty_staged.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_empty_staged.first_run_result.changed | bool
+          - staged_vpc.config_data.network_os.policy.peer1_member_ports == []
+          - staged_vpc.config_data.network_os.policy.peer2_member_ports == []
+          - not nd4x_vpc_empty_staged.second_run_result.changed | bool
+          - nd4x_vpc_empty_staged.idempotency_attempts == 1
+
+    - name: "MERGED EMPTY MEMBERS: Reconcile exact staged intent with deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        idempotency: false
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc100
+            config_data:
+              network_os:
+                policy:
+                  peer1_member_ports: []
+                  peer2_member_ports: []
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+        nd_queries:
+          - name: Validate deployed empty member lists on peer 1
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.configData.networkOS.policy.peer1MemberPorts
+                equals: []
+              - jsonpath: $.current.configData.networkOS.policy.peer2MemberPorts
+                equals: []
+          - name: Validate deployed empty member lists on peer 2
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer2 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.configData.networkOS.policy.peer1MemberPorts
+                equals: []
+              - jsonpath: $.current.configData.networkOS.policy.peer2MemberPorts
+                equals: []
+      register: nd4x_vpc_empty_reconcile
+
+    - name: "MERGED EMPTY MEMBERS: Verify staged intent deployment"
+      vars:
+        deployed_vpc: >-
+          {{
+            nd4x_vpc_empty_reconcile.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_empty_reconcile.check_mode_result.changed | bool
+          - nd4x_vpc_empty_reconcile.first_run_result.changed | bool
+          - deployed_vpc.config_data.network_os.policy.peer1_member_ports == []
+          - deployed_vpc.config_data.network_os.policy.peer2_member_ports == []
+          - nd4x_vpc_empty_reconcile.idempotency_attempts == 0
+
+    - name: "MERGED EMPTY MEMBERS: Wait for vPC membership convergence"
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: "MERGED EMPTY MEMBERS: Verify deployed empty state is idempotent"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc100
+            config_data:
+              network_os:
+                policy:
+                  peer1_member_ports: []
+                  peer2_member_ports: []
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+        nd_queries:
+          - name: Confirm empty peer member state remains deployed
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.configData.networkOS.policy.peer1MemberPorts
+                equals: []
+              - jsonpath: $.current.configData.networkOS.policy.peer2MemberPorts
+                equals: []
+      register: nd4x_vpc_empty_idempotent
+
+    - name: "MERGED EMPTY MEMBERS: Restore populated state before direct clear"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        config_actions:
+          deploy: true
+        state: merged
+      register: nd4x_vpc_empty_populated_restore
+
+    - name: "MERGED EMPTY MEMBERS: Deploy empty lists directly from populated state"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_vpc_access
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - switch_ip: "{{ test_switch_ip_peer1 }}"
+            interface_name: vpc100
+            config_data:
+              network_os:
+                policy:
+                  peer1_member_ports: []
+                  peer2_member_ports: []
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_vpc_pair_check_mode_queries }}"
+        nd_queries:
+          - name: Validate direct deployed empty member lists on peer 1
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer1 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.configData.networkOS.policy.peer1MemberPorts
+                equals: []
+              - jsonpath: $.current.configData.networkOS.policy.peer2MemberPorts
+                equals: []
+          - name: Validate direct deployed empty member lists on peer 2
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_peer2 }}/interfaces/vpc100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.configData.networkOS.policy.peer1MemberPorts
+                equals: []
+              - jsonpath: $.current.configData.networkOS.policy.peer2MemberPorts
+                equals: []
+      register: nd4x_vpc_empty_direct_deploy
+
+    - name: "MERGED EMPTY MEMBERS: Verify direct deployed clear and replay"
+      vars:
+        direct_deployed_vpc: >-
+          {{
+            nd4x_vpc_empty_direct_deploy.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vpc100')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_vpc_empty_direct_deploy.check_mode_result.changed | bool
+          - nd4x_vpc_empty_direct_deploy.first_run_result.changed | bool
+          - direct_deployed_vpc.config_data.network_os.policy.peer1_member_ports == []
+          - direct_deployed_vpc.config_data.network_os.policy.peer2_member_ports == []
+          - not nd4x_vpc_empty_direct_deploy.second_run_result.changed | bool
+          - nd4x_vpc_empty_direct_deploy.idempotency_attempts == 1
+
+    - name: "MERGED EMPTY MEMBERS: Restore baseline member lists"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        config_actions:
+          deploy: true
+        state: merged
+      register: nd4x_vpc_empty_restore
+
+    - name: "MERGED EMPTY MEMBERS: Verify deployed state and restoration"
+      ansible.builtin.assert:
+        that:
+          - not nd4x_vpc_empty_idempotent.check_mode_result.changed | bool
+          - not nd4x_vpc_empty_idempotent.first_run_result.changed | bool
+          - not nd4x_vpc_empty_idempotent.second_run_result.changed | bool
+          - nd4x_vpc_empty_idempotent.idempotency_attempts == 1
+          - nd4x_vpc_empty_direct_deploy.first_run_result.changed | bool
+          - not nd4x_vpc_empty_direct_deploy.second_run_result.changed | bool
+          - nd4x_vpc_empty_populated_restore.changed | bool
+          - nd4x_vpc_empty_restore.changed | bool
+  always:
+    - name: "MERGED EMPTY MEMBERS: Ensure baseline vpc100 member lists"
+      cisco.nd.nd_interface_vpc_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ vpc_access_baseline }}"
+        config_actions:
+          deploy: true
+        state: merged
+      ignore_errors: true

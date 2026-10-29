@@ -1,0 +1,102 @@
+---
+- name: Run nd_interface_ethernet_access multi-switch deleted test
+  block:
+    - name: "MULTI-SWITCH DELETED SETUP: Normalize both reserved ports"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+        state: deleted
+
+    - name: "MULTI-SWITCH DELETED SETUP: Create access policies on both switches"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 721
+                  description: "ND4X multi-switch deleted baseline A"
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  access_vlan: 722
+                  description: "ND4X multi-switch deleted baseline B"
+        state: merged
+
+    - name: "MULTI-SWITCH DELETED: Normalize access policies on both switches in one call"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_access
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Verify Ethernet1/41 is normalized on switch A
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == '{{ nd4x_multi_switch_interface }}' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+          - name: Verify Ethernet1/41 is normalized on switch B
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_test_switch_b_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(
+                  @.interfaceName == '{{ nd4x_multi_switch_interface }}' &
+                  @.configData.networkOS.policy.policyType == 'accessHost'
+                  )]
+                exists: false
+      register: multi_switch_deleted
+
+    - name: "MULTI-SWITCH DELETED: Verify both targets and idempotency"
+      ansible.builtin.assert:
+        that:
+          - multi_switch_deleted.check_mode_result.changed | bool
+          - multi_switch_deleted.first_run_result.changed | bool
+          - multi_switch_deleted.idempotency_attempts == 1
+          - not multi_switch_deleted.second_run_result.changed | bool
+          - multi_switch_deleted.nd_query_results | length == 2
+          - multi_switch_deleted.first_run_result.after | default([]) | length == 0
+
+  always:
+    - name: "MULTI-SWITCH DELETED CLEANUP: Normalize both reserved ports"
+      cisco.nd.nd_interface_ethernet_access:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+          - switch_ip: "{{ test_switch_b_ip }}"
+            interface_names: ["{{ nd4x_multi_switch_interface }}"]
+        state: deleted

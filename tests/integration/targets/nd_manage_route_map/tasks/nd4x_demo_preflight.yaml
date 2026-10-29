@@ -1,0 +1,44 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record nd_manage_route_map harness support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{
+        nd4x_version.current.platformVersion
+        is version('4.2.1', '>=')
+      }}
+
+- name: "ND4X PREFLIGHT: Define route-map snapshot"
+  ansible.builtin.set_fact:
+    nd4x_route_map_check_mode_queries:
+      - name: Snapshot all route maps in the test fabric
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps
+        expected_status: 200
+        pagination:
+          page_size: 100
+          collection_key: routeMaps
+          max_pages: 10000
+        unordered_paths: [/routeMaps]
+        ignore_keys:
+          - lastUpdateTimestamp
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify route-map snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_route_map_check_mode_queries | length == 1
+    fail_msg: >-
+      The route-map harness requires one fabric-wide predictive snapshot.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x nd_manage_route_map harness scenarios because controller
+      version {{ nd4x_version.current.platformVersion }} is older than 4.2.1.
+  when: not nd4x_supported | bool

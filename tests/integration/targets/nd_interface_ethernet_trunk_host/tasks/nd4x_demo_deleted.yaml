@@ -1,0 +1,218 @@
+---
+- name: Run trunk-host deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Reconstruct exact post-overridden fan-out state"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
+        state: deleted
+
+    - name: "DELETED SETUP: Run cleanup re-query probe"
+      ansible.builtin.include_tasks: nd4x_demo_setup_probe.yaml
+
+    - name: "DELETED SETUP: Create Ethernet1/45 through Ethernet1/47"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: ["{{ ethernet_45_46_47 }}"]
+        state: merged
+      register: deleted_setup
+
+    - name: "DELETED SETUP: Verify fan-out prerequisite"
+      ansible.builtin.assert:
+        that:
+          - deleted_setup.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 1
+          - (deleted_setup.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first).config_data.network_os.policy.allowed_vlans == "400-500"
+
+    - name: "DELETED SINGLE: Normalize Ethernet1/45"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: deleted
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/45]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate physical Ethernet1/45 remains present
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F45"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaceName", equals: Ethernet1/45}
+              - {jsonpath: "$.current.interfaceType", equals: ethernet}
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkHost}
+      register: deleted_single
+
+    - name: "DELETED SINGLE: Verify reset and idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_single.first_run_result.changed | bool
+          - ((deleted_single.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 0) or ((deleted_single.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first).config_data.network_os.policy.allowed_vlans != "400-500"))
+          - deleted_single.idempotency_attempts == 1
+          - not deleted_single.second_run_result.changed | bool
+
+    - name: "DELETED FAN-OUT: Normalize Ethernet1/46 and Ethernet1/47"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: deleted
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/46, Ethernet1/47]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate fan-out physical interfaces remain present
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/46' & @.configData.networkOS.policy.policyType == 'trunkHost')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/47' & @.configData.networkOS.policy.policyType == 'trunkHost')]"
+                exists: true
+      register: deleted_fanout
+
+    - name: "DELETED FAN-OUT: Verify both interfaces were reset"
+      ansible.builtin.assert:
+        that:
+          - deleted_fanout.first_run_result.changed | bool
+          - not deleted_fanout.second_run_result.changed | bool
+
+    - name: "DELETED MULTI SETUP: Create Ethernet1/41 through Ethernet1/43"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ ethernet_41 }}"
+          - "{{ ethernet_42_43 }}"
+        state: merged
+      register: deleted_multi_setup
+
+    - name: "DELETED MULTI: Normalize multiple config groups"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: deleted
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/41]
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/42, Ethernet1/43]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate multi-group trunk-host resets
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/41' & @.configData.networkOS.policy.description == 'Ansible integration test Ethernet1/41')]"
+                exists: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == 'Ethernet1/42' & @.configData.networkOS.policy.description == 'Ansible integration test trunk ports')]"
+                exists: false
+      register: deleted_multi
+
+    - name: "DELETED MULTI: Verify all groups changed"
+      ansible.builtin.assert:
+        that:
+          - deleted_multi.first_run_result.changed | bool
+          - not deleted_multi.second_run_result.changed | bool
+          - deleted_multi.nd_query_results | length == 1
+
+    - name: "DELETED NON-EXISTENT: Normalize Ethernet1/48"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: deleted
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate Ethernet1/48 is at trunk defaults
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.interfaceName", equals: Ethernet1/48}
+              - {jsonpath: "$.current.configData.networkOS.policy.policyType", equals: trunkHost}
+      register: deleted_nonexistent
+
+    - name: "DELETED NON-EXISTENT: Verify every phase is unchanged"
+      ansible.builtin.assert:
+        that:
+          - not deleted_nonexistent.check_mode_result.changed | bool
+          - not deleted_nonexistent.first_run_result.changed | bool
+          - not deleted_nonexistent.second_run_result.changed | bool
+
+    - name: "DELETED CLASS C SETUP: Seed bandwidth on Ethernet1/48"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+            config_data:
+              network_os:
+                policy:
+                  bandwidth: 1500000
+        state: merged
+      register: deleted_class_c_seed
+
+    - name: "DELETED CLASS C: Reset Ethernet1/48"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_ethernet_trunk_host
+        state: deleted
+        common_args: {output_level: "{{ nd_info.output_level }}", fabric_name: "{{ test_fabric_name }}"}
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: [Ethernet1/48]
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+          idempotency: {changed: false, failed: false}
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate bandwidth was cleared
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces/Ethernet1%2F48"
+            method: get
+            expected_status: 200
+            expect:
+              - {jsonpath: "$.current.configData.networkOS.policy.bandwidth", exists: false}
+      register: deleted_class_c
+
+    - name: "DELETED CLASS C: Verify module-specific reset"
+      ansible.builtin.assert:
+        that:
+          - deleted_class_c_seed.changed | bool
+          - deleted_class_c.first_run_result.changed | bool
+          - ((deleted_class_c.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | list | length == 0) or ((deleted_class_c.first_run_result.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first).config_data.network_os.policy.bandwidth | default(none)) != 1500000)
+
+  always:
+    - name: "DELETED CLEANUP: Normalize all reserved trunk-host interfaces"
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_names: "{{ nd4x_ethernet_reserved_interfaces }}"
+        state: deleted

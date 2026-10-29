@@ -1,0 +1,58 @@
+---
+- name: Run nd_manage_route_map deleted harness scenarios
+  block:
+    - name: "DELETED SETUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml
+
+    - name: "DELETED SETUP: Create the primary route map"
+      cisco.nd.nd_manage_route_map:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ route_map_primary }}"
+        state: merged
+
+    - name: "DELETED: Delete primary route map through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_route_map
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ test_route_map_primary_name }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_route_map_check_mode_queries }}"
+        nd_queries:
+          - name: Verify deleted primary route map is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name }}/routeMaps?max=100
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.routeMaps[?(
+                  @.name == '{{ test_route_map_primary_name }}'
+                  )]
+                exists: false
+      register: deleted_primary
+
+    - name: "DELETED: Verify deletion and harness idempotency"
+      ansible.builtin.assert:
+        that:
+          - deleted_primary.check_mode_result.changed | bool
+          - deleted_primary.first_run_result.changed | bool
+          - deleted_primary.first_run_result.after | selectattr('name', 'equalto', test_route_map_primary_name) | list | length == 0
+          - deleted_primary.second_run_result.changed == false
+  always:
+    - name: "DELETED CLEANUP: Remove reserved route maps"
+      ansible.builtin.include_tasks: setup.yaml
