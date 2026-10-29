@@ -245,7 +245,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        deploy: true
+        deploy: false
         config:
           - name: switch_freeform
             description: "Enable system vlan long-name"
@@ -329,7 +329,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        deploy: true
+        deploy: false
         config:
           - name: feature_enable
             description: "Enable LACP on leaf switches"
@@ -432,7 +432,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        deploy: true
+        deploy: false
         config:
           - name: clock_timezone
             description: "Set timezone to CET"
@@ -481,7 +481,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        deploy: true
+        deploy: false
         config:
           - name: feature_enable
             description: "Enable LACP on leaf switches"

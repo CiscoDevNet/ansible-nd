@@ -900,7 +900,7 @@
       cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
-        deploy: true
+        deploy: false
         config:
           - name: feature_enable
             description: "SPC-BFD-Enable BFD feature"
