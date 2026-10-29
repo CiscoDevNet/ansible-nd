@@ -1,0 +1,240 @@
+---
+- name: "MERGED HARNESS PREFLIGHT: Protect reserved NX-OS subinterface names"
+  ansible.builtin.include_tasks: nd4x_demo_nxos_reserved_preflight.yaml
+
+- name: "MERGED HARNESS: Create, update, and verify an NX-OS subinterface"
+  block:
+    - name: "MERGED HARNESS: Create Ethernet .20 and .21 plus Port-channel .23"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: merged
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_20 }}"
+          - "{{ nd4x_subif_eth_21 }}"
+          - "{{ nd4x_subif_pc_23 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate the created managed subinterface
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')].configData.networkOS.policy.ip"
+                equals: "192.168.61.20"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ip"
+                equals: "192.168.60.20"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.vlanId"
+                equals: 20
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6"
+                equals: "2001:192:168:60::20"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6Prefix"
+                equals: 64
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.mtu"
+                equals: 9216
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimSparse"
+                equals: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimDrPriority"
+                equals: 1
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.netflow"
+                equals: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ port_channel_parent | lower }}.23')]"
+                exists: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ port_channel_parent | lower }}.23')].configData.networkOS.policy.ip"
+                equals: "192.168.63.20"
+      register: nd4x_merged_eth_20
+
+    - name: "MERGED HARNESS: Verify returned configuration and harness phases"
+      vars:
+        subif_after: >-
+          {{
+            nd4x_merged_eth_20.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.20')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - subif_after.config_data.network_os.network_os_type == 'nx-os'
+          - subif_after.config_data.network_os.policy.policy_type == 'subinterface'
+          - subif_after.config_data.network_os.policy.ip == '192.168.60.20'
+          - subif_after.config_data.network_os.policy.vlan_id == 20
+          - subif_after.config_data.network_os.policy.ipv6 == '2001:192:168:60::20'
+          - subif_after.config_data.network_os.policy.ipv6_prefix == 64
+          - subif_after.config_data.network_os.policy.mtu == 9216
+          - subif_after.config_data.network_os.policy.pim_sparse == false
+          - subif_after.config_data.network_os.policy.pim_dr_priority == 1
+          - subif_after.config_data.network_os.policy.netflow == false
+          - nd4x_merged_eth_20.first_run_result.after | selectattr('interface_name', 'equalto', ethernet_parent ~ '.21') | list | length == 1
+          - nd4x_merged_eth_20.first_run_result.after | selectattr('interface_name', 'equalto', port_channel_parent ~ '.23') | list | length == 1
+          - nd4x_merged_eth_20.check_mode_query_results | length == nd4x_fabric_check_mode_queries | length
+          - nd4x_merged_eth_20.second_run_result.changed == false
+          - nd4x_merged_eth_20.nd_query_results | length == 1
+
+    - name: "MERGED HARNESS: Verify a converged check-mode reapply predicts no change"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: merged
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_20 }}"
+          - "{{ nd4x_subif_eth_21 }}"
+          - "{{ nd4x_subif_pc_23 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: nd4x_merged_eth_20_noop
+
+    - name: "MERGED HARNESS: Verify the converged predictive no-op"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_eth_20_noop.first_run_result.changed == false
+          - nd4x_merged_eth_20_noop.second_run_result.changed == false
+
+    - name: "MERGED HARNESS: Infer NX-OS and subinterface policy defaults"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: merged
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_24_inferred }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate inferred NX-OS policy type
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.24')].configData.networkOS.networkOSType"
+                equals: nx-os
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.24')].configData.networkOS.policy.policyType"
+                equals: subinterface
+      register: nd4x_merged_eth_24_inferred
+
+    - name: "MERGED HARNESS: Verify inferred NX-OS defaults in returned state"
+      vars:
+        subif_after: >-
+          {{
+            nd4x_merged_eth_24_inferred.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.24')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - subif_after.config_data.network_os.network_os_type == 'nx-os'
+          - subif_after.config_data.network_os.policy.policy_type == 'subinterface'
+          - nd4x_merged_eth_24_inferred.second_run_result.changed == false
+
+    - name: "MERGED HARNESS: Update the Ethernet subinterface"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: merged
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_20_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated Ethernet configuration
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ip"
+                equals: "192.168.60.21"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.description"
+                equals: "ND4X harness updated subinterface 20"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipRedirects"
+                equals: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6"
+                equals: "2001:192:168:60::21"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6Prefix"
+                equals: 64
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.mtu"
+                equals: 9000
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimSparse"
+                equals: true
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimDrPriority"
+                equals: 50
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.netflow"
+                equals: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.routingTag"
+                equals: 12345
+      register: nd4x_merged_eth_20_updated
+
+    - name: "MERGED HARNESS: Verify returned update"
+      vars:
+        subif_after: >-
+          {{
+            nd4x_merged_eth_20_updated.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.20')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - subif_after.config_data.network_os.policy.ip == '192.168.60.21'
+          - subif_after.config_data.network_os.policy.description == 'ND4X harness updated subinterface 20'
+          - subif_after.config_data.network_os.policy.ip_redirects == false
+          - subif_after.config_data.network_os.policy.ipv6 == '2001:192:168:60::21'
+          - subif_after.config_data.network_os.policy.ipv6_prefix == 64
+          - subif_after.config_data.network_os.policy.mtu == 9000
+          - subif_after.config_data.network_os.policy.pim_sparse == true
+          - subif_after.config_data.network_os.policy.pim_dr_priority == 50
+          - subif_after.config_data.network_os.policy.netflow == false
+          - subif_after.config_data.network_os.policy.routing_tag == '12345'
+          - nd4x_merged_eth_20_updated.second_run_result.changed == false
+  always:
+    - name: "MERGED HARNESS CLEANUP: Remove reserved subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_eth_cleanup }}"
+        state: deleted

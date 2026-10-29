@@ -1,0 +1,154 @@
+---
+- name: "XE OVERRIDDEN HARNESS: Reset the setup guard"
+  ansible.builtin.set_fact:
+    nd4x_xe_override_setup_started: false
+
+- name: "XE OVERRIDDEN HARNESS: Require destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_subinterface_managed_destructive_tests_enabled | bool
+    fail_msg: >-
+      The IOS-XE overridden scenario can delete managed subinterfaces across the entire fabric.
+      Run it only on a dedicated test fabric with no other managed subinterfaces and set
+      nd_subinterface_managed_destructive_tests_enabled=true.
+
+- name: "XE OVERRIDDEN HARNESS PREFLIGHT: Prove the whole XE fabric is within the reserved scope"
+  ansible.builtin.include_tasks: nd4x_demo_override_scope_preflight.yaml
+  vars:
+    nd4x_override_scope_fabric_name: "{{ test_xe_fabric_name }}"
+    nd4x_override_scope_switch_ip: "{{ test_xe_switch_ip }}"
+    nd4x_override_scope_phase: preflight
+    nd4x_override_scope_allowed_pairs: "{{ nd4x_override_reserved_xe_pairs }}"
+
+- name: "XE OVERRIDDEN HARNESS: Record the resolved XE switch ID"
+  ansible.builtin.set_fact:
+    nd4x_xe_switch_id: "{{ nd4x_override_scope_test_switch_id }}"
+
+- name: "XE OVERRIDDEN HARNESS: Guard the parent port and reserved subinterface IDs"
+  ansible.builtin.include_tasks: nd4x_demo_xe_parent_preflight.yaml
+
+- name: "XE OVERRIDDEN HARNESS: Mark the guarded setup as started"
+  ansible.builtin.set_fact:
+    nd4x_xe_override_setup_started: true
+
+- name: "XE OVERRIDDEN HARNESS: Retain .200 and .201 and remove .202"
+  block:
+    - name: "XE OVERRIDDEN HARNESS SETUP: Remove only reserved harness subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config: "{{ nd4x_subif_xe_cleanup }}"
+        config_actions:
+          deploy: true
+        state: deleted
+
+    - name: "XE OVERRIDDEN HARNESS SETUP: Convert the parent port to an IOS-XE routed host"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - "{{ xe_parent_routed }}"
+        config_actions:
+          deploy: true
+        state: merged
+
+    - name: "XE OVERRIDDEN HARNESS SETUP: Wait for ND to discover the routed parent"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+      register: nd4x_xe_override_parent_discovery
+      until: >-
+        nd4x_xe_override_parent_discovery.current.interfaces | default([])
+        | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+        | selectattr('operData.mode', 'defined')
+        | selectattr('operData.mode', 'equalto', 'routed')
+        | list | length == 1
+      retries: 18
+      delay: 10
+
+    - name: "XE OVERRIDDEN HARNESS SETUP: Create explicit .200, .201, and .202 policies"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_xe_200 }}"
+          - "{{ nd4x_subif_xe_201_shut }}"
+          - "{{ nd4x_subif_xe_202_override }}"
+        config_actions:
+          deploy: true
+        state: merged
+
+    - name: "XE OVERRIDDEN HARNESS: Apply fabric-wide override retaining .200 and .201"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: overridden
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_xe_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: true
+        config:
+          - "{{ nd4x_subif_xe_200 }}"
+          - "{{ nd4x_subif_xe_201_shut }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_override_scope_check_mode_queries }}"
+        nd_queries:
+          - name: Verify explicit IOS-XE policies were retained and .202 was removed
+            path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.policyType"
+                equals: iosXeSubinterface
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
+                equals: 10.99.200.1
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.policyType"
+                equals: iosXeSubinterfaceShutNoshut
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.adminState"
+                equals: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.202')]"
+                exists: false
+      register: nd4x_xe_overridden
+
+    - name: "XE OVERRIDDEN HARNESS POSTFLIGHT: Require only .200 and .201 across the XE fabric"
+      ansible.builtin.include_tasks: nd4x_demo_override_scope_preflight.yaml
+      vars:
+        nd4x_override_scope_fabric_name: "{{ test_xe_fabric_name }}"
+        nd4x_override_scope_switch_ip: "{{ test_xe_switch_ip }}"
+        nd4x_override_scope_phase: postflight
+        nd4x_override_scope_allowed_pairs: "{{ nd4x_override_intended_xe_pairs }}"
+
+    - name: "XE OVERRIDDEN HARNESS: Verify returned retained and removed membership"
+      vars:
+        retained_200: >-
+          {{ nd4x_xe_overridden.first_run_result.after | selectattr('interface_name', 'equalto', xe_parent ~ '.200') | first }}
+        retained_201: >-
+          {{ nd4x_xe_overridden.first_run_result.after | selectattr('interface_name', 'equalto', xe_parent ~ '.201') | first }}
+      ansible.builtin.assert:
+        that:
+          - retained_200.config_data.network_os.policy.policy_type == 'iosXeSubinterface'
+          - retained_200.config_data.network_os.policy.ip == '10.99.200.1'
+          - retained_201.config_data.network_os.policy.policy_type == 'iosXeSubinterfaceShutNoshut'
+          - retained_201.config_data.network_os.policy.admin_state == false
+          - nd4x_xe_overridden.first_run_result.after | selectattr('interface_name', 'equalto', xe_parent ~ '.202') | list | length == 0
+          - nd4x_xe_overridden.second_run_result.changed == false
+          - nd4x_xe_overridden.nd_query_results | length == 1
+  always:
+    - name: "XE OVERRIDDEN HARNESS CLEANUP: Remove reserved harness subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config: "{{ nd4x_subif_xe_cleanup }}"
+        config_actions:
+          deploy: true
+        state: deleted

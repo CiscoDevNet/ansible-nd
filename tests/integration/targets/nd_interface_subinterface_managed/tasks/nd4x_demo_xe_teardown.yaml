@@ -1,0 +1,247 @@
+---
+- name: "XE HARNESS TEARDOWN: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: nd4x_xe_teardown_inventory
+
+- name: "XE HARNESS TEARDOWN: Resolve the Catalyst switch ID"
+  vars:
+    matches: >-
+      {{
+        nd4x_xe_teardown_inventory.current.switches
+        | default(nd4x_xe_teardown_inventory.jsondata.switches | default([]))
+        | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip)
+        | map(attribute='switchId')
+        | list
+      }}
+  ansible.builtin.set_fact:
+    nd4x_xe_teardown_switch_matches: "{{ matches }}"
+
+- name: "XE HARNESS TEARDOWN: Require exactly one current Catalyst switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_teardown_switch_matches | length == 1
+    fail_msg: >-
+      Cannot safely restore the IOS-XE harness parent: expected exactly one switch with fabricManagementIp
+      {{ test_xe_switch_ip }} in {{ test_xe_fabric_name }}, found {{ nd4x_xe_teardown_switch_matches | length }}.
+
+- name: "XE HARNESS TEARDOWN: Record current Catalyst switch ID"
+  ansible.builtin.set_fact:
+    nd4x_xe_teardown_switch_id: "{{ nd4x_xe_teardown_switch_matches[0] }}"
+
+- name: "XE HARNESS TEARDOWN: Restore the Catalyst parent when its switch is present"
+  when: nd4x_xe_teardown_switch_id | length > 0
+  block:
+    - name: "XE HARNESS TEARDOWN: Read the parent interface and fabric links"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_teardown_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+      register: nd4x_xe_teardown_interfaces_result
+      changed_when: false
+
+    - name: "XE HARNESS TEARDOWN: Re-read fabric links"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/links?fabricName={{ test_xe_fabric_name }}"
+        method: get
+      register: nd4x_xe_teardown_links_result
+      changed_when: false
+
+    - name: "XE HARNESS TEARDOWN: Require complete parent and fabric-link snapshots"
+      vars:
+        interfaces: >-
+          {{ nd4x_xe_teardown_interfaces_result.current.interfaces
+             | default(nd4x_xe_teardown_interfaces_result.jsondata.interfaces | default([], true), true) }}
+        links: >-
+          {{ nd4x_xe_teardown_links_result.current.links
+             | default(nd4x_xe_teardown_links_result.jsondata.links | default([], true), true) }}
+      ansible.builtin.assert:
+        that:
+          - interfaces is sequence
+          - interfaces is not string
+          - interfaces | selectattr('interfaceName', 'defined') | list | length == interfaces | length
+          - interfaces | selectattr('interfaceType', 'defined') | list | length == interfaces | length
+          - interfaces | length < 500
+          - links is sequence
+          - links is not string
+          - links | selectattr('srcSwitchId', 'defined') | list | length == links | length
+          - links | selectattr('srcInterfaceName', 'defined') | list | length == links | length
+          - links | selectattr('dstSwitchId', 'defined') | list | length == links | length
+          - links | selectattr('dstInterfaceName', 'defined') | list | length == links | length
+        fail_msg: >-
+          Refusing IOS-XE harness teardown because ND did not return complete parent-interface and fabric-link inventories.
+
+    - name: "XE HARNESS TEARDOWN: Validate the parent state before cleanup or restoration"
+      vars:
+        interfaces: >-
+          {{ nd4x_xe_teardown_interfaces_result.current.interfaces
+             | default(nd4x_xe_teardown_interfaces_result.jsondata.interfaces | default([], true), true) }}
+        links: >-
+          {{ nd4x_xe_teardown_links_result.current.links
+             | default(nd4x_xe_teardown_links_result.jsondata.links | default([], true), true) }}
+        parents: >-
+          {{ interfaces
+             | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+             | list }}
+        parent: "{{ parents | first | default({}) }}"
+        policy: "{{ parents[0].configData.networkOS.policy | default({}) if parents | length == 1 else {} }}"
+        normalized_policy: >-
+          {{ policy | dict2items
+             | rejectattr('key', 'equalto', 'description')
+             | list | items2dict }}
+        default_policy:
+          policyType: iosXeTrunkHost
+          adminState: true
+          allowedVlans: none
+          bpduGuard: default
+          mtu: 1500
+          speed: auto
+        routed_policy:
+          policyType: iosXeRoutedHost
+          adminState: true
+          description: "{{ xe_parent_routed.config_data.network_os.policy.description }}"
+          mtu: 1500
+          speed: auto
+        parent_links: >-
+          {{ links
+             | selectattr('srcSwitchId', 'equalto', nd4x_xe_teardown_switch_id)
+             | selectattr('srcInterfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+             | list
+             + links
+             | selectattr('dstSwitchId', 'equalto', nd4x_xe_teardown_switch_id)
+             | selectattr('dstInterfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+             | list }}
+      ansible.builtin.assert:
+        that:
+          - parents | length == 1
+          - parent.interfaceType == 'ethernet'
+          - parent.operData.portChannelId is defined
+          - parent.operData.portChannelId is number
+          - parent.operData.portChannelId | int < 1
+          - parent_links | length == 0
+          - >-
+            (parent.operData.mode | default('') == 'trunk'
+             and normalized_policy == default_policy
+             and policy.description | default('') == '')
+            or
+            (parent.operData.mode | default('') == 'routed'
+             and normalized_policy == routed_policy)
+        fail_msg: >-
+          Refusing IOS-XE harness teardown for {{ xe_parent }}: the port is neither in the verified
+          fabric-default trunk-host state nor the routed-host state created by this harness, or it has
+          become a fabric-link or port-channel member. Restore it manually after inspecting current state.
+
+    - name: "XE HARNESS TEARDOWN: Record whether the harness routed the parent"
+      vars:
+        interfaces: >-
+          {{ nd4x_xe_teardown_interfaces_result.current.interfaces
+             | default(nd4x_xe_teardown_interfaces_result.jsondata.interfaces | default([], true), true) }}
+        parent: >-
+          {{ interfaces
+             | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+             | first }}
+      ansible.builtin.set_fact:
+        nd4x_xe_teardown_parent_is_routed: "{{ parent.operData.mode == 'routed' }}"
+
+    - name: "XE HARNESS TEARDOWN: Wait until any remaining test subinterfaces are discovered"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_teardown_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+      register: nd4x_xe_teardown_discovery
+      vars:
+        present: >-
+          {{
+            nd4x_xe_teardown_discovery.current.interfaces
+            | default(nd4x_xe_teardown_discovery.jsondata.interfaces | default([]))
+            | selectattr('interfaceName', 'in', nd4x_subif_xe_cleanup | map(attribute='interface_name') | list)
+            | list
+          }}
+        discovered: >-
+          {{
+            present
+            | selectattr('operData.operationalStatus', 'defined')
+            | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+            | list
+          }}
+      until: present | length == discovered | length
+      retries: 60
+      delay: 10
+      ignore_errors: true
+
+    - name: "XE HARNESS TEARDOWN: Remove only the reserved harness subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config: "{{ nd4x_subif_xe_cleanup }}"
+        config_actions:
+          deploy: true
+        state: deleted
+
+    - name: "XE HARNESS TEARDOWN: Wait until harness subinterfaces leave the running config"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_teardown_switch_id }}/diff"
+        method: get
+      register: nd4x_xe_teardown_diff
+      vars:
+        running: >-
+          {{
+            nd4x_xe_teardown_diff.current.diffConfigs
+            | default(nd4x_xe_teardown_diff.jsondata.diffConfigs | default([]))
+            | map(attribute='runningConfig')
+            | select('defined')
+            | join('\n')
+          }}
+      until: >-
+        running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.200') | regex_escape) ~ '\\s*$')
+        and running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.201') | regex_escape) ~ '\\s*$')
+        and running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.202') | regex_escape) ~ '\\s*$')
+        and running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.203') | regex_escape) ~ '\\s*$')
+        and running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.204') | regex_escape) ~ '\\s*$')
+      retries: 12
+      delay: 10
+
+    - name: "XE HARNESS TEARDOWN: Convert the parent to a trunk host and deploy it"
+      when: nd4x_xe_teardown_parent_is_routed | bool
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_names:
+              - "{{ xe_parent }}"
+            config_data:
+              network_os:
+                network_os_type: ios-xe
+                policy:
+                  admin_state: true
+        config_actions:
+          deploy: true
+        state: replaced
+
+    - name: "XE HARNESS TEARDOWN: Reset the parent to the fabric-default trunk host"
+      when: nd4x_xe_teardown_parent_is_routed | bool
+      cisco.nd.nd_interface_ethernet_trunk_host:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_xe_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_xe_switch_ip }}"
+            interface_names:
+              - "{{ xe_parent }}"
+        config_actions:
+          deploy: true
+        state: deleted
+
+    - name: "XE HARNESS TEARDOWN: Wait until ND rediscovers the parent as a trunk"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_teardown_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+      register: nd4x_xe_parent_rediscovery
+      until: >-
+        nd4x_xe_parent_rediscovery.current.interfaces
+        | default(nd4x_xe_parent_rediscovery.jsondata.interfaces | default([]))
+        | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
+        | selectattr('operData.mode', 'defined')
+        | selectattr('operData.mode', 'equalto', 'trunk')
+        | list | length == 1
+      retries: 60
+      delay: 10
