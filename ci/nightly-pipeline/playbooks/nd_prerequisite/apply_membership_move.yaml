@@ -11,6 +11,28 @@
     fail_msg: "NDP_SWITCH_CREDENTIALS_MISSING: no prerequisite switch was removed."
   run_once: true
 
+- name: Read the destination before prerequisite switch onboarding
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.destination_fabric_ref] }}"
+  register: _ndp_switch_destination_probe
+  failed_when: false
+  no_log: true
+  run_once: true
+- name: Require a readable destination compatible with preserve_config=false before mutation
+  ansible.builtin.assert:
+    that:
+      - _ndp_switch_destination_probe.status | default(0) | int == 200
+      - _ndp_switch_destination_probe.current is mapping
+      - _ndp_switch_destination_probe.current.management is mapping
+      - _destination_type in ['vxlanibgp', 'vxlanebgp']
+    fail_msg: >-
+      NDP_SWITCH_DESTINATION_BLOCKED: destination must be readable with HTTP 200 and
+      be a supported nightly VXLAN iBGP/eBGP destination with preserve_config=false; no switch was removed or added.
+  vars:
+    _destination: "{{ _ndp_switch_destination_probe.current | default({}) }}"
+    _destination_type: "{{ _destination.management.type | default('') | string | lower if _destination is mapping and _destination.get('management') is mapping else '' }}"
+  run_once: true
 - name: "membership_move remove {{ _ndp_operation.switch_ref }} from {{ _ndp_operation.source_fabric_ref }}"
   cisco.nd.nd_manage_switches:
     fabric: "{{ _ndp_fabric_name_by_ref[_ndp_operation.source_fabric_ref] }}"
@@ -31,6 +53,6 @@
         role: "{{ _ndp_operation.desired_role }}"
         username: "{{ nd_switch_username | default(switch_username, true) }}"
         password: "{{ nd_switch_password | default(switch_password, true) }}"
-        preserve_config: "{{ false if (_ndp_fabric_type_by_ref[_ndp_operation.destination_fabric_ref] | default('') | lower) not in ['', 'external', 'externalconnectivity'] else omit }}"
+        preserve_config: false
   run_once: true
   no_log: true

@@ -11,6 +11,34 @@
     fail_msg: "Switch repair scope or credentials are incomplete; no switch was changed."
   run_once: true
 
+- name: Read the destination before prerequisite switch onboarding
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}"
+  register: _ndp_switch_destination_probe
+  failed_when: false
+  no_log: true
+  run_once: true
+  when: >-
+    _ndp_repair_operation.action != 'role' or
+    ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) == ['border', 'spine']
+- name: Require a readable destination compatible with preserve_config=false before mutation
+  ansible.builtin.assert:
+    that:
+      - _ndp_switch_destination_probe.status | default(0) | int == 200
+      - _ndp_switch_destination_probe.current is mapping
+      - _ndp_switch_destination_probe.current.management is mapping
+      - _destination_type in ['vxlanibgp', 'vxlanebgp']
+    fail_msg: >-
+      NDP_SWITCH_DESTINATION_BLOCKED: destination must be readable with HTTP 200 and
+      be a supported nightly VXLAN iBGP/eBGP destination with preserve_config=false; no switch was removed or added.
+  vars:
+    _destination: "{{ _ndp_switch_destination_probe.current | default({}) }}"
+    _destination_type: "{{ _destination.management.type | default('') | string | lower if _destination is mapping and _destination.get('management') is mapping else '' }}"
+  run_once: true
+  when: >-
+    _ndp_repair_operation.action != 'role' or
+    ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) == ['border', 'spine']
 - name: Journal switch repair before changing membership or role
   ansible.builtin.set_fact:
     _ndp_baseline_repair_journal: "{{ _ndp_baseline_repair_journal + [_ndp_repair_operation] }}"
@@ -50,7 +78,7 @@
         role: "{{ _ndp_repair_operation.desired_role }}"
         username: "{{ nd_switch_username | default(switch_username, true) }}"
         password: "{{ nd_switch_password | default(switch_password, true) }}"
-        preserve_config: "{{ omit if _ndp_repair_operation.fabric_type == 'externalConnectivity' else false }}"
+        preserve_config: false
   register: _ndp_repair_switch_result
   retries: 3
   delay: 15

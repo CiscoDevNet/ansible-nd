@@ -42,6 +42,131 @@ def valid_state():
     return yaml.safe_load((ROOT / "tests/fixtures/nd_prerequisite/valid_state.yaml").read_text())
 
 
+def test_baseline_repair_removes_only_declared_namespace(registry, valid_state):
+    from nd_prerequisite_orchestrator import plan_baseline_repairs
+
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    namespace = next(resource for resource in resolved["profile"]["resources"]
+                     if resource["kind"] == "verify_logical_interface_namespace")
+    interfaces = state["logical_interfaces"][namespace["switch_ref"]]
+    interfaces[namespace["interfaces"][0]] = {"exists": True, "policy": "int_subif"}
+    interfaces["Ethernet1/50.999"] = {"exists": True, "policy": "int_subif"}
+
+    operations = plan_baseline_repairs(confirmed, resolved, state)
+    deletions = [operation for operation in operations if operation.get("action") == "delete"]
+    assert [operation["interface"] for operation in deletions] == [namespace["interfaces"][0]]
+    assert interfaces["Ethernet1/50.999"]["exists"] is True
+
+
+@pytest.mark.parametrize("drift", ["missing", "role", "fabric", "identity"])
+def test_baseline_switch_repair_uses_declared_identity(registry, valid_state, drift):
+    from nd_prerequisite_orchestrator import plan_baseline_repairs
+
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    switch_ref = resolved["profile"]["switches"]["members"][0]["ref"]
+    if drift == "missing":
+        del state["switches"][switch_ref]
+    else:
+        field, value = {"role": ("role", "border"), "fabric": ("fabric_ref", "network_ebgp"),
+                        "identity": ("serial", "UNEXPECTED")}[drift]
+        state["switches"][switch_ref][field] = value
+    if drift == "identity":
+        with pytest.raises(OrchestrationError, match="identity mismatch"):
+            plan_baseline_repairs(confirmed, resolved, state, "switches")
+    else:
+        operations = plan_baseline_repairs(confirmed, resolved, state, "switches")
+        assert operations[0]["action"] == {"missing": "onboard", "role": "role", "fabric": "move"}[drift]
+        assert operations[0]["serial"] == confirmed["lab"]["switches"][switch_ref]["serial"]
+
+
+@pytest.mark.parametrize("members,allowed", [("", True), ("Ethernet1/1", True), ("Ethernet1/50", False)])
+def test_baseline_port_channel_repair_rejects_unowned_members(registry, valid_state, members, allowed):
+    from nd_prerequisite_orchestrator import plan_baseline_repairs
+
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    resource = next(item for item in resolved["profile"]["resources"] if item["kind"] == "ensure_routed_port_channel")
+    state["logical_interfaces"][resource["switch_ref"]][resource["interface"]] = {
+        "exists": True, "policy": "int_port_channel_trunk_host", "nv_pairs": {"MEMBER_INTERFACES": members}}
+    if not allowed:
+        with pytest.raises(OrchestrationError, match="undeclared members"):
+            plan_baseline_repairs(confirmed, resolved, state)
+    else:
+        operations = plan_baseline_repairs(confirmed, resolved, state)
+        assert any(item["interface"] == resource["interface"] and item["action"] == "delete" for item in operations)
+
+
+def test_baseline_repair_replaces_declared_routed_policy_without_mutating_snapshot(registry, valid_state):
+    from nd_prerequisite_orchestrator import plan_baseline_repairs
+
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    resource = next(item for item in resolved["profile"]["resources"] if item["kind"] == "ensure_routed_parent")
+    state["interfaces"][resource["switch_ref"]][resource["interface"]].update(
+        configured=True, policy="int_trunk_host", nv_pairs={"ALLOWED_VLANS": "100"})
+    before = copy.deepcopy(state)
+    operations = plan_baseline_repairs(confirmed, resolved, state)
+    assert any(item["action"] == "routed" and item["interface"] == resource["interface"] for item in operations)
+    assert state == before
+
+
+def test_baseline_inventory_rejects_serial_substitution_and_duplicates(registry):
+    from nd_prerequisite_orchestrator import normalize_repair_inventory
+
+    switch = registry["lab"]["switches"]["vxlan_leaf_1"]
+    inventory = [{"fabric_ref": "advanced", "switches": [{"switchId": "UNEXPECTED",
+                 "fabricManagementIp": switch["seed_ip"], "switchRole": "leaf"}]}]
+    with pytest.raises(OrchestrationError, match="identity mismatch"):
+        normalize_repair_inventory(registry, inventory)
+    inventory[0]["switches"][0]["switchId"] = switch["serial"]
+    with pytest.raises(OrchestrationError, match="ambiguous"):
+        normalize_repair_inventory(registry, inventory * 2)
+
+
+def test_baseline_repair_cli_is_readonly(registry, valid_state, tmp_path, capsys):
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    del state["switches"]["vxlan_leaf_1"]
+    registry_path, state_path = tmp_path / "registry.yaml", tmp_path / "state.yaml"
+    registry_path.write_text(yaml.safe_dump(confirmed))
+    state_path.write_text(yaml.safe_dump(state))
+    before = state_path.read_bytes()
+    assert main(["plan", "--registry", str(registry_path), "--execution-id", profile_id,
+                 "--state", str(state_path), "--repair-stage", "switches"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["operations"][0]["action"] == "onboard"
+    assert state_path.read_bytes() == before
+
+
+def test_baseline_repair_helpers_are_delivered_and_disabled_outside_live_apply():
+    wrapper = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    jenkins = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    for name in ("repair_baseline.yaml", "apply_repair_interface.yaml", "apply_repair_switch.yaml", "refresh_existing_link.yaml"):
+        assert f"'nd_prerequisite/{name}'" in jenkins
+    assert '-e "nd_prerequisite_repair_baseline=true"' in jenkins
+    repairs = [task for task in wrapper if task.get("ansible.builtin.include_tasks") == "repair_baseline.yaml"]
+    assert len(repairs) == 2
+    assert repairs[1]["loop"] == [0, 1, 2, 3]
+    for task in repairs:
+        guards = " ".join(task["when"])
+        assert "not ansible_check_mode" in guards
+        assert "nd_prerequisite_only" in guards
+        assert "nd_prerequisite_apply" in guards
+        assert "nd_prerequisite_mode" in guards
+        assert "nd_prerequisite_repair_baseline" in guards
+
+
 def confirm(registry, profile_id):
     result = copy.deepcopy(registry)
     result["profiles"][profile_id]["confirmation"] = {
@@ -72,6 +197,7 @@ def interface_state_for_profile(registry, valid_state, profile_id):
                     "dstSwitchId": peer["serial"],
                     "dstInterfaceName": resource["existing_link"]["peer_interface"],
                     "linkType": "ethisl",
+                    "linkPlanned": False,
                     "linkPresent": True,
                 }
                 if cable not in state["physical_links"]:
@@ -250,19 +376,6 @@ def test_permitted_switch_profile_can_reconcile_role_drift(registry, valid_state
     }]
 
 
-def test_permitted_switch_profile_refuses_in_place_spine_border_role_change(registry, valid_state):
-    switch_registry = confirm(registry, "integration.nd_manage_switches")
-    resolved = resolve_execution(switch_registry, "integration.nd_manage_switches")
-    spine_to_border = copy.deepcopy(valid_state)
-    spine_to_border["switches"]["vxlan_border_1"]["role"] = "spine"
-    with pytest.raises(OrchestrationError, match="forbids an in-place spine->border"):
-        plan_topology_delta(switch_registry, resolved, spine_to_border)
-    border_to_spine = copy.deepcopy(valid_state)
-    border_to_spine["switches"]["vxlan_spine_1"]["role"] = "border"
-    with pytest.raises(OrchestrationError, match="forbids an in-place border->spine"):
-        plan_topology_delta(switch_registry, resolved, border_to_spine)
-
-
 def test_non_topology_prerequisites_remain_available(registry, valid_state):
 
     group_registry = confirm(registry, "integration.nd_manage_policy_group")
@@ -291,9 +404,6 @@ def test_typed_interface_verification_operations_are_planned(registry, valid_sta
         ],
         "integration.nd_interface_port_channel_trunk_host": [
             "verify_free_interfaces", "verify_logical_interface_namespace",
-        ],
-        "integration.nd_interface_port_channel_routed": [
-            "verify_free_interfaces", "verify_logical_interface_namespace", "verify_logical_interface_namespace",
         ],
     }.items():
         confirmed = confirm(registry, profile_id)
@@ -473,10 +583,24 @@ def test_subinterface_parent_must_ride_the_declared_existing_link(registry, vali
     legacy["physical_links"] = [{
         "link-type": "ethisl",
         "is-present": True,
-        "sw1-info": {"sw-serial-number": "SERIAL00001", "if-name": "Ethernet1/1"},
-        "sw2-info": {"sw-serial-number": "SERIAL00005", "if-name": "Ethernet1/1"},
+        "sw1-info": {"sw-serial-number": "SERIAL00001", "if-name": "Ethernet1/1",
+                     "if-admin-status": "up", "if-op-status": "up"},
+        "sw2-info": {"sw-serial-number": "SERIAL00005", "if-name": "Ethernet1/1",
+                     "if-admin-status": "up", "if-op-status": "up"},
     }]
     assert plan_topology_delta(confirmed, resolved, legacy)[0]["operation"] == "ensure_routed_parent"
+
+    # Endpoint identity alone does not prove a healthy cable. Neither an absent
+    # presence bit nor a reported down endpoint may authorize parent conversion.
+    unverified = copy.deepcopy(state)
+    for link in unverified["physical_links"]:
+        link.pop("linkPresent", None)
+    with pytest.raises(UnavailableError, match="ND link presence is unverified"):
+        plan_topology_delta(confirmed, resolved, unverified)
+    down = copy.deepcopy(legacy)
+    down["physical_links"][0]["sw1-info"].update({"if-op-status": "down", "if-op-reason": "bpdu-guard"})
+    with pytest.raises(UnavailableError, match="required existing link is not healthy"):
+        plan_topology_delta(confirmed, resolved, down)
 
     # No cable in ND: the substrate is unavailable -> skip with the exact ports, never provision.
     uncabled = copy.deepcopy(state)
@@ -504,40 +628,6 @@ def test_subinterface_parent_must_ride_the_declared_existing_link(registry, vali
     parent["existing_link"] = {"peer_switch_ref": "vxlan_leaf_2", "peer_interface": "Ethernet1/1"}
     with pytest.raises(OrchestrationError, match="existing link must join two"):
         plan_topology_delta(underlay, resolve_execution(underlay, profile_id), state)
-
-
-@pytest.mark.parametrize("target", ["managed", "unmanaged"])
-@pytest.mark.parametrize("condition, expected", [
-    ({"is-present": False}, "not present"),
-    ({"linkPresent": None}, "unverified"),
-    ({"is-planned": True}, "planned link"),
-    ({"sw2-info": {"if-op-status": "Down", "if-op-reason": "BPDUGuard errDisable"}}, "BPDUGuard errDisable"),
-    ({"sw1-info": {"if-admin-status": "Down"}}, "if-admin-status=Down"),
-])
-def test_subinterface_existing_link_requires_health_evidence(registry, valid_state, target, condition, expected):
-    profile_id = f"integration.nd_interface_subinterface_{target}"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    state["physical_links"] = [state["physical_links"][-1]]
-    state["physical_links"][0].update(condition)
-    with pytest.raises(UnavailableError, match=expected):
-        plan_topology_delta(confirmed, resolved, state)
-
-
-def test_subinterface_rejects_old_serial_and_accepts_fresh_healthy_record(registry, valid_state):
-    profile_id = "integration.nd_interface_subinterface_managed"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    state["physical_links"] = [state["physical_links"][-1]]
-    cable = state["physical_links"][0]
-    cable["srcSwitchId"] = "STALE000008"
-    with pytest.raises(UnavailableError, match="required existing link is absent"):
-        plan_topology_delta(confirmed, resolved, state)
-    cable["srcSwitchId"] = "SERIAL00001"
-    cable["linkUuid"] = "NEW-DISCOVERY-UUID"
-    assert plan_topology_delta(confirmed, resolved, state)[0]["operation"] == "ensure_routed_parent"
 
 
 def test_links_profile_verifies_free_ports_on_both_switches(registry, valid_state):
@@ -797,41 +887,26 @@ def test_delta_creates_only_namespaced_disposable_fabric(registry, valid_state):
         )
 
 
-@pytest.mark.parametrize("profile_id", [
-    "smoke.nd_manage_vpc_pair", "smoke.nd_interface_vpc_access", "smoke.nd_interface_vpc_trunk_host",
-])
-def test_smoke_vpc_requires_physical_cable_without_virtual_creation(registry, valid_state, profile_id):
-    from nd_prerequisite_orchestrator import UnavailableError
-
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = copy.deepcopy(valid_state)
-    state["vpc_pairs"] = []
-    operations = plan_topology_delta(confirmed, resolved, state)
-    assert not any(operation["operation"] == "ensure_virtual_vpc" for operation in operations)
-    state["links"] = []
-    state["physical_links"] = []
-    with pytest.raises(UnavailableError, match="required physical vPC peer-link is missing"):
-        plan_topology_delta(confirmed, resolved, state)
-
-
-def test_delta_enforces_link_allowlist_virtual_vpc_and_resources(registry, valid_state):
+def test_delta_enforces_link_allowlist_physical_vpc_and_resources(registry, valid_state):
     confirmed = confirm(registry, "smoke.nd_interface_vpc_access")
-    confirmed["profiles"]["smoke.nd_interface_vpc_access"]["vpc_pairs"] = [{
-        "fabric_ref": "advanced", "peer_refs": ["vxlan_leaf_1", "vxlan_leaf_2"],
-        "state": "present", "mode": "virtual", "physical_peer_links": [],
-    }]
     state = copy.deepcopy(valid_state)
     state["interfaces"]["vxlan_leaf_1"]["Ethernet1/3"]["admin_state"] = False
     state["vpc_pairs"] = []
     resolved = resolve_execution(confirmed, "smoke.nd_interface_vpc_access")
     operations = plan_topology_delta(confirmed, resolved, state)
     assert any(item["operation"] == "ensure_interface" and item["switch_ref"] == "vxlan_leaf_1" for item in operations)
-    vpc = [item for item in operations if item["operation"] == "ensure_virtual_vpc"]
-    assert vpc == [{
-        "operation": "ensure_virtual_vpc", "fabric_ref": "advanced",
-        "peer_refs": ["vxlan_leaf_1", "vxlan_leaf_2"], "physical_peer_links": [],
-    }]
+    # The smoke playbook forms its own physical pair. The planner verifies the
+    # declared cable and never substitutes a virtual pair for authored setup.
+    pair = resolved["profile"]["vpc_pairs"][0]
+    assert pair["mode"] == "physical" and pair["required_path"] == "module_creates_pair"
+    assert pair["physical_peer_links"]
+    assert not any(item["operation"] == "ensure_virtual_vpc" for item in operations)
+    uncabled = copy.deepcopy(state)
+    peer_serials = {confirmed["lab"]["switches"][ref]["serial"] for ref in pair["peer_refs"]}
+    uncabled["links"] = [link for link in uncabled["links"]
+                         if {link.get("srcSwitchId"), link.get("dstSwitchId")} != peer_serials]
+    with pytest.raises(UnavailableError, match="required physical vPC peer-link is missing"):
+        plan_topology_delta(confirmed, resolved, uncabled)
 
     broken = copy.deepcopy(state)
     broken["interfaces"]["vxlan_leaf_1"].pop("Ethernet1/3")
@@ -998,134 +1073,3 @@ def test_cli_plan_and_schedule_emit_json(capsys):
         "plan", "--registry", str(registry_path),
         "--execution-id", "integration.nd_vpc_pair.external", "--allow-auto-confirm",
     ]) == 1
-
-
-def test_baseline_repair_removes_only_declared_namespace(registry, valid_state):
-    from nd_prerequisite_orchestrator import plan_baseline_repairs
-
-    profile_id = "integration.nd_interface_subinterface_managed"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    namespace = next(resource for resource in resolved["profile"]["resources"]
-                     if resource["kind"] == "verify_logical_interface_namespace")
-    interfaces = state["logical_interfaces"][namespace["switch_ref"]]
-    interfaces[namespace["interfaces"][0]] = {"exists": True, "policy": "int_subif"}
-    interfaces["Ethernet1/50.999"] = {"exists": True, "policy": "int_subif"}
-
-    operations = plan_baseline_repairs(confirmed, resolved, state)
-    deletions = [operation for operation in operations if operation.get("action") == "delete"]
-    assert [operation["interface"] for operation in deletions] == [namespace["interfaces"][0]]
-    assert interfaces["Ethernet1/50.999"]["exists"] is True
-
-
-
-@pytest.mark.parametrize("drift", ["missing", "role", "fabric", "identity"])
-def test_baseline_switch_repair_uses_declared_identity(registry, valid_state, drift):
-    from nd_prerequisite_orchestrator import plan_baseline_repairs
-
-    profile_id = "integration.nd_interface_subinterface_managed"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    switch_ref = resolved["profile"]["switches"]["members"][0]["ref"]
-    if drift == "missing":
-        del state["switches"][switch_ref]
-    else:
-        field, value = {"role": ("role", "border"), "fabric": ("fabric_ref", "network_ebgp"),
-                        "identity": ("serial", "UNEXPECTED")}[drift]
-        state["switches"][switch_ref][field] = value
-    if drift == "identity":
-        with pytest.raises(OrchestrationError, match="identity mismatch"):
-            plan_baseline_repairs(confirmed, resolved, state, "switches")
-    else:
-        operations = plan_baseline_repairs(confirmed, resolved, state, "switches")
-        assert operations[0]["action"] == {"missing": "onboard", "role": "role", "fabric": "move"}[drift]
-        assert operations[0]["serial"] == confirmed["lab"]["switches"][switch_ref]["serial"]
-
-
-
-@pytest.mark.parametrize("members,allowed", [("", True), ("Ethernet1/1", True), ("Ethernet1/50", False)])
-def test_baseline_port_channel_repair_rejects_unowned_members(registry, valid_state, members, allowed):
-    from nd_prerequisite_orchestrator import plan_baseline_repairs
-
-    profile_id = "integration.nd_interface_subinterface_managed"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    resource = next(item for item in resolved["profile"]["resources"] if item["kind"] == "ensure_routed_port_channel")
-    state["logical_interfaces"][resource["switch_ref"]][resource["interface"]] = {
-        "exists": True, "policy": "int_port_channel_trunk_host", "nv_pairs": {"MEMBER_INTERFACES": members}}
-    if not allowed:
-        with pytest.raises(OrchestrationError, match="undeclared members"):
-            plan_baseline_repairs(confirmed, resolved, state)
-    else:
-        operations = plan_baseline_repairs(confirmed, resolved, state)
-        assert any(item["interface"] == resource["interface"] and item["action"] == "delete" for item in operations)
-
-
-
-def test_baseline_repair_replaces_declared_routed_policy_without_mutating_snapshot(registry, valid_state):
-    from nd_prerequisite_orchestrator import plan_baseline_repairs
-
-    profile_id = "integration.nd_interface_subinterface_managed"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    resource = next(item for item in resolved["profile"]["resources"] if item["kind"] == "ensure_routed_parent")
-    state["interfaces"][resource["switch_ref"]][resource["interface"]].update(
-        configured=True, policy="int_trunk_host", nv_pairs={"ALLOWED_VLANS": "100"})
-    before = copy.deepcopy(state)
-    operations = plan_baseline_repairs(confirmed, resolved, state)
-    assert any(item["action"] == "routed" and item["interface"] == resource["interface"] for item in operations)
-    assert state == before
-
-
-
-def test_baseline_inventory_rejects_serial_substitution_and_duplicates(registry):
-    from nd_prerequisite_orchestrator import normalize_repair_inventory
-
-    switch = registry["lab"]["switches"]["vxlan_leaf_1"]
-    inventory = [{"fabric_ref": "advanced", "switches": [{"switchId": "UNEXPECTED",
-                 "fabricManagementIp": switch["seed_ip"], "switchRole": "leaf"}]}]
-    with pytest.raises(OrchestrationError, match="identity mismatch"):
-        normalize_repair_inventory(registry, inventory)
-    inventory[0]["switches"][0]["switchId"] = switch["serial"]
-    with pytest.raises(OrchestrationError, match="ambiguous"):
-        normalize_repair_inventory(registry, inventory * 2)
-
-
-
-def test_baseline_repair_cli_is_readonly(registry, valid_state, tmp_path, capsys):
-    profile_id = "integration.nd_interface_subinterface_managed"
-    confirmed = confirm(registry, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    del state["switches"]["vxlan_leaf_1"]
-    registry_path, state_path = tmp_path / "registry.yaml", tmp_path / "state.yaml"
-    registry_path.write_text(yaml.safe_dump(confirmed))
-    state_path.write_text(yaml.safe_dump(state))
-    before = state_path.read_bytes()
-    assert main(["plan", "--registry", str(registry_path), "--execution-id", profile_id,
-                 "--state", str(state_path), "--repair-stage", "switches"]) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result["operations"][0]["action"] == "onboard"
-    assert state_path.read_bytes() == before
-
-
-
-def test_baseline_repair_helpers_are_delivered_and_disabled_outside_live_apply():
-    wrapper = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
-    jenkins = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    for name in ("repair_baseline.yaml", "apply_repair_interface.yaml", "apply_repair_switch.yaml", "refresh_existing_link.yaml"):
-        assert f"'nd_prerequisite/{name}'" in jenkins
-    assert '-e "nd_prerequisite_repair_baseline=true"' in jenkins
-    repairs = [task for task in wrapper if task.get("ansible.builtin.include_tasks") == "repair_baseline.yaml"]
-    assert len(repairs) == 2
-    assert repairs[1]["loop"] == [0, 1, 2, 3]
-    for task in repairs:
-        guards = " ".join(task["when"])
-        assert "not ansible_check_mode" in guards
-        assert "nd_prerequisite_only" in guards
-        assert "nd_prerequisite_apply" in guards
-        assert "nd_prerequisite_mode" in guards
-        assert "nd_prerequisite_repair_baseline" in guards

@@ -122,7 +122,9 @@
 
 - name: Recapture actual controller state after interface repairs
   ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
-  when: _ndp_repair_stage == 'interfaces'
+  when:
+    - _ndp_repair_stage == 'interfaces'
+    - (_ndp_repair_plan.stdout | from_json).operations | length > 0
 
 - name: Stop repair passes when no destructive interface repairs remain
   ansible.builtin.set_fact:

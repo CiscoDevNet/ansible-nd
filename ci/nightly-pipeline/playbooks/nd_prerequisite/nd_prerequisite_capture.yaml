@@ -96,16 +96,18 @@
 
 - name: Discover required switch memberships across profile fabrics
   cisco.nd.nd_rest:
-    path: "/api/v1/manage/fabrics/{{ _ndp_membership_query.0.name }}/switches"
+    path: "/api/v1/manage/fabrics/{{ _ndp_membership_fabric.name }}/switches"
     method: get
-  loop: "{{ _ndp_profile.fabrics | product(_ndp_profile.switches.members) | list }}"
+  loop: "{{ _ndp_profile.fabrics }}"
   loop_control:
-    loop_var: _ndp_membership_query
-    label: "{{ _ndp_membership_query.0.ref }}/{{ _ndp_membership_query.1.ref }}"
+    loop_var: _ndp_membership_fabric
+    label: "{{ _ndp_membership_fabric.ref }}"
   register: _ndp_live_membership_results
   no_log: true
   check_mode: false
-  when: nd_prerequisite_mode | default('fixture') == 'live'
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - _ndp_profile.switches.members | length > 0
 
 - name: Normalize each discovered switch membership for the planner
   ansible.builtin.set_fact:
@@ -113,8 +115,8 @@
       {{
         _ndp_live_state | combine({
           'switches': _ndp_live_state.switches | combine({
-            _ndp_membership_result._ndp_membership_query.1.ref: {
-              'fabric_ref': _ndp_membership_result._ndp_membership_query.0.ref,
+            _ndp_membership_pair.1.ref: {
+              'fabric_ref': _ndp_membership_pair.0._ndp_membership_fabric.ref,
               'serial': _ndp_expected_switch.serial,
               'seed_ip': _ndp_discovered_switch.fabricManagementIp,
               'role': _ndp_discovered_switch.switchRole | lower | regex_replace('edgerouter', 'edge_router'),
@@ -125,12 +127,13 @@
         })
       }}
   vars:
-    _ndp_expected_switch: "{{ _ndp_registry.lab.switches[_ndp_membership_result._ndp_membership_query.1.ref] }}"
-    _ndp_discovered_switch: "{{ _ndp_membership_result.current.switches | default([]) | selectattr('switchId', 'equalto', _ndp_expected_switch.serial) | list | first | default({}) }}"
-  loop: "{{ _ndp_live_membership_results.results | default([]) }}"
+    _ndp_expected_switch: "{{ _ndp_registry.lab.switches[_ndp_membership_pair.1.ref] }}"
+    _ndp_discovered_switch: "{{ _ndp_membership_pair.0.current.switches | default([]) | selectattr('switchId', 'equalto', _ndp_expected_switch.serial) | list | first | default({}) }}"
+  # Expand the shared response locally instead of repeating the same ND GET for every member.
+  loop: "{{ (_ndp_live_membership_results.results | default([])) | product(_ndp_profile.switches.members) | list }}"
   loop_control:
-    loop_var: _ndp_membership_result
-    label: "{{ _ndp_membership_result._ndp_membership_query.0.ref }}/{{ _ndp_membership_result._ndp_membership_query.1.ref }}"
+    loop_var: _ndp_membership_pair
+    label: "{{ _ndp_membership_pair.0._ndp_membership_fabric.ref }}/{{ _ndp_membership_pair.1.ref }}"
   run_once: true
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'

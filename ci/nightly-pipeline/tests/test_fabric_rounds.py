@@ -7,16 +7,18 @@ pre-flight playbook carry the round / re-home contract.
 """
 import contextlib
 import importlib.util
+import io
 import json
-import os
 import pathlib
 import re
-import subprocess
 import sys
 import types
 
 import pytest
 import yaml
+
+from test_five_issue_pipeline_fixes import groovy_runner as active_pipeline
+from test_build124_switch_preflight import PRODUCER, groovy_runner as lifecycle_pipeline
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -155,8 +157,8 @@ def test_runner_reconcile_fixture_and_reset_follow_the_round_fabric(rendered):
     assert "vrfType: externalConnectivity" in runner
     assert "nd_test_fabric_switches.VXLAN_EVPN_Fabric_eBGP | length == 6" in runner
     assert "nd_test_fabric_switches.VXLAN_EVPN_Fabric |" not in runner
-    # The reduced ToR test follows the round fabric through ansible_it_fabric and names no fabric literally.
-    assert "nd_tor_switch_name: vxlan_leaf_3" in runner and "nd_tor_leaf_name: vxlan_leaf_4" in runner
+    # ToR runs its authored develop role; no reduced-suite aliases are injected.
+    assert "nd_tor_switch_name: vxlan_leaf_3" not in runner and "nd_tor_leaf_name: vxlan_leaf_4" not in runner
     assert "test_tor_fabric_name" not in runner
     reconcile = rendered["nd_prerequisite/nd_prerequisite_reconcile.yaml"]
     assert "      advanced: VXLAN_EVPN_Fabric_eBGP\n" in reconcile
@@ -174,12 +176,15 @@ def test_runner_reconcile_fixture_and_reset_follow_the_round_fabric(rendered):
     assert HOME_FABRIC not in roster
 
 
-def test_round_type_is_configurable_and_reaches_every_type_pin():
-    texts = render_round_texts(canonical_texts(), ROUND_FABRIC, "routed")
-    assert "vrfType: routed" in texts["run_integration_module.yaml"]
-    assert "      advanced: routed\n" in texts["nd_prerequisite/nd_prerequisite_reconcile.yaml"]
-    assert '"advanced": {"ref": "advanced", "name": "VXLAN_EVPN_Fabric_eBGP", "type": "routed"' in texts["validate_nd_prerequisites.py"]
-    assert "{ref: advanced, name: VXLAN_EVPN_Fabric_eBGP, type: routed, lifecycle: retained}" in texts["nd_prerequisite_profiles.yaml"]
+def test_round_type_matches_the_preserved_fabric_and_reaches_every_type_pin():
+    texts = render_round_texts(canonical_texts(), ROUND_FABRIC, ROUND_TYPE)
+    assert "vrfType: vxlanEbgp" in texts["run_integration_module.yaml"]
+    assert "      advanced: vxlanEbgp\n" in texts["nd_prerequisite/nd_prerequisite_reconcile.yaml"]
+    assert load_validator(texts["validate_nd_prerequisites.py"]).CANONICAL_FABRICS["advanced"]["type"] == ROUND_TYPE
+    assert yaml.safe_load(texts["nd_prerequisite_profiles.yaml"])["lab"]["fabrics"]["advanced"]["type"] == ROUND_TYPE
+    # A generic routed destination cannot replace the preserved VXLAN fabric.
+    with pytest.raises(ValidationError, match="round type must be the preserved fabric type"):
+        render_round_texts(canonical_texts(), ROUND_FABRIC, "routed")
 
 
 @pytest.mark.parametrize("bad", ["vxlan-ebgp", "vxlanEbgp\n", "x y", "1abc", "a;b"])
@@ -391,12 +396,13 @@ def test_every_nd_version_is_expanded_into_one_run_per_round():
     assert "def baseNdfcVersions = [" in text
     assert "def ndfcVersions = []" in text
     assert "ndfcVersions.add(buildRoundConfig(baseConfig, fabricRound))" in text
-    assert "for (ndfcConfig in ndfcVersions) {" in text
-    # A fabric round is not an ND version: the version shows once in the title, the rounds beside it.
+    assert "for (baseConfig in baseNdfcVersions) {" in text
+    assert "def roundConfigs = FABRIC_ROUNDS.collect { buildRoundConfig(baseConfig, it) }" in text
+    assert "for (ndfcConfig in roundConfigs) {" in text
     assert "ndfcVersions.collect { it.version }.unique().join(', ')" in text
-    assert "env.ACTIVE_FABRIC_ROUNDS = (FABRIC_ROUNDS.size() > 1) ? FABRIC_ROUNDS.collect { it.label }.join(' + ') : ''" in text
+    assert "env.ACTIVE_FABRIC_ROUNDS = FABRIC_ROUNDS.collect { it.label }.join(' + ')" in text
     builder = groovy_function("buildRoundConfig")
-    assert "roundConfig.versionId = \"${baseConfig.versionId}${fabricRound.idSuffix}\".toString()" in builder
+    assert 'roundConfig.versionId = "${baseConfig.versionId}${fabricRound.idSuffix}".toString()' in builder
     assert "roundConfig.fabric_name = fabricRound.fabric" in builder
     assert "(sw.fabric == baseConfig.fabric_name) ? fabricRound.fabric : sw.fabric" in builder
     assert "roundConfig.round_render = (fabricRound.fabric != homeRound.fabric)" in builder
@@ -406,179 +412,136 @@ def test_every_nd_version_is_expanded_into_one_run_per_round():
 
 def test_the_advanced_vpc_pair_follows_the_round_fabric():
     text = jenkins_text()
-    assert "def pairFabric = (run.id == 'advanced') ? ndfcConfig.fabric_name : run.fabric" in text
-    assert "def pairType = (run.id == 'advanced') ? (ndfcConfig.vpc_pair_fabric_type ?: run.type) : run.type" in text
+    assert "def pairFabric = run.id == 'advanced' ? ndfcConfig.fabric_name : run.fabric" in text
+    assert "def pairType = run.id == 'advanced' ? ndfcConfig.vpc_pair_fabric_type : run.type" in text
     assert "def networkFabricName = ndfcConfig.fabric_name" in text
     assert "def networkFabricName = 'VXLAN_EVPN_Fabric_eBGP'" not in text
     assert "torFabricName" not in text
 
 
 def test_vpc_pair_targets_are_rebuilt_fresh_inside_runFabricTest_every_round():
-    # vpcPairRows/standaloneTargets/orderedIntegrationTargets/resultTargets must all be LOCAL to
-    # runFabricTest(ndfcConfig), which runs once per ndfcVersions entry (once per fabric round) - so
-    # nd_vpc_pair.advanced/.external are re-added, re-run and re-parsed on every round, not just the
-    # first. A build where round 2 never starts (e.g. the eBGP round aborting earlier) only shows one
-    # vpc_pair row per id because the ROUND never ran - that is not vpc_pair missing from the wiring.
     run_fabric_test = groovy_function("runFabricTest")
     assert "def vpcPairRows = []" in run_fabric_test
     assert 'def standaloneTargets = vpcPairRows.collect { row -> "nd_vpc_pair.${row.id}".toString() }' in run_fabric_test
     assert "def orderedIntegrationTargets = []" in run_fabric_test
     assert "orderedIntegrationTargets.addAll(standaloneTargets)" in run_fabric_test
-    assert "def effectiveIntegrationModulesForResults = orderedIntegrationTargets" in run_fabric_test
-    # None of the four are promoted to script-global state that could leak or go stale across rounds.
+    assert "def plannedResultTargets = orderedIntegrationTargets.collect { [it, 'integration'] }" in run_fabric_test
+    assert "registerStructuredExecutions(ndfcConfig, plannedResultTargets," in run_fabric_test
     text = jenkins_text()
-    for name in ("vpcPairRows", "standaloneTargets", "orderedIntegrationTargets", "resultTargets"):
+    for name in ("vpcPairRows", "standaloneTargets", "orderedIntegrationTargets", "plannedResultTargets"):
         assert f"@Field\ndef {name}" not in text
 
 
 def test_a_round_off_the_canonical_fabric_checks_its_type_then_renders_before_anything_runs():
     prepare = groovy_function("applyFabricRound")
     assert "if (!ndfcConfig.round_render) {\n        return\n    }" in prepare
-    # Read-only type check first, then the render; nothing is touched when the fabric is not the type the round needs.
     assert prepare.index("def reportedType = sh(returnStdout: true") < prepare.index("render-round")
     assert '"/api/v1/manage/fabrics/" + fabric' in prepare
-    # ND labels a VXLAN EVPN eBGP/routed-underlay fabric 'routed', so the round accepts either label.
-    assert "def acceptedTypes = (ndfcConfig.primary_fabric_type.toLowerCase() == 'vxlanebgp') ? ['vxlanebgp', 'routed'] : [ndfcConfig.primary_fabric_type.toLowerCase()]" in prepare
-    assert "!acceptedTypes.contains(reportedType.toLowerCase())" in prepare
-    assert "nothing was moved" in prepare
-    assert "--round-fabric \"${ROUND_FABRIC}\"" in prepare and "--round-type \"${ROUND_FABRIC_TYPE}\"" in prepare
+    assert "reportedType.toLowerCase() != ndfcConfig.primary_fabric_type.toLowerCase()" in prepare
+    assert "acceptedTypes" not in prepare
+    assert "no switches were moved" in prepare
+    assert '--round-fabric "${ROUND_FABRIC}"' in prepare and '--round-type "${ROUND_FABRIC_TYPE}"' in prepare
     assert "env.HOME_ROSTER_COPY_READY = 'true'" in prepare
-    # The credentials are read from the bound environment, never printed or passed on a command line.
     assert 'os.environ["NDFC_USER"]' in prepare and 'os.environ["NDFC_PASSWORD"]' in prepare
     run_tests = groovy_function("runNDFCVersionTests")
-    assert run_tests.index("applyFabricRound(ndfcConfig)") > run_tests.index("Install version-specific Dependencies")
+    assert run_tests.index("applyFabricRound(ndfcConfig)") > run_tests.index("Install runtime inputs")
     assert run_tests.index("applyFabricRound(ndfcConfig)") < run_tests.index("generateDynamicInventory(ndfcConfig)")
 
 
 def test_the_lab_goes_home_after_the_last_reset_and_before_the_logs_are_bundled():
     text = jenkins_text()
-    loop = text[text.index("for (ndfcConfig in ndfcVersions) {"):text.index("bundleAllLogs()\n")]
-    assert "resetFabricBetweenVersions(ndfcConfig.round_tag ?: '')" in loop
-    assert loop.index("resetFabricBetweenVersions(ndfcConfig.round_tag") < loop.index("restoreHomeFabric(ndfcVersions)")
-    assert re.search(r"finally\s*\{\s*try\s*\{\s*if \(env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true'\) \{\s*restoreHomeFabric\(ndfcVersions\)", loop)
+    producer = text[text.index("for (baseConfig in baseNdfcVersions) {"):text.index("// Clean workspace - best effort")]
+    assert "resetFabricBetweenVersions(ndfcConfig.round_tag ?: '')" in producer
+    assert producer.index("resetFabricBetweenVersions(ndfcConfig.round_tag") < producer.index("restoreHomeFabric(roundConfigs, activeRound)")
+    assert "withCleanupPreservingFailure({" in producer
+    assert producer.index("restoreHomeFabric(roundConfigs, activeRound)") < producer.index("finishStructuredExecution(executionStatus)")
+    assert producer.index("finishStructuredExecution(executionStatus)") < producer.index("bundleAllLogs()")
     home = groovy_function("restoreHomeFabric")
-    assert "if (lastConfig.fabric_name == firstConfig.fabric_name && !needsRecovery) {" in home
+    assert "if (env.HOME_RESTORE_REQUIRED != 'true') { return }" in home
     assert "integration_config.home.yml" in home
-    assert "runSwitchMembershipSync(homeConfig, 'home'" in home
-    assert "rethrowIfInterrupt(e)" in home
+    assert "runSwitchMembershipSync(homeConfig, 'home', homeRoster)" in home
+    assert home.index("resetFabricBetweenVersions(") < home.index("runSwitchMembershipSync(")
+    assert "rethrowIfInterrupt(e)" in home and "throw e" in home
     assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in home
-    assert "throw e" in home
     assert "usernamePassword(credentialsId: SWITCH_CREDENTIALS_ID" in home
-    # The renderer keeps the canonical roster under exactly the name the restore reads.
     assert HOME_ROSTER_COPY == "integration_config.home.yml"
 
 
 @pytest.mark.parametrize("failure", ["restore", "files", "home", "interrupt", "none"])
-def test_round_failure_reporting_and_archiving_groovy_runtime(tmp_path, failure):
-    java = os.environ.get("ND_REPORT_JAVA")
-    groovy_jar = os.environ.get("ND_REPORT_GROOVY_JAR")
-    if not java or not groovy_jar:
-        pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
-    text = jenkins_text()
-    lifecycle = text[text.index("                    try {\n                    for (ndfcConfig"):
-                     text.index("                    // Clean workspace - best effort")]
-    lifecycle = lifecycle.replace("org.jenkinsci.plugins.workflow.steps.FlowInterruptedException", "InterruptedException")
-    harness = r'''
-import groovy.transform.Field
-@Field def env = [ND_SWITCH_RESTORE_FAILED: 'false', ND_PREREQUISITE_ONLY_EFFECTIVE: 'false']
-@Field def currentBuild = [:]
-@Field def events = []
-@Field def TEST_RESULT_SUMMARY_BUF = ''
-@Field def failure = 'SCENARIO'
-def echo(message) {}
-def setFailureFlag(name, value) {}
-def isFailureFlagSet(name) { false }
-def runNDFCVersionTests(config) {
-    events.add('run:' + config.round_tag)
-    if (failure == 'interrupt') { throw new InterruptedException('cancelled') }
-    if (failure == 'files') { throw new RuntimeException('missing files') }
-    env.REQUIRED_FILES_READY = 'true'
-    if (failure == 'restore') {
-        env.ND_SWITCH_RESTORE_FAILED = 'true'
-        throw new RuntimeException('restore incomplete')
+def test_round_failure_reporting_and_archiving_groovy_runtime(lifecycle_pipeline, failure):
+    body = 'def scenario = ' + json.dumps(failure) + '\ndef failureMode = "reported-module-failure"\n'
+    body += 'def failure = new IllegalStateException("offline infrastructure failure")\n'
+    body += PRODUCER + r'''
+script.metaClass.runNDFCVersionTests = { Object round ->
+    calls.add('run:' + round.round_label)
+    if (scenario == 'interrupt') { throw new InterruptedException('cancelled') }
+    if (scenario == 'files') { throw failure }
+    if (scenario == 'restore') {
+        context.ND_SWITCH_RESTORE_FAILED = 'true'
+        context.PIPELINE_FAILED = 'true'
     }
 }
-def resetFabricBetweenVersions(tag) { events.add('reset:' + tag) }
-def restoreHomeFabric(configs) {
-    events.add('home')
-    if (failure == 'home') { throw new RuntimeException('home failed') }
+script.metaClass.restoreHomeFabric = { Object rounds, Object active ->
+    calls.add('home')
+    if (scenario == 'home') { throw failure }
 }
-def bundleAllLogs() { events.add('archive') }
-def ndfcVersions = [
-    [version: '4.2', versionId: '42', round_tag: 'ibgp', fabric_name: 'home'],
-    [version: '4.2', versionId: '42', round_tag: 'ebgp', fabric_name: 'round']
-]
-def thrown = false
-try {
-LIFECYCLE
-} catch (Exception error) { thrown = true }
-assert events[-2..-1] == ['home', 'archive'] : events
-assert events.count('archive') == 1
-assert thrown == (failure in ['files', 'home', 'interrupt'])
-if (failure == 'restore') {
-    assert events == ['run:ibgp', 'home', 'archive'] : events
-    assert TEST_RESULT_SUMMARY_BUF.contains('ABORT|round stoppedibgp|')
-    assert TEST_RESULT_SUMMARY_BUF.contains('ABORT|round skippedebgp|')
-    assert env.PIPELINE_FAILED == 'true'
+def caught = null
+try { script.run() } catch (Exception error) { caught = error }
+assert calls.contains('home') && calls.count('bundle') == 1
+assert calls.indexOf('home') < calls.indexOf('fold') && calls.indexOf('fold') < calls.indexOf('bundle')
+assert (caught != null) == (scenario in ['files', 'home', 'interrupt'])
+if (scenario == 'restore') {
+    assert !calls.contains('run:eBGP')
+    assert calls.contains('record:eBGP')
+    assert context.PIPELINE_FAILED == 'true'
 }
-if (failure in ['files', 'interrupt']) { assert !events.contains('run:ebgp') }
-'''.replace("SCENARIO", failure).replace("LIFECYCLE", lifecycle)
-    script = tmp_path / "RoundLifecycle.groovy"
-    script.write_text(harness)
-    result = subprocess.run([java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(script)],
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stdout + result.stderr
+if (scenario in ['files', 'interrupt']) { assert !calls.contains('run:eBGP') }
+assert calls.contains('finish:' + (scenario == 'interrupt' ? 'interrupted' : (scenario in ['files', 'home'] ? 'failed' : 'success')))
+'''
+    lifecycle_pipeline(body)
 
 
-def test_home_recovery_retries_a_failed_restore_before_the_second_round_render():
+def test_home_recovery_remains_required_until_the_canonical_roster_is_confirmed():
     home = groovy_function("restoreHomeFabric")
-    assert "def needsRecovery = (env.ND_SWITCH_RESTORE_FAILED == 'true')" in home
-    assert "def hasHomeCopy = (env.HOME_ROSTER_COPY_READY == 'true')" in home
-    assert "if (!hasHomeCopy && !needsRecovery) {" in home
-    assert 'def homeRoster = hasHomeCopy ? "${COLLECTIONS_DIRECTORY}/integration_config.home.yml" : "${COLLECTIONS_DIRECTORY}/integration_config.yml"' in home
+    assert "if (env.HOME_RESTORE_REQUIRED != 'true') { return }" in home
+    assert "def homeConfig = roundConfigs[0]" in home
+    assert "env.HOME_ROSTER_COPY_READY == 'true' ?" in home
+    assert '"${COLLECTIONS_DIRECTORY}/integration_config.home.yml" : "${COLLECTIONS_DIRECTORY}/integration_config.yml"' in home
     assert "runSwitchMembershipSync(homeConfig, 'home', homeRoster)" in home
-    missing_files = home[home.index("if (env.REQUIRED_FILES_READY != 'true') {"):home.index("def homeRoster")]
+    missing_files = home[home.index("if (env.REQUIRED_FILES_READY != 'true') {"):home.index("// Clear pairs/resources")]
     assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in missing_files
     assert "env.PIPELINE_FAILED = 'true'" in missing_files
-    assert "NDP_SWITCH_RESTORE_FAILED: required files are unavailable" in missing_files
+    assert "NDP_SWITCH_HOME_RESTORE_FAILED: required runtime files are unavailable" in missing_files
+    assert home.index("runSwitchMembershipSync(homeConfig, 'home', homeRoster)") < home.index("env.HOME_RESTORE_REQUIRED = 'false'")
 
 
 @pytest.mark.parametrize("has_home_copy", [True, False])
-def test_home_restore_reports_canonical_destination_groovy_runtime(tmp_path, has_home_copy):
-    java = os.environ.get("ND_REPORT_JAVA")
-    groovy_jar = os.environ.get("ND_REPORT_GROOVY_JAR")
-    if not java or not groovy_jar:
-        pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
-    harness = r'''
-import groovy.transform.Field
-@Field def env = [ND_SWITCH_RESTORE_FAILED: 'true', HOME_ROSTER_COPY_READY: 'HAS_COPY', REQUIRED_FILES_READY: 'true']
-@Field def COLLECTIONS_DIRECTORY = '/unused'
-@Field def SWITCH_CREDENTIALS_ID = 'unused'
-@Field def captured = [:]
-def usernamePassword(config) { config }
-def withCredentials(credentials, Closure body) { body() }
-def runSwitchMembershipSync(config, phase, roster) { captured = [config: config, phase: phase, roster: roster] }
-def echo(message) {}
-def error(message) { throw new RuntimeException(message) }
-def rethrowIfInterrupt(error) { throw error }
-HOME_FUNCTION
-def first = [fabric_name: 'home', primary_fabric_type: 'vxlanIbgp', round_tag: '', version: '4.2']
+def test_home_restore_reports_canonical_destination_groovy_runtime(lifecycle_pipeline, has_home_copy):
+    body = 'context.HOME_ROSTER_COPY_READY = ' + json.dumps(str(has_home_copy).lower()) + '\n'
+    body += r'''
+context.HOME_RESTORE_REQUIRED = 'true'
+context.REQUIRED_FILES_READY = 'true'
+def captured = [:]
+script.metaClass.usernamePassword = { Map options -> options }
+script.metaClass.withCredentials = { List options, Closure work -> work.call() }
+script.metaClass.resetFabricBetweenVersions = { Object label -> calls.add('reset') }
+script.metaClass.generateDynamicInventory = { Object round -> calls.add('inventory:' + round.fabric_name) }
+script.metaClass.runSwitchMembershipSync = { Object round, Object phase, Object roster ->
+    captured = [config: round, phase: phase, roster: roster]
+}
+def first = [fabric_name: 'home', primary_fabric_type: 'vxlanIbgp', round_tag: '', version: '4.3', rehome_fabrics: ['home', 'round']]
 def last = [fabric_name: 'round', primary_fabric_type: 'vxlanEbgp', round_tag: 'ebgp', version: '4.3', rehome_fabrics: ['home', 'round']]
-restoreHomeFabric([first, last])
+script.restoreHomeFabric([first, last], last)
 assert captured.phase == 'home'
-assert captured.config.fabric_name == 'home'
-assert captured.config.primary_fabric_type == 'vxlanIbgp'
-assert captured.config.round_tag == ''
-assert captured.config.version == '4.3'
+assert captured.config.is(first)
+assert captured.config.fabric_name == 'home' && captured.config.primary_fabric_type == 'vxlanIbgp'
+assert captured.config.round_tag == '' && captured.config.version == '4.3'
 assert captured.config.rehome_fabrics == ['home', 'round']
-assert captured.roster == '/unused/' + (env.HOME_ROSTER_COPY_READY == 'true' ? 'integration_config.home.yml' : 'integration_config.yml')
-assert last.fabric_name == 'round'
-'''.replace("HAS_COPY", str(has_home_copy).lower()).replace("HOME_FUNCTION", groovy_function("restoreHomeFabric"))
-    script = tmp_path / "HomeRestore.groovy"
-    script.write_text(harness)
-    result = subprocess.run([java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(script)],
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stdout + result.stderr
+assert captured.roster == '/fixture/collection/' + (context.HOME_ROSTER_COPY_READY == 'true' ? 'integration_config.home.yml' : 'integration_config.yml')
+assert calls == ['reset', 'inventory:home']
+assert context.HOME_RESTORE_REQUIRED == 'false' && last.fabric_name == 'round'
+'''
+    lifecycle_pipeline(body)
 
 
 def test_the_switch_sync_carries_the_round_roster_and_the_fabrics_to_move_between():
@@ -588,163 +551,113 @@ def test_the_switch_sync_carries_the_round_roster_and_the_fabrics_to_move_betwee
     assert '-e "nd_switch_roster_file=${PREFLIGHT_ROSTER}"' in sync
     assert '-e "nd_switch_rehome_fabrics_csv=${PREFLIGHT_REHOME_FABRICS}"' in sync
     assert "(ndfcConfig.rehome_fabrics ?: []).join(',')" in sync
-    assert "if (!isPost) {" in sync and "throw e" in sync
-    assert "NDP_SWITCH_RESTORE_FAILED" in sync
+    assert "if (!isPost || phase == 'home') { throw e }" in sync
+    assert "NDP_SWITCH_RESTORE_INCOMPLETE" in sync
     assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in sync
+    assert "env.PIPELINE_FAILED = 'true'" in sync
     assert "continuing best-effort (post-suite)" not in sync
     text = jenkins_text()
     assert "runSwitchMembershipSync(ndfcConfig, 'pre')" in text and "runSwitchMembershipSync(ndfcConfig, 'post')" in text
-    # The per-module guard never moves a switch between fabrics: only the pre-flight and the restores do.
     guard = text[text.index("ensure_switches_ready() {"):text.index("ensure_switches_ready() {") + 2500]
     assert "nd_switch_rehome_fabrics_csv" not in guard
 
 
-def test_preflight_failure_still_runs_restore_and_restore_failure_blocks_the_next_round():
+def test_preflight_failure_keeps_home_recovery_required_and_blocks_the_next_round():
     lifecycle = groovy_function("runNDFCVersionTests")
-    assert re.search(r"try\s*\{\s*runSwitchPreflight\(ndfcConfig\)\s*runInterfacePreflight\(ndfcConfig\)\s*runPortChannelUnbundlePreflight\(ndfcConfig\)\s*runFabricTest\(ndfcConfig\)\s*\}\s*finally", lifecycle)
-    assert "runSwitchPostRestore(ndfcConfig)" in lifecycle
+    assert lifecycle.index("env.HOME_RESTORE_REQUIRED = 'true'") < lifecycle.index("runSwitchPreflight(ndfcConfig)")
+    assert "def preflightCompleted = false" in lifecycle
+    assert re.search(r"runSwitchPreflight\(ndfcConfig\)\s*preflightCompleted = true\s*runFabricTest\(ndfcConfig\)", lifecycle)
+    assert "if (preflightCompleted) {\n                    runSwitchPostRestore(ndfcConfig)" in lifecycle
+    assert "NDP_SWITCH_ACTIVE_ROUND_RESTORE_SKIPPED" in lifecycle
+    assert "Outer home-fabric recovery remains required" in lifecycle
+    assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in lifecycle
     text = jenkins_text()
     assert "if (env.ND_SWITCH_RESTORE_FAILED == 'true')" in text
-    assert "Switch restore failed; refusing to start another fabric round" in text
+    assert "previous restore did not confirm the full roster" in text
 
 
-def test_switch_sync_has_independent_phase_timeouts_and_env_overrides():
+def test_switch_sync_passes_one_enclosing_budget_to_every_phase():
     sync = groovy_function("runSwitchMembershipSync")
-    selection = sync.split("def syncTimeout =", 1)[1].split("stage(stageName)", 1)[0]
-    assert " ".join(selection.split()) == (
-        "(phase == 'home') ? (env.ND_SWITCH_HOME_SYNC_TIMEOUT ?: '1500') : "
-        "((phase == 'post') ? (env.ND_SWITCH_POST_SYNC_TIMEOUT ?: '2100') : "
-        "(env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'))"
-    )
-    assert '"PREFLIGHT_TIMEOUT=${syncTimeout}"' in sync
+    assert "def timeoutLimit = env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'" in sync
+    assert '"PREFLIGHT_TIMEOUT=${timeoutLimit}"' in sync
     assert 'timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook' in sync
+    assert '-e "nd_switch_guard_timeout_seconds=${PREFLIGHT_TIMEOUT}"' in sync
+    assert "returnStatus: true" in sync
 
 
-def test_switch_recovery_reaches_onboarding_without_optional_preparation():
+def test_switch_recovery_reaches_onboarding_with_guard_owned_preparation_defaults():
     sync = groovy_function("runSwitchMembershipSync")
-    assert "def isPost = (phase != 'pre')" in sync
-    assert "PREFLIGHT_REDISCOVER_ENABLED=${env.ND_SWITCH_REDISCOVER_ENABLED ?: (isPost ? 'false' : 'true')}" in sync
-    assert "PREFLIGHT_ONBOARD_INITIAL_WAIT=${env.ND_SWITCH_ONBOARD_INITIAL_WAIT ?: (isPost ? '0' : '480')}" in sync
-    assert '-e "nd_switch_rediscover_enabled=${PREFLIGHT_REDISCOVER_ENABLED}"' in sync
-    assert '-e "nd_switch_onboard_initial_wait=${PREFLIGHT_ONBOARD_INITIAL_WAIT}"' in sync
+    assert "def autoOnboard = (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')" in sync
+    assert '-e "nd_switch_apply=${PREFLIGHT_APPLY}"' in sync
     assert '-e "nd_switch_require_full_roster=true"' in sync
-    assert '-e "nd_switch_onboard_retries=${ND_SWITCH_ONBOARD_RETRIES:-10}"' in sync
-    assert '-e "nd_switch_onboard_delay=${ND_SWITCH_ONBOARD_DELAY:-120}"' in sync
+    assert '-e "nd_switch_preserve_config=false"' in sync
+    values = ensure_switches_play()["vars"]
+    assert "ND_SWITCH_REDISCOVER_ENABLED" in values["nd_switch_rediscover_enabled"]
+    assert "ND_SWITCH_ONBOARD_INITIAL_WAIT" in values["nd_switch_onboard_initial_wait"]
+    assert "ND_SWITCH_ONBOARD_RETRIES" in values["nd_switch_onboard_retries"]
+    assert "ND_SWITCH_ONBOARD_DELAY" in values["nd_switch_onboard_delay"]
 
 
-def test_switch_recovery_preparation_groovy_runtime(tmp_path):
-    java = os.environ.get("ND_REPORT_JAVA")
-    groovy_jar = os.environ.get("ND_REPORT_GROOVY_JAR")
-    if not java or not groovy_jar:
-        pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
-    harness = r'''
-import groovy.transform.Field
-@Field def env = [:]
-@Field def COLLECTIONS_DIRECTORY = '/unused'
-@Field def captured = [:]
-@Field def shellCalls = 0
-def stage(name, Closure body) { body() }
-def echo(message) {}
-def withEnv(entries, Closure body) {
-    captured = entries.collectEntries { entry ->
-        def parts = entry.toString().split('=', 2)
-        [(parts[0]): parts[1]]
-    }
-    body()
-}
-def sh(script) { shellCalls += 1 }
-'''
-    checks = r'''
-def config = [version: '4.3', rehome_fabrics: ['home', 'ebgp']]
+def test_switch_recovery_budget_and_audit_mode_groovy_runtime(lifecycle_pipeline):
+    lifecycle_pipeline(r'''
+script.metaClass.sh = { Object options -> assert options.returnStatus == true; shells.add(options.script.toString()); return 0 }
 ['pre', 'post', 'home'].each { phase ->
-    [[:], [ND_SWITCH_REDISCOVER_ENABLED: 'true', ND_SWITCH_ONBOARD_INITIAL_WAIT: '75'],
-        [ND_SWITCH_REDISCOVER_ENABLED: 'false', ND_SWITCH_ONBOARD_INITIAL_WAIT: '0']].each { overrides ->
-        env.clear()
-        env.putAll([ND_SWITCH_PREFLIGHT_READY: 'true'] + overrides)
-        runSwitchMembershipSync(config, phase, '/unused/home.yml')
-        assert captured.PREFLIGHT_REDISCOVER_ENABLED ==
-            (overrides.ND_SWITCH_REDISCOVER_ENABLED ?: (phase == 'pre' ? 'true' : 'false'))
-        assert captured.PREFLIGHT_ONBOARD_INITIAL_WAIT ==
-            (overrides.ND_SWITCH_ONBOARD_INITIAL_WAIT ?: (phase == 'pre' ? '480' : '0'))
-        assert captured.PREFLIGHT_TIMEOUT == [pre: '3600', post: '2100', home: '1500'][phase]
+    [[:], [ND_SWITCH_SYNC_TIMEOUT: '75']].each { overrides ->
+        context.remove('ND_SWITCH_SYNC_TIMEOUT')
+        context.putAll(overrides)
+        script.runSwitchMembershipSync(config, phase, '/fixture/home.yml')
+        def captured = capturedEnvironments[-1]
+        assert captured.PREFLIGHT_TIMEOUT == (overrides.ND_SWITCH_SYNC_TIMEOUT ?: '3600')
         assert captured.PREFLIGHT_APPLY == 'true'
-        assert captured.PREFLIGHT_ROSTER == '/unused/home.yml'
-        assert captured.PREFLIGHT_REHOME_FABRICS == 'home,ebgp'
+        assert captured.PREFLIGHT_ROSTER == '/fixture/home.yml'
+        assert captured.PREFLIGHT_REHOME_FABRICS == 'VXLAN_EVPN_Fabric,VXLAN_EVPN_Fabric_eBGP'
     }
 }
-env.clear()
-env.putAll([ND_SWITCH_PREFLIGHT_READY: 'true', ND_PREREQUISITE_ONLY_EFFECTIVE: 'true'])
-runSwitchMembershipSync(config, 'pre')
-assert captured.PREFLIGHT_APPLY == 'false'
-assert shellCalls == 10
-'''
-    program = tmp_path / "switch_recovery.groovy"
-    program.write_text(harness + groovy_function("runSwitchMembershipSync") + checks, encoding="utf-8")
-    result = subprocess.run(
-        [java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(program)],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+context.ND_PREREQUISITE_ONLY_EFFECTIVE = 'true'
+script.runSwitchMembershipSync(config, 'pre')
+assert capturedEnvironments[-1].PREFLIGHT_APPLY == 'false'
+assert shells.size() == 7
+''')
 
 
-def test_switch_sync_phase_caps_preserve_fatal_pre_and_soft_post_home():
+def test_switch_sync_propagates_pre_and_home_errors_and_flags_post_failure():
     sync = groovy_function("runSwitchMembershipSync")
     catch = sync.split("} catch (Exception e) {", 1)[1]
-    pre, remainder = catch.split("if (phase == 'home') {", 1)
-    home, post = remainder.split("\n            }", 1)
-    assert "if (!isPost) {" in pre and "throw e" in pre
-    assert "currentBuild.result = 'UNSTABLE'" in home and "return" in home
-    assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in post
-    assert "currentBuild.result = 'UNSTABLE'" in post and "return" in post
-    assert "NDP_SWITCH_RESTORE_INCOMPLETE" in post
-    assert "env.PIPELINE_FAILED = 'true'" not in post and "error(" not in post
-    assert catch.index("rethrowIfInterrupt(e)") < catch.index("if (!isPost)")
+    assert catch.index("rethrowIfInterrupt(e)") < catch.index("if (isPost)")
+    assert "if (!isPost || phase == 'home') { throw e }" in catch
+    assert "if (!isPost || phase == 'home') { error(reason) }" in catch
+    assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in catch
+    assert "env.PIPELINE_FAILED = 'true'" in catch
+    assert "NDP_SWITCH_RESTORE_INCOMPLETE" in catch
+    assert "currentBuild.result = 'UNSTABLE'" not in catch
 
 
 def test_incomplete_restore_skips_later_rounds_before_preparation():
     text = jenkins_text()
-    loop = text.split("for (ndfcConfig in ndfcVersions) {", 1)[1]
-    guard = loop.split("// Define failure flag", 1)[0]
+    loop = text.split("for (ndfcConfig in roundConfigs) {", 1)[1]
+    guard = loop.split("activeRound = ndfcConfig", 1)[0]
     assert guard.lstrip().startswith("if (env.ND_SWITCH_RESTORE_FAILED == 'true') {")
-    assert "currentBuild.result = 'UNSTABLE'" in guard
+    assert "recordUnstartedRound(ndfcConfig, 'previous switch restore incomplete')" in guard
     assert "NDP_SWITCH_ROUNDS_SKIPPED" in guard
-    assert "ABORT|round skipped" in guard
     assert "continue" in guard
-    assert "env.PIPELINE_FAILED" not in guard
-    assert "restoreHomeFabric(ndfcVersions)" in loop and "bundleAllLogs()" in loop
+    assert "runNDFCVersionTests" not in guard
+    assert "restoreHomeFabric(roundConfigs, activeRound)" in loop and "bundleAllLogs()" in loop
 
 
-def test_port_channel_unbundle_preflight_runs_before_the_gate_and_clears_the_stale_pcs():
-    # The remediating unbundle pre-flight is wired best-effort (own ready flag), runs
-    # after the interface pre-flight and BEFORE runFabricTest (which hosts the read-only
-    # verify_free_interfaces gate), and deletes the stale test port-channel50x then
-    # Recalculate & Deploy so the shared Ethernet1/10-13 members are free.
-    text = jenkins_text()
-    assert "def CONSUL_PC_UNBUNDLE_FILES = ['nd_ensure_pc_members_free.yaml']" in text
-    assert "CONSUL_PC_UNBUNDLE_FILES.each { pb -> downloadFromConsul(pb) }" in text
-    assert "env.ND_PC_UNBUNDLE_READY = 'true'" in text
-    assert "def pcUnbundleInstallFiles = (env.ND_PC_UNBUNDLE_READY == 'true') ? CONSUL_PC_UNBUNDLE_FILES : []" in text
-    move_block = text[text.index("def moveFiles ="):text.index("def moveFiles =") + 400]
-    assert "pcUnbundleInstallFiles" in move_block
-
-    preflight = groovy_function("runPortChannelUnbundlePreflight")
-    assert "if (env.ND_PC_UNBUNDLE_READY != 'true')" in preflight
-    # ENFORCE in a normal run, audit-only during a prerequisite-only run.
-    assert "def applyUnbundle = (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')" in preflight
-    assert '-e "nd_pc_unbundle_apply=${PC_APPLY}"' in preflight
-    assert '-e "nd_pc_fabric_name=${PC_FABRIC}"' in preflight
-    assert "PC_FABRIC=${ndfcConfig.fabric_name}" in preflight
-    assert "non-fatal; suite continues" in preflight
-
-    # The playbook deletes port-channel501/502/503 and then Recalculate & Deploy.
+def test_port_channel_unbundle_is_scoped_to_the_runner_gate_with_an_audit_safe_default():
+    # The current round lifecycle delegates topology preparation to the runner;
+    # it has no separate best-effort port-channel stage before the suite.
+    lifecycle = groovy_function("runNDFCVersionTests")
+    assert "runPortChannelUnbundlePreflight" not in lifecycle
+    assert "runFabricTest(ndfcConfig)" in lifecycle
     play = yaml.safe_load((ROOT / "playbooks/nd_ensure_pc_members_free.yaml").read_text(encoding="utf-8"))[0]
     assert play["vars"]["nd_pc_member_names"] == ["port-channel501", "port-channel502", "port-channel503"]
-    assert play["vars"]["nd_pc_unbundle_apply"] is False  # audit-safe default
+    assert play["vars"]["nd_pc_unbundle_apply"] is False
     delete_task = next(t for t in play["tasks"] if t.get("name", "").startswith("ENFORCE: delete"))
     assert delete_task["cisco.nd.nd_interface_port_channel_access"]["state"] == "deleted"
     rest_paths = [t["cisco.nd.nd_rest"]["path"] for t in play["tasks"] if "cisco.nd.nd_rest" in t]
-    assert any("actions/configSave" in p for p in rest_paths)
-    assert any("actions/deploy" in p for p in rest_paths)
+    assert any("actions/configSave" in path for path in rest_paths)
+    assert any("actions/deploy" in path for path in rest_paths)
 
 
 def test_runner_releases_reserved_port_channel_members_before_the_prerequisite_gate():
@@ -787,115 +700,71 @@ def test_runner_releases_reserved_port_channel_members_before_the_prerequisite_g
 
 
 def test_a_round_that_stops_early_is_listed_with_its_reason_and_rows_carry_the_round():
-    text = jenkins_text()
-    assert "TEST_RESULT_SUMMARY_BUF += \"\\nABORT|round stopped${ndfcConfig.round_tag ?: ''}|" in text
-    table = groovy_function("formatResultsTable")
-    assert "f[0].trim() == 'ABORT'" in table and "ROUND NOT COMPLETED:" in table
-    assert "def pbLabel = ((testType == 'smoke') ? \"${pb} (smoke)\" : pb) + (ndfcConfig.round_tag ?: '')" in text
-    assert "def artifactLabel = ((testType == 'smoke') ? \"${token} (smoke)\" : token) + (ndfcConfig.round_tag ?: '')" in text
-    assert "def roundsSuffix = activeRounds ? \" (${activeRounds})\" : ''" in text
+    missing = groovy_function("recordUnstartedRound")
+    assert "result: 'NOT_RUN', coverage: 'UNKNOWN', counts: [:], case_totals: [:]" in missing
+    assert "round_label: ndfcConfig.round_label" in missing
+    assert "reason ?: 'round not reached'" in missing
+    assert "MODULE_ACTIVITY_RESULTS.keySet().any" in missing
+    summary = groovy_function("moduleCaseSummaryRows")
+    assert 'label += " (${row.round_label} round)"' in summary
+    fold = groovy_function("foldStructuredResults")
+    assert '${row.module} (${row.scope}; ${row.round_label} round)|${row.artifact}' in fold
 
 
 def test_capability_reporting_is_shared_and_keeps_failure_handling():
-    capability_parser = groovy_function("virtualPeerLinkCapabilityFailures")
-    assert ".clear(" not in capability_parser
-    assert "failureLines = []" in capability_parser
-    parser = groovy_function("parseTestResults")
-    assert parser.index("missing the current-run marker") < parser.index("virtualPeerLinkCapabilityFailures(testOutput)")
-    assert "|${durationStr}|${capabilityNote}" in parser
-    assert 'error("Test stage failed: unsupported virtual peer-link capability (no PLAY RECAP)")' in parser
-    assert 'error("Test stage failed: ${failedCount} tasks failed")' in parser
-    assert 'error("Test stage failed: Ansible exited with status ${ansibleExitStatus}")' in parser
-    table = groovy_function("formatResultsTable")
-    assert "affected task case(s)" in table
-    assert "Failure totals are unchanged; other failures may coexist." in table
-    assert "formatResultsTable(TEST_RESULT_SUMMARY_BUF)" in groovy_function("bundleAllLogs")
-    assert "formatResultsTable(roundGroup.rows)" in jenkins_text()
-    assert "webexMessages.collectMany { splitWebexReport(it, WEBEX_SAFE_MESSAGE_LIMIT) }" in jenkins_text()
+    spec = importlib.util.spec_from_file_location("round_invocation_summary", ROOT / "playbooks/nd_result_summary.py")
+    agent = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(agent)
+    rejection = 'fatal: [leaf]: FAILED! => {"msg":"Virtual peer-link is not supported on N9K-C9300v", "private":"PRIVATE_BODY"}'
+    failures = "TASK [create virtual pair] ***\n" + rejection + "\n" + rejection + "\n" + \
+        "TASK [replace virtual pair] ***\nfatal: [leaf]: N9K-C9300v does not support vPC Fabric Peering\n"
+    def collect(body, marker="current", failed=2, code=2, recap=True):
+        text = "[RUN_MARKER: " + marker + "]\n" + body
+        if recap:
+            text += "PLAY RECAP\nleaf : ok=4 changed=0 unreachable=0 failed=" + str(failed) + " skipped=1\n"
+        text += "[ANSIBLE_EXIT_STATUS: " + str(code) + "]\n[TIMESTAMP_END: 20]\n"
+        return agent.parse_log(io.StringIO(text), "current")
+    result = collect(failures)
+    assert result["status"] == "FAIL" and result["counts"]["failed"] == 2
+    assert result["capability_tasks"] == ["create virtual pair", "replace virtual pair"]
+    assert "PRIVATE_BODY" not in json.dumps(result)
+    assert collect(failures, marker="stale")["status"] == "ERR"
+    assert collect(failures, recap=False)["status"] == "ERR"
+    assert collect(failures, failed=0, code=2)["status"] == "FAIL"
+    assert collect("TASK [expected rejection] ***\n" + rejection + "\n...ignoring\n", failed=0, code=0)["capability_tasks"] == []
+    assert collect(failures.replace("N9K-C9300v", "N9K-C93180YC"))["capability_tasks"] == []
+    assert collect("TASK [physical pair] ***\nfatal: [leaf]: N9K-C9300v peer-link missing; inSync timeout\n")["capability_tasks"] == []
+    assert collect("TASK [platform] ***\nok: [leaf]: N9K-C9300v\nTASK [failure] ***\nfatal: [leaf]: virtual peer-link not supported\n")["capability_tasks"] == []
 
 
-def test_capability_reporting_groovy_runtime(tmp_path):
-    java = os.environ.get("ND_REPORT_JAVA")
-    groovy_jar = os.environ.get("ND_REPORT_GROOVY_JAR")
-    if not java or not groovy_jar:
-        pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
-    source = "\n".join(groovy_function(name) for name in (
-        "virtualPeerLinkCapabilityFailures", "formatResultsTable", "parseTestResults", "splitWebexReport",
-    ))
-    harness = r'''
-import groovy.transform.Field
-@Field def env = [COLLECTIONS_DIRECTORY: '/unused', TOTAL_FAILED_COUNT: '0', TOTAL_PASSED_COUNT: '0']
-@Field def TEST_RESULT_SUMMARY_BUF = ''
-@Field def BUILD_FAILURE_REASON_BUF = ''
-@Field def output = ''
-@Field def messages = []
-@Field def failureFlag = false
-def echo(message) { messages.add(message.toString()) }
-def sh(options) { output }
-def withEnv(values, body) { body() }
-def setFailureFlag(name, value) { failureFlag = value }
-def error(message) { throw new RuntimeException(message.toString()) }
-'''
-    checks = r'''
-def rejection = 'fatal: [leaf1]: FAILED! => {"msg":"Virtual peer-link is not supported on N9K-C9300v"}'
-def rejected = "TASK [create virtual pair] ***\n${rejection}\n${rejection}\n" +
-    'TASK [replace virtual pair] ***\nfatal: [leaf2]: FAILED! => {"msg":"N9K-C9300v does not support vPC Fabric Peering"}\n'
-assert virtualPeerLinkCapabilityFailures(rejected) == ['create virtual pair', 'replace virtual pair']
-assert virtualPeerLinkCapabilityFailures('TASK [physical pair]\nfatal: [leaf]: FAILED! => {"msg":"N9K-C9300v peer-link missing; vpc 101 invalid; inSync timeout"}') == []
-assert virtualPeerLinkCapabilityFailures(rejected.replace('N9K-C9300v', 'N9K-C93180YC')) == []
-assert virtualPeerLinkCapabilityFailures(rejected.replace('fatal:', 'ok:')) == []
-assert virtualPeerLinkCapabilityFailures('TASK [expected rejection]\n' + rejection + '\n...ignoring\nTASK [physical failure]\nfatal: [leaf]: cable missing') == []
-assert virtualPeerLinkCapabilityFailures('TASK [platform]\nok: [leaf] => N9K-C9300v\nTASK [failure]\nfatal: [leaf]: virtual peer-link not supported') == []
-assert virtualPeerLinkCapabilityFailures('TASK [name|unsafe`label]\n' + rejection) == ['name unsafe label']
-def config = [fabric_name: 'fabricA', version: '4.3', versionId: '43', round_tag: ' (iBGP)']
-output = '[RUN_MARKER: current]\n' + rejected + '\nPLAY RECAP\nleaf : ok=4 failed=3 skipped=1\n[ANSIBLE_EXIT_STATUS: 2]'
-try { parseTestResults(config, 'failed', 'nd_vpc_pair', 'integration', 'current'); assert false }
-catch (RuntimeException failure) { assert failure.message.contains('Ansible exited with status 2') }
-assert failureFlag
-assert env.TOTAL_FAILED_COUNT == '3'
-assert TEST_RESULT_SUMMARY_BUF.contains('FAIL|nd_vpc_pair (iBGP)|fabricA|4.3|4|3|1|N/A|NDP_UNSUPPORTED_CAPABILITY count=2')
-assert messages.any { it.contains('N9K-C9300v virtual peer-link / vPC Fabric Peering is unsupported') }
-def report = formatResultsTable(TEST_RESULT_SUMMARY_BUF)
-assert report.contains('2 affected task case(s) across 1 module/round result(s).')
-assert report.contains('tests=create virtual pair; replace virtual pair')
-assert report.contains('Failure totals are unchanged')
-TEST_RESULT_SUMMARY_BUF = ''
-output = '[RUN_MARKER: current]\n' + rejected
-try { parseTestResults(config, 'failed', 'nd_vpc_pair', 'integration', 'current'); assert false }
-catch (RuntimeException failure) { assert failure.message.contains('no PLAY RECAP') }
-assert TEST_RESULT_SUMMARY_BUF.readLines().findAll { it }.size() == 1
-assert TEST_RESULT_SUMMARY_BUF.contains('ERR|nd_vpc_pair (iBGP)')
-assert formatResultsTable(TEST_RESULT_SUMMARY_BUF).contains('count=2')
-TEST_RESULT_SUMMARY_BUF = ''
-try { parseTestResults(config, 'failed', 'nd_vpc_pair', 'integration', 'other-run'); assert false }
-catch (RuntimeException failure) { assert failure.message.contains('current-run marker') }
-assert TEST_RESULT_SUMMARY_BUF == ''
-messages.clear()
-output = '[RUN_MARKER: current]\n' + rejected + '\nPLAY RECAP\nleaf : ok=4 failed=0 skipped=1\n[ANSIBLE_EXIT_STATUS: 0]'
-parseTestResults(config, 'failed', 'nd_vpc_pair', 'integration', 'current')
-assert !TEST_RESULT_SUMMARY_BUF.contains('NDP_UNSUPPORTED_CAPABILITY')
-assert !messages.any { it.contains('NDP_UNSUPPORTED_CAPABILITY') }
-assert !formatResultsTable(TEST_RESULT_SUMMARY_BUF).contains('UNSUPPORTED CAPABILITY')
+def test_capability_failure_survives_active_aggregation_and_bounded_webex_parts(active_pipeline):
+    active_pipeline(r'''
+def rejection = 'N9K-C9300v virtual peer-link is unsupported; use the physical peer-link'
+def row = [version_id: 'ND43', module: 'nd_vpc_pair.advanced', run_id: 'current', nd: '4.3',
+    fabric: 'fixture', scope: 'iBGP', round_label: 'iBGP', result: 'FAIL', coverage: 'COMPLETE',
+    case_totals: [started: 2, passed: 0, failed: 2, skipped: 0, incomplete: 0],
+    counts: [merged: [started: 2]], failure: rejection, reporting_status: 'SUCCESS',
+    archive_status: 'success', artifact: 'fixture.txt', duration: '20s']
+script.metaClass.sh = { Object options -> '' }
+script.metaClass.readFile = { Map options -> script.writeReportingJson([rows: [row], failed: true, reporting_errors: []]) }
+script.metaClass.archiveArtifacts = { Map options -> }
+script.foldStructuredResults()
+assert script.binding.env.PIPELINE_FAILED == 'true'
+assert script.BUILD_FAILURE_REASON_BUF.contains(rejection)
+def raw = script.moduleCaseSummaryRows()
+assert raw.startsWith('FAIL|nd_vpc_pair.advanced|fixture|4.3|0|2|0|')
+def table = script.formatResultsTable(raw, 'module test cases')
+assert table.contains('FAIL') && table.contains('iBGP') && table.contains('eBGP') && table.contains('NOT_RUN')
+assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).failed == '2'
 def manyRows = (1..120).collect { index ->
-    "FAIL|module_${index}|fabricA|4.3|4|1|0|2s|NDP_UNSUPPORTED_CAPABILITY count=1 tests=case_${index}_end"
+    "FAIL|module_${index}|fixture|4.3|0|1|0|2s|case_${index}_end|iBGP"
 }.join('\n')
-def largeReport = formatResultsTable(manyRows)
-assert largeReport.contains('120 affected task case(s) across 120 module/round result(s).')
-def parts = splitWebexReport(largeReport)
+def largeReport = script.formatResultsTable(manyRows, 'module test cases')
+def parts = script.splitWebexMessage(largeReport, 'Build fixture continuation\n')
 assert parts.size() > 1
 assert parts.every { it.length() <= 7000 && it.count('```') % 2 == 0 }
-(1..120).each { index -> assert parts.join('\n').count("tests=case_${index}_end") == 1 }
-assert splitWebexReport('short report') == ['short report']
-assert splitWebexReport('x' * 15000).join('') == 'x' * 15000
-println 'Capability parser, console, report, failure preservation and stale-output checks passed'
-'''
-    program = tmp_path / "capability_reporting.groovy"
-    program.write_text(harness + source + checks, encoding="utf-8")
-    result = subprocess.run(
-        [java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(program)],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+(1..120).each { index -> assert parts.join('\n').count("case_${index}_end") == 1 }
+''')
 
 
 # ----------------------------------------------------------------------------------------------
@@ -905,8 +774,15 @@ def ensure_switches_play():
     return yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text(encoding="utf-8"))[0]
 
 
+def walk_tasks(tasks):
+    for task in tasks:
+        yield task
+        for branch in ("block", "rescue", "always"):
+            yield from walk_tasks(task.get(branch, []))
+
+
 def task_named(tasks, prefix):
-    return next(task for task in tasks if task.get("name", "").startswith(prefix))
+    return next(task for task in walk_tasks(tasks) if task.get("name", "").startswith(prefix))
 
 
 def test_switches_are_moved_only_in_enforce_mode_and_only_between_the_listed_fabrics():
@@ -928,87 +804,79 @@ def test_switches_are_moved_only_in_enforce_mode_and_only_between_the_listed_fab
 
 
 def test_the_destination_type_is_checked_before_a_switch_is_removed():
-    block = task_named(ensure_switches_play()["tasks"], "Move the roster switches out of the round fabric")["block"]
-    names = [task["name"] for task in block]
-    gate = next(i for i, name in enumerate(names) if name.startswith("Refuse to move switches into a fabric type"))
-    probe = next(i for i, name in enumerate(names) if name.startswith("Read the type of each fabric"))
-    unpair = next(i for i, name in enumerate(names) if name.startswith("Unpair every vPC pair"))
-    remove = next(i for i, name in enumerate(names) if name.startswith("Remove each switch from the fabric"))
-    assert probe < gate < unpair < remove
-    assert "NDP_SWITCH_REHOME_BLOCKED" in block[gate]["ansible.builtin.assert"]["fail_msg"]
-    assert "NOTHING was removed" in block[gate]["ansible.builtin.assert"]["fail_msg"]
-    # The destination must be a type nd_manage_switches can onboard into (an ND 'routed' fabric is not).
     play = ensure_switches_play()
-    supported = play["vars"]["nd_switch_rehome_supported_types"]
-    assert supported == ["vxlanibgp", "vxlanebgp", "vxlancampus", "external", "externalconnectivity"]
-    assert "routed" not in supported
-    # The removal is the module's deleted state on the leaving fabric. Its failure stops the move, as
-    # before, unless the opt-in force-delete fallback is enabled (default off), which then gets a chance first.
-    removal = block[remove]
-    assert removal["cisco.nd.nd_manage_switches"]["state"] == "deleted"
-    assert "failed_when" not in removal
-    assert removal["ignore_errors"] == "{{ nd_switch_rehome_force_delete | bool }}"
-    assert removal["cisco.nd.nd_manage_switches"]["config"] == "{{ _rm.value }}"
-    # The onboard block still adds with exactly one nd_manage_switches call (pinned elsewhere); the move block never adds.
+    destination = task_named(play["tasks"], "Validate missing-switch destinations")
+    move = task_named(play["tasks"], "Move the roster switches out of the round fabric")
+    assert play["tasks"].index(destination) < play["tasks"].index(move)
+    probe = task_named(destination["block"], "Read the type of each missing-switch destination")
+    gate = task_named(destination["block"], "Refuse to onboard switches")
+    assert destination["block"].index(probe) < destination["block"].index(gate)
+    assert "NDP_SWITCH_REHOME_BLOCKED" in gate["ansible.builtin.assert"]["fail_msg"]
+    assert "NOTHING was removed" in gate["ansible.builtin.assert"]["fail_msg"]
+    assert "preserve_config=false" in gate["ansible.builtin.assert"]["fail_msg"]
+    block = list(walk_tasks(move["block"]))
+    unpair = task_named(block, "Unpair every vPC pair")
+    removal = task_named(block, "Remove each switch from the fabric")
+    accepted = task_named(block, "Require acceptance of every requested normal removal")
+    assert block.index(unpair) < block.index(removal) < block.index(accepted)
+    assert play["vars"]["nd_switch_rehome_supported_types"] == ["vxlanibgp", "vxlanebgp"]
+    request = removal["cisco.nd.nd_rest"]
+    assert request["method"] == "post"
+    assert request["path"] == "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove"
+    assert "selectattr('from_fabric', 'equalto', _rm.key)" in request["content"]["switchIds"]
+    assert "map(attribute='serial')" in request["content"]["switchIds"]
+    assert removal["failed_when"] is False and removal["no_log"] is True
+    assert "_report.classification == 'accepted'" in accepted["ansible.builtin.assert"]["that"]
     assert not any(task.get("cisco.nd.nd_manage_switches", {}).get("state") == "merged" for task in block)
 
 
 def test_the_move_waits_for_nd_to_finish_removing_the_switches():
     block = task_named(ensure_switches_play()["tasks"], "Move the roster switches out of the round fabric")["block"]
-    wait = task_named(block, "Wait until ND reports the moved switches gone")
+    tasks = list(walk_tasks(block))
+    accepted = task_named(tasks, "Require acceptance of every requested normal removal")
+    wait = task_named(tasks, "Wait until ND reports the moved switches gone")
+    assert tasks.index(accepted) < tasks.index(wait)
     assert wait["cisco.nd.nd_manage_switches"]["state"] == "gathered"
     assert "intersect" in wait["until"] and "| length) == 0" in wait["until"]
     assert wait["retries"] == "{{ nd_switch_rehome_retries | int }}"
-    # The wait is BEST-EFFORT: it gives ND time to report the switches gone but never aborts the
-    # round, so switches ND already removed (or is slow/lagging to report) are still onboarded to eBGP.
-    assert wait["ignore_errors"] is True
+    assert "ignore_errors" not in wait
+    assert "nd_rehome_left is succeeded" in wait["until"]
+    assert "nd_rehome_left.gathered is defined" in wait["until"]
+    assert "select('mapping')" in wait["until"]
     assert "failed_when" not in wait
-    unpair = task_named(block, "Unpair every vPC pair")
+    unpair = task_named(tasks, "Unpair every vPC pair")
     assert unpair["cisco.nd.nd_manage_vpc_pair"]["state"] == "deleted"
     assert "subelements('gathered.vpc_pairs', skip_missing=true)" in unpair["loop"]
 
 
-def test_force_delete_fallback_is_opt_in_and_does_nothing_while_off():
+def test_force_delete_is_rejected_before_any_controller_call():
     play = ensure_switches_play()
     assert play["vars"]["nd_switch_rehome_force_delete"] is False
-    block = task_named(play["tasks"], "Move the roster switches out of the round fabric")["block"]
-    names = [task["name"] for task in block]
-    remove = next(i for i, name in enumerate(names) if name.startswith("Remove each switch from the fabric"))
-    force = next(i for i, name in enumerate(names) if name.startswith("Force-remove the switches the normal call could not"))
-    wait = next(i for i, name in enumerate(names) if name.startswith("Wait until ND reports the moved switches gone"))
-    assert remove < force < wait
-    # One flag gates every force-delete task, so with it off none of them is evaluated and the move behaves as before.
-    fallback = block[force]
-    assert fallback["when"] == "nd_switch_rehome_force_delete | bool"
-    assert fallback["block"][0]["name"].startswith("Re-check which switches are still present")
-    forced = task_named(fallback["block"], "Force-remove only the switches that are still present")
-    assert forced["when"] == "(nd_rehome_force_needed | default([])) | length > 0"
-    post = task_named(forced["block"], "POST switchActions/remove with force=true")["cisco.nd.nd_rest"]
-    assert post["method"] == "post"
-    assert post["path"] == "/api/v1/manage/fabrics/{{ _ff.key }}/switchActions/remove?force=true"
-    assert post["content"] == {"switchIds": "{{ _ff.value }}"}
-    # Only the force call tolerates failure; the wait task that verifies the move stays unconditional.
-    assert "when" not in block[wait]
+    policy = task_named(play["tasks"], "Require a bounded non-force")
+    assert "not (nd_switch_rehome_force_delete | default(false) | bool)" in policy["ansible.builtin.assert"]["that"]
+    policy_index = play["tasks"].index(policy)
+    assert not any(any(key.startswith("cisco.nd.") for key in task)
+                   for task in walk_tasks(play["tasks"][:policy_index + 1]))
+    assert "force=true" not in json.dumps(play)
+    assert "NDP_SWITCH_LIFECYCLE_POLICY" in policy["ansible.builtin.assert"]["fail_msg"]
 
 
-def test_webex_results_are_split_one_round_per_message_only_when_they_do_not_fit():
+def test_webex_splits_the_complete_report_and_keeps_a_minimal_fallback():
     text = jenkins_text()
     post = text[text.index("post {\n        always {"):text.index("        cleanup {")]
-    # One message by default; a second compaction step splits per fabric round instead of dropping rows.
-    assert "def webexMessages = [message]" in post
-    assert "if (message.length() > WEBEX_SAFE_MESSAGE_LIMIT) {" in post
-    assert "def roundGroups = groupResultRowsByFabric(TEST_RESULT_SUMMARY_BUF)" in post
-    assert "if (roundGroups.size() > 1) {" in post
-    assert "formatResultsTable(roundGroup.rows)" in post
-    assert "if (index == 0) {" in post and "if (index == roundGroups.size() - 1) {" in post
-    assert post.count("postWebexMarkdown(webexMessage)") == 1
-    # The send itself moved into one helper that keeps the ASCII-only JSON escaping and never throws on a non-200 reply.
-    sender = groovy_function("postWebexMarkdown")
-    assert "String.format('\\\\u%04x', (int) ch)" in sender
+    assert "final int WEBEX_SAFE_MESSAGE_LIMIT = 7000" in post
+    assert "splitWebexMessage(message, continuationHeader, WEBEX_SAFE_MESSAGE_LIMIT)" in post
+    assert "sendWebexNotificationMessages(notificationMessages)" in post
+    assert "selectedBranch" in post and "selectedCommit" in post
+    assert "sendWebexNotificationMessages([minimalBuildNotification(e.getClass().getName())])" in post
+    sender = groovy_function("sendWebexNotificationMessages")
+    assert "writeReportingJson(" in sender
     assert "contentType: 'APPLICATION_JSON_UTF8'" in sender
     assert "validResponseCodes: '100:599'" in sender
     assert "maskValue: true" in sender
+    assert "if (resp.status == 200)" in sender
+    assert 'error("Webex notification returned HTTP ${resp.status}")' in sender
     assert "httpRequest(" not in post and "withCredentials" not in post
-    grouper = groovy_function("groupResultRowsByFabric")
-    assert "fields[2].trim()" in grouper
-    assert "current.fabric != fabric" in grouper
+    splitter = groovy_function("splitWebexMessage")
+    assert "maxLength = 7000" in splitter
+    assert "continuationHeader" in splitter

@@ -39,9 +39,8 @@
 # type is checked BEFORE anything is removed (NDP_SWITCH_REHOME_BLOCKED), so a fabric the
 # module cannot onboard into never strands the switches outside every fabric. AUDIT mode
 # only reports the plan (NDP_SWITCH_REHOME_PLAN). Without the variable nothing is moved.
-# A switch ND refuses to delete ("...Please check Anomalies for possible reasons.") can
-# optionally be retried with switchActions/remove?force=true (nd_switch_rehome_force_delete,
-# default false - the cisco.nd modules never set this themselves).
+# A refused deletion is terminal. The legacy force flag is rejected before any
+# switch operation; no force request bypasses a controller refusal.
 #
 #   ansible-playbook -i inventory.yaml playbooks/nd_ensure_switches.yaml \
 #     -e nd_switch_apply=true -e switch_username=admin -e switch_password=***
@@ -71,8 +70,14 @@
     # mandatory full-roster confirmation gate below is what fails the run, regardless
     # of this flag.
     nd_switch_fail_on_missing: false
-    # auto = wipe: ND erases and reloads each switch as it adds it; only External must preserve. A preserve add hangs in Migration mode.
-    nd_switch_preserve_config: auto
+    # Fixed pipeline policy: explicitly use false for every fabric, including External.
+    # No fabric probe, module-default omission, or preservation fallback changes it.
+    # Unsupported combinations fail through the unchanged collection validation.
+    nd_switch_preserve_config: false
+    # Jenkins passes the enclosing shell budget; direct callers use one hour.
+    nd_switch_guard_timeout_seconds: 3600
+    _nd_switch_clock: >-
+      {{ lookup('ansible.builtin.pipe', (ansible_playbook_python | quote) ~ ' -c "import time; print(time.monotonic())"') | float }}
     # expected_serial_number exists only on cisco.nd branches that implement it (GitHub develop does not
     # yet); detect it in the cloned collection so the pre-flight works on whichever ND_GIT_BRANCH runs.
     nd_switch_expected_serial_supported: "{{ 'expected_serial_number' in (lookup('ansible.builtin.file', playbook_dir ~ '/plugins/modules/nd_manage_switches.py', errors='ignore') | default('', true) | string) }}"
@@ -159,19 +164,18 @@
     # default) = a switch that sits in another fabric is never touched and the add fails in ND.
     nd_switch_rehome_fabrics_csv: ""
     nd_switch_rehome_fabrics: "{{ nd_switch_rehome_fabrics_csv.split(',') | map('trim') | reject('equalto', '') | list }}"
-    # ND fabric types cisco.nd.nd_manage_switches can onboard switches into (its
-    # SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES). A move's destination must report one of these
-    # BEFORE the switches are removed from their current fabric; an ND 'routed' fabric, for
-    # example, is not onboardable, so a round targeting one stops here with nothing removed.
+    # This nightly onboards its fixed NX-OS leaf/spine/border roster only into
+    # VXLAN iBGP/eBGP destinations with preserve_config=false. Other fabric
+    # families have different preservation/role constraints; stop before mutation.
     nd_switch_rehome_supported_types:
       - vxlanibgp
       - vxlanebgp
-      - vxlancampus
-      - external
-      - externalconnectivity
     # Bounded wait for ND to finish removing the moved switches (retries x delay seconds).
     nd_switch_rehome_retries: 18
     nd_switch_rehome_delay: 10
+    # Two retries after the initial normal delete = three total attempts.
+    nd_switch_remove_retries: 2
+    nd_switch_remove_delay: 30
     # BEFORE removing the re-homed switches, Recalculate & Deploy their source fabric
     # so a pending "Leaf-ToR unpairing" left by the nd_manage_tor test is finalised on
     # the devices. ND otherwise refuses the delete with "Please perform Recalculate and
@@ -193,40 +197,50 @@
     # / ND_SWITCH_ONBOARD_DELAY environment for a slower lab.
     nd_switch_onboard_retries: "{{ lookup('env', 'ND_SWITCH_ONBOARD_RETRIES') | default(5, true) }}"
     nd_switch_onboard_delay: "{{ lookup('env', 'ND_SWITCH_ONBOARD_DELAY') | default(120, true) }}"
-    # Before the FIRST add attempt, wait this long so a just-reset/just-removed switch
-    # (iBGP -> eBGP) can finish booting and present a serial to ND. Without it the retry
-    # loop starts hammering a switch from t=0 while it is still coming up (ND returns a
-    # discovery response with no serial), burning retries before the switch is ready and
-    # tripping the enforced restore. Fires once, only when there are switches to add; 0
-    # disables it. Tunable via -e or the ND_SWITCH_ONBOARD_INITIAL_WAIT environment.
+    # Explicit fallback only when rediscovery is disabled: give a just-reset switch
+    # time to boot before the first add. With rediscovery enabled, the bounded identity
+    # poll below is the readiness gate and exits as soon as ND confirms every seed.
+    # Tunable via -e or ND_SWITCH_ONBOARD_INITIAL_WAIT; 0 disables this fallback wait.
     nd_switch_onboard_initial_wait: "{{ lookup('env', 'ND_SWITCH_ONBOARD_INITIAL_WAIT') | default(480, true) }}"
     # PRE-ONBOARD DISCOVERY RECOVERY. A switch the destructive suite just deleted is still
     # rebooting, so ND returns a discovery response with NO serial for its seed IP and the add
     # loop below would fail identically on every retry (build #96: leaf 192.0.2.195 could not
     # be restored -> NDP_SWITCH_RESTORE_FAILED blocked the eBGP round). Before the add, actively
     # RE-TRIGGER ND shallow discovery for each missing seed and wait until it presents its serial,
-    # so the add finds an identity instead of hammering an empty discovery. Best-effort: a seed
-    # that never re-identifies falls through to the add retry loop unchanged. Set false to skip.
+    # so the add finds an identity instead of hammering an empty discovery. A missing,
+    # mismatched or unmanageable identity fails before add. Set false to use the fallback wait.
     nd_switch_rediscover_enabled: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_ENABLED') | default(true, true) }}"
-    # SNMPv3 auth protocols tried when re-triggering discovery (the lab default is md5; sha is the
-    # documented fallback tools/nd_switch_discovery_diagnostic.py also tries). The identity poll
-    # uses the first entry.
+    # Try configured SNMPv3 protocols within one shared retry-delay budget. Carry
+    # the first protocol that confirms an expected identity into its add request.
     nd_switch_rediscover_protocols: [md5, sha]
-    # Bounded identity poll after the re-trigger: retries x delay seconds (8 x 20s = up to ~2.5
-    # min) for each missing seed to present its serial, under the caller's ND_SWITCH_SYNC_TIMEOUT
-    # wall-clock guard. Exits as soon as the serial is back; a seed that never re-identifies just
-    # falls through to the add loop.
-    nd_switch_rediscover_retries: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_RETRIES') | default(8, true) }}"
+    # One deadline covers every seed, protocol, API call and sleep. An explicit
+    # legacy retry override optionally caps whole batch cycles; 0 means one full
+    # cycle through every protocol. Normally the deadline alone controls retries.
+    nd_switch_discovery_timeout: "{{ lookup('env', 'ND_SWITCH_DISCOVERY_TIMEOUT') | default(900, true) }}"
+    nd_switch_discovery_call_timeout: "{{ lookup('env', 'ND_SWITCH_DISCOVERY_CALL_TIMEOUT') | default(60, true) }}"
+    nd_switch_rediscover_retries: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_RETRIES') | default(none, true) }}"
     nd_switch_rediscover_delay: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_DELAY') | default(20, true) }}"
-    # ND's switchActions/remove endpoint accepts force=true to bypass its own soft block on a
-    # switch with "pending operations" (the "Failed to delete the switch... Please check Anomalies
-    # for possible reasons." refusal seen on an otherwise-healthy switch); the cisco.nd modules never
-    # set it. Opt-in only (default false, and then nothing below changes): when a switch is still
-    # present after the normal removal (whose own failure is then ignored), retry it with a raw
-    # cisco.nd.nd_rest force=true call before the wait task gives up.
+    # Compatibility flag only: true is rejected rather than bypassing a refusal.
     nd_switch_rehome_force_delete: false
 
   tasks:
+    - name: Start the bounded switch lifecycle clock
+      ansible.builtin.set_fact:
+        _nd_switch_guard_started: "{{ _nd_switch_clock }}"
+
+    - name: Require a bounded non-force switch lifecycle before any controller call
+      ansible.builtin.assert:
+        that:
+          - nd_switch_guard_timeout_seconds | int > 30
+          - not (nd_switch_rehome_force_delete | default(false) | bool)
+        fail_msg: "NDP_SWITCH_LIFECYCLE_POLICY: a numeric guard budget above 30 seconds and non-force removal are required."
+
+    - name: Require the fixed preservation policy before any switch operation
+      ansible.builtin.assert:
+        that:
+          - (nd_switch_preserve_config | string | lower) == 'false'
+        fail_msg: "NDP_SWITCH_PRESERVE_POLICY: this pipeline requires preserve_config=false for every fabric."
+
     - name: Locate the canonical roster file across both layouts
       ansible.builtin.set_fact:
         nd_switch_roster_resolved: "{{ lookup('ansible.builtin.first_found', _ff) }}"
@@ -451,17 +465,16 @@
                  if ((nd_rehome_moves | default([])) | length > 0)
                  else 'NDP_SWITCH_REHOME_NONE no missing roster switch sits in another round fabric' }}
 
-    # ---- Re-home: move them (enforce mode only) ------------------------------------------------
-    - name: Move the roster switches out of the round fabric they currently sit in (enforce mode only)
+    - name: Validate missing-switch destinations for the fixed preservation policy
       when:
         - nd_switch_apply | bool
-        - (nd_rehome_moves | default([])) | length > 0
+        - nd_missing_switches | length > 0
       block:
-        - name: Read the type of each fabric the switches will move into
+        - name: Read the type of each missing-switch destination before mutation
           cisco.nd.nd_rest:
             method: get
             path: "/api/v1/manage/fabrics/{{ _dst }}"
-          loop: "{{ nd_rehome_moves | map(attribute='fabric') | unique | list }}"
+          loop: "{{ nd_missing_switches | map(attribute='fabric') | unique | list }}"
           loop_control:
             loop_var: _dst
             label: "{{ _dst }}"
@@ -470,23 +483,34 @@
           no_log: true
 
         # Nothing has been removed yet: a destination the module cannot onboard into stops the move here.
-        - name: Refuse to move switches into a fabric type the module cannot onboard
+        - name: Refuse to onboard switches with an incompatible fixed preservation policy
           ansible.builtin.assert:
             that:
+              - _p.status | default(0) | int == 200
+              - _p.current is mapping
+              - _p.current.management is mapping
               - _type in nd_switch_rehome_supported_types
             fail_msg: >-
-              NDP_SWITCH_REHOME_BLOCKED fabric {{ _p._dst }} reports ND type '{{ _type }}' (empty = the fabric could not be read),
-              which nd_manage_switches cannot onboard switches into (supported: {{ nd_switch_rehome_supported_types }}).
-              NOTHING was removed from {{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}.
-              Recreate {{ _p._dst }} as a fabric of a supported type (for the eBGP round: a VXLAN EVPN eBGP fabric).
+              NDP_SWITCH_REHOME_BLOCKED fabric {{ _p._dst }} status={{ _p.status | default('unavailable') }} reports ND type '{{ _type }}'.
+              Destination must be readable with HTTP 200 and be a supported nightly VXLAN iBGP/eBGP destination with preserve_config=false
+              (allowed types: {{ nd_switch_rehome_supported_types }}).
+              NOTHING was removed from {{ nd_rehome_moves | default([]) | map(attribute='from_fabric') | unique | list }}.
+              Use a compatible destination before retrying; the preservation policy was not changed.
             success_msg: "NDP_SWITCH_REHOME_DESTINATION_OK {{ _p._dst }} is a '{{ _type }}' fabric"
           vars:
-            _type: "{{ ((_p.current | default({})).get('management', {})).get('type', '') | string | lower }}"
+            _body: "{{ _p.current | default({}) }}"
+            _type: "{{ _body.management.type | default('') | string | lower if _body is mapping and _body.get('management') is mapping else '' }}"
           loop: "{{ nd_rehome_dst_probe.results }}"
           loop_control:
             loop_var: _p
             label: "{{ _p._dst }}"
 
+    # ---- Re-home: move them (enforce mode only) ------------------------------------------------
+    - name: Move the roster switches out of the round fabric they currently sit in (enforce mode only)
+      when:
+        - nd_switch_apply | bool
+        - (nd_rehome_moves | default([])) | length > 0
+      block:
         # ND refuses to remove a switch that is still half of a vPC pair, so unpair first (the same
         # gather-then-delete idiom reset_fabric.yaml uses). Non-fatal: the removal below fails loudly
         # with ND's own message if a pair could not be torn down.
@@ -535,101 +559,248 @@
         # (configSave) then Deploy (switchActions/deploy) the leaving switches on each
         # source fabric, the SAME proven ND 4.x REST idiom the read-only heal below uses.
         # Best-effort (failed_when: false): a fabric with nothing pending is a no-op and
-        # the removal + force-delete fallback stay the authority. Gated by
+        # the immediate removal response stays the authority. Gated by
         # nd_switch_predelete_deploy.
-        - name: Recalculate each source fabric (config save) to finalise a pending Leaf-ToR unpairing before delete
-          cisco.nd.nd_rest:
-            method: post
-            path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
-            content: {}
-          loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
-          loop_control:
-            loop_var: _rf
-            label: "{{ _rf }}"
-          register: nd_predelete_save
-          failed_when: false
+        - name: Measure switch lifecycle deploy-settle
           when: nd_switch_predelete_deploy | bool
-
-        - name: Deploy the leaving switches (switchActions/deploy) so ND completes the Leaf-ToR unpairing before delete
-          cisco.nd.nd_rest:
-            method: post
-            path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
-            content:
-              switchIds: >-
-                {{ nd_rehome_moves
-                   | selectattr('from_fabric', 'equalto', _rf)
-                   | map(attribute='serial') | list }}
-          loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
-          loop_control:
-            loop_var: _rf
-            label: "{{ _rf }}"
-          register: nd_predelete_deploy
-          failed_when: false
-          when: nd_switch_predelete_deploy | bool
-
-        - name: Give ND a moment to finish the pre-delete deploy before removing the switches
-          ansible.builtin.wait_for:
-            timeout: "{{ nd_switch_settle_seconds | int }}"
-          delegate_to: localhost
-          run_once: true
-          when:
-            - nd_switch_predelete_deploy | bool
-            - (nd_switch_settle_seconds | int) > 0
-
-        - name: Report the pre-delete Recalculate & Deploy
-          ansible.builtin.debug:
-            msg: >-
-              NDP_SWITCH_PREDELETE_DEPLOY Recalculate & Deploy issued on
-              {{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}
-              for switches {{ nd_rehome_moves | map(attribute='serial') | list }}
-              to finalise any pending Leaf-ToR unpairing before removal.
-          when: nd_switch_predelete_deploy | bool
-
-        # With the opt-in force-delete fallback the normal removal error is ignored here
-        # so that fallback gets a chance. The bounded source-membership wait below remains
-        # a hard gate: onboarding starts only after ND confirms the moved switches left.
-        - name: Remove each switch from the fabric it is leaving
-          cisco.nd.nd_manage_switches:
-            fabric: "{{ _rm.key }}"
-            state: deleted
-            config: "{{ _rm.value }}"
-          loop: "{{ nd_rehome_removals | dict2items }}"
-          loop_control:
-            loop_var: _rm
-            label: "{{ _rm.key }} ({{ _rm.value | length }} switch(es))"
-          register: nd_rehome_removed
-          ignore_errors: "{{ nd_switch_rehome_force_delete | bool }}"
-
-        - name: Report the scoped switch removal result
-          ansible.builtin.debug:
-            msg: >-
-              NDP_SWITCH_REMOVE fabric={{ _removal._rm.key }}
-              requested={{ _removal._rm.value | map(attribute='seed_ip') | list }}
-              selected={{ (_removal.diff | default([], true))
-                           | selectattr('_action', 'defined')
-                           | selectattr('_action', 'equalto', 'deleted')
-                           | map(attribute='seed_ip') | list }}
-              changed={{ _removal.changed | default(false) }}
-              message={{ _removal.msg | default('') }}
-              api_codes={{ (_removal.response | default([], true)) | map(attribute='RETURN_CODE', default=-1) | list }}
-              api_messages={{ (_removal.response | default([], true)) | map(attribute='MESSAGE', default='') | list }}
-              api_details={{ (_removal.response | default([], true)) | map(attribute='DATA', default={}) | list }}
-          loop: "{{ nd_rehome_removed.results }}"
-          loop_control:
-            loop_var: _removal
-            label: "{{ _removal._rm.key }}"
-
-        # Everything for the opt-in force-delete fallback (nd_switch_rehome_force_delete, default false)
-        # lives in this block and is skipped entirely while the flag is off. ND's switchActions/remove
-        # endpoint accepts force=true specifically to bypass the "pending operations"/anomaly soft
-        # block the normal module call cannot express (the cisco.nd collection never sets it). The wait
-        # task below stays the authority on whether the move actually succeeded.
-        - name: Force-remove the switches the normal call could not (opt-in fallback)
-          when: nd_switch_rehome_force_delete | bool
           block:
-            # The bulk delete can leave a switch behind even when the call itself reported success
-            # (a mixed-result 207), so re-check ground truth instead of trusting the result.
-            - name: Re-check which switches are still present after the normal removal attempt
+            - name: Start deploy-settle timing
+              ansible.builtin.set_fact:
+                _nd_phase_deploy_settle_started: "{{ _nd_switch_clock }}"
+                _nd_phase_deploy_settle_status: failed
+
+            - name: Recalculate each source fabric (config save) to finalise a pending Leaf-ToR unpairing before delete
+              cisco.nd.nd_rest:
+                method: post
+                path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
+                content: {}
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _rf
+                label: "{{ _rf }}"
+              register: nd_predelete_save
+              failed_when: false
+              when: nd_switch_predelete_deploy | bool
+
+            - name: Deploy the leaving switches (switchActions/deploy) so ND completes the Leaf-ToR unpairing before delete
+              cisco.nd.nd_rest:
+                method: post
+                path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
+                content:
+                  switchIds: >-
+                    {{ nd_rehome_moves
+                       | selectattr('from_fabric', 'equalto', _rf)
+                       | map(attribute='serial') | list }}
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _rf
+                label: "{{ _rf }}"
+              register: nd_predelete_deploy
+              failed_when: false
+              when: nd_switch_predelete_deploy | bool
+
+            - name: Give ND a moment to finish the pre-delete deploy before removing the switches
+              ansible.builtin.wait_for:
+                timeout: "{{ nd_switch_settle_seconds | int }}"
+              delegate_to: localhost
+              run_once: true
+              when:
+                - nd_switch_predelete_deploy | bool
+                - (nd_switch_settle_seconds | int) > 0
+
+            - name: Report the pre-delete Recalculate & Deploy
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_PREDELETE_DEPLOY Recalculate & Deploy issued on
+                  {{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}
+                  for switches {{ nd_rehome_moves | map(attribute='serial') | list }}
+                  to finalise any pending Leaf-ToR unpairing before removal.
+              when: nd_switch_predelete_deploy | bool
+
+            # Use the same non-force endpoint/payload as the collection's delete
+            # workflow, but inspect its immediate response before any absence wait.
+            # A permanent per-switch refusal must never enter another delete workflow.
+
+            - name: Complete deploy-settle timing
+              ansible.builtin.set_fact:
+                _nd_phase_deploy_settle_status: success
+          always:
+            - name: Report deploy-settle duration without replacing its result
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_PHASE: deploy-settle
+                  {{ ((_nd_switch_clock | float) - (_nd_phase_deploy_settle_started | float)) | round(3) if _nd_phase_deploy_settle_started is defined else "unknown" }}
+                  status={{ _nd_phase_deploy_settle_status | default("failed") }}
+              ignore_errors: true
+
+        - name: Measure switch lifecycle delete
+          block:
+            - name: Start delete timing
+              ansible.builtin.set_fact:
+                _nd_phase_delete_started: "{{ _nd_switch_clock }}"
+                _nd_phase_delete_status: failed
+
+            - name: Validate the exact roster serials requested for normal removal
+              ansible.builtin.assert:
+                that:
+                  - _requested_ids | length > 0
+                  - _requested_ids | length == _rm.value | length
+                  - _requested_ids | unique | list | length == _requested_ids | length
+                  - _requested_ids | select('string') | list | length == _requested_ids | length
+                  - _requested_ids | map('trim') | reject('equalto', '') | list | length == _requested_ids | length
+                fail_msg: "NDP_SWITCH_REMOVE_SCOPE_INVALID: requested roster identities are missing or duplicated; no remove request was sent."
+              vars:
+                _requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rm.key) | map(attribute='serial') | list }}"
+              loop: "{{ nd_rehome_removals | dict2items }}"
+              loop_control:
+                loop_var: _rm
+                label: "{{ _rm.key }}"
+
+            - name: Remove each switch from the fabric it is leaving
+              cisco.nd.nd_rest:
+                method: post
+                path: "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove"
+                content:
+                  switchIds: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rm.key) | map(attribute='serial') | list }}"
+              loop: "{{ nd_rehome_removals | dict2items }}"
+              loop_control:
+                loop_var: _rm
+                label: "{{ _rm.key }} ({{ _rm.value | length }} switch(es))"
+              register: nd_rehome_removed
+              vars:
+                _remove_http_status: "{{ nd_rehome_removed.status | default(0) | int }}"
+                _remove_transport_retryable: >-
+                  {{ (_remove_http_status | int) in [0, -1]
+                     and (nd_rehome_removed.msg | default('') is string)
+                     and (nd_rehome_removed.msg | default('') is search('(?i)timed? out|timeout|connection reset|connection refused|temporarily unavailable|remote end closed|network is unreachable'))
+                     and not (nd_rehome_removed.msg | default('') is search('(?i)authentication|authorization|unauthorized|forbidden|invalid credentials?|permission denied')) }}
+                _remove_retryable: "{{ (_remove_http_status | int) == 429 or (500 <= (_remove_http_status | int) < 600) or (_remove_transport_retryable | bool) }}"
+              # Exhaust the bounded transport budget without hiding a final error:
+              # the next assertion always decides success from the captured response.
+              until: >-
+                not (_remove_retryable | bool)
+                or (nd_rehome_removed.attempts | default(1) | int) >= (nd_switch_remove_retries | int) + 1
+              retries: "{{ nd_switch_remove_retries | int }}"
+              delay: "{{ nd_switch_remove_delay | int }}"
+              failed_when: false
+              no_log: true
+
+            - name: Classify the immediate normal removal response without exposing API payloads
+              ansible.builtin.set_fact:
+                nd_rehome_delete_reports: "{{ nd_rehome_delete_reports | default([]) + [_remove_report] }}"
+              vars:
+                _requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _removal._rm.key) | map(attribute='serial') | list }}"
+                _credential_tail: '(?i)\b(?:password|passwd|pwd|token|secret|authorization|credentials?|community|username|api[_-]?key|auth(?:entication)?[_-]?(?:pass(?:word)?|key)|priv(?:acy)?[_-]?(?:pass(?:word)?|key))\b.*'
+                _remove_report: >-
+                  {%- set http = _removal.status | default(0) | int -%}
+                  {%- set body = _removal.jsondata if _removal.jsondata is defined else _removal.current | default(none) -%}
+                  {%- set items = body.get('items') if body is mapping else none -%}
+                  {%- set ns = namespace(valid=true, refused=false, ids=[], details=[]) -%}
+                  {%- if http == 207 or (body is mapping and 'items' in body) -%}
+                    {%- if items is not sequence or items is string or items is mapping or items | length == 0 -%}
+                      {%- set ns.valid = false -%}
+                    {%- else -%}
+                      {%- for item in items -%}
+                        {%- if item is not mapping -%}
+                          {%- set ns.valid = false -%}
+                        {%- else -%}
+                          {%- set identity = item.get('switchId') -%}
+                          {%- if identity is not string or identity not in _requested_ids or identity in ns.ids -%}
+                            {%- set ns.valid = false -%}
+                          {%- endif -%}
+                          {%- if identity is string -%}
+                            {%- set ns.ids = ns.ids + [identity] -%}
+                          {%- endif -%}
+                          {%- set status = item.get('status', '') | string | trim | lower -%}
+                          {%- if status not in ['success', 'failed', 'failure', 'error', 'denied', 'rejected'] -%}
+                            {%- set ns.valid = false -%}
+                          {%- endif -%}
+                          {%- if status in ['failed', 'failure', 'error', 'denied', 'rejected'] -%}
+                            {%- set ns.refused = true -%}
+                          {%- endif -%}
+                          {%- set raw_code = item.get('errorCode', item.get('error_code', item.get('code', 'unavailable'))) -%}
+                          {%- set code = raw_code | string if raw_code is string or raw_code is number else 'unavailable' -%}
+                          {%- if code is not match('^[A-Za-z0-9_.:-]{1,64}$') or code is search('(?i)password|token|secret|bearer') -%}
+                            {%- set code = 'redacted-or-invalid' -%}
+                          {%- endif -%}
+                          {%- set raw_reason = item.get('message', item.get('reason', 'No textual reason returned')) -%}
+                          {%- set reason = raw_reason if raw_reason is string else 'Controller returned a non-text reason' -%}
+                          {%- set reason = reason | regex_replace('[\r\n\t]+', ' ') | regex_replace('(?i)https?://[^ ]+', '[endpoint]')
+                               | regex_replace('(?i)(?<![A-Za-z0-9_])Bearer[ ]+[^ ]+', 'Bearer [redacted]') | regex_replace(_credential_tail, '[credential details redacted]')
+                               | regex_replace('(?<![0-9])(?:[0-9]{1,3}[.]){3}[0-9]{1,3}(?![0-9])', '[address]')
+                               | regex_replace('(?<![A-Za-z0-9_])[A-Z0-9]{9,}(?![A-Za-z0-9_])', '[identifier]') | replace('|', '/') | replace('`', "'") | truncate(240, true, '', 0) -%}
+                          {%- set alias = nd_rehome_moves | selectattr('serial', 'equalto', identity) | map(attribute='name', default='roster switch') | first | default('unrecognized switch') -%}
+                          {%- set ns.details = ns.details + [{'switch': alias, 'status': status if status in ['success', 'failed', 'failure', 'error', 'denied', 'rejected'] else 'invalid', 'error_code': code, 'reason': reason}] -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- if ns.ids | length != _requested_ids | length or ns.ids | difference(_requested_ids) | length > 0 -%}
+                        {%- set ns.valid = false -%}
+                      {%- endif -%}
+                    {%- endif -%}
+                  {%- elif http in [200, 201, 202, 204] and body is not mapping and body is not none -%}
+                    {%- set ns.valid = false -%}
+                  {%- endif -%}
+                  {%- if body is mapping and (body.get('error') or body.get('errors')) -%}
+                    {%- set ns.refused = true -%}
+                  {%- endif -%}
+                  {%- if not ns.details and http not in [200, 201, 202, 204, 207] -%}
+                    {%- set reason = _removal.msg | default('No usable HTTP response returned') -%}
+                    {%- set reason = reason if reason is string else 'Controller returned a non-text reason' -%}
+                    {%- set reason = reason | regex_replace('[\r\n\t]+', ' ') | regex_replace('(?i)https?://[^ ]+', '[endpoint]')
+                         | regex_replace('(?i)(?<![A-Za-z0-9_])Bearer[ ]+[^ ]+', 'Bearer [redacted]') | regex_replace(_credential_tail, '[credential details redacted]')
+                         | regex_replace('(?<![0-9])(?:[0-9]{1,3}[.]){3}[0-9]{1,3}(?![0-9])', '[address]')
+                         | regex_replace('(?<![A-Za-z0-9_])[A-Z0-9]{9,}(?![A-Za-z0-9_])', '[identifier]') | replace('|', '/') | replace('`', "'") | truncate(240, true, '', 0) -%}
+                    {%- set ns.details = [{'switch': 'requested roster', 'status': 'http-error', 'error_code': http, 'reason': reason}] -%}
+                  {%- endif -%}
+                  {{- {'fabric': _removal._rm.key, 'http_status': http, 'attempts': _removal.attempts | default(1),
+                       'classification': 'refused' if ns.refused else 'invalid-response' if not ns.valid else 'accepted' if http in [200, 201, 202, 204, 207] else 'request-failed',
+                       'items': ns.details[:8], 'item_count': ns.details | length} -}}
+              loop: "{{ nd_rehome_removed.results }}"
+              loop_control:
+                loop_var: _removal
+                label: "{{ _removal._rm.key }}"
+              no_log: true
+
+            - name: Require acceptance of every requested normal removal before source polling
+              ansible.builtin.assert:
+                that:
+                  - _report.classification == 'accepted'
+                fail_msg: >-
+                  NDP_SWITCH_REMOVE_REJECTED fabric={{ _report.fabric }} http={{ _report.http_status }}
+                  attempts={{ _report.attempts }} classification={{ _report.classification }}
+                  items={{ _report.items }}; no source-absence polling or destination add will run.
+                success_msg: >-
+                  NDP_SWITCH_REMOVE_ACCEPTED fabric={{ _report.fabric }} http={{ _report.http_status }};
+                  fresh source absence is still required before onboarding.
+              loop: "{{ nd_rehome_delete_reports }}"
+              loop_control:
+                loop_var: _report
+                label: "{{ _report.fabric }}"
+
+            # Require ND to confirm source membership removal before the destination add.
+            # Give ND up to nd_switch_rehome_retries x nd_switch_rehome_delay seconds to
+            # converge; an unconfirmed removal fails this move before onboarding begins.
+
+            - name: Complete delete timing
+              ansible.builtin.set_fact:
+                _nd_phase_delete_status: success
+          always:
+            - name: Report delete duration without replacing its result
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_PHASE: delete
+                  {{ ((_nd_switch_clock | float) - (_nd_phase_delete_started | float)) | round(3) if _nd_phase_delete_started is defined else "unknown" }}
+                  status={{ _nd_phase_delete_status | default("failed") }}
+              ignore_errors: true
+
+        - name: Measure switch lifecycle source-absence
+          block:
+            - name: Start source-absence timing
+              ansible.builtin.set_fact:
+                _nd_phase_source_absence_started: "{{ _nd_switch_clock }}"
+                _nd_phase_source_absence_status: failed
+
+            - name: Wait until ND reports the moved switches gone from the fabric they left
               cisco.nd.nd_manage_switches:
                 fabric: "{{ _rm.key }}"
                 state: gathered
@@ -637,87 +808,32 @@
               loop_control:
                 loop_var: _rm
                 label: "{{ _rm.key }}"
-              register: nd_rehome_still_present
-              failed_when: false
+              register: nd_rehome_left
+              until: >-
+                nd_rehome_left is succeeded and nd_rehome_left.gathered is defined
+                and nd_rehome_left.gathered is sequence
+                and nd_rehome_left.gathered is not string and nd_rehome_left.gathered is not mapping
+                and (nd_rehome_left.gathered | select('mapping') | list | length) == (nd_rehome_left.gathered | length)
+                and (nd_rehome_left.gathered | selectattr('seed_ip', 'defined') | list | length) == (nd_rehome_left.gathered | length)
+                and (nd_rehome_left.gathered | map(attribute='seed_ip') | select('string') | list | length) == (nd_rehome_left.gathered | length)
+                and (nd_rehome_left.gathered | map(attribute='seed_ip') | map('trim') | reject('equalto', '') | list | length) == (nd_rehome_left.gathered | length)
+                and (((_rm.value | map(attribute='seed_ip') | list)
+                      | intersect(nd_rehome_left.gathered | map(attribute='seed_ip') | list)
+                      | length) == 0)
+              retries: "{{ nd_switch_rehome_retries | int }}"
+              delay: "{{ nd_switch_rehome_delay | int }}"
 
-            - name: Identify the roster switches the normal removal left behind
+            - name: Complete source-absence timing
               ansible.builtin.set_fact:
-                nd_rehome_force_needed: >-
-                  {{ (nd_rehome_force_needed | default([])) +
-                     (nd_rehome_moves
-                       | selectattr('from_fabric', 'equalto', _sp._rm.key)
-                       | selectattr('seed_ip', 'in', (_sp.gathered | default([], true)) | map(attribute='seed_ip') | list)
-                       | list) }}
-              loop: "{{ nd_rehome_still_present.results }}"
-              loop_control:
-                loop_var: _sp
-                label: "{{ _sp._rm.key }}"
-
-            - name: Force-remove only the switches that are still present
-              when: (nd_rehome_force_needed | default([])) | length > 0
-              block:
-                - name: Report the switches about to be force-removed
-                  ansible.builtin.debug:
-                    msg: >-
-                      NDP_SWITCH_REHOME_FORCE_RETRY {{ nd_rehome_force_needed | map(attribute='serial') | list }}
-                      still present after the normal removal; retrying with switchActions/remove?force=true.
-
-                - name: Group the still-present switches by the fabric they are leaving
-                  ansible.builtin.set_fact:
-                    nd_rehome_force_by_fabric: >-
-                      {{ (nd_rehome_force_by_fabric | default({})) | combine({
-                           _fs.from_fabric: ((nd_rehome_force_by_fabric | default({})).get(_fs.from_fabric, []) + [_fs.serial])
-                         }) }}
-                  loop: "{{ nd_rehome_force_needed }}"
-                  loop_control:
-                    loop_var: _fs
-                    label: "{{ _fs.serial }}"
-
-                # nd_rest raises on a 207 Multi-Status after ND has already run the request, so a failure here
-                # proves nothing: the wait task below verifies the real outcome.
-                - name: POST switchActions/remove with force=true for the switches still present
-                  cisco.nd.nd_rest:
-                    method: post
-                    path: "/api/v1/manage/fabrics/{{ _ff.key }}/switchActions/remove?force=true"
-                    content:
-                      switchIds: "{{ _ff.value }}"
-                  loop: "{{ nd_rehome_force_by_fabric | dict2items }}"
-                  loop_control:
-                    loop_var: _ff
-                    label: "{{ _ff.key }} ({{ _ff.value | length }} switch(es))"
-                  register: nd_rehome_force_result
-                  failed_when: false
-
-                - name: Report the force-removal result
-                  ansible.builtin.debug:
-                    msg: >-
-                      NDP_SWITCH_REHOME_FORCE_DONE fabric={{ _fres._ff.key }}
-                      switch_ids={{ _fres._ff.value }}
-                      status={{ _fres.status | default('n/a') }}
-                      message={{ _fres.msg | default('') }}
-                  loop: "{{ nd_rehome_force_result.results }}"
-                  loop_control:
-                    loop_var: _fres
-                    label: "{{ _fres._ff.key }}"
-
-        # Require ND to confirm source membership removal before the destination add.
-        # Give ND up to nd_switch_rehome_retries x nd_switch_rehome_delay seconds to
-        # converge; an unconfirmed removal fails this move before onboarding begins.
-        - name: Wait until ND reports the moved switches gone from the fabric they left
-          cisco.nd.nd_manage_switches:
-            fabric: "{{ _rm.key }}"
-            state: gathered
-          loop: "{{ nd_rehome_removals | dict2items }}"
-          loop_control:
-            loop_var: _rm
-            label: "{{ _rm.key }}"
-          register: nd_rehome_left
-          until: >-
-            ((_rm.value | map(attribute='seed_ip') | list)
-             | intersect((nd_rehome_left.gathered | default([])) | map(attribute='seed_ip') | list)
-             | length) == 0
-          retries: "{{ nd_switch_rehome_retries | int }}"
-          delay: "{{ nd_switch_rehome_delay | int }}"
+                _nd_phase_source_absence_status: success
+          always:
+            - name: Report source-absence duration without replacing its result
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_PHASE: source-absence
+                  {{ ((_nd_switch_clock | float) - (_nd_phase_source_absence_started | float)) | round(3) if _nd_phase_source_absence_started is defined else "unknown" }}
+                  status={{ _nd_phase_source_absence_status | default("failed") }}
+              ignore_errors: true
 
         - name: Report the completed move
           ansible.builtin.debug:
@@ -725,166 +841,164 @@
               NDP_SWITCH_REHOME_DONE {{ nd_rehome_moves | map(attribute='serial') | list }} left
               {{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}; the onboard step adds them to
               {{ nd_rehome_moves | map(attribute='fabric') | unique | list }}.
+      always:
+        - name: Report the bounded normal removal outcome without raw controller payloads
+          ansible.builtin.debug:
+            msg: "NDP_SWITCH_REMOVE_SUMMARY {{ nd_rehome_delete_reports | default([]) }}"
     - name: Onboard the missing switches (add, then recalculate & deploy - ENFORCED)
       when:
         - nd_missing_switches | length > 0
         - nd_switch_apply | bool
       block:
-        # Fabric types decide the onboarding mode (see nd_switch_preserve_config). The probe is read-only.
-        - name: Read the fabric type of every fabric that is missing switches
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/fabrics/{{ _fab }}"
-          loop: "{{ nd_missing_switches | map(attribute='fabric') | unique | list }}"
-          loop_control:
-            loop_var: _fab
-          register: nd_fabric_type_probe
-          failed_when: false
-          no_log: true
-
-        - name: Decide the onboarding mode of each fabric
-          ansible.builtin.set_fact:
-            nd_preserve_override: >-
-              {{ (nd_preserve_override | default({})) | combine({
-                   _p._fab: (
-                     {'preserve_config': (nd_switch_preserve_config | bool)}
-                       if ((nd_switch_preserve_config | string | lower) in ['true', 'false'])
-                     else ({'preserve_config': false}
-                       if (_t | length > 0 and _t not in ['external', 'externalconnectivity'])
-                       else {})
-                   )
-                 }) }}
-          vars:
-            _t: "{{ ((_p.current | default({})).get('management', {})).get('type', '') | string | lower }}"
-          loop: "{{ nd_fabric_type_probe.results }}"
-          loop_control:
-            loop_var: _p
-            label: "{{ _p._fab }}"
-
-        - name: Report how each fabric's switches will be onboarded
+        - name: Report the fixed onboarding preservation policy
           ansible.builtin.debug:
             msg: >-
-              NDP_SWITCH_ONBOARD_MODE {{ nd_preserve_override }} (empty = module default for that fabric type)
+              NDP_SWITCH_ONBOARD_MODE preserve_config=false for every fabric;
+              no fabric-dependent omission or fallback is applied.
 
-        - name: Build one add request per fabric
-          ansible.builtin.set_fact:
-            nd_add_requests: >-
-              {{ (nd_add_requests | default({})) | combine({
-                   _sw.fabric: ((nd_add_requests | default({})).get(_sw.fabric, []) + [
-                     {'seed_ip': _sw.seed_ip, 'role': _sw.role,
-                      'username': (nd_switch_username | default(switch_username)),
-                      'password': (nd_switch_password | default(switch_password))}
-                     | combine({'expected_serial_number': _sw.serial} if (nd_switch_expected_serial_supported | bool) else {})
-                     | combine((nd_preserve_override | default({})).get(_sw.fabric, {}))
-                   ])
-                 }) }}
-          loop: "{{ nd_missing_switches }}"
-          loop_control:
-            loop_var: _sw
-            label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
-          no_log: true
+        - name: Measure switch lifecycle discovery
+          block:
+            - name: Start discovery timing
+              ansible.builtin.set_fact:
+                _nd_phase_discovery_started: "{{ _nd_switch_clock }}"
+                _nd_phase_discovery_status: failed
 
-        # PRE-ONBOARD DISCOVERY RECOVERY (before the add loop). RE-TRIGGER ND shallow discovery
-        # for each missing seed so a switch still rebooting after the destructive suite's
-        # delete-all re-presents its serial, instead of the add loop hammering an empty
-        # discovery (build #96: leaf 192.0.2.195). First a one-shot wake on every SNMPv3 auth
-        # protocol (mirroring tools/nd_switch_discovery_diagnostic.py), then a bounded poll on the
-        # primary protocol until the serial is back. Both steps are best-effort (failed_when:
-        # false): a seed that never re-identifies falls through to the add retry loop unchanged.
-        - name: Re-trigger ND shallow discovery for every missing seed IP (wake ND before the add)
-          cisco.nd.nd_rest:
-            method: post
-            path: "/api/v1/manage/fabrics/{{ _rd.0.fabric }}/actions/shallowDiscovery"
-            content:
-              seedIpCollection: ["{{ _rd.0.seed_ip }}"]
-              maxHop: 0
-              platformType: nx-os
-              snmpV3AuthProtocol: "{{ _rd.1 }}"
-              username: "{{ nd_switch_username }}"
-              password: "{{ nd_switch_password }}"
-          loop: "{{ nd_missing_switches | product(nd_switch_rediscover_protocols) | list }}"
-          loop_control:
-            loop_var: _rd
-            label: "{{ _rd.0.name | default(_rd.0.serial) }} ({{ _rd.0.seed_ip }}, {{ _rd.1 }})"
-          register: nd_rediscover_fire
-          failed_when: false
-          changed_when: false
-          no_log: true
-          when:
-            - nd_switch_rediscover_enabled | bool
+            - name: Start a fresh expected-identity discovery gate
+              ansible.builtin.set_fact:
+                nd_rediscovery_protocol_by_seed: {}
 
-        - name: Wait until each missing seed presents its serial to ND (identity poll)
-          cisco.nd.nd_rest:
-            method: post
-            path: "/api/v1/manage/fabrics/{{ _rd.fabric }}/actions/shallowDiscovery"
-            content:
-              seedIpCollection: ["{{ _rd.seed_ip }}"]
-              maxHop: 0
-              platformType: nx-os
-              snmpV3AuthProtocol: "{{ nd_switch_rediscover_protocols | first }}"
-              username: "{{ nd_switch_username }}"
-              password: "{{ nd_switch_password }}"
-          register: nd_rediscover_wait
-          failed_when: false
-          changed_when: false
-          no_log: true
-          until: >-
-            _rd.serial in (((nd_rediscover_wait.current | default({})).switches | default([]))
-              | selectattr('serialNumber', 'defined') | map(attribute='serialNumber') | list)
-          retries: "{{ nd_switch_rediscover_retries | int }}"
-          delay: "{{ nd_switch_rediscover_delay | int }}"
-          loop: "{{ nd_missing_switches }}"
-          loop_control:
-            loop_var: _rd
-            label: "{{ _rd.name | default(_rd.serial) }} ({{ _rd.seed_ip }})"
-          when:
-            - nd_switch_rediscover_enabled | bool
+            - name: Limit discovery to the enclosing guard's remaining time
+              ansible.builtin.set_fact:
+                _nd_discovery_remaining_seconds: >-
+                  {{ [nd_switch_discovery_timeout | float,
+                      (nd_switch_guard_timeout_seconds | float)
+                        - ((_nd_switch_clock | float) - (_nd_switch_guard_started | default(_nd_phase_discovery_started) | float)) - 30] | min }}
+              when: nd_switch_rediscover_enabled | bool
 
-        - name: Report the pre-onboard discovery re-trigger
-          ansible.builtin.debug:
-            msg: >-
-              NDP_SWITCH_REDISCOVER re-triggered ND shallow discovery for seeds
-              {{ nd_missing_switches | map(attribute='seed_ip') | list }}
-              (protocols={{ nd_switch_rediscover_protocols }}); the add + confirmation gate below verify identity.
-          when:
-            - nd_switch_rediscover_enabled | bool
+            - name: Require time for a precise discovery result before the outer timeout
+              ansible.builtin.assert:
+                that: _nd_discovery_remaining_seconds | float > 0
+                fail_msg: "NDP_SWITCH_REDISCOVER_UNREADY reason=GUARD_BUDGET_EXHAUSTED; no switches added."
+                quiet: true
+              when: nd_switch_rediscover_enabled | bool
 
-        # Give a just-reset/just-removed switch time to finish booting and present a serial
-        # to ND before the first add attempt, so the retry loop below polls a switch that is
-        # actually coming up instead of hammering it from t=0 (and exhausting its retries
-        # before the late switch is reachable). Fires once; 0 disables the wait.
-        - name: Wait for late/rebooting switches to settle before the first add attempt
-          ansible.builtin.wait_for:
-            timeout: "{{ nd_switch_onboard_initial_wait | int }}"
-          delegate_to: localhost
-          run_once: true
-          when:
-            - (nd_switch_onboard_initial_wait | int) > 0
+            - name: Discover pending switches in bounded fabric and protocol batches
+              nd_switch_discovery:
+                seeds: "{{ nd_missing_switches }}"
+                protocols: "{{ nd_switch_rediscover_protocols }}"
+                timeout_seconds: "{{ _nd_discovery_remaining_seconds }}"
+                call_timeout_seconds: "{{ nd_switch_discovery_call_timeout }}"
+                interval_seconds: "{{ nd_switch_rediscover_delay }}"
+                retries: "{{ nd_switch_rediscover_retries }}"
+              register: nd_batched_discovery
+              when: nd_switch_rediscover_enabled | bool
 
-        # One call per fabric runs the wipe-and-reload of every switch in parallel; no ignore_errors on purpose (enforced restore).
-        - name: Add each fabric's missing switches in one call, then recalculate and deploy
-          cisco.nd.nd_manage_switches:
-            fabric: "{{ _req.key }}"
-            state: merged
-            config_actions:
-              save: true
-              deploy: "{{ nd_switch_deploy | bool }}"
-              type: "{{ nd_switch_deploy_scope }}"
-            config: "{{ _req.value }}"
-          loop: "{{ nd_add_requests | dict2items }}"
-          loop_control:
-            loop_var: _req
-            label: "{{ _req.key }} ({{ _req.value | length }} switch(es))"
-          register: nd_onboard_results
-          # A switch still (re)booting or not yet rediscovered after a reset/rehome makes
-          # ND return a discovery response with no serial, failing the add. Do not stop
-          # the round on that transient: re-attempt the add up to nd_switch_onboard_retries
-          # cycles, waiting nd_switch_onboard_delay seconds between cycles until the late
-          # switch is reachable and onboards. Each loop item retries independently.
-          until: nd_onboard_results is succeeded
-          retries: "{{ nd_switch_onboard_retries | int }}"
-          delay: "{{ nd_switch_onboard_delay | int }}"
-          no_log: true
+            - name: Keep the protocols confirmed by the completed discovery gate
+              ansible.builtin.set_fact:
+                nd_rediscovery_protocol_by_seed: "{{ nd_batched_discovery.protocol_by_seed }}"
+              when: nd_switch_rediscover_enabled | bool
+
+            - name: Require every expected discovery identity before adding any switch
+              ansible.builtin.assert:
+                that:
+                  - (nd_missing_switches | map(attribute='seed_ip') | difference(nd_rediscovery_protocol_by_seed.keys() | list) | length) == 0
+                fail_msg: "NDP_SWITCH_REDISCOVER_UNREADY: expected manageable identities were not confirmed; no switches added."
+                quiet: true
+              when: nd_switch_rediscover_enabled | bool
+
+            - name: Report the pre-onboard discovery re-trigger
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_REDISCOVER_READY ND confirmed the expected manageable identities for seeds
+                  {{ nd_missing_switches | map(attribute='seed_ip') | list }}
+                  (confirmed protocols={{ nd_rediscovery_protocol_by_seed }}); proceeding without the fallback boot wait.
+              when:
+                - nd_switch_rediscover_enabled | bool
+
+            # Keep the explicit boot-time fallback for callers that disable rediscovery.
+            # A successful identity poll needs no additional fixed delay.
+            - name: Wait for late/rebooting switches to settle before the first add attempt
+              ansible.builtin.wait_for:
+                timeout: "{{ nd_switch_onboard_initial_wait | int }}"
+              delegate_to: localhost
+              run_once: true
+              when:
+                - not (nd_switch_rediscover_enabled | bool)
+                - (nd_switch_onboard_initial_wait | int) > 0
+
+            - name: Complete discovery timing
+              ansible.builtin.set_fact:
+                _nd_phase_discovery_status: success
+          always:
+            - name: Report discovery duration without replacing its result
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_PHASE: discovery
+                  {{ ((_nd_switch_clock | float) - (_nd_phase_discovery_started | float)) | round(3) if _nd_phase_discovery_started is defined else "unknown" }}
+                  status={{ _nd_phase_discovery_status | default("failed") }}
+              ignore_errors: true
+
+        - name: Measure switch lifecycle add
+          block:
+            - name: Start add timing
+              ansible.builtin.set_fact:
+                _nd_phase_add_started: "{{ _nd_switch_clock }}"
+                _nd_phase_add_status: failed
+
+            - name: Build one add request per fabric
+              ansible.builtin.set_fact:
+                nd_add_requests: >-
+                  {{ (nd_add_requests | default({})) | combine({
+                       _sw.fabric: ((nd_add_requests | default({})).get(_sw.fabric, []) + [
+                         {'seed_ip': _sw.seed_ip, 'role': _sw.role, 'preserve_config': false,
+                          'username': (nd_switch_username | default(switch_username)),
+                          'password': (nd_switch_password | default(switch_password))}
+                         | combine({'auth_proto': nd_rediscovery_protocol_by_seed[_sw.seed_ip] | upper | replace('-', '_')} if (nd_switch_rediscover_enabled | bool) else {})
+                         | combine({'expected_serial_number': _sw.serial} if (nd_switch_expected_serial_supported | bool) else {})
+                       ])
+                     }) }}
+              loop: "{{ nd_missing_switches }}"
+              loop_control:
+                loop_var: _sw
+                label: "{{ _sw.name | default(_sw.serial) }} -> {{ _sw.fabric }}"
+              no_log: true
+
+            # One call per fabric runs the wipe-and-reload of every switch in parallel; no ignore_errors on purpose (enforced restore).
+            - name: Add each fabric's missing switches in one call, then recalculate and deploy
+              cisco.nd.nd_manage_switches:
+                fabric: "{{ _req.key }}"
+                state: merged
+                config_actions:
+                  save: true
+                  deploy: "{{ nd_switch_deploy | bool }}"
+                  type: "{{ nd_switch_deploy_scope }}"
+                config: "{{ _req.value }}"
+              loop: "{{ nd_add_requests | dict2items }}"
+              loop_control:
+                loop_var: _req
+                label: "{{ _req.key }} ({{ _req.value | length }} switch(es))"
+              register: nd_onboard_results
+              # A switch still (re)booting or not yet rediscovered after a reset/rehome makes
+              # ND return a discovery response with no serial, failing the add. Do not stop
+              # the round on that transient: re-attempt the add up to nd_switch_onboard_retries
+              # cycles, waiting nd_switch_onboard_delay seconds between cycles until the late
+              # switch is reachable and onboards. Each loop item retries independently.
+              until: nd_onboard_results is succeeded
+              retries: "{{ nd_switch_onboard_retries | int }}"
+              delay: "{{ nd_switch_onboard_delay | int }}"
+              no_log: true
+
+            - name: Complete add timing
+              ansible.builtin.set_fact:
+                _nd_phase_add_status: success
+          always:
+            - name: Report add duration without replacing its result
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_PHASE: add
+                  {{ ((_nd_switch_clock | float) - (_nd_phase_add_started | float)) | round(3) if _nd_phase_add_started is defined else "unknown" }}
+                  status={{ _nd_phase_add_status | default("failed") }}
+              ignore_errors: true
 
     # ENFORCED CONFIRMATION GATE. Runs on every apply run (even when the initial audit
     # found nothing missing) so the pipeline never starts without proof. Re-gather the
@@ -893,6 +1007,11 @@
     - name: Confirm the full canonical roster is present after onboarding
       when: nd_switch_apply | bool
       block:
+        - name: Start convergence timing
+          ansible.builtin.set_fact:
+            _nd_phase_convergence_started: "{{ _nd_switch_clock }}"
+            _nd_phase_convergence_status: failed
+
         # ---- Active read-only (Migration/Maintenance) self-heal -----------------
         # Before waiting for the switches to be in sync, actively clear any switch
         # stuck in a read-only system mode (the "Selected switches are in read-only
@@ -1333,8 +1452,8 @@
         # mode. No configuration deployment is permitted" suite failures). Poll ND per
         # fabric until every canonical switch reports a deployable system mode, matched
         # to the roster by serial. Authoritative per-switch mode comes from the
-        # lan-fabric REST inventory because state: gathered does not expose it. The
-        # poll is bounded (retries x delay) and non-fatal here; the explicit gate below
+        # fabric REST inventory; the existing final gather also exposes normalized
+        # inventory under after. The poll is bounded (retries x delay) and non-fatal here; the explicit gate below
         # then refuses to start the pipeline with a greppable NDP_SWITCH_INSYNC line.
         - name: Wait until every canonical switch reports in sync (deployable system mode)
           cisco.nd.nd_rest:
@@ -1363,9 +1482,9 @@
         # (genuine Migration/Maintenance read-only) -> these fail the gate.
         # nd_insync_unverified = switches the probe returned no mode for at all
         # (empty/errored switchesByFabric; failed_when:false hides a non-2xx) ->
-        # UNVERIFIED, never failed: presence is already guaranteed by the roster
-        # gate, so an unreadable mode must not be mistaken for read-only (the build
-        # #23 false positive that failed all 6 on an empty probe).
+        # UNVERIFIED, not read-only: the fresh final gather below must corroborate
+        # Normal before these switches pass. This avoids the build #23 false
+        # read-only classification while still requiring positive readiness evidence.
         - name: Compute canonical switches the probe returned in a read-only (non-deployable) mode
           ansible.builtin.set_fact:
             nd_not_insync: >-
@@ -1374,7 +1493,8 @@
                    | selectattr('serial', 'in',
                        (((_res.current | default({})).switches | default([]))
                         | selectattr('switchId', 'defined')
-                        | rejectattr('additionalData.systemMode', 'in', nd_switch_insync_ok_modes)
+                        | selectattr('additionalData.systemMode', 'defined')
+                        | selectattr('additionalData.systemMode', 'in', ['Migration', 'migration', 'Maintenance', 'maintenance', 'Inconsistent', 'inconsistent', 'Waiting', 'waiting', 'notApplicable', 'notapplicable'])
                         | map(attribute='switchId') | list))
                    | map('combine', {'fabric': _res._fab.key})
                    | list
@@ -1395,7 +1515,7 @@
                    | rejectattr('serial', 'in',
                        (((_res.current | default({})).switches | default([]))
                         | selectattr('switchId', 'defined')
-                        | selectattr('additionalData.systemMode', 'defined')
+                        | selectattr('additionalData.systemMode', 'in', nd_switch_insync_ok_modes + ['Migration', 'migration', 'Maintenance', 'maintenance', 'Inconsistent', 'inconsistent', 'Waiting', 'waiting', 'notApplicable', 'notapplicable'])
                         | map(attribute='switchId') | list))
                    | map('combine', {'fabric': _res._fab.key})
                    | list
@@ -1440,9 +1560,9 @@
                  else (('NDP_SWITCH_INSYNC_UNVERIFIED could not read a system mode for '
                         ~ ((nd_insync_unverified | default([])) | length) ~ ' switch(es): '
                         ~ ((nd_insync_unverified | default([])) | map(attribute='serial') | list)
-                        ~ '; switchesByFabric returned no usable data (per-fabric '
-                        ~ (nd_insync_probe_summary | default([])) ~ '). Roster presence is already'
-                        ~ ' confirmed and no switch is read-only, so proceeding without a false timeout.')
+                        ~ '; the REST probe returned no usable mode (per-fabric '
+                        ~ (nd_insync_probe_summary | default([])) ~ '). The fresh module gather must'
+                        ~ ' corroborate Normal before this switch can pass the final readiness gate.')
                        if ((nd_insync_unverified | default([])) | length > 0)
                        else ('NDP_SWITCH_INSYNC_OK all '
                              ~ (nd_test_fabric_switches | dict2items | map(attribute='value') | map('length') | sum)
@@ -1557,27 +1677,60 @@
               NDP_SWITCH_CONFIRM_OK: full canonical roster present and deployed; safe to start the pipeline.
           when: nd_switch_require_full_roster | bool
 
-        # Membership alone is not a healthy heal: a switch can be a fabric member yet
-        # still be read-only (Migration/Maintenance), which passes the roster assert
-        # above but fails every later config push. Refuse to start ONLY for switches the
-        # probe actually returned in a read-only mode (nd_not_insync). Switches the probe
-        # could not read a mode for (nd_insync_unverified) are reported above as
-        # NDP_SWITCH_INSYNC_UNVERIFIED and do NOT fail the gate - presence is already
-        # guaranteed by the roster assert, so an empty/errored probe must not false-fail
-        # the whole roster (the build #23 regression).
+        # The fresh final gather includes normalized after[].additional_data.system_mode
+        # even when the earlier raw REST response omits it. Reuse that existing read:
+        # unknown is not read-only, but neither roster membership nor an unknown
+        # mode proves safe deployment.
+        - name: Corroborate canonical system modes using the fresh final inventory
+          ansible.builtin.set_fact:
+            nd_final_mode_checks: >-
+              {{ nd_final_mode_checks | default([]) + [{
+                   'fabric': _check.0._fab.key, 'serial': _check.1.serial,
+                   'raw_mode': _raw_mode, 'gathered_mode': _gathered_mode,
+                   'status': ('blocked' if (_raw_mode in _blocked_modes or _gathered_mode in _blocked_modes)
+                              else 'verified' if (_gathered_mode == 'normal' or (_raw_mode == 'normal' and _gathered_mode == '')) else 'unverified')
+                 }] }}
+          vars:
+            _probe: "{{ nd_insync_probe.results | default([]) | selectattr('_fab.key', 'equalto', _check.0._fab.key) | first | default({}) }}"
+            _records: "{{ _probe.current.switches if _probe.status | default(0) | int == 200 and _probe.current | default({}) is mapping and _probe.current.switches | default(none) is sequence and _probe.current.switches is not string and _probe.current.switches is not mapping else [] }}"
+            _raw: "{{ _records | select('mapping') | selectattr('switchId', 'defined') | selectattr('switchId', 'equalto', _check.1.serial) | first | default({}) }}"
+            _fresh_rows: "{{ _check.0.after if _check.0.after | default(none) is sequence and _check.0.after is not string and _check.0.after is not mapping else [] }}"
+            _fresh: "{{ _fresh_rows | select('mapping') | selectattr('switch_id', 'defined') | selectattr('switch_id', 'equalto', _check.1.serial) | first | default({}) }}"
+            _raw_mode: "{{ _raw.additionalData.systemMode | default('') | default('', true) | string | trim | lower }}"
+            _gathered_mode: "{{ _fresh.additional_data.system_mode | default('') | default('', true) | string | trim | lower }}"
+            _blocked_modes: ['migration', 'maintenance', 'inconsistent', 'waiting', 'notapplicable']
+          loop: "{{ nd_gathered_confirm.results | subelements('_fab.value') }}"
+          loop_control:
+            loop_var: _check
+            label: "{{ _check.1.serial }} ({{ _check.0._fab.key }})"
+          when: nd_switch_wait_insync | bool
+
         - name: Require every canonical switch to be in sync before the pipeline may start
           ansible.builtin.assert:
             that:
-              - ((nd_not_insync | default([])) | length) == 0
+              - nd_final_mode_checks | selectattr('status', 'equalto', 'blocked') | list | length == 0
+              - nd_final_mode_checks | selectattr('status', 'equalto', 'unverified') | list | length == 0
             fail_msg: >-
-              NDP_SWITCH_INSYNC_TIMEOUT: {{ (nd_not_insync | default([])) | map(attribute='serial') | list }}
-              present but in a read-only (Migration/Maintenance) system mode in
-              {{ (nd_not_insync | default([])) | map(attribute='fabric') | list }} after add + Recalculate &
-              Deploy. A read-only switch ("Selected switches are in read-only mode. No configuration deployment
-              is permitted") will fail the suite; take it out of that mode on ND and re-run.
+              {{ 'NDP_SWITCH_INSYNC_TIMEOUT: non-deployable system mode remains: '
+                 ~ (nd_final_mode_checks | selectattr('status', 'equalto', 'blocked') | list)
+                 if (nd_final_mode_checks | selectattr('status', 'equalto', 'blocked') | list | length > 0)
+                 else 'NDP_SWITCH_INSYNC_UNVERIFIED: neither the REST probe nor the fresh final gather verified Normal: '
+                 ~ (nd_final_mode_checks | selectattr('status', 'equalto', 'unverified') | list) }}
             success_msg: >-
-              NDP_SWITCH_INSYNC_OK: no canonical switch is in a read-only mode; safe to start the pipeline.
+              NDP_SWITCH_INSYNC_OK: every canonical switch has a verified Normal system mode; safe to start the pipeline.
           when: nd_switch_wait_insync | bool
+
+        - name: Complete convergence timing
+          ansible.builtin.set_fact:
+            _nd_phase_convergence_status: success
+      always:
+        - name: Report convergence duration without replacing its result
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_PHASE: convergence
+              {{ ((_nd_switch_clock | float) - (_nd_phase_convergence_started | float)) | round(3) if _nd_phase_convergence_started is defined else "unknown" }}
+              status={{ _nd_phase_convergence_status | default("failed") }}
+          ignore_errors: true
 
     - name: Audit-only notice when switches are missing but apply is off
       ansible.builtin.debug:

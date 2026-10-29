@@ -281,6 +281,16 @@
       Run with nd_prerequisite_only=true to audit the required changes without mutating the lab.
   run_once: true
 
+# Only these helpers are assertions/debug over the already-captured state. Any
+# other operation remains conservative and keeps fresh post-apply verification.
+- name: Decide whether prerequisite operations require fresh post-apply verification
+  ansible.builtin.set_fact:
+    _ndp_reconcile_requires_refresh: >-
+      {{ _ndp_result.operations
+         | rejectattr('operation', 'in', ['verify_resource', 'verify_free_interfaces', 'verify_logical_interface_namespace'])
+         | list | length > 0 }}
+  run_once: true
+
 - name: Reconcile the prepared topology on the controller (gated live mutation)
   ansible.builtin.include_tasks: nd_prerequisite_reconcile.yaml
   when:
@@ -306,7 +316,7 @@
     - nd_prerequisite_apply | default(false) | bool
     - not (nd_prerequisite_only | default(false) | bool)
     - not ansible_check_mode
-    - _ndp_result.operations | length > 0
+    - _ndp_reconcile_requires_refresh | bool
 
 - name: Replan prerequisites from the reconciled live state
   ansible.builtin.command:
@@ -321,13 +331,14 @@
     - nd_prerequisite_apply | default(false) | bool
     - not (nd_prerequisite_only | default(false) | bool)
     - not ansible_check_mode
-    - _ndp_result.operations | length > 0
+    - _ndp_reconcile_requires_refresh | bool
 
 - name: Confirm reconciled prerequisites have no remaining topology delta
   ansible.builtin.assert:
     that:
-      # verify_resource / ensure_interface and the typed verify operations are
-      # non-mutating checks that intentionally remain in every replan.
+      # Keep the established replan contract for verification/interface/link
+      # entries. This does not classify ensure_interface or ensure_link as read-only:
+      # both still require the fresh post-apply capture above.
       # ensure_link is mutating but self-verifying: apply_ensure_link.yaml is GET-first
       # (skips when the link already exists) and asserts the create was accepted, so a
       # failed create already fails the run before this gate. Its post-create GET shape
@@ -341,7 +352,7 @@
     - nd_prerequisite_apply | default(false) | bool
     - not (nd_prerequisite_only | default(false) | bool)
     - not ansible_check_mode
-    - _ndp_result.operations | length > 0
+    - _ndp_reconcile_requires_refresh | bool
 
 - name: Publish verified ND prerequisite runtime variables as facts
   ansible.builtin.set_fact:

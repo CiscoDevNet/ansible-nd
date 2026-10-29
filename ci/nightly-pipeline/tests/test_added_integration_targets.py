@@ -98,7 +98,7 @@ def switch(ip, serial, mode="normal", intended=None, sync="inSync", role="leaf")
 
 
 def jenkins_skip_note(test_output):
-    """The skip-note extraction of Jenkinsfile_nd_jenkins_script (parseTestResults), ported line for line."""
+    """Extract a bounded skip marker from the synthetic debug-output fixtures."""
     idx = test_output.find("NDP_MODULE_SKIPPED")
     assert idx >= 0
     tail = test_output[idx: idx + 420].replace("\r", " ").replace("\n", " ")
@@ -253,8 +253,9 @@ def test_jenkins_wires_every_new_module_in_a_safe_order():
     assert integration.index("nd_local_user") > integration.index("nd_manage_fabric_group_members")
     assert integration.index("nd_maintenance_mode") > integration.index("nd_manage_tor")
     assert integration.index("nd_fabric_update_group") > integration.index("nd_maintenance_mode")
-    # None of them runs after the destructive switch lifecycle; those four are appended after every static and interface module.
-    destructive = [effective.index(name) for name in ("nd_resource_manager", "nd_manage_fabric", "nd_manage_links", "nd_manage_switches")]
+    # The user excludes the switch lifecycle; all other baseline targets stay selected.
+    assert "nd_manage_switches" not in effective
+    destructive = [effective.index(name) for name in ("nd_resource_manager", "nd_manage_fabric", "nd_manage_links")]
     assert all(effective.index(module) < min(destructive) for module in NEW_MODULES)
 
 
@@ -293,8 +294,8 @@ def test_the_runner_runs_the_upstream_target_for_every_new_module():
     include = task("include collection target (all configured cases)")
     for module in NEW_MODULES:
         assert module not in include["when"], module
-        assert not runs(include, {"test_module": "nd_manage_tor"})
         assert runs(include, {"test_module": module})
+    assert runs(include, {"test_module": "nd_manage_tor"})
 
 
 # --- nd_local_user guard --------------------------------------------------------------------------------------------

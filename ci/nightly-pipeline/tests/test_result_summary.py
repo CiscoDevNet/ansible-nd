@@ -3,12 +3,15 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
 
 import pytest
 import yaml
+
+from test_five_issue_pipeline_fixes import groovy_runner as active_pipeline
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,11 +189,18 @@ def test_real_ansible_callback_records_failure_cleanup_and_compact_output(tmp_pa
 
 def test_jenkins_reporting_wiring_and_shell_syntax(tmp_path):
     source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    parser = source.split("def parseTestResults(", 1)[1].split("def resetFabricBetweenVersions", 1)[0]
-    assert "--require-execution --format recap" in parser
-    assert "cat --" not in parser
-    assert 'e.getMessage().contains(' not in parser
-    assert "failedCount > 0 || ansibleExitStatus > 0" in parser
+    fold = source.split("def foldStructuredResults(", 1)[1].split("\n}\n", 1)[0]
+    assert 'nd_reporting_pipeline.py" aggregate' in fold
+    assert 'readFile(file: "${env.ND_REPORTING_RELATIVE_ROOT}/aggregate.json")' in fold
+    assert "MODULE_ACTIVITY_RESULTS[key] = row" in fold
+    assert "if (report.failed || report.reporting_errors)" in fold
+    # The restored afternoon file retains compatibility definitions. Reporting
+    # must still use structured summaries, with no invocation of the old parsers.
+    uncommented = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("//"))
+    for legacy in ("archiveTestOutput", "archiveSkipList", "captureModuleActivity", "parseDeploymentResults", "parseTestResults"):
+        without_declaration = re.sub(r"(?m)^def " + legacy + r"\([^\n]*\)\s*\{", "", uncommented)
+        assert not re.search(r"\b" + legacy + r"\s*\(", without_declaration)
+    assert 'e.getMessage().contains(' not in source
     assert source.count("run_reported_playbook ") == 3
     for index, block in enumerate(source.split("'''#!/bin/bash")[1:]):
         block = block.split("'''", 1)[0]
@@ -221,6 +231,7 @@ def test_execution_wrapper_records_exit_and_selects_debug(tmp_path, enabled, sel
                       "run_reported_playbook example output.txt execution " +
                       shlex.join([sys.executable, "-c", probe]) + "\n")
     environment = dict(os.environ, COLLECTIONS_DIRECTORY=str(ROOT / "playbooks"),
+                       ND_REPORTING_TOOLS=str(ROOT / "playbooks"),
                        TEST_RUN_MARKER="current", ND_REPORT_DEBUG_ENABLED=enabled,
                        ND_REPORT_DEBUG_MODULES=selected,
                        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""))
@@ -245,7 +256,7 @@ def test_final_phase_timing_table_groovy_runtime(tmp_path):
         pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
     assert java and groovy_jar
     source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    functions = source.split("def formatPhaseDuration(", 1)[1].split("def fabricScopeLabel(", 1)[0]
+    functions = source.split("def formatPhaseDuration(", 1)[1].split("def formatResultsTable(", 1)[0]
     harness = "def formatPhaseDuration(" + functions + r'''
 assert formatPhaseDuration(null) == 'N/A'
 assert formatPhaseDuration(-1) == 'N/A'
@@ -283,67 +294,49 @@ println table
     assert "FINAL TIME BREAKDOWN" in completed.stdout
     post = source.split("    post {", 1)[1]
     assert post.index("echo formatPhaseTimingTable") < post.index("Post-build Webex")
-    archive = source.split("def archiveTestOutput(", 1)[1].split("def archiveSkipList(", 1)[0]
-    assert "PHASE_TIMING_RESULTS[timingKey] = [:]" in archive
-    assert "timingSummary.run_id != expectedRunMarker" in archive
-    assert archive.index("PHASE_TIMING_RESULTS[timingKey] = timingSummary.phase_seconds") < archive.index(
-        'archiveArtifacts artifacts: "${archivedFileName}.*.json"')
+    fold = source.split("def foldStructuredResults(", 1)[1].split("\n}\n", 1)[0]
+    assert '"${row.version_id}|${row.module}|${row.run_id}".toString()' in fold
+    assert "PHASE_TIMING_RESULTS[key] = row.phase_seconds ?: [:]" in fold
+    assert fold.index("PHASE_TIMING_RESULTS[key]") < fold.index('archiveArtifacts artifacts: "${env.ND_REPORTING_RELATIVE_ROOT}/aggregate.json')
 
 
 @pytest.mark.parametrize("scenario", ["null_message", "nonzero_exit", "success"])
-def test_jenkins_result_rows_groovy_runtime(tmp_path, scenario):
-    java = os.environ.get("ND_REPORT_JAVA")
-    groovy_jar = os.environ.get("ND_REPORT_GROOVY_JAR")
-    if not java or not groovy_jar:
-        pytest.skip("Set ND_REPORT_JAVA and ND_REPORT_GROOVY_JAR for offline Groovy checks")
-    assert java and groovy_jar
-    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    start = source.index("def parseTestResults(")
-    parser = source[start:source.index("\n}\n", start) + 3]
-    helpers = ""
-    for function_name in ("fabricScopeLabel", "activityResultKey"):
-        helper_start = source.index(f"def {function_name}(")
-        helpers += source[helper_start:source.index("\n}\n", helper_start) + 3]
-    harness = r'''
-import groovy.transform.Field
-@Field def env = [COLLECTIONS_DIRECTORY: '/tmp/collection', TOTAL_FAILED_COUNT: '0',
-                  TOTAL_PASSED_COUNT: '0', TEST_RESULT_SUMMARY: '', BUILD_FAILURE_REASON: '']
-@Field def TEST_RESULT_SUMMARY_BUF = ''
-@Field def BUILD_FAILURE_REASON_BUF = ''
-@Field def MODULE_ACTIVITY_RESULTS = [:]
-@Field def scenario = 'SCENARIO'
-@Field def flags = [:]
-def echo(message) {}
-def setFailureFlag(name, value) { flags[name] = value }
-def error(message) { throw new RuntimeException(message.toString()) }
-def withEnv(values, body) { body() }
-def virtualPeerLinkCapabilityFailures(output) { [] }
-def sh(options) {
-    if (scenario == 'null_message') { throw new RuntimeException() }
-    return '[RUN_MARKER: current]\n[DURATION_SECONDS: 20]\nPLAY RECAP\n' +
-           'host : ok=43 changed=6 unreachable=0 failed=0 skipped=2\n' +
-           '[ANSIBLE_EXIT_STATUS: ' + (scenario == 'nonzero_exit' ? '2' : '0') + ']\n'
-}
-HELPERS
-PARSER
+def test_active_structured_results_preserve_failures_and_case_counts(active_pipeline, scenario):
+    active_pipeline("def scenario = " + repr(scenario) + "\n" + r'''
+def failure = new RuntimeException()
+def row = [version_id: 'ND43', module: 'example', run_id: 'current', nd: '4.3',
+    fabric: 'fixture', scope: 'iBGP', round_label: 'iBGP', validated: true,
+    result: scenario == 'success' ? 'PASS' : 'FAIL', coverage: 'COMPLETE',
+    case_totals: [started: 1, passed: scenario == 'success' ? 1 : 0,
+                  failed: scenario == 'success' ? 0 : 1, skipped: 0, incomplete: 0],
+    counts: [merged: [started: 1]], duration: '20s', phase_seconds: [execution: 20],
+    archive_status: 'success', artifact: 'fixture-output.txt', failure: scenario == 'success' ? '' : 'Ansible execution failed',
+    invocation: [status: scenario == 'success' ? 'OK' : 'FAIL', exit_code: scenario == 'success' ? 0 : 2,
+                 counts: [ok: 43, failed: 0, skipped: 2]]]
+script.MODULE_ACTIVITY_RESULTS['planned'] = [module: 'example', result: 'UNKNOWN',
+    coverage: 'UNKNOWN', counts: [:], case_totals: [:], failure: 'awaiting final result']
+script.metaClass.sh = { Object options -> if (scenario == 'null_message') { throw failure }; return '' }
+script.metaClass.readFile = { Map options -> script.writeReportingJson(
+    [rows: [row], failed: scenario != 'success', reporting_errors: []]) }
+script.metaClass.archiveArtifacts = { Map options -> }
+def cleanupRan = false
 def caught = null
 try {
-    parseTestResults([fabric_name: 'fabric', versionId: '43', version: '4.3'],
-                     'failed', 'example', 'integration', 'current')
-} catch (Exception failure) { caught = failure }
-def rows = (env.TEST_RESULT_SUMMARY ?: TEST_RESULT_SUMMARY_BUF).readLines().findAll { it.trim() }
-assert rows.size() == 1 : rows
-def expected = scenario == 'null_message' ? 'ERR' : (scenario == 'nonzero_exit' ? 'FAIL' : 'OK')
-assert rows[0].startsWith(expected + '|example|') : rows
-assert (caught != null) == (scenario != 'success')
-if (scenario != 'success') { assert flags.failed == true }
+    script.withCleanupPreservingFailure({ script.foldStructuredResults() }, { cleanupRan = true })
+} catch (Exception error) { caught = error }
+assert cleanupRan
 if (scenario == 'null_message') {
-    assert caught.message.contains('java.lang.RuntimeException') : caught.message
-    assert !caught.message.contains('contains() on null')
+    assert caught != null && caught.is(failure) && caught.message == null
+    assert script.MODULE_ACTIVITY_RESULTS['planned'].result == 'UNKNOWN'
+    assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
+} else {
+    assert caught == null
+    def collected = script.MODULE_ACTIVITY_RESULTS['ND43|example|current']
+    assert collected.result == (scenario == 'success' ? 'PASS' : 'FAIL')
+    def raw = script.moduleCaseSummaryRows().readLines().find { it.contains('|example|') && !it.contains('awaiting final result') }
+    assert raw.startsWith((scenario == 'success' ? 'OK' : 'FAIL') + '|example|')
+    assert raw.split('\\|', -1)[4..6] == (scenario == 'success' ? ['1', '0', '0'] : ['0', '1', '0'])
+    assert !raw.contains('|43|') : 'Task recap totals must not replace authored case totals'
+    if (scenario == 'nonzero_exit') { assert script.binding.env.PIPELINE_FAILED == 'true' }
 }
-'''.replace("SCENARIO", scenario).replace("HELPERS", helpers).replace("PARSER", parser)
-    script = tmp_path / "Reporting.groovy"
-    script.write_text(harness)
-    result = subprocess.run([java, "-cp", groovy_jar, "groovy.ui.GroovyMain", str(script)],
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stdout + result.stderr
+''')

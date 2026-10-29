@@ -581,6 +581,12 @@ def jenkins_targets(text):
     # Jenkins gate below receives the already evaluated list and remains the final
     # authority if the Groovy assembly becomes more dynamic in the future.
     appended = re.findall(r"'([A-Za-z0-9_.-]+)'", effective_expression)
+    if re.search(r"\bTRAILING_INTEGRATION_MODULES\b", effective_expression):
+        trailing_match = re.search(r"def\s+TRAILING_INTEGRATION_MODULES\s*=\s*\[(.*?)\]", text, re.S)
+        if not trailing_match:
+            raise ValidationError("missing Jenkins trailing integration target array")
+        appended += [item for line in trailing_match.group(1).splitlines()
+                     for item in re.findall(r"'([A-Za-z0-9_.-]+)'", line.split("//", 1)[0])]
     effective = (
         result["INTEGRATION_MODULES"]
         + result["INTERFACE_INTEGRATION_MODULES"]
