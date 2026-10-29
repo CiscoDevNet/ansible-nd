@@ -1,0 +1,216 @@
+---
+# Fabric-wide inventory guard for state: overridden. This file is included once
+# before setup and once after apply, with the phase and expected pairs supplied
+# by the caller. Never use module `before` output as a fabric inventory: it only
+# describes interfaces selected by the module input.
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Read the current fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ nd4x_override_scope_fabric_name }}/switches"
+    method: get
+  register: nd4x_override_scope_switches_result
+  changed_when: false
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Normalize and validate the switch inventory"
+  ansible.builtin.set_fact:
+    nd4x_override_scope_switches: >-
+      {{
+        nd4x_override_scope_switches_result.current.switches
+        | default(nd4x_override_scope_switches_result.jsondata.switches | default([]), true)
+      }}
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Require a complete switch inventory"
+  ansible.builtin.assert:
+    that:
+      - nd4x_override_scope_switches is sequence
+      - nd4x_override_scope_switches | length > 0
+      - nd4x_override_scope_switches | selectattr('switchId', 'defined') | list | length == nd4x_override_scope_switches | length
+      - nd4x_override_scope_switches | selectattr('fabricManagementIp', 'defined') | list | length == nd4x_override_scope_switches | length
+      - nd4x_override_scope_switches | map(attribute='switchId') | unique | list | length == nd4x_override_scope_switches | length
+    fail_msg: >-
+      Cannot safely run the fabric-wide overridden scenario: Nexus Dashboard did not return a complete,
+      uniquely identified switch inventory for {{ nd4x_override_scope_fabric_name }}.
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Resolve the configured test switch from the current inventory"
+  vars:
+    matches: >-
+      {{
+        nd4x_override_scope_switches
+        | selectattr('fabricManagementIp', 'equalto', nd4x_override_scope_switch_ip)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - matches | length == 1
+      - matches[0].switchId is defined
+    fail_msg: >-
+      Cannot safely run the fabric-wide overridden scenario: expected exactly one current switch with
+      fabricManagementIp {{ nd4x_override_scope_switch_ip }} in {{ nd4x_override_scope_fabric_name }}, found {{ matches | length }}.
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Record the configured switch ID"
+  vars:
+    matches: >-
+      {{
+        nd4x_override_scope_switches
+        | selectattr('fabricManagementIp', 'equalto', nd4x_override_scope_switch_ip)
+        | map(attribute='switchId')
+        | list
+      }}
+  ansible.builtin.set_fact:
+    nd4x_override_scope_test_switch_id: "{{ matches[0] }}"
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Read every switch's full interface inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ nd4x_override_scope_fabric_name }}/switches/{{ item.switchId }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+    method: get
+  loop: "{{ nd4x_override_scope_switches }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp }} ({{ item.switchId }})"
+  register: nd4x_override_scope_interface_results
+  changed_when: false
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Require a complete interface inventory for every switch"
+  vars:
+    interfaces: >-
+      {{
+        item.current.interfaces
+        | default(item.jsondata.interfaces | default([], true), true)
+      }}
+  ansible.builtin.assert:
+    that:
+      - interfaces is sequence
+      - interfaces is not string
+      - interfaces | selectattr('interfaceName', 'defined') | list | length == interfaces | length
+      - interfaces | selectattr('interfaceType', 'defined') | list | length == interfaces | length
+      - interfaces | length < 500
+    fail_msg: >-
+      Cannot safely run the fabric-wide overridden scenario: interface inventory for switch {{ item.item.switchId }}
+      was missing, incomplete, or reached the 500-row page limit. No override was applied.
+  loop: "{{ nd4x_override_scope_interface_results.results }}"
+  loop_control:
+    label: "{{ item.item.fabricManagementIp }} ({{ item.item.switchId }})"
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Initialize the managed-resource snapshot"
+  ansible.builtin.set_fact:
+    nd4x_override_scope_managed_resources: []
+    nd4x_override_scope_check_mode_queries: []
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Build interface snapshot queries for every switch"
+  ansible.builtin.set_fact:
+    nd4x_override_scope_check_mode_queries: >-
+      {{
+        nd4x_override_scope_check_mode_queries
+        + [
+            {
+              'name': 'Snapshot managed interfaces on switch '
+                ~ (item.fabricManagementIp | default(item.switchId)),
+              'path': '/api/v1/manage/fabrics/'
+                ~ nd4x_override_scope_fabric_name
+                ~ '/switches/'
+                ~ item.switchId
+                ~ '/interfaces?max=500&offset=0&sort=interfaceName:asc',
+              'expected_status': 200,
+              'unordered_paths': ['/interfaces'],
+              'ignore_keys': ['operData']
+            }
+          ]
+      }}
+  loop: "{{ nd4x_override_scope_switches }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp }} ({{ item.switchId }})"
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Collect module-managed subinterfaces across the fabric"
+  vars:
+    interfaces: >-
+      {{
+        item.current.interfaces
+        | default(item.jsondata.interfaces | default([], true), true)
+      }}
+    managed_policy_types:
+      - subinterface
+      - iosXeSubinterface
+      - iosXeSubinterfaceShutNoshut
+  ansible.builtin.set_fact:
+    nd4x_override_scope_managed_resources: >-
+      {{
+        nd4x_override_scope_managed_resources
+        + (
+            interfaces
+            | selectattr('interfaceType', 'equalto', 'subInterface')
+            | selectattr('configData', 'defined')
+            | rejectattr('configData', 'equalto', none)
+            | selectattr('configData.networkOS', 'defined')
+            | rejectattr('configData.networkOS', 'equalto', none)
+            | selectattr('configData.networkOS.policy', 'defined')
+            | rejectattr('configData.networkOS.policy', 'equalto', none)
+            | selectattr('configData.networkOS.policy.policyType', 'in', managed_policy_types)
+            | map('combine', {'switchId': item.item.switchId})
+            | list
+          )
+      }}
+  loop: "{{ nd4x_override_scope_interface_results.results }}"
+  loop_control:
+    label: "{{ item.item.fabricManagementIp }} ({{ item.item.switchId }})"
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Reject managed resources outside the allowed switch/interface pairs"
+  vars:
+    resource_switch_ip: >-
+      {{
+        nd4x_override_scope_switches
+        | selectattr('switchId', 'equalto', item.switchId)
+        | map(attribute='fabricManagementIp')
+        | first
+      }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_override_scope_allowed_pairs
+        | selectattr('switch_ip', 'equalto', resource_switch_ip)
+        | map(attribute='interface_name')
+        | map('lower')
+        | select('equalto', item.interfaceName | lower)
+        | list | length == 1
+    fail_msg: >-
+      Unsafe fabric-wide overridden scope during {{ nd4x_override_scope_phase }}: managed subinterface
+      {{ item.interfaceName }} on switch {{ item.switchId }} ({{ resource_switch_ip }}) is outside the
+      explicitly reserved switch/interface pairs.
+  loop: "{{ nd4x_override_scope_managed_resources }}"
+  loop_control:
+    label: "{{ item.switchId }} / {{ item.interfaceName }}"
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Require every allowed pair to be present"
+  vars:
+    pair_switch_matches: >-
+      {{
+        nd4x_override_scope_switches
+        | selectattr('fabricManagementIp', 'equalto', item.switch_ip)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - pair_switch_matches | length == 1
+      - pair_switch_matches[0].switchId is defined
+      - >-
+        nd4x_override_scope_managed_resources
+        | selectattr('switchId', 'equalto', pair_switch_matches[0].switchId)
+        | map(attribute='interfaceName')
+        | map('lower')
+        | select('equalto', item.interface_name | lower)
+        | list | length == 1
+    fail_msg: >-
+      The fabric-wide overridden scope does not contain exactly the allowed pair
+      {{ item.switch_ip }} / {{ item.interface_name }} during {{ nd4x_override_scope_phase }}.
+  loop: "{{ nd4x_override_scope_allowed_pairs }}"
+  loop_control:
+    label: "{{ item.switch_ip }} / {{ item.interface_name }}"
+  when: nd4x_override_scope_phase == 'postflight'
+
+- name: "OVERRIDE SCOPE {{ nd4x_override_scope_phase | upper }}: Require the exact allowed managed-resource count"
+  ansible.builtin.assert:
+    that:
+      - nd4x_override_scope_managed_resources | length == nd4x_override_scope_allowed_pairs | length
+    fail_msg: >-
+      The fabric-wide overridden scope contains {{ nd4x_override_scope_managed_resources | length }} managed resources,
+      but exactly {{ nd4x_override_scope_allowed_pairs | length }} reserved resources are expected during
+      {{ nd4x_override_scope_phase }}. Found {{ nd4x_override_scope_managed_resources | map(attribute='switchId') | zip(nd4x_override_scope_managed_resources | map(attribute='interfaceName')) | map('join', '/') | list }}.
+  when: nd4x_override_scope_phase == 'postflight'

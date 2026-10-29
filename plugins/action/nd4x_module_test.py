@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import re
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -1077,11 +1079,36 @@ class ActionModule(ActionBase):
     def _jsonpath_values(self, data, expression):
         if not HAS_JSONPATH_NG_PARSE:
             raise AnsibleActionFail("Cannot use JSONPath validation because the jsonpath-ng " + "Python library is not available")
+
+        # ND may return interfaceName with different capitalization than the
+        # canonical name accepted by the module. Normalize both the data and
+        # literal interfaceName selectors so existence checks cannot miss a
+        # real resource solely because of case.
+        interface_name_selector = re.compile(r"(@\.interfaceName\s*==\s*)(['\"])(.*?)\2")
+        if interface_name_selector.search(expression):
+            expression = interface_name_selector.sub(
+                lambda match: match.group(1) + match.group(2) + match.group(3).lower() + match.group(2),
+                expression,
+            )
+            data = copy.deepcopy(data)
+            self._lower_interface_names(data)
+
         try:
             jsonpath_expression = parse(expression)
         except Exception as exc:
             raise AnsibleActionFail("Invalid JSONPath expression %s: %s" % (expression, exc))
         return [match.value for match in jsonpath_expression.find(data)]
+
+    def _lower_interface_names(self, value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "interfaceName" and isinstance(child, str):
+                    value[key] = child.lower()
+                else:
+                    self._lower_interface_names(child)
+        elif isinstance(value, list):
+            for child in value:
+                self._lower_interface_names(child)
 
     def _has_unexpected_failure(self, module_result, expected):
         if module_result is None:

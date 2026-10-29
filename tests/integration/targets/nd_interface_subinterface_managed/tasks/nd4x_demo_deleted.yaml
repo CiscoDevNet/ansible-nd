@@ -1,0 +1,58 @@
+---
+- name: "DELETED HARNESS PREFLIGHT: Protect reserved NX-OS subinterface names"
+  ansible.builtin.include_tasks: nd4x_demo_nxos_reserved_preflight.yaml
+
+- name: "DELETED HARNESS: Remove a managed NX-OS subinterface"
+  block:
+    - name: "DELETED HARNESS SETUP: Create .22"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_22 }}"
+        state: merged
+
+    - name: "DELETED HARNESS: Delete .22 through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: deleted
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: "{{ ethernet_parent }}.22"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Verify .22 is absent from the managed interface inventory
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.22')]"
+                exists: false
+      register: nd4x_deleted_eth_22
+
+    - name: "DELETED HARNESS: Verify returned resource absence"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_eth_22.first_run_result.after | selectattr('interface_name', 'equalto', ethernet_parent ~ '.22') | list | length == 0
+          - nd4x_deleted_eth_22.second_run_result.changed == false
+          - nd4x_deleted_eth_22.nd_query_results | length == 1
+  always:
+    - name: "DELETED HARNESS CLEANUP: Remove reserved subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_eth_cleanup }}"
+        state: deleted

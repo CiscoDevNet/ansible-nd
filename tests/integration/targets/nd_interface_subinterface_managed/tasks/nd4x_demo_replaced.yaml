@@ -1,0 +1,68 @@
+---
+- name: "REPLACED HARNESS PREFLIGHT: Protect reserved NX-OS subinterface names"
+  ansible.builtin.include_tasks: nd4x_demo_nxos_reserved_preflight.yaml
+
+- name: "REPLACED HARNESS: Replace a managed NX-OS subinterface"
+  block:
+    - name: "REPLACED HARNESS SETUP: Create the original .21 configuration"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_21 }}"
+        state: merged
+
+    - name: "REPLACED HARNESS: Replace .21 configuration"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: replaced
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_21_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced subinterface fields
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')].configData.networkOS.policy.description"
+                equals: "ND4X harness updated subinterface 21"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')].configData.networkOS.policy.ip"
+                equals: "192.168.61.21"
+      register: nd4x_replaced_eth_21
+
+    - name: "REPLACED HARNESS: Verify returned replacement and idempotency"
+      vars:
+        subif_after: >-
+          {{
+            nd4x_replaced_eth_21.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.21')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - subif_after.config_data.network_os.policy.description == 'ND4X harness updated subinterface 21'
+          - subif_after.config_data.network_os.policy.ip == '192.168.61.21'
+          - subif_after.config_data.network_os.policy.ip_redirects == true
+          - nd4x_replaced_eth_21.second_run_result.changed == false
+          - nd4x_replaced_eth_21.nd_query_results | length == 1
+  always:
+    - name: "REPLACED HARNESS CLEANUP: Remove reserved subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_eth_cleanup }}"
+        state: deleted

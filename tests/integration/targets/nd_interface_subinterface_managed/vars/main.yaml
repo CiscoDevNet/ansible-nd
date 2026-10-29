@@ -110,9 +110,23 @@ cleanup_config:
 # xe.yaml is skipped when nd_test_xe_switch_ip is unset. The parent port is converted to a routed host for the run and reset to the
 # fabric-default trunk host afterwards; sub-ids 100-103 on it are reserved. Lab-verified on CAMPUS1 Catalyst 9000v leaves against
 # ND 4.2.1.10 and 4.3.1.175.
+# The ND 4.x harness XE scenarios additionally require nd_subinterface_managed_xe_tests_enabled=true; setting it confirms that
+# nd_test_xe_parent_interface is the dedicated test host port (default GigabitEthernet1/0/2). The port must begin as plain,
+# unbundled, and not a fabric-link endpoint, and in the exact IOS-XE fabric-default trunk-host state.
+# Harness sub-IDs 200-204 on that parent are reserved and must
+# be absent from both ND's interface inventory and running configuration. Teardown verifies the parent is still either this
+# documented default or the routed-host policy created by the harness before changing it.
 test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
 test_xe_switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
 xe_parent: "{{ nd_test_xe_parent_interface | default('GigabitEthernet1/0/2') }}"
+nd4x_subinterface_managed_xe_tests_enabled: >-
+  {{ nd_subinterface_managed_xe_tests_enabled | default(false) | bool }}
+nd4x_xe_reserved_subinterface_ids:
+  - 200
+  - 201
+  - 202
+  - 203
+  - 204
 
 # The routed parent, applied with nd_interface_ethernet_routed before the subinterfaces are created (ND checks the parent's
 # DISCOVERED mode, so the parent is deployed and xe.yaml waits for discovery before the first create).
@@ -205,3 +219,296 @@ xe_cleanup_config:
     interface_name: "{{ xe_parent }}.102"
   - switch_ip: "{{ test_xe_switch_ip }}"
     interface_name: "{{ xe_parent }}.103"
+
+# --- ND 4.x harness coverage ---
+# These IDs do not overlap the legacy NX-OS (.2-.5) or IOS-XE (.100-.103) suite.
+# NX-OS harness scenarios require .20-.22 and .24 on the Ethernet parent and .23 on the Port-channel parent to be free in both
+# ND's interface inventory and running configuration before setup. An occupied ID fails preflight; the harness does not try to
+# infer that an existing resource is stale harness data or delete it before starting.
+nd4x_subinterface_managed_destructive_tests_enabled: >-
+  {{
+    nd_subinterface_managed_destructive_tests_enabled
+    | default(false)
+    | bool
+  }}
+
+nd4x_subif_eth_20:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.20"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X harness managed subinterface 20"
+        vlan_id: 20
+        vrf_interface: default
+        ip: 192.168.60.20
+        prefix: 24
+        ipv6: "2001:192:168:60::20"
+        ipv6_prefix: 64
+        mtu: 9216
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        netflow: false
+
+nd4x_subif_eth_20_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.20"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X harness updated subinterface 20"
+        vlan_id: 20
+        vrf_interface: default
+        ip: 192.168.60.21
+        prefix: 24
+        ipv6: "2001:192:168:60::21"
+        ipv6_prefix: 64
+        mtu: 9000
+        ip_redirects: false
+        pim_sparse: true
+        pim_dr_priority: 50
+        routing_tag: "12345"
+        netflow: false
+
+nd4x_subif_eth_21:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.21"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X harness managed subinterface 21"
+        vlan_id: 21
+        vrf_interface: default
+        ip: 192.168.61.20
+        prefix: 24
+
+nd4x_subif_eth_21_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.21"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X harness updated subinterface 21"
+        vlan_id: 21
+        vrf_interface: default
+        ip: 192.168.61.21
+        prefix: 24
+        ip_redirects: true
+
+nd4x_subif_eth_22:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.22"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X harness managed subinterface 22"
+        vlan_id: 22
+        vrf_interface: default
+        ip: 192.168.62.20
+        prefix: 24
+
+# Intentionally omits network_os_type and policy_type to exercise NX-OS defaults.
+nd4x_subif_eth_24_inferred:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.24"
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        description: "ND4X inferred NX-OS subinterface 24"
+        vlan_id: 24
+        vrf_interface: default
+        ip: 192.168.64.20
+        prefix: 24
+
+nd4x_subif_pc_23:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ port_channel_parent }}.23"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X harness Port-channel subinterface 23"
+        vlan_id: 23
+        vrf_interface: default
+        ip: 192.168.63.20
+        prefix: 24
+
+nd4x_subif_pc_23_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ port_channel_parent }}.23"
+  config_data:
+    network_os:
+      network_os_type: nx-os
+      policy:
+        policy_type: subinterface
+        admin_state: true
+        description: "ND4X updated Port-channel subinterface 23"
+        vlan_id: 23
+        vrf_interface: default
+        ip: 192.168.63.21
+        prefix: 24
+
+nd4x_subif_eth_cleanup:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.20"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.21"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.22"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.24"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ port_channel_parent }}.23"
+
+# Fabric-wide state: overridden safety scope. Each entry is a composite
+# (switch management IP, interface name) pair; the harness resolves the current
+# switch ID from the fabric inventory before comparing it with live resources.
+# Keep the reserved set limited to interfaces owned by this scenario.
+nd4x_override_reserved_nxos_pairs:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.20"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.21"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.22"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.24"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ port_channel_parent }}.23"
+
+nd4x_override_intended_nxos_pairs:
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ ethernet_parent }}.20"
+  - switch_ip: "{{ test_switch_ip }}"
+    interface_name: "{{ port_channel_parent }}.23"
+
+nd4x_subif_xe_200:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.200"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSubinterface
+        admin_state: true
+        description: "ND4X harness IOS-XE subinterface 200"
+        vlan_id: 200
+        ip: 10.99.200.1
+        prefix: 24
+        ipv6: "2001:db8:200::1"
+        ipv6_prefix: 64
+
+# Explicit network_os_type with omitted policy_type exercises IOS-XE default inference.
+nd4x_subif_xe_204_inferred:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.204"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        description: "ND4X inferred IOS-XE subinterface 204"
+        vlan_id: 204
+        ip: 10.99.204.1
+        prefix: 24
+
+nd4x_subif_xe_201_shut:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.201"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSubinterfaceShutNoshut
+        admin_state: false
+
+nd4x_subif_xe_200_updated:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.200"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSubinterface
+        admin_state: true
+        description: "ND4X harness updated IOS-XE subinterface 200"
+        vlan_id: 200
+        ip: 10.99.200.2
+        prefix: 24
+        ipv6: "2001:db8:200::1"
+        ipv6_prefix: 64
+
+nd4x_subif_xe_203_bad_mtu:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.203"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        vlan_id: 203
+        ip: 10.99.203.1
+        prefix: 24
+        mtu: 9216
+
+nd4x_subif_xe_202_override:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: "{{ xe_parent }}.202"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeSubinterface
+        admin_state: true
+        description: "ND4X explicit IOS-XE override subinterface 202"
+        vlan_id: 202
+        ip: 10.99.202.1
+        prefix: 24
+
+nd4x_subif_xe_cleanup:
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.200"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.201"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.202"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.203"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.204"
+
+nd4x_override_reserved_xe_pairs:
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.200"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.201"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.202"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.203"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.204"
+
+nd4x_override_intended_xe_pairs:
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.200"
+  - switch_ip: "{{ test_xe_switch_ip }}"
+    interface_name: "{{ xe_parent }}.201"

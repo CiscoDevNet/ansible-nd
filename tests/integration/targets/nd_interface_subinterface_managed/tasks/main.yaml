@@ -14,10 +14,11 @@
 #   nd_test_xe_fabric_name=<Catalyst fabric, defaults to nd_test_fabric_name>
 #   nd_test_xe_switch_ip=<Catalyst leaf switch IP; unset skips xe.yaml>
 #   nd_test_xe_parent_interface=<Catalyst front-panel port used as the routed parent, default GigabitEthernet1/0/2>
+#   nd_subinterface_managed_xe_tests_enabled=true (required to opt in to either ND 4.x harness XE scenario)
 #
 # The parent port must be a plain host port (not a port-channel member or a fabric link); xe.yaml converts it to a routed port for
 # the duration of the run and xe_teardown.yaml resets it to the fabric-default trunk host afterwards, also when the run fails.
-# Sub-ids 100-103 on it must be free.
+# Sub-ids 100-103 on it must be free for the legacy suite; harness IOS-XE scenarios reserve .200-.204.
 #
 # --- Optional test variables ---
 #
@@ -66,5 +67,176 @@
       always:
         - name: Remove the IOS-XE test subinterfaces and reset the parent port
           ansible.builtin.include_tasks: xe_teardown.yaml
+
+    # Harness scenarios are opt-in. Their task tags do not select or alter the legacy suite above.
+    - name: Run ND 4.x harness preflight discovery
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_overridden
+            - nd4x_demo_override_scope
+            - nd4x_demo_negative
+            - nd4x_demo_xe
+            - nd4x_demo_xe_overridden
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_overridden
+        - nd4x_demo_override_scope
+        - nd4x_demo_negative
+        - nd4x_demo_xe
+        - nd4x_demo_xe_overridden
+
+    - name: Run merged state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_merged
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_merged
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run replaced state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run deleted state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run overridden state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_overridden
+            - nd4x_demo_override_scope
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_overridden
+        - nd4x_demo_override_scope
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run negative validation tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run IOS-XE tests using the ND 4.x harness (requires explicit opt-in and nd_test_xe_switch_ip)
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd4x_subinterface_managed_xe_tests_enabled | bool
+        - nd_test_xe_switch_ip is defined
+        - nd_test_xe_switch_ip | length > 0
+      block:
+        - name: Run the IOS-XE harness scenario
+          ansible.builtin.include_tasks:
+            file: nd4x_demo_xe.yaml
+            apply:
+              tags:
+                - never
+                - nd4x_demo
+                - nd4x_demo_xe
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_xe
+      always:
+        - name: Remove the IOS-XE harness subinterfaces and reset the parent port
+          ansible.builtin.include_tasks:
+            file: nd4x_demo_xe_teardown.yaml
+            apply:
+              tags:
+                - never
+                - nd4x_demo
+                - nd4x_demo_xe
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_xe
+          when: nd4x_xe_setup_started | default(false) | bool
+
+    - name: Run IOS-XE overridden state tests using the ND 4.x harness (requires explicit opt-in and nd_test_xe_switch_ip)
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd4x_subinterface_managed_xe_tests_enabled | bool
+        - nd4x_subinterface_managed_destructive_tests_enabled | bool
+        - nd_test_xe_switch_ip is defined
+        - nd_test_xe_switch_ip | length > 0
+      block:
+        - name: Run the IOS-XE overridden harness scenario
+          ansible.builtin.include_tasks:
+            file: nd4x_demo_xe_overridden.yaml
+            apply:
+              tags:
+                - never
+                - nd4x_demo
+                - nd4x_demo_xe_overridden
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_xe_overridden
+      always:
+        - name: Remove IOS-XE overridden harness resources and restore the parent port
+          ansible.builtin.include_tasks:
+            file: nd4x_demo_xe_teardown.yaml
+            apply:
+              tags:
+                - never
+                - nd4x_demo
+                - nd4x_demo_xe_overridden
+          tags:
+            - never
+            - nd4x_demo
+            - nd4x_demo_xe_overridden
+          when: nd4x_xe_override_setup_started | default(false) | bool
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
