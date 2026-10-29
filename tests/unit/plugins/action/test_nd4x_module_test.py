@@ -446,6 +446,25 @@ def test_prepare_check_mode_queries_prepares_pagination(action_plugin):
     assert action_plugin._pagination_path(prepared[0]["path"], 100, 200) == "/api/v1/test?clusterName=CLUSTER&max=100&offset=200"
 
 
+def test_unpaginated_snapshot_rejects_response_with_remaining_records(action_plugin):
+    query = check_mode_query(unordered_paths=["/interfaces"])
+    interface_page = [{"interfaceName": "Ethernet1/%s" % index} for index in range(500)]
+    action_plugin._execute_module.return_value = snapshot_response(
+        {
+            "interfaces": interface_page,
+            "meta": {"counts": {"total": 501, "remaining": 1}},
+        }
+    )
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="reports 1 remaining records but pagination is not configured",
+    ):
+        action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    action_plugin._execute_module.assert_called_once()
+
+
 def test_paginated_snapshot_aggregates_all_pages(action_plugin):
     query = {
         "name": "Snapshot route maps",
@@ -467,6 +486,46 @@ def test_paginated_snapshot_aggregates_all_pages(action_plugin):
         "/api/v1/manage/fabrics/FAB/routeMaps?max=2&offset=2",
     ]
     assert snapshots[0]["snapshot"] == {"routeMaps": [{"name": "RM1"}, {"name": "RM2"}, {"name": "RM3"}]}
+
+
+def test_paginated_check_mode_snapshot_detects_change_on_second_page(action_plugin):
+    query = check_mode_query(unordered_paths=["/interfaces"])
+    query["pagination"] = {
+        "page_size": 500,
+        "collection_key": "interfaces",
+        "max_pages": 2,
+    }
+    first_page = [
+        {"interfaceName": "Ethernet1/%s" % index, "description": "unchanged"}
+        for index in range(1, 501)
+    ]
+    second_page_before = [{"interfaceName": "Ethernet1/501", "description": "before"}]
+    second_page_after = [{"interfaceName": "Ethernet1/501", "description": "after"}]
+
+    def interface_page(rows, remaining):
+        return snapshot_response(
+            {
+                "interfaces": rows,
+                "meta": {"counts": {"total": 501, "remaining": remaining}},
+            }
+        )
+
+    action_plugin._task.args["check_mode_queries"] = [query]
+    action_plugin._execute_module.side_effect = [
+        interface_page(first_page, 1),
+        interface_page(second_page_before, 0),
+        {"changed": True, "failed": False},
+        interface_page(first_page, 1),
+        interface_page(second_page_after, 0),
+    ]
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="Controller state changed during predictive check mode",
+    ):
+        run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 5
 
 
 def test_paginated_snapshot_fetches_empty_sentinel_after_full_page(action_plugin):

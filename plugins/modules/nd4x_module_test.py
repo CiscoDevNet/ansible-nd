@@ -100,6 +100,9 @@ options:
         when C(current.<collection_key>) is missing or is not a list. It also
         fails if C(max_pages) is reached without receiving a final page shorter
         than C(page_size); the snapshot is never silently truncated.
+      - Without C(pagination), the query fails if response metadata reports
+        that additional records remain, rather than treating a partial page as
+        a complete snapshot.
       - C(unordered_paths) contains JSON pointers relative to the response in
         C(current). Only lists at the named paths are treated as unordered;
         C(*) matches one path component, including a list index. An empty
