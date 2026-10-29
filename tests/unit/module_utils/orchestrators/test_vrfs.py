@@ -507,13 +507,11 @@ def test_standalone_vrf_state_machine_repeated_sparse_definition_is_noop(state):
     sm.proposed = NDConfigCollection(VrfDataModel, [proposed])
     sm.sent = NDConfigCollection(VrfDataModel)
     sm.removed = NDConfigCollection(VrfDataModel)
-    sm.model_orchestrator = SimpleNamespace(
-        preflight_create=lambda _items: None,
-        preflight=lambda _items: None,
-        update=lambda item: writes.append(("update", item)),
-        create_bulk=lambda items: writes.append(("create", items)),
-        delete_bulk=lambda items: writes.append(("delete", items)),
+    sm.model_orchestrator = NDVrfOrchestrator(
+        rest_send=RestSend({"state": state}),
+        strategy=StandaloneVrfStrategy(fabric_name="AK-VXLAN"),
     )
+    object.__setattr__(sm.model_orchestrator, "_request", lambda **kwargs: writes.append(kwargs) or {})
     sm.output = SimpleNamespace(assign=lambda **_kwargs: None)
     sm.check_mode = False
     sm.ignore_errors = False
