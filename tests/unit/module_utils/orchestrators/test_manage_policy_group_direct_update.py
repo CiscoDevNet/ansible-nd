@@ -139,7 +139,7 @@ def test_real_changes_preserve_put_sequence_and_deploy_union(change, deploy):
         kwargs["description"] = "new description"
     model = _desired(**kwargs)
     split = change == "both"
-    responses = [_resp({"policyId": POLICY_ID}, method="PUT") for _ in range(2 if split else 1)]
+    responses = [_resp({"policyId": POLICY_ID}, method="PUT") for _response_index in range(2 if split else 1)]
     if deploy:
         responses.append(_resp({"switchIds": []}, method="POST"))
     rest_send = _build_rest_send(responses)
@@ -184,7 +184,7 @@ def test_omitted_direct_fields_keep_existing_payload_meaning(missing_field):
     else:
         assert "templateInputs" not in desired
     expected = PolicyGroupOrchestrator._build_update_payloads(current, desired)
-    responses = [_resp({"policyId": POLICY_ID}, method="PUT") for _ in expected]
+    responses = [_resp({"policyId": POLICY_ID}, method="PUT") for _payload in expected]
     rest_send = _build_rest_send(responses)
     results = _make_results()
     instance = _make_orchestrator(rest_send, deploy=False, results=results)
@@ -350,7 +350,7 @@ def test_direct_real_changes_keep_requests_and_report_planned_changes(change, de
     expected = PolicyGroupOrchestrator._build_update_payloads(current, model.to_payload())
     responses = []
     if not check_mode:
-        responses.extend(_resp({"policyId": POLICY_ID}, method="PUT") for _ in expected)
+        responses.extend(_resp({"policyId": POLICY_ID}, method="PUT") for _payload in expected)
         if deploy:
             responses.append(_resp({"switchIds": []}, method="POST"))
     rest_send = _build_rest_send(responses)
@@ -409,7 +409,7 @@ def test_direct_omitted_fields_are_compared_with_existing_effective_payload(omit
     del config[omitted]
     model = PolicyGroupCreate.from_config(config)
     expected = PolicyGroupOrchestrator._build_update_payloads(_current(), model.to_payload())
-    rest_send = _build_rest_send([_resp({"policyId": POLICY_ID}, method="PUT") for _ in expected])
+    rest_send = _build_rest_send([_resp({"policyId": POLICY_ID}, method="PUT") for _payload in expected])
     results = _make_results()
     instance = _make_orchestrator(rest_send, deploy=False, results=results)
     instance._raw_cache = [_current()]
@@ -742,7 +742,7 @@ def test_direct_freeform_real_changes_keep_existing_wire_payloads(overrides, che
     before_current = deepcopy(current)
     before_model = deepcopy(model.model_dump())
     expected = PolicyGroupOrchestrator._build_update_payloads(current, model.to_payload())
-    responses = [] if check_mode else [_resp({"policyId": POLICY_ID}, method="PUT") for _ in expected]
+    responses = [] if check_mode else [_resp({"policyId": POLICY_ID}, method="PUT") for _payload in expected]
     results = _make_results()
     instance = _make_orchestrator(_build_rest_send(responses), deploy=False, results=results)
     instance._raw_cache = [current]

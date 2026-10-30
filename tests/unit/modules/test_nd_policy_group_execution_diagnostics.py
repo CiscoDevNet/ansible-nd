@@ -17,6 +17,9 @@ from ansible_collections.cisco.nd.tests.unit.modules.test_nd_policy_group_direct
     invoke as invoke,
 )
 
+# Re-export the shared pytest fixture.
+__all__ = ["invoke"]
+
 
 class DiagnosticController(Controller):
     def __init__(self, records, *, error_detail="diagnostic controller rejection"):
