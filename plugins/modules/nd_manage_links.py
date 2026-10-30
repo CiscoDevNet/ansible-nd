@@ -139,6 +139,18 @@ options:
             - V(preprovision) pre-provisions a link before the switches are online.
             - V(userDefined) uses a custom template named by O(config.config_data.template_name).
             - V(vpcPeerKeepalive) is a vPC peer keepalive (heartbeat) link.
+            - V(ipfmNumbered) is an intra-fabric numbered IP Fabric for Media link.
+            - V(ospfVrfLite) is an OSPF VRF Lite external connection.
+            - V(csrMultisiteUnderlay) is a CSR multisite underlay connection.
+            - V(csrEvpnMultisiteOverlay) is a CSR EVPN multisite overlay connection.
+            - V(csrBgpOverIpsec) is an on-premises to cloud CSR BGP over IPsec connection.
+            - V(vxlanAciMultisiteUnderlay) is a VXLAN to ACI multisite underlay connection.
+            - V(vxlanAciEvpnOverlay) is a VXLAN to ACI EVPN overlay connection.
+            - V(routedFabric) is a routed-fabric external eBGP handoff.
+            - V(multisiteUnderlayInterFabricGroup) is a multisite underlay across fabric groups (ND 4.3 or later).
+            - V(serviceTrunk) is a service-device trunk attachment (ND 4.3 or later).
+            - V(servicePoTrunk) is a service-device port-channel trunk attachment (ND 4.3 or later).
+            - V(serviceVpcTrunk) is a service-device vPC trunk attachment with no template inputs (ND 4.3 or later).
             type: str
             choices:
             - numbered
@@ -155,6 +167,18 @@ options:
             - preprovision
             - userDefined
             - vpcPeerKeepalive
+            - ipfmNumbered
+            - ospfVrfLite
+            - csrMultisiteUnderlay
+            - csrEvpnMultisiteOverlay
+            - csrBgpOverIpsec
+            - vxlanAciMultisiteUnderlay
+            - vxlanAciEvpnOverlay
+            - routedFabric
+            - multisiteUnderlayInterFabricGroup
+            - serviceTrunk
+            - servicePoTrunk
+            - serviceVpcTrunk
           template_name:
             description:
             - The name of the link template.
@@ -168,15 +192,24 @@ options:
             - The accepted keys depend on O(config.config_data.policy_type). Keys that do not belong to the selected policy type are rejected.
             - Omitted fields are sent with ND's documented default (for example C(mtu) 9216, C(interface_admin_state) C(true), C(fec) C(auto)) or,
               when no documented default exists, a typed empty value (C("") / C(0) / C(false)), including secrets. See the note on secret fields below.
-            - This module can create and update the policy types listed below. Other valid ND policy types (for example C(ipfmNumbered) or
-              C(routedFabric)) are still read back by O(state=gathered) and preserved as opaque records; the module warns about them and never
-              modifies or deletes them.
+            - The new IPFM, OSPF, CSR, ACI and routed policies support ND 4.2 and 4.3. Cross-fabric-group and service policies require ND 4.3 or later.
+            - The module reads the controller version through the connection and rejects unsupported release-specific input in normal and check mode.
+              When the version is unknown, only fields common to both API versions are accepted; ND 4.3-only policies require a known version.
+            - ACI underlay interface configuration fields apply only to ND 4.2; its C(speed) field applies to ND 4.3 or later.
+              ACI overlay interface and MACsec/QKD fields apply only to ND 4.2; its multihop and route-server fields apply to ND 4.3 or later.
+            - Constrained optional fields without a valid default, such as service C(native_vlan), C(description) and C(speed), are omitted when unset.
+            - SONiC policies C(sonicNumbered) and C(sonicRoutedFabric) are not writable. Unmodeled policies remain opaque in gathered output.
             - 'In the lists below, a key shown as C(name) (int) or C(name) (bool) takes that type; all other keys are strings.'
-            - 'Secret fields - C(ebgp_password), C(default_vrf_ebgp_neighbor_password), C(macsec_primary_key_string) and C(macsec_fallback_key_string)
+            - 'Secret fields - C(ebgp_password), C(ebgp_neighbor_password), C(ip_sec_shared_key), C(default_vrf_ebgp_neighbor_password),
+              C(macsec_primary_key_string) and C(macsec_fallback_key_string)
               are sent to the controller but their values are masked as C(VALUE_SPECIFIED_IN_NO_LOG_PARAMETER) in this module''s output and excluded
               from rendered diffs. Nexus Dashboard does not return secret values on read, so explicitly supplying a secret is treated as update
               intent. Omit it for an idempotent reapplication; re-supply it when updating a link for another reason, otherwise it is written empty.
               The module registers supplied values for no-log masking before it prepares or validates link identities.'
+            - 'CSR IPsec requires C(ip_sec_shared_key) and its peering, tunnel and domain/FQDN inputs on writes. Gathered output omits the secret;
+              supply it again before reapplying that policy.'
+            - 'CSR overlay uses C(ebgp_multihop) 5 by default with range 2-255; CSR IPsec uses nonnegative 32-bit loopback/tunnel identifiers.
+              These common constraints satisfy both API versions, including the stricter ND 4.3 contract.'
             - 'Common interface fields, available on V(numbered), V(unnumbered) and V(ipv6LinkLocal) - C(interface_admin_state) (bool), C(mtu) (int),
               C(speed), C(fec), C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config)
               and C(macsec) (bool).'
@@ -214,6 +247,52 @@ options:
               and the interface description fields.'
             - 'V(userDefined) - an open set of fields validated by ND; C(allowed_vlans) and C(mtu) (int) are recognized,
               and O(config.config_data.template_name) must be set.'
+            - 'V(ipfmNumbered) - C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config),
+              C(interface_admin_state) (bool), C(interface_vrf), C(src_ip), C(dst_ip), C(speed), C(bandwidth_capacity_percentage) (int),
+              C(mtu) (int).'
+            - 'V(ospfVrfLite) - C(inherit_ttag_fabric_setting) (bool), C(qkd) (bool), C(ignore_certificate) (bool), C(src_kme_server_ip),
+              C(dst_kme_server_ip), C(src_kme_server_port_number) (int), C(dst_kme_server_port_number) (int), C(src_macsec_key_chain_prefix),
+              C(dst_macsec_key_chain_prefix), C(src_qkd_profile_name), C(dst_qkd_profile_name), C(src_trustpoint_label),
+              C(dst_trustpoint_label), C(macsec) (bool), C(macsec_cipher_suite), C(macsec_primary_cryptographic_algorithm),
+              C(macsec_primary_key_string), C(macsec_fallback_cryptographic_algorithm), C(macsec_fallback_key_string),
+              C(override_fabric_macsec) (bool), C(src_interface_description), C(dst_interface_description), C(src_interface_config),
+              C(dst_interface_config), C(src_ip_address_mask), C(dst_ip_address), C(src_ipv6_address_mask), C(dst_ipv6_address), C(link_mtu)
+              (int), C(auto_gen_config_peer) (bool), C(template_config_gen_peer).'
+            - 'V(csrMultisiteUnderlay) - C(src_interface_description), C(dst_interface_description), C(src_interface_config),
+              C(dst_interface_config), C(src_ip_address_mask), C(dst_ip), C(enable_ebgp_password) (bool), C(ebgp_neighbor_password).'
+            - 'V(csrEvpnMultisiteOverlay) - C(enable_ebgp_password) (bool), C(ebgp_neighbor_password), C(ebgp_multihop) (int).'
+            - 'V(csrBgpOverIpsec) - C(ip_sec_shared_key), C(loopback_id) (int), C(on_prem_device_ip_bgp_peering), C(cloud_csr_ip_bgp_peering),
+              C(tunnel_id) (int), C(on_prem_device_tunnel_ip), C(cloud_csr_tunnel_ip), C(on_prem_device_remote_domain),
+              C(on_prem_device_fqdn), C(cloud_csr_remote_domain), C(cloud_csr_fqdn).'
+            - 'V(vxlanAciMultisiteUnderlay) - C(src_ebgp_asn), C(dst_ebgp_asn), C(src_ip_address_mask), C(dst_ip_address),
+              C(src_ipv6_address_mask), C(dst_ipv6_address), C(src_interface_description), C(dst_interface_description),
+              C(src_interface_config) (ND 4.2 only), C(dst_interface_config) (ND 4.2 only), C(speed) (ND 4.3 or later).'
+            - 'V(vxlanAciEvpnOverlay) - C(src_ebgp_asn), C(dst_ebgp_asn), C(src_ip_address), C(dst_ip_address), C(src_interface_description)
+              (ND 4.2 only), C(dst_interface_description) (ND 4.2 only), C(src_interface_config) (ND 4.2 only), C(dst_interface_config) (ND
+              4.2 only), C(macsec) (bool) (ND 4.2 only), C(src_macsec_key_chain_prefix) (ND 4.2 only), C(dst_macsec_key_chain_prefix) (ND 4.2
+              only), C(qkd) (bool) (ND 4.2 only), C(override_fabric_macsec) (bool) (ND 4.2 only), C(macsec_cipher_suite) (ND 4.2 only),
+              C(macsec_primary_key_string) (ND 4.2 only), C(macsec_primary_cryptographic_algorithm) (ND 4.2 only),
+              C(macsec_fallback_key_string) (ND 4.2 only), C(macsec_fallback_cryptographic_algorithm) (ND 4.2 only), C(src_qkd_profile_name)
+              (ND 4.2 only), C(src_kme_server_ip) (ND 4.2 only), C(src_kme_server_port_number) (int) (ND 4.2 only), C(src_trustpoint_label)
+              (ND 4.2 only), C(dst_qkd_profile_name) (ND 4.2 only), C(dst_kme_server_ip) (ND 4.2 only), C(dst_kme_server_port_number) (int)
+              (ND 4.2 only), C(dst_trustpoint_label) (ND 4.2 only), C(ignore_certificate) (bool) (ND 4.2 only), C(ebgp_multihop) (int) (ND 4.3
+              or later), C(redistribute_route_server) (bool) (ND 4.3 or later), C(route_server_routing_tag) (ND 4.3 or later).'
+            - 'V(routedFabric) - C(src_interface_description), C(dst_interface_description), C(src_interface_config), C(dst_interface_config),
+              C(src_ip_address_mask), C(dst_ip_address), C(src_ipv6_address_mask), C(dst_ipv6_address), C(src_ebgp_asn), C(dst_ebgp_asn),
+              C(ebgp_maximum_paths) (int), C(link_mtu) (int), C(default_route_configuration) (bool).'
+            - 'V(multisiteUnderlayInterFabricGroup) - C(inherit_ttag_fabric_setting) (bool), C(src_interface_description),
+              C(dst_interface_description), C(src_interface_config), C(dst_interface_config), C(src_ip_address_mask), C(dst_ip_address),
+              C(src_ipv6_address_mask), C(dst_ipv6_address), C(src_ebgp_asn), C(dst_ebgp_asn), C(ebgp_maximum_paths) (int), C(routing_tag),
+              C(link_mtu) (int), C(speed), C(dci_tracking_direction), C(enable_ebgp_password) (bool), C(ebgp_password),
+              C(ebgp_auth_key_encryption_type), C(ebgp_log_neighbor_change) (bool), C(ebgp_bfd) (bool), C(ebgp_send_comboth) (bool).'
+            - 'V(serviceTrunk) - C(admin_state) (bool), C(allowed_vlans), C(bpdu_guard), C(cdp) (bool), C(mtu), C(native_vlan) (int),
+              C(netflow) (bool), C(netflow_monitor), C(netflow_sampler), C(orphan_port) (bool), C(pfc) (bool), C(duplex_mode),
+              C(port_type_edge_trunk) (bool), C(qos) (bool), C(qos_policy), C(queuing_policy), C(speed), C(description), C(extra_config).'
+            - 'V(servicePoTrunk) - C(admin_state) (bool), C(allowed_vlans), C(bpdu_guard), C(cdp) (bool), C(mtu), C(native_vlan) (int),
+              C(netflow) (bool), C(netflow_monitor), C(netflow_sampler), C(orphan_port) (bool), C(pfc) (bool), C(duplex_mode),
+              C(port_type_edge_trunk) (bool), C(qos) (bool), C(qos_policy), C(queuing_policy), C(speed), C(description), C(extra_config),
+              C(port_channel_mode), C(copy_description) (bool), C(lacp_rate), C(lacp_suspend) (bool), C(lacp_port_priority) (int).'
+            - 'V(serviceVpcTrunk) - no template inputs; omit O(config.config_data.template_inputs).'
             - 'eBGP password fields - C(enable_ebgp_password) (bool), C(ebgp_password), C(ebgp_auth_key_encryption_type)
               and C(inherit_ebgp_password_msd_settings) (bool).'
             - 'Full MACsec fields - C(macsec) (bool), C(macsec_cipher_suite), C(macsec_primary_cryptographic_algorithm), C(macsec_primary_key_string),
@@ -586,6 +665,228 @@ EXAMPLES = r"""
         src_interface_name: Ethernet1/12
         dst_interface_name: Ethernet1/12
     state: deleted
+
+- name: Create a ipfmNumbered link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: ansible-fab
+      src_switch_name: leaf-1
+      dst_switch_name: leaf-2
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: ipfmNumbered
+        template_inputs:
+          src_ip: 192.0.2.1
+          dst_ip: 192.0.2.2
+          interface_vrf: default
+          speed: auto
+    state: merged
+- name: Create a ospfVrfLite link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: ospfVrfLite
+        template_inputs:
+          src_ip_address_mask: 192.0.2.1/30
+          dst_ip_address: 192.0.2.2
+          link_mtu: 9216
+    state: merged
+- name: Create a csrMultisiteUnderlay link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: csrMultisiteUnderlay
+        template_inputs:
+          src_ip_address_mask: 192.0.2.1/30
+          dst_ip: 192.0.2.2
+    state: merged
+- name: Create a csrEvpnMultisiteOverlay link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: csrEvpnMultisiteOverlay
+        template_inputs:
+          ebgp_multihop: 5
+    state: merged
+- name: Create a csrBgpOverIpsec link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: csrBgpOverIpsec
+        template_inputs:
+          ip_sec_shared_key: '{{ link_ipsec_shared_key }}'
+          on_prem_device_ip_bgp_peering: 192.0.2.1
+          cloud_csr_ip_bgp_peering: 192.0.2.2
+          on_prem_device_tunnel_ip: 198.51.100.1
+          cloud_csr_tunnel_ip: 198.51.100.2
+          on_prem_device_remote_domain: cloud.example.test
+          on_prem_device_fqdn: border.example.test
+          cloud_csr_remote_domain: onprem.example.test
+          cloud_csr_fqdn: csr.cloud.example.test
+    state: merged
+- name: Create a vxlanAciMultisiteUnderlay link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: vxlanAciMultisiteUnderlay
+        template_inputs:
+          src_ebgp_asn: '65001'
+          dst_ebgp_asn: '65002'
+          src_ip_address_mask: 192.0.2.1/30
+          dst_ip_address: 192.0.2.2
+    state: merged
+- name: Create a vxlanAciEvpnOverlay link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: vxlanAciEvpnOverlay
+        template_inputs:
+          src_ebgp_asn: '65001'
+          dst_ebgp_asn: '65002'
+          src_ip_address: 192.0.2.1
+          dst_ip_address: 192.0.2.2
+    state: merged
+- name: Create a routedFabric link
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: routedFabric
+        template_inputs:
+          src_ebgp_asn: '65001'
+          dst_ebgp_asn: '65002'
+          src_ip_address_mask: 192.0.2.1/30
+          dst_ip_address: 192.0.2.2
+    state: merged
+- name: Create a multisiteUnderlayInterFabricGroup link (ND 4.3 or later)
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: multisiteUnderlayInterFabricGroup
+        template_inputs:
+          src_ebgp_asn: '65001'
+          dst_ebgp_asn: '65002'
+          dci_tracking_direction: source
+          speed: auto
+    state: merged
+- name: Create a serviceTrunk link (ND 4.3 or later)
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: Ethernet1/10
+      dst_interface_name: Ethernet1/10
+      config_data:
+        policy_type: serviceTrunk
+        template_inputs:
+          allowed_vlans: 100-110
+          native_vlan: 100
+          description: service trunk
+          speed: auto
+    state: merged
+- name: Create a servicePoTrunk link (ND 4.3 or later)
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: port-channel10
+      dst_interface_name: port-channel10
+      config_data:
+        policy_type: servicePoTrunk
+        template_inputs:
+          allowed_vlans: 100-110
+          port_channel_mode: active
+          lacp_rate: normal
+    state: merged
+- name: Create a serviceVpcTrunk link (ND 4.3 or later)
+  cisco.nd.nd_manage_links:
+    fabric_name: ansible-fab
+    link_scope: manage
+    config:
+    - src_fabric_name: ansible-fab
+      dst_fabric_name: peer-fab
+      src_switch_name: leaf-1
+      dst_switch_name: peer-1
+      src_interface_name: port-channel10
+      dst_interface_name: port-channel10
+      config_data:
+        policy_type: serviceVpcTrunk
+    state: merged
 """
 
 RETURN = r"""
