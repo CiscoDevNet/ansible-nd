@@ -28,7 +28,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import VrfChildConfigModel, VrfConfigModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import VrfType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import VrfType, VXLAN_VRF_TYPES
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import NDVrfOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
@@ -329,6 +329,9 @@ class VrfWorkflowCoordinator:
         if isinstance(mode, bool):
             proposed.fabric_data = {**(proposed.fabric_data or {}), "l3VniWithoutVlan": mode}
             entry["l3vni_wo_vlan"] = mode
+            if mode and isinstance(proposed.core_data, dict):
+                for field in ("vrfVlanName", "vrfInterfaceDescription", "mtu", "ipv6LinkLocal"):
+                    proposed.core_data.pop(field, None)
 
     @staticmethod
     def _resolve_parent_vrf_intent(sm: NDStateMachine, entries: list[dict], state: str, strategy: BaseVrfStrategy) -> None:
@@ -343,7 +346,7 @@ class VrfWorkflowCoordinator:
                 proposed.vlan_id = current.vlan_id
             if "v6_redist_direct_rmap" in entry:
                 continue
-            if proposed is None or proposed.vrf_type not in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+            if proposed is None or proposed.vrf_type not in VXLAN_VRF_TYPES:
                 continue
             if state == "merged" and current is not None:
                 continue
@@ -367,7 +370,7 @@ class VrfWorkflowCoordinator:
                     updating=current is not None and sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "changed",
                 )
                 continue
-            if proposed.vrf_type not in (VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+            if proposed.vrf_type not in VXLAN_VRF_TYPES:
                 continue
 
             self._resolve_l3vni_mode(proposed, current, entry, fabric_default)
@@ -429,7 +432,7 @@ class VrfWorkflowCoordinator:
                 sm.proposed.replace(proposed)
             if proposed.vrf_id is None and current is not None and current.vrf_id is not None:
                 proposed.vrf_id = current.vrf_id
-            if proposed.vrf_type in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+            if proposed.vrf_type in VXLAN_VRF_TYPES:
                 cls._resolve_l3vni_mode(proposed, current, entry, fabric_default)
             effective = current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
             public = effective.to_gathered_config()

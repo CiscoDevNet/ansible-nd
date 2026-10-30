@@ -743,7 +743,13 @@ def test_vrf_l3vni_workflow_create_update_and_repeat(*, state, check_mode, exist
         return result
 
     first = run()
-    changed = existing_mode is None or existing_mode is not expected or any(key in fields for key in ("vlan_id", "vrf_vlan_name", "vrf_intf_desc"))
+    # This minimal fixture omits core defaults that an authoritative definition explicitly applies.
+    changed = (
+        state != "merged"
+        or existing_mode is None
+        or existing_mode is not expected
+        or any(key in fields for key in ("vlan_id", "vrf_vlan_name", "vrf_intf_desc"))
+    )
     assert first["changed"] is changed
     assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
     assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(changed and not check_mode)

@@ -945,9 +945,11 @@ def _transform(
     is_child=False,
     is_parent=False,
     is_multicluster=False,
+    state="merged",
 ):
     """Call the payload transformer without constructing the full orchestrator."""
     instance = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(instance, "rest_send", RestSend({"state": state}))
     object.__setattr__(
         instance,
         "strategy",
@@ -1557,7 +1559,8 @@ def test_vrf_rd_id_and_vpn_route_leaking_map_and_gather():
     assert gathered["enable_vrf_vpn_route_leaking"] is True
 
 
-def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_payload():
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_payload(state):
     """
     # Summary
 
@@ -1577,6 +1580,7 @@ def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_paylo
         fabric_data={"managementType": "vxlan"},
         is_parent=True,
         is_multicluster=True,
+        state=state,
     )
     payload = VrfDataModel.from_config(transformed).to_payload()
 
@@ -1596,6 +1600,8 @@ def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_paylo
     assert "vlanId" not in mcfg_payload
     assert "vrfTemplateConfig" not in mcfg_payload
     assert mcfg_payload["fabricData"] == {}
+    if state == "merged":
+        assert "coreData" not in payload
     assert mcfg_payload["coreData"]["vrfVlanName"] == ""
     assert mcfg_payload["coreData"]["vrfInterfaceDescription"] == ""
     assert mcfg_payload["coreData"]["vrfDescription"] == ""

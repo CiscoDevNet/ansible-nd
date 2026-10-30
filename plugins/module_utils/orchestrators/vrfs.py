@@ -339,44 +339,28 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if vrf_type == VrfType.USER_DEFINED.value:
             return transformed
 
-        core_data = VxlanCoreData(
-            vrf_vlan_name=self._value(config, "vrf_vlan_name"),
-            vrf_interface_description=self._value(
-                config,
-                "vrf_intf_desc",
-            ),
-            vrf_description=self._value(config, "vrf_description"),
-            mtu=(None if config.get("l3vni_wo_vlan") else self._value(config, "vrf_int_mtu", default=9216)),
-            routing_tag=self._value(
-                config,
-                "loopback_route_tag",
-                default=12345,
-            ),
-            vrf_route_map=self._value(
-                config,
-                "redist_direct_rmap",
-                default="FABRIC-RMAP-REDIST-SUBNET",
-            ),
-            v6_vrf_route_map=self._value(
-                config,
-                "v6_redist_direct_rmap",
-            ),
-            max_bgp_paths=self._value(config, "max_bgp_paths", default=1),
-            max_ibgp_paths=self._value(config, "max_ibgp_paths", default=2),
-            ipv6_link_local=(None if config.get("l3vni_wo_vlan") else self._value(config, "ipv6_linklocal_enable", default=True)),
-            route_distinguisher_id=self._value(config, "route_distinguisher_id"),
-            disable_rt_auto=self._value(config, "disable_rt_auto", default=False),
-            route_target_import=self._value(config, "import_vpn_rt"),
-            route_target_export=self._value(config, "export_vpn_rt"),
-            evpn_route_target_import=self._value(
-                config,
-                "import_evpn_rt",
-            ),
-            evpn_route_target_export=self._value(
-                config,
-                "export_evpn_rt",
-            ),
-        )
+        core_values = {
+            "vrf_vlan_name": self._value(config, "vrf_vlan_name"),
+            "vrf_interface_description": self._value(config, "vrf_intf_desc"),
+            "vrf_description": self._value(config, "vrf_description"),
+            "mtu": self._value(config, "vrf_int_mtu"),
+            "routing_tag": self._value(config, "loopback_route_tag"),
+            "vrf_route_map": self._value(config, "redist_direct_rmap"),
+            "v6_vrf_route_map": self._value(config, "v6_redist_direct_rmap"),
+            "max_bgp_paths": self._value(config, "max_bgp_paths"),
+            "max_ibgp_paths": self._value(config, "max_ibgp_paths"),
+            "ipv6_link_local": self._value(config, "ipv6_linklocal_enable"),
+            "route_distinguisher_id": self._value(config, "route_distinguisher_id"),
+            "disable_rt_auto": self._value(config, "disable_rt_auto"),
+            "route_target_import": self._value(config, "import_vpn_rt"),
+            "route_target_export": self._value(config, "export_vpn_rt"),
+            "evpn_route_target_import": self._value(config, "import_evpn_rt"),
+            "evpn_route_target_export": self._value(config, "export_evpn_rt"),
+        }
+        core_values = {key: value for key, value in core_values.items() if value is not None}
+        if config.get("l3vni_wo_vlan"):
+            core_values.update(mtu=None, ipv6_link_local=None)
+        core_data = VxlanCoreData(**core_values)
 
         trm_data = TrmData(
             ipv4_trm=self._value(config, "trm_enable", default=False),
@@ -428,27 +412,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         )
 
         is_multicluster = getattr(self.strategy, "is_multicluster", False)
-        core_payload = core_data.to_payload()
+        core_payload = core_data.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged")
         fabric_payload = fabric_data.to_payload()
         if not is_parent:
-            core_sources = {
-                "vrfVlanName": "vrf_vlan_name",
-                "vrfInterfaceDescription": "vrf_intf_desc",
-                "vrfDescription": "vrf_description",
-                "mtu": "vrf_int_mtu",
-                "routingTag": "loopback_route_tag",
-                "vrfRouteMap": "redist_direct_rmap",
-                "v6VrfRouteMap": "v6_redist_direct_rmap",
-                "maxBgpPaths": "max_bgp_paths",
-                "maxIbgpPaths": "max_ibgp_paths",
-                "ipv6LinkLocal": "ipv6_linklocal_enable",
-                "routeDistinguisherId": "route_distinguisher_id",
-                "disableRtAuto": "disable_rt_auto",
-                "routeTargetImport": "import_vpn_rt",
-                "routeTargetExport": "export_vpn_rt",
-                "evpnRouteTargetImport": "import_evpn_rt",
-                "evpnRouteTargetExport": "export_evpn_rt",
-            }
             fabric_sources = {
                 "l3VniWithoutVlan": "l3vni_wo_vlan",
                 "bgpBestPathRelax": "bgp_best_path_relax",
@@ -485,7 +451,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 "mvpnRouteTargetImport": "import_mvpn_rt",
                 "mvpnRouteTargetExport": "export_mvpn_rt",
             }
-            core_payload = {key: value for key, value in core_payload.items() if core_sources[key] in config}
             trm_payload = fabric_payload.get("trmData", {})
             trm_payload = {key: value for key, value in trm_payload.items() if trm_sources[key] in config}
             fabric_payload = {key: value for key, value in fabric_payload.items() if key != "trmData" and (fabric_sources[key] in config)}

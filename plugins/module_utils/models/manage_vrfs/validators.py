@@ -262,6 +262,7 @@ class VrfValidators:
         Accepts:
         - ``None``                    → ``None``
         - ``""``                      → ``None``
+        - ``[]``                      → ``[]`` (explicit clear)
         - ``"65001:100"``             → ``["65001:100"]``
         - ``"65001:100, 65001:200"``  → ``["65001:100", "65001:200"]``
         - ``["65001:100", "65001:200"]`` → ``["65001:100", "65001:200"]``
@@ -284,7 +285,7 @@ class VrfValidators:
             validated = VrfValidators.validate_route_target(rt)
             if validated is not None:
                 result.append(validated)
-        return result if result else None
+        return result
 
     # ------------------------------------------------------------------
     # Require wrappers

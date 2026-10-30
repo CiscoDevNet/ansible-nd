@@ -35,6 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums 
     ConfigurationStatus,
     OperationStatus,
     VrfType,
+    VXLAN_VRF_TYPES,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.validators import (
     VrfValidators,
@@ -277,22 +278,22 @@ class VxlanCoreData(NDNestedModel):
         description=("Applicable to IPv4, IPv6 VPN/EVPN/MVPN. RtAuto automatically " "assigns route targets to VPNs"),
     )
     route_target_import: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="routeTargetImport",
         description="List of VPN import route targets",
     )
     route_target_export: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="routeTargetExport",
         description="List of VPN export route targets",
     )
     evpn_route_target_import: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="evpnRouteTargetImport",
         description="List of EVPN import route targets",
     )
     evpn_route_target_export: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="evpnRouteTargetExport",
         description="List of EVPN export route targets",
     )
@@ -641,8 +642,23 @@ class VrfDataModel(NDBaseModel):
         return data
 
     def to_diff_dict(self, **kwargs) -> dict[str, Any]:
-        """Ignore controller-echoed SVI values when L3VNI has no VLAN."""
+        """Compare cleared route targets without expanding sparse intent."""
         data = super().to_diff_dict(**kwargs)
+        if self.vrf_type in VXLAN_VRF_TYPES and not kwargs.get("exclude_unset", False):
+            core = data.get("coreData") or {}
+            data["coreData"] = core
+            for name, field in VxlanCoreData.model_fields.items():
+                if field.default_factory is list:
+                    alias = field.alias or name
+                    if core.get(alias) is None:
+                        core[alias] = field.get_default(call_default_factory=True)
+            fabric = data.get("fabricData") or {}
+            data["fabricData"] = fabric
+            trm = fabric.get("trmData") or {}
+            fabric["trmData"] = trm
+            for key in ("mvpnRouteTargetImport", "mvpnRouteTargetExport"):
+                if trm.get(key) is None:
+                    trm[key] = []
         self.normalize_no_vlan(data)
         return data
 
@@ -671,7 +687,7 @@ class VrfDataModel(NDBaseModel):
             if field_name in merged.model_fields_set and isinstance(current, dict) and isinstance(update, dict):
                 setattr(merged, field_name, self._merge_nested_data(current, update))
         result = super().merge(merged)
-        if self.vrf_type in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value) and isinstance(self.fabric_data, dict):
+        if self.vrf_type in VXLAN_VRF_TYPES and isinstance(self.fabric_data, dict):
             supplied = other.fabric_data if isinstance(other.fabric_data, dict) else {}
             self._prune_inherited_trm(self.fabric_data, supplied)
             if supplied.get("netflow") is False and "netflowMonitor" not in supplied:
@@ -682,7 +698,7 @@ class VrfDataModel(NDBaseModel):
         """Include conditional TRM clears in sparse comparison."""
         if super().merge_would_change(other):
             return True
-        if self.vrf_type not in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+        if self.vrf_type not in VXLAN_VRF_TYPES:
             return False
         supplied = other.fabric_data if isinstance(other.fabric_data, dict) else {}
         trm = supplied.get("trmData") if isinstance(supplied.get("trmData"), dict) else {}
@@ -708,7 +724,7 @@ class VrfDataModel(NDBaseModel):
 
         def drop_inherited(*fields: str) -> None:
             for field in fields:
-                if field not in intent:
+                if field not in intent and trm.get(field) is not False:
                     trm.pop(field, None)
 
         if intent.get("v4RpAbsent") is True:
@@ -731,7 +747,7 @@ class VrfDataModel(NDBaseModel):
 
     def _scrub_reverse_diff_dict(self, data: dict[str, Any]) -> None:
         super()._scrub_reverse_diff_dict(data)
-        if self.vrf_type not in (VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value):
+        if self.vrf_type not in VXLAN_VRF_TYPES:
             return
         core = data.get("coreData")
         if isinstance(core, dict):
@@ -756,7 +772,7 @@ class VrfDataModel(NDBaseModel):
     def _drop_model_defaults(data: dict[str, Any], model_cls: type[NDNestedModel]) -> None:
         for name, field in model_cls.model_fields.items():
             alias = field.alias or name
-            if alias in data and data[alias] == field.default:
+            if alias in data and data[alias] == field.get_default(call_default_factory=True):
                 data.pop(alias)
 
     @classmethod
