@@ -297,7 +297,7 @@ println table
     fold = source.split("def foldStructuredResults(", 1)[1].split("\n}\n", 1)[0]
     assert '"${row.version_id}|${row.module}|${row.run_id}".toString()' in fold
     assert "PHASE_TIMING_RESULTS[key] = row.phase_seconds ?: [:]" in fold
-    assert fold.index("PHASE_TIMING_RESULTS[key]") < fold.index('archiveArtifacts artifacts: "${env.ND_REPORTING_RELATIVE_ROOT}/aggregate.json')
+    assert fold.index("PHASE_TIMING_RESULTS[key]") < fold.index('archiveArtifacts artifacts: skiplistFile')
 
 
 @pytest.mark.parametrize("scenario", ["null_message", "nonzero_exit", "success"])
@@ -317,7 +317,7 @@ script.MODULE_ACTIVITY_RESULTS['planned'] = [module: 'example', result: 'UNKNOWN
     coverage: 'UNKNOWN', counts: [:], case_totals: [:], failure: 'awaiting final result']
 script.metaClass.sh = { Object options -> if (scenario == 'null_message') { throw failure }; return '' }
 script.metaClass.readFile = { Map options -> script.writeReportingJson(
-    [rows: [row], failed: scenario != 'success', reporting_errors: []]) }
+    [rows: [row], failed: scenario != 'success', reporting_errors: [], skiplist_file: 'skipped_tests_build_122.txt']) }
 script.metaClass.archiveArtifacts = { Map options -> }
 def cleanupRan = false
 def caught = null

@@ -89,7 +89,7 @@ script.metaClass.sh = { Object options ->
     if (text.contains(' next ')) {
         calls.add('next'); nextCalls++
         if (errors.next != null) { throw errors.next }
-        return nextCalls == 1 ? '{"done":false,"execution":{"id":"job","files":["fixture-reports/executions/log.txt"],"attempt":1}}' : '{"done":true}'
+        return nextCalls == 1 ? '{"done":false,"execution":{"id":"job","files":["test_output_fabric_ND43_IBGP_nd_fixture.txt"],"attempt":1}}' : '{"done":true}'
     }
     if (text.contains(' ack ')) { calls.add('ack'); if (errors.ack != null) { throw errors.ack }; return '' }
     if (text.contains('reporter-failed')) { calls.add('receipt'); if (errors.receipt != null) { throw errors.receipt }; return '' }

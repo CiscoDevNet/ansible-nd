@@ -674,8 +674,191 @@ def ensure_summary(root, job, closed, timeout):
         return result
 
 
+def public_log_name(job):
+    """Readable flat artifact name; private execution paths remain unchanged."""
+    round_name = token(str(job.get("round_label") or "UNSPECIFIED").upper(), "round")
+    version = token(job["version_id"], "version ID")
+    version = version.removesuffix("_" + round_name) or version
+    name = "test_output_%s_%s_%s_%s.txt" % (
+        token(job["fabric_name"], "fabric"), version, round_name, token(job["module"], "module"))
+    if len(os.fsencode(name)) > 240:
+        raise ValueError("readable log filename exceeds safe limits")
+    return name
+
+
+@contextmanager
+def readable_file(destination, binary=False):
+    """Publish one complete human report atomically; never follow a symlink."""
+    destination = Path(destination)
+    if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+        raise ValueError("unsafe readable artifact destination")
+    descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix="." + destination.name + ".")
+    try:
+        with os.fdopen(descriptor, "wb" if binary else "w", **({} if binary else {"encoding": "utf-8"})) as stream:
+            yield stream
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def readable_header(job):
+    return ("MODULE: %s | ND: %s | ROUND: %s\nFABRIC: %s | SCOPE: %s | BUILD: %s\n" % (
+        job["module"], job.get("nd", ""), job.get("round_label") or "UNSPECIFIED",
+        case_parser.safe_label(job.get("fabric", job["fabric_name"]), 300),
+        case_parser.safe_label(job.get("scope", "Unknown"), 100), job["build"]))
+
+
+def skip_detail(value, condition=False):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    value = case_parser.normal_name(value[:1024])
+    if re.search(r"password|passwd|pwd|token|secret|bearer|authorization|credential|community|username|private.?key|api.?key|auth[_-]?(?:pass|key)|priv[_-]?(?:pass|key)", value, re.I):
+        return "Credential-related skip evidence withheld"
+    if condition or "'" in value or '"' in value:
+        labels = {"all", "merged", "replaced", "overridden", "deleted", "gathered", "vxlanibgp", "vxlanebgp", "externalconnectivity", "nxos", "true", "false"}
+        value = re.sub(r'''(['"])((?:\\.|(?!\1).)*)(?:\1|$)''',
+            lambda match: match[0] if match[2].lower() in labels else "'[value]'", value)
+    return case_parser.safe_label(value, 240)
+
+
+def owned_skip_task(event, catalog, positions):
+    """Use pinned authored names/paths/roles, never pipeline header totals."""
+    name = case_parser.normal_name(event.get("name"))
+    role, separator, tail = name.partition(" : ")
+    role = str(event.get("role") or (role if separator else ""))
+    name = tail if separator else name
+    path = str(event.get("path") or "").replace("\\", "/")
+    path = "/" + path.lstrip("/") if path else ""
+    fragment = "/tests/integration/targets/" + catalog["target"] + "/"
+    candidates = catalog["tasks"].get(name, [])
+    if not path and role and role not in {catalog["target"], "cisco.nd." + catalog["target"]}:
+        return None
+    if path:
+        if fragment not in path:
+            return None
+        relative = path.split(fragment, 1)[1]
+        candidates = [record for record in candidates if record["path"] == relative]
+        # Dynamic display names can still be resolved through a pinned source position.
+        if not candidates and isinstance(event.get("line"), int):
+            candidates = positions.get((relative, event["line"]), [])
+    elif not role:
+        return None
+    if not candidates:
+        return None
+    phase = "Base" if all(record.get("base") for record in candidates) else (
+        "Cleanup" if all(record.get("cleanup") for record in candidates) else "Authored test task")
+    label = candidates[0]["name"] if len({record["name"] for record in candidates}) == 1 else name
+    return phase, case_parser.safe_label(label, 512)
+
+
+def skipped_tasks(job, result, catalog):
+    """Stream full skip evidence; compact case-label limits do not truncate tasks."""
+    positions = {}
+    for records in catalog["tasks"].values():
+        for record in records:
+            positions.setdefault((record["path"], record.get("line")), []).append(record)
+    if result.get("summary_source") == "structured_events":
+        with Path(job["log"] + ".events.jsonl").open("rb") as source:
+            for _ in range(case_parser.MAX_EVENT_RECORDS + 1):
+                raw = source.readline(case_parser.MAX_EVENT_LINE + 1)
+                if not raw:
+                    return
+                if len(raw) > case_parser.MAX_EVENT_LINE or not raw.endswith(b"\n"):
+                    raise ValueError("skip journal contains an oversized or partial record")
+                event = json.loads(raw)
+                identity(event, job)
+                if event.get("kind") == "outcome" and event.get("outcome") == "skipped":
+                    owned = owned_skip_task(event, catalog, positions)
+                    if owned:
+                        yield owned, event
+            raise ValueError("skip journal exceeds the event bound")
+    elif result.get("summary_source") == "raw_log_recovery":
+        current = None
+        with Path(job["log"]).open("r", encoding="utf-8", errors="replace") as source:
+            for raw in invocation_parser.bounded_lines(source):
+                line = invocation_parser.ANSI.sub("", raw).rstrip("\r\n")
+                match = case_parser.TASK_HEADER.match(line)
+                if match:
+                    current = {"name": match[1], "path": ""}
+                match = case_parser.SOURCE_PATH.match(line)
+                if current and match:
+                    current.update(path=match[1], line=int(match[2]))
+                if current and line.lstrip().startswith("skipping: ["):
+                    owned = owned_skip_task(current, catalog, positions)
+                    if owned:
+                        event = dict(current, host=line.split("[", 1)[1].split("]", 1)[0])
+                        try:
+                            payload = json.loads(line.partition("=>")[2].strip())
+                        except ValueError:
+                            payload = {}
+                        if isinstance(payload, dict):
+                            event.update({key: payload[key] for key in ("skip_reason", "false_condition", "_ansible_no_log") if key in payload})
+                        yield owned, event
+
+
+def module_skip_report(root, job, result):
+    """Internal text projection; case outcomes and task observations stay distinct."""
+    destination = within(root, job["log"] + ".skips.txt")
+    frozen = validate_catalog(root, job)
+    catalog = frozen["catalog"]
+    activity = result["activity"]
+    cases = activity.get("case_results", [])
+    with readable_file(destination) as output:
+        output.write(readable_header(job))
+        output.write("RESULT: %s | COVERAGE: %s | BASE: %s | CLEANUP: %s\n" % (
+            activity.get("result", "UNKNOWN"), activity.get("coverage", "UNKNOWN"),
+            activity.get("base", "Not observed"), activity.get("cleanup", "Not observed")))
+        totals = activity.get("testcase_totals", {})
+        output.write("Authored case totals: " + "; ".join("%s=%s" % (key,
+            totals[key] if isinstance(totals.get(key), int) and not isinstance(totals[key], bool) else "unknown")
+            for key in ("started", "passed", "failed", "skipped", "incomplete")) + "\n")
+        if not catalog["cases"]:
+            output.write("Authored case inventory unavailable: case-level skips and unreached cases cannot be enumerated; task skips below are separate observations.\n")
+        if activity.get("failure"):
+            output.write("Failure evidence: " + "; ".join(case_parser.safe_label(value, 220)
+                for value in activity["failure"][:4]) + "\n")
+        for label, outcome in (("FAILED CASES", "failed"), ("FULLY SKIPPED CASES", "skipped"), ("INCOMPLETE CASES", "incomplete")):
+            selected = [case for case in cases if case.get("outcome") == outcome]
+            output.write("\n" + label + "\n")
+            for case in selected:
+                output.write("- %s [%s]%s\n" % (case_parser.safe_label(case.get("label", case.get("id", "Unknown")), 512),
+                    case.get("state", "other"), ": " + skip_detail(case["reason"]) if case.get("reason") else ""))
+            if not selected:
+                output.write("None recorded.\n")
+        output.write("\nNOT OBSERVED / NOT REACHED (not counted as skipped cases)\n")
+        if activity.get("validated") is not True or activity.get("evidence_truncated"):
+            output.write("Unverified: absent case labels cannot be classified from incomplete or bounded evidence.\n")
+        else:
+            observed = {case["id"] for case in cases}
+            missing = [case for key, case in catalog["cases"].items() if key not in observed]
+            for case in missing:
+                output.write("- " + case_parser.safe_label(case.get("label", "Unknown"), 512) + "\n")
+            if not missing:
+                output.write("None recorded.\n")
+        if activity.get("evidence_truncated"):
+            output.write("Case labels are bounded; full case totals above are retained. Task skips below use the complete evidence stream.\n")
+        output.write("\nAUTHORED TASK SKIP OBSERVATIONS (not unique case counts; pipeline tasks excluded)\n")
+        count = 0
+        for (phase, label), event in skipped_tasks(job, result, catalog):
+            count += 1
+            censored = event.get("no_log") or event.get("_ansible_no_log")
+            reason = "Reason withheld (no_log)" if censored else skip_detail(event.get("skip_reason")) or "Reason not recorded"
+            condition = "" if censored else skip_detail(event.get("false_condition"), condition=True)
+            output.write("- %s | %s | host=%s%s | %s%s\n" % (phase, "Censored task" if censored else label,
+                case_parser.safe_label(event.get("host", "unknown"), 100), " | loop item" if event.get("item") else "", reason,
+                " | condition: " + condition if condition else ""))
+        if not count:
+            output.write("No module-owned task skips recorded.\n")
+        if result.get("summary_source") != "structured_events":
+            output.write("Evidence: %s; unavailable skip reasons are not reconstructed.\n" % result.get("summary_source", "unavailable"))
+        output.write("\n")
+    return destination
+
+
 def artifact_files(root, config, job):
-    log = Path(job["log"])
+    log = within(root, job["log"])
+    regular(log)
     closed = read_json(root / "closed" / (job["id"] + ".json"))
     if closed.get("complete") and file_stamp(log) != closed.get("log_stamp"):
         raise ValueError("raw log changed between summary generation and archive")
@@ -697,20 +880,12 @@ def artifact_files(root, config, job):
         path = Path(str(log) + suffix)
         if not path.exists():
             atomic_json(path, value, limit=MAX_CATALOG if suffix == ".catalog.json" else MAX_JSON)
-    candidates = [log] + [Path(str(log) + suffix) for suffix in (
-        ".execution.json", ".phases.json", ".events.jsonl", ".event-summary.json", ".summary.json", ".activity.json",
-        ".job.json", ".catalog.json", ".closed.json", ".result.json")]
-    output = []
-    workspace = Path(config["workspace"])
-    for candidate in candidates:
-        candidate = within(root, candidate)
-        if candidate.exists():
-            regular(candidate)
-            for directory in [root] + [parent for parent in candidate.parents if parent != root and parent.is_relative_to(root)]:
-                os.chmod(directory, 0o755)
-            os.chmod(candidate, 0o644)
-            output.append(candidate.relative_to(workspace).as_posix())
-    return output
+    module_skip_report(root, job, result)
+    destination = Path(config["workspace"]) / public_log_name(job)
+    with readable_file(destination, binary=True) as output, log.open("rb") as source:
+        output.write((readable_header(job) + "\nFULL EXECUTION LOG (including prerequisites and cleanup)\n\n").encode("utf-8"))
+        shutil.copyfileobj(source, output, length=1024 * 1024)
+    return [destination.relative_to(Path(config["workspace"])).as_posix()]
 
 
 def next_execution(root, config, args):
@@ -856,6 +1031,7 @@ def aggregate(root, config, args):
     producer = read_json(root / "producer.json", missing=True)
     if producer:
         settle_unclosed(root, jobs(root))
+    skip_sections = []
     rows, errors, archive_times, progress = [], [], [], ["ND MODULE CASE PROGRESS - Build " + config["build"],
         "Counts describe authored module cases; pipeline, base and cleanup tasks are excluded.", ""]
     for job in jobs(root):
@@ -936,9 +1112,13 @@ def aggregate(root, config, args):
                "phase_seconds": phases, "invocation": invocation, "reporting_metrics": metrics,
                "summary_source": result["summary_source"], "reporting_status": "ERROR" if reporting_error else "SUCCESS",
                "archive_status": archive_status,
-               "artifact": Path(job["log"]).relative_to(Path(config["workspace"])).as_posix()
-                           if archive_status == "success" and Path(job["log"]).is_file() else ""}
+               "artifact": public_log_name(job)
+                           if archive_status == "success" and (Path(config["workspace"]) / public_log_name(job)).is_file() else ""}
         rows.append(row)
+        skip_path = Path(job["log"] + ".skips.txt")
+        if not skip_path.exists():
+            skip_path = module_skip_report(root, job, result)
+        skip_sections.append(skip_path)
         progress += ["=" * 72, "MODULE: %s | FABRIC: %s | ROUND: %s" % (job["module"], job["scope"], job["round_label"]),
                      "RESULT: %s | COVERAGE: %s | SUMMARY: %s" % (activity_result, row["coverage"], row["summary_source"]),
                      "BASE: %s | CLEANUP: %s" % (row["base"], row["cleanup"]),
@@ -961,6 +1141,16 @@ def aggregate(root, config, args):
     progress_path = root / ("module_progress_build_" + token(config["build"], "build") + ".txt")
     progress_path.write_text("\n".join(progress) + "\n", encoding="utf-8")
     os.chmod(progress_path, 0o644)
+    skiplist_path = Path(config["workspace"]) / ("skipped_tests_build_" + token(config["build"], "build") + ".txt")
+    with readable_file(skiplist_path) as output:
+        output.write("ND MODULE SKIPS AND UNREACHED CASES - Build " + config["build"] + "\n")
+        output.write("Case outcomes are distinct authored module cases. Task skips are observations, not case counts.\n")
+        output.write("Modules or rounds never registered are NOT_RUN in the activity table; they are not fabricated skips.\n\n")
+        for skip_path in skip_sections:
+            output.write("=" * 80 + "\n")
+            regular(skip_path)
+            with skip_path.open("r", encoding="utf-8") as source:
+                shutil.copyfileobj(source, output, length=65536)
     value = {"schema_version": SCHEMA_VERSION, "build": config["build"], "run_id": config["run_id"],
              "rows": rows, "reporting_errors": errors[:MAX_JOBS], "selected_executions": len(rows),
              "producer_status": (producer or {}).get("status", "missing"),
@@ -969,7 +1159,7 @@ def aggregate(root, config, args):
                                  for name in ("structured_events", "raw_log_recovery", "unavailable")},
              "failed": bool(errors or any(row["result"] in {"FAIL", "UNKNOWN", "NOT_RUN"} for row in rows)
                             or (producer or {}).get("status") != "success"),
-             "progress_file": progress_path.relative_to(Path(config["workspace"])).as_posix()}
+             "skiplist_file": skiplist_path.name}
     destination = within(root, args.output) if args.output else root / "aggregate.json"
     atomic_json(destination, value, limit=MAX_OUTPUT)
     return value

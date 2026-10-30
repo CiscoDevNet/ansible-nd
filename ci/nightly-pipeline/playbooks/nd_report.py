@@ -53,6 +53,22 @@ def _failure_label(value):
     return label.replace("|", "/").replace("`", "'")
 
 
+def _skip_evidence(value):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    text = _bounded(value, 1024)
+    if re.search(r"password|passwd|pwd|token|secret|bearer|authorization|credential|community|username|private.?key|api.?key|auth[_-]?(?:pass|key)|priv[_-]?(?:pass|key)", text, re.I):
+        return "Credential-related skip evidence withheld"
+    # Retain authored applicability labels, not arbitrary quoted values.
+    safe_literals = {"all", "merged", "replaced", "overridden", "deleted", "gathered",
+                     "vxlanibgp", "vxlanebgp", "externalconnectivity", "nxos", "true", "false"}
+    text = re.sub(r'''(['"])((?:\\.|(?!\1).)*)(?:\1|$)''',
+                  lambda match: match.group(0) if match.group(2).lower() in safe_literals else "'[value redacted]'", text)
+    text = re.sub(r"https?://\S+", "[endpoint]", text, flags=re.I)
+    text = re.sub(r"(?<!\w)(?:\d{1,3}\.){3}\d{1,3}(?!\w)", "[address]", text)
+    return text[:240]
+
+
 class CallbackModule(DefaultCallback):
     CALLBACK_NAME = "nd_report"
 
@@ -220,6 +236,14 @@ class CallbackModule(DefaultCallback):
                 task_instance=self._host_instances.get(
                     (event["task_uuid"], host_name), self._task_instances.get(event["task_uuid"], 0)),
             )
+            if outcome == "skipped":
+                if no_log:
+                    event["skip_reason"] = "Reason withheld (no_log)"
+                else:
+                    for key in ("skip_reason", "false_condition"):
+                        value = _skip_evidence(payload.get(key))
+                        if value:
+                            event[key] = value
             reasons = []
             capability = False
             if outcome in ("failed", "unreachable") and not no_log:

@@ -83,7 +83,7 @@ script.metaClass.sh = { Object options -> '' }
 script.metaClass.readFile = { Map options ->
     calls.add('read-aggregate')
     assert options.file.endsWith('/aggregate.json')
-    return '{"rows":[],"reporting_errors":[],"failed":true,"progress_file":"fixture-reports/progress.txt"}'
+    return '{"rows":[],"reporting_errors":[],"failed":true,"skiplist_file":"skipped_tests_build_124.txt"}'
 }
 script.metaClass.archiveArtifacts = { Map options -> null }
 def caught = null
@@ -123,7 +123,7 @@ if (failure.message != null && failure.message.size() == 2000) {
 def skipField = script.getClass().getDeclaredField('SKIPLIST_FILES_BUF')
 skipField.setAccessible(true)
 assert script.formatSkippedTestLinks(skipField.get(script)) ==
-    '📋 [Module case progress and skips](https://jenkins.example/job/nd/124/artifact/fixture-reports/progress.txt)'
+    '📋 [Module skips and cases not reached](https://jenkins.example/job/nd/124/artifact/skipped_tests_build_124.txt)'
 
 // Execute the real post-notification DSL with HTTP sending replaced locally.
 def sent = []

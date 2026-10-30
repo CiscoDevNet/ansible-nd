@@ -26,7 +26,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value) + "\n")
 
 
-def queue_fixture(tmp_path, structured, stale_marker=False):
+def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, extra_events=()):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     queue = workspace / "reports"
@@ -53,11 +53,21 @@ def queue_fixture(tmp_path, structured, stale_marker=False):
     assert begun["log"] == job["log"]
     log = Path(job["log"])
     marker = "stale-round" if stale_marker else "smoke-round"
+    counts = {key: 0 for key in ("ok", "changed", "unreachable", "failed", "skipped", "rescued", "ignored")}
+    counts["changed"] = 1
+    for outcome in [row[3] for row in TASKS] + [event.get("outcome") for event in extra_events]:
+        if outcome in counts:
+            counts[outcome] += 1
     lines = [f"[MODULE: {MODULE}] Starting execution...", f"[RUN_MARKER: {marker}]", "[TIMESTAMP_START: 100]"]
     for name, _, _, outcome in TASKS:
+        if outcome is None:
+            continue
+        result_line = {"ok": "ok: [localhost]", "failed": "fatal: [localhost]: FAILED!", "skipped": "skipping: [localhost]"}[outcome]
+        if outcome == "skipped" and skip_fields:
+            result_line += " => " + json.dumps(skip_fields)
         lines += [f"TASK [{MODULE} : {name}] ***", f"task path: {source}:1",
-                  {"ok": "ok: [localhost]", "failed": "fatal: [localhost]: FAILED!", "skipped": "skipping: [localhost]"}[outcome]]
-    lines += ["PLAY RECAP", "localhost : ok=4 changed=1 unreachable=0 failed=1 skipped=1 rescued=0 ignored=0",
+                  result_line]
+    lines += ["PLAY RECAP", "localhost : " + " ".join(f"{key}={value}" for key, value in counts.items()),
               "[ANSIBLE_EXIT_STATUS: 2]", "[TIMESTAMP_END: 110]", "[DURATION_SECONDS: 10]",
               f"[MODULE: {MODULE}] Execution completed."]
     log.write_text("\n".join(lines) + "\n")
@@ -66,20 +76,25 @@ def queue_fixture(tmp_path, structured, stale_marker=False):
     if structured:
         records = []
         for index, (name, action, _, outcome) in enumerate(TASKS):
+            if outcome is None:
+                continue
             event = {"schema_version": 1, "module": MODULE, "run_id": "smoke-round", "invocation_id": "smoke",
                      "phase": "execution", "task_uuid": str(index), "task_instance": 1, "name": name,
                      "path": str(source), "line": 1, "action": action, "role": MODULE, "no_log": False}
+            if outcome == "skipped":
+                event.update(skip_fields or {})
             records.append(dict(event, kind="task", seq=len(records) + 1))
             records.append(dict(event, kind="outcome", seq=len(records) + 1, outcome=outcome,
                                 host="localhost", terminal=True, item=False, ignored=False, reason_codes=[]))
+        for event in extra_events:
+            records.append(dict(event, seq=len(records) + 1))
         journal = "".join(json.dumps(event, sort_keys=True) + "\n" for event in records).encode()
         Path(str(log) + ".events.jsonl").write_bytes(journal)
         write_json(Path(str(log) + ".event-summary.json"), {
             "schema_version": 1, "module": MODULE, "run_id": "smoke-round", "invocation_id": "smoke",
             "completed": True, "capture_error": False, "errors": [], "event_count": len(records),
             "event_bytes": len(journal), "event_sha256": hashlib.sha256(journal).hexdigest(),
-            "host_count": 1, "counts": {"ok": 4, "changed": 1, "failed": 1, "unreachable": 0,
-                                       "skipped": 1, "rescued": 0, "ignored": 0}})
+            "host_count": 1, "counts": counts})
     closed = cli("close", *execution_args, "--exit-code", "2", "--duration-seconds", "10")
     assert closed["summary_ready"] is (structured and not stale_marker)
     return workspace, queue, job, cli
