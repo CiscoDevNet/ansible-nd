@@ -10,19 +10,26 @@
 """
 Base orchestrator for vPC interface modules on Nexus Dashboard.
 
-This module provides `VpcInterfaceBaseOrchestrator`, which implements shared CRUD operations for all vPC interface
-types (`accessVpcHost`, `trunkVpcHost`, etc.) via the ND Manage Interfaces API. Type-specific orchestrators
-inherit from this base and provide their own `model_class` and `_managed_policy_types()`.
+This module provides `VpcInterfaceBaseOrchestrator`, the shared base for all vPC interface types (`accessVpcHost`,
+`trunkVpcHost`, etc.) on the ND Manage Interfaces API. Type-specific orchestrators inherit from this base and provide
+their own `model_class` and `_managed_policy_types()`.
 
-Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch resolution) from
-`NDBaseInterfaceOrchestrator` and adds vPC-specific functionality:
+`create`, `update`, `create_bulk` and `query_one` come from the shared templates on `NDBaseInterfaceOrchestrator`
+(issue #348), together with deploy queuing, fabric validation and switch resolution. This class sets
+`query_interface_type = "vpc"` and fills the template hooks with vPC-specific behavior:
 
-- Peer-serial auto-resolution: create/update injects the peer serial as `peerSwitchId` in the payload. Standalone
-  orchestrators resolve a cache miss through the per-switch `vpcPair` endpoint. The aggregate interface workflow
-  shares a cache seeded from its authoritative fabric-wide `vpcPairs` read, so its mutations need no per-primary
-  pair lookups.
-- Standard remove-based deletion (vPC interfaces are virtual and deletable).
-- Fabric-wide `query_all()` filtered by `interfaceType: "vpc"` and per-type policy filtering.
+- `_decorate_write_payload`: peer-serial auto-resolution; every create/update/bulk-create body carries the peer serial
+  as `peerSwitchId`. Standalone orchestrators resolve a cache miss through the per-switch `vpcPair` endpoint. The
+  aggregate interface workflow shares a cache seeded from its authoritative fabric-wide `vpcPairs` read, so its
+  mutations need no per-primary pair lookups.
+- `_before_update` / `_prepare_bulk_item` / `_prepare_delete_context`: retain the pair/child deploy context.
+
+It keeps two overrides of its own:
+
+- `delete`: an immediate per-interface `DELETE /interfaces/{name}` (the bulk remove endpoint rejects vPC interfaces).
+  `delete_bulk` is not supported (`supports_bulk_delete = False`).
+- `query_all`: reads the managed records via the base `_managed_records` and dedupes the per-peer copies ND returns
+  for each vPC interface.
 
 A vPC interface spans two switches in a vPC pair; the user supplies one peer's management IP as `switch_ip`.
 If the supplied switch is not in a vPC pair the orchestrator raises a clear `RuntimeError` instructing the
@@ -53,12 +60,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_membership impo
     MembershipValidationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
-    requires_bulk_support,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
-    BulkCreateGroupKey,
-    BulkCreateItem,
     NDBaseInterfaceOrchestrator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
@@ -81,9 +83,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     payload. Standalone instances populate cache misses from `vpcPair`; aggregate workflows can share a cache
     pre-seeded from an authoritative `vpcPairs` inventory.
 
-    Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` issues an immediate
-    per-interface `DELETE /interfaces/{name}` (the bulk `interfaceActions/remove` endpoint rejects vPC interfaces;
-    see the `TODO(4.2.1)` below) and queues a deploy. Call `deploy_pending` after all mutations are complete.
+    `create`, `update`, `create_bulk` and `query_one` are inherited from the `NDBaseInterfaceOrchestrator` templates; `create` and
+    `update` queue deploys for bulk execution. `delete` issues an immediate per-interface `DELETE /interfaces/{name}` (the bulk
+    `interfaceActions/remove` endpoint rejects vPC interfaces; see the `TODO(4.2.1)` below) and queues a deploy. Call `deploy_pending`
+    after all mutations are complete.
 
     ## Raises
 
@@ -109,6 +112,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     supports_bulk_full_modify: ClassVar[bool] = True
     supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = False
+    query_interface_type: ClassVar[str] = "vpc"
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -387,21 +391,6 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
         self._peer_serial_cache = cache
 
-    def _managed_policy_types(self) -> set[str]:
-        """
-        # Summary
-
-        Return the set of API-side policy type values managed by this orchestrator. Subclasses must override this method
-        to return their specific policy types (e.g., `{"accessVpcHost"}` for the access orchestrator).
-
-        ## Raises
-
-        ### NotImplementedError
-
-        - Always, if not overridden by a subclass.
-        """
-        raise NotImplementedError("Subclasses must implement _managed_policy_types()")
-
     def _resolve_peer_switch_id(self, switch_ip: str, primary_serial: str) -> str:
         """
         # Summary
@@ -670,70 +659,77 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         policy["peerSwitchId"] = peer_serial
         return payload
 
-    def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
+    def _decorate_write_payload(self, payload: dict[str, Any], model_instance: ModelType, switch_id: str) -> None:
         """
         # Summary
 
-        Create a vPC interface configuration. Resolves `switch_ip` to a primary serial, resolves the peer serial via
-        the vPC pair record, injects both into the payload, and POSTs the wrapped `interfaces` array. Queues a deploy
-        for later bulk execution via `deploy_pending`.
+        Hook called by the base `create` and `update` templates and by `bulk_create_groups` after `switchId` is injected. Resolves the
+        reciprocal peer serial (cached per switch; a miss costs the `vpcPair` GETs) and injects it as `peerSwitchId` into the payload's
+        `configData.networkOS.policy` block.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the create API request fails.
-        - If the primary switch is not in a vPC pair.
+        - Via `_resolve_reciprocal_peer_switch_id` if the switch is not in a vPC pair or the pair identity is not reciprocal.
+        - Via `_inject_peer_switch_id` if the payload has no `configData.networkOS.policy` block.
         """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
-            api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            self._inject_peer_switch_id(payload, peer_serial)
-            request_body = {"interfaces": [payload]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-            self._prepare_deploy_context(model_instance, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
+        peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        self._inject_peer_switch_id(payload, peer_serial)
 
-    def update(self, model_instance: ModelType, **kwargs) -> ResponseType:
+    def _before_update(self, model_instance: ModelType, switch_id: str, previous_model: ModelType | None) -> None:
         """
         # Summary
 
-        Update a vPC interface configuration. Resolves `switch_ip` to a primary serial, resolves the peer serial via
-        the vPC pair record, injects both into the payload, and PUTs the updated configuration. Queues a deploy for
-        later bulk execution via `deploy_pending`.
+        Hook called by the base `update` template after the switch is resolved and before the PUT is built. When `previous_model` is
+        given, retains the previous pair/child deploy context and queues a preview-derived discovery when neither the previous nor the
+        proposed vPC has peer members. Returns `None`.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the update API request fails.
-        - If the primary switch is not in a vPC pair.
+        - Propagated from `_prepare_deploy_context` or `_queue_preview_derived_discovery`; the template wraps it as
+          `Update failed for <identifier>: ...`.
         """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
-            previous_model = kwargs.get("previous_model")
-            if previous_model is not None:
-                self._prepare_deploy_context(previous_model, switch_id)
-                if not self._proposed_peer_members(previous_model) and not self._proposed_peer_members(model_instance):
-                    self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
-            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            payload = model_instance.to_payload()
-            payload["switchId"] = switch_id
-            self._inject_peer_switch_id(payload, peer_serial)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-            self._prepare_deploy_context(model_instance, switch_id)
-            self._queue_deploy(model_instance.interface_name, switch_id)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+        if previous_model is not None:
+            self._prepare_deploy_context(previous_model, switch_id)
+            if not self._proposed_peer_members(previous_model) and not self._proposed_peer_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook called by `bulk_create_groups` (via the base `create_bulk` template) for each model after its switch is resolved and before
+        its payload is built. Retains the item's pair/child deploy context at the same pre-POST position where the previous vPC
+        `create_bulk` ran it per item (before the payload is built and the group is posted).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_prepare_deploy_context`; the template wraps it as `Bulk create failed: ...`.
+        """
+        self._prepare_deploy_context(model_instance, switch_id)
+
+    def _prepare_delete_context(self, model_instance: ModelType, name: str, switch_id: str) -> None:
+        """
+        # Summary
+
+        Hook called by this class's `delete` override after the reciprocal pair evidence is checked and before the DELETE is sent. Retains
+        the pair/child deploy context and queues a preview-derived discovery for `name` when the vPC has no peer members.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_prepare_deploy_context` or `_queue_preview_derived_discovery`; `delete` wraps it as
+          `Delete failed for <identifier>: ...`.
+        """
+        self._prepare_deploy_context(model_instance, switch_id)
+        if not self._proposed_peer_members(model_instance):
+            self._queue_preview_derived_discovery(name, switch_id)
 
     def _bulk_modify_payload(self, model_instance: ModelType, switch_id: str) -> dict[str, Any]:
         """Build the singular vPC body, including its authoritative peer ID."""
@@ -788,76 +784,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
             api_endpoint = self._configure_endpoint(self.delete_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
-            self._prepare_deploy_context(model_instance, switch_id)
-            if not self._proposed_peer_members(model_instance):
-                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+            self._prepare_delete_context(model_instance, model_instance.interface_name, switch_id)
             self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             self._queue_deploy(model_instance.interface_name, switch_id)
         except Exception as e:
             raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
-
-    @requires_bulk_support("supports_bulk_create")
-    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Create multiple vPC interfaces in bulk. Groups by primary switch and policy type, resolves the peer serial once per group,
-        and sends one POST per group with all vPC interfaces in the `interfaces` array. Uses the shared interface partial-create
-        recovery so every vPC explicitly accepted from a mixed response is queued for failure-path deployment.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If any create API request fails.
-        - If any primary switch is not in a vPC pair.
-        """
-        try:
-            groups: dict[BulkCreateGroupKey, list[BulkCreateItem]] = {}
-            for model_instance in model_instances:
-                switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
-                payload = model_instance.to_payload()
-                payload["switchId"] = switch_id
-                self._inject_peer_switch_id(payload, peer_serial)
-                self._prepare_deploy_context(model_instance, switch_id)
-                group_key = BulkCreateGroupKey(
-                    switch_id=switch_id,
-                    policy_type=self._desired_policy_type(model_instance),
-                )
-                groups.setdefault(group_key, []).append(
-                    BulkCreateItem(
-                        interface_name=model_instance.interface_name,
-                        payload=payload,
-                    )
-                )
-
-            results = []
-            for group_key, items in groups.items():
-                results.append(self._post_bulk_create_group(group_key, items))
-            return results
-        except Exception as e:
-            raise RuntimeError(f"Bulk create failed: {e}") from e
-
-    def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Query a single vPC interface by name on a specific switch.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the query API request fails.
-        """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-        except Exception as e:
-            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def _configured_switch_ips_by_interface_name(self) -> dict[str, set[str]]:
         """
@@ -896,23 +827,6 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         None
         """
         return name.lower()
-
-    @staticmethod
-    def _policy_type(iface: dict) -> str | None:
-        """
-        # Summary
-
-        Return `configData.networkOS.policy.policyType` for an interface dict, tolerating a missing or null value at
-        any level of the nested chain (ND occasionally returns `configData: null`).
-
-        ## Raises
-
-        None
-        """
-        config_data = iface.get("configData") or {}
-        network_os = config_data.get("networkOS") or {}
-        policy = network_os.get("policy") or {}
-        return policy.get("policyType")
 
     def _pair_key(self, iface: dict, switch_ip: str, switch_id: str) -> frozenset[str]:
         """
@@ -960,26 +874,6 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 raise RuntimeError(f"vPC interface {iface.get('interfaceName')!r} has non-reciprocal peer identity: {exc}") from exc
         return frozenset({switch_id, peer_switch_id})
 
-    def _managed_vpc_interfaces(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
-        """
-        # Summary
-
-        Read one switch's complete shared interface inventory and return the vPC interfaces whose policy type this orchestrator manages,
-        each enriched with the `switchIp` of the switch it was read from. The shared reader paginates, validates identities, and publishes
-        its cache only after the full collection succeeds.
-
-        ## Raises
-
-        ### Exception
-
-        - If the paginated interface-list request or completeness validation fails (propagated to `query_all`'s wrapper).
-        """
-        interfaces = self._switch_interfaces(switch_id).values()
-        managed = [dict(iface) for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
-        for iface in managed:
-            iface["switchIp"] = switch_ip
-        return managed
-
     def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         """
         # Summary
@@ -1024,7 +918,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             # spurious delete.
             interfaces_by_key: dict[tuple[str, frozenset[str]], tuple[str, dict]] = {}
             for switch_ip, switch_id in self._switches_to_query().items():
-                for iface in self._managed_vpc_interfaces(switch_ip, switch_id, managed_types):
+                for iface in self._managed_records(switch_ip, switch_id, managed_types):
                     raw_name = iface.get("interfaceName")
                     if raw_name is None:
                         continue
