@@ -23,6 +23,9 @@ from ansible_collections.cisco.nd.tests.unit.modules.test_nd_policy_group_direct
     invoke,
 )
 
+# Re-export the shared pytest fixture.
+__all__ = ["invoke"]
+
 ANONYMOUS_ID = "POLICY-GROUP-103"
 MISSING_ID = "POLICY-GROUP-999"
 DESCRIPTION = "Duplicate description"
@@ -943,9 +946,9 @@ def test_template_only_delete_rejects_selected_row_without_id(invoke, missing_id
 
     class MissingIdController(Controller):
         @staticmethod
-        def summary(current):
-            result = Controller.summary(current)
-            if current["policyId"] == ANONYMOUS_ID:
+        def summary(group):
+            result = Controller.summary(group)
+            if group["policyId"] == ANONYMOUS_ID:
                 result.update(policyId=missing_id, policyType="group")
             return result
 
@@ -1140,9 +1143,9 @@ def test_fully_pending_cleanup_uses_name_id_precedence(invoke, check_mode):
 
     class PendingController(Controller):
         @staticmethod
-        def summary(current):
-            result = Controller.summary(current)
-            if current.get("markDeleted"):
+        def summary(group):
+            result = Controller.summary(group)
+            if group.get("markDeleted"):
                 for switch in result["switches"]:
                     switch["markDeleted"] = True
             return result
