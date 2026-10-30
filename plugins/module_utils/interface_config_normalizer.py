@@ -10,19 +10,25 @@ from copy import deepcopy
 from typing import Any
 
 
-def validate_ethernet_interface_names(config_list: list[dict[str, Any]]) -> None:
-    """Require an explicit list; only an actual empty list means reset-all."""
+def validate_ethernet_interface_names(
+    config_list: list[dict[str, Any]],
+    *,
+    require_interface_names: bool = True,
+) -> None:
+    """Validate grouped Ethernet names, optionally allowing gathered filters to omit them."""
     for item_index, group in enumerate(config_list):
         if not isinstance(group, dict):
             raise ValueError(f"Ethernet config item {item_index} must be a mapping.")
         switch_ip = group.get("switch_ip")
         if "interface_names" not in group:
-            raise ValueError(f"interface_names is required for Ethernet config item {item_index} on switch '{switch_ip}'.")
+            if require_interface_names:
+                raise ValueError(f"interface_names is required for Ethernet config item {item_index} on switch '{switch_ip}'.")
+            continue
         interface_names = group["interface_names"]
         if not isinstance(interface_names, list):
             raise ValueError(f"interface_names for Ethernet config item {item_index} on switch '{switch_ip}' must be a list.")
         for entry_index, name in enumerate(interface_names):
-            if isinstance(name, str) and name:
+            if isinstance(name, str) and name.strip():
                 continue
             if name is None:
                 reason = "null"
@@ -68,8 +74,30 @@ def validate_ethernet_across_item_duplicates(config_list: list[dict[str, Any]]) 
             seen[key] = item_index
 
 
-def expand_ethernet_config(config_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Expand standalone-style ``interface_names`` groups into model items."""
+def expand_ethernet_config(
+    config_list: list[dict[str, Any]],
+    *,
+    allow_empty_interface_names: bool = False,
+) -> list[dict[str, Any]]:
+    """Expand grouped Ethernet config, optionally preserving overridden reset-all semantics."""
+    for item_index, group in enumerate(config_list):
+        if not isinstance(group, dict):
+            raise ValueError(f"Ethernet config item {item_index} must be a mapping.")
+        switch_ip = group.get("switch_ip")
+        if not isinstance(switch_ip, str) or not switch_ip.strip():
+            raise ValueError(f"switch_ip is required and must be a non-empty string for config item {item_index}.")
+        if "interface_names" not in group:
+            raise ValueError(f"interface_names is required and must contain at least one interface for switch " f"'{switch_ip}' (config item {item_index}).")
+        interface_names = group["interface_names"]
+        if not isinstance(interface_names, list):
+            if interface_names is None and not allow_empty_interface_names:
+                raise ValueError(
+                    f"interface_names is required and must contain at least one interface for switch " f"'{switch_ip}' (config item {item_index})."
+                )
+            raise ValueError(f"interface_names for Ethernet config item {item_index} on switch '{switch_ip}' must be a list.")
+        if not interface_names and not allow_empty_interface_names:
+            raise ValueError(f"interface_names is required and must contain at least one interface for switch " f"'{switch_ip}' (config item {item_index}).")
+
     validate_ethernet_interface_names(config_list)
     validate_ethernet_within_item_duplicates(config_list)
     validate_ethernet_across_item_duplicates(config_list)
