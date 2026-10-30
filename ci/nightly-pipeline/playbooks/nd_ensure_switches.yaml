@@ -177,15 +177,87 @@
     nd_switch_remove_retries: 2
     nd_switch_remove_delay: 30
     # BEFORE removing the re-homed switches, Recalculate & Deploy their source fabric
-    # so a pending "Leaf-ToR unpairing" left by the nd_manage_tor test is finalised on
-    # the devices. ND otherwise refuses the delete with "Please perform Recalculate and
+    # so pending changes, including a historical "Leaf-ToR unpairing", are finalised
+    # on the devices. ND has previously refused delete with "Please perform Recalculate and
     # Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the
-    # fabric" (seen blocking the iBGP -> eBGP re-home of vxlan_leaf_3 / vxlan_leaf_4).
+    # fabric". Build 128's generic "check Anomalies" does not prove this same cause.
     # Issues the proven ND 4.x REST idiom (configSave then switchActions/deploy of the
-    # leaving switches) the read-only heal below also uses; best-effort, a fabric with
-    # nothing pending is a no-op. Set false to delete without the pre-flush. Tunable via
-    # -e or the ND_SWITCH_PREDELETE_DEPLOY environment.
+    # leaving switches) the read-only heal below also uses. Removal requires accepted
+    # save/deploy responses and fresh configSyncStatus=inSync for every leaving switch.
+    # Disabling this gate blocks a transfer instead of deleting without the pre-flush.
     nd_switch_predelete_deploy: "{{ lookup('env', 'ND_SWITCH_PREDELETE_DEPLOY') | default(true, true) }}"
+    nd_switch_predelete_timeout_seconds: 600
+    nd_switch_predelete_call_timeout_seconds: 60
+    nd_switch_predelete_poll_seconds: 10
+    _nd_predelete_remaining: >-
+      {{ (_nd_phase_deploy_settle_budget | float)
+         - ((_nd_switch_clock | float) - (_nd_phase_deploy_settle_started | float)) }}
+    _nd_predelete_call_limit: >-
+      {{ [nd_switch_predelete_call_timeout_seconds | int,
+           [1, _nd_predelete_remaining | float] | max]
+         | min | round(0, 'ceil') | int }}
+    # Shared save/deploy response check. A 207 can contain per-switch results or
+    # the completion message documented by the collection's switch deploy endpoint.
+    # Only the boolean escapes no_log; controller bodies/credentials stay private.
+    _nd_predelete_response_valid: >-
+      {%- set http = _predelete_reply.status | default(0) | int -%}
+      {%- set body = _predelete_reply.jsondata if _predelete_reply.jsondata is defined else _predelete_reply.current | default(none) -%}
+      {%- set ns = namespace(ok=http in [200, 201, 202, 204, 207] and not _predelete_reply.failed | default(false), ids=[]) -%}
+      {%- if body is not mapping and body is not none -%}{%- set ns.ok = false -%}{%- endif -%}
+      {%- if body is mapping -%}
+        {%- if body.get('error') or body.get('errors') -%}{%- set ns.ok = false -%}{%- endif -%}
+        {%- set status = body.get('status', '') -%}
+        {%- if status is not string or status is search('(?i)fail|error|denied|reject|unauthori|forbidden') -%}
+          {%- set ns.ok = false -%}
+        {%- endif -%}
+        {%- if 'items' in body -%}
+          {%- set items = body.get('items') -%}
+          {%- if items is not sequence or items is string or items is mapping or items | length == 0 -%}
+            {%- set ns.ok = false -%}
+          {%- else -%}
+            {%- for item in items -%}
+              {%- if item is not mapping or item.get('switchId') not in _predelete_requested_ids
+                    or item.get('switchId') in ns.ids or item.get('status', '') | string | lower != 'success'
+                    or item.get('error') or item.get('errors')
+                    or item.get('errorCode', '0') | string not in ['', '0'] -%}
+                {%- set ns.ok = false -%}
+              {%- endif -%}
+              {%- if item is mapping -%}{%- set ns.ids = ns.ids + [item.get('switchId')] -%}{%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {%- if ns.ids | length != _predelete_requested_ids | length -%}{%- set ns.ok = false -%}{%- endif -%}
+        {%- elif http == 207 -%}
+          {%- set groups = status | regex_findall('^Configuration deployment completed for \\[([^]]*)\\]\\.$') if status is string else [] -%}
+          {%- set ids = groups[0].split(',') | map('trim') | list if groups | length == 1 else [] -%}
+          {%- if _predelete_operation != 'deploy' or ids | length != _predelete_requested_ids | length
+                or ids | unique | list | length != ids | length or ids | difference(_predelete_requested_ids) | length > 0 -%}
+            {%- set ns.ok = false -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- elif http == 207 -%}{%- set ns.ok = false -%}{%- endif -%}
+      {{- ns.ok -}}
+    _nd_predelete_inventory_ready: >-
+      {%- set body = _predelete_inventory_reply.current | default(none) -%}
+      {%- set rows = body.get('switches') if body is mapping else none -%}
+      {%- set ns = namespace(ok=_predelete_inventory_reply.status | default(0) | int == 200
+           and not _predelete_inventory_reply.failed | default(false), ids=[]) -%}
+      {%- if body is mapping and (body.get('error') or body.get('errors')) -%}{%- set ns.ok = false -%}{%- endif -%}
+      {%- if rows is not sequence or rows is string or rows is mapping -%}
+        {%- set ns.ok = false -%}
+      {%- else -%}
+        {%- for row in rows -%}
+          {%- if row is not mapping -%}{%- set ns.ok = false -%}
+          {%- elif row.get('switchId') in _predelete_requested_ids -%}
+            {%- if row.get('switchId') in ns.ids or row.get('additionalData') is not mapping
+                  or row.get('additionalData', {}).get('configSyncStatus') != 'inSync' -%}
+              {%- set ns.ok = false -%}
+            {%- endif -%}
+            {%- set ns.ids = ns.ids + [row.get('switchId')] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if ns.ids | length != _predelete_requested_ids | length -%}{%- set ns.ok = false -%}{%- endif -%}
+      {%- endif -%}
+      {{- ns.ok -}}
     # Bounded wait-and-retry for the ONBOARD (add) step. A switch that is still
     # (re)booting, or that ND has not finished rediscovering after a reset/rehome
     # (iBGP -> eBGP), makes ND return a discovery response with NO serial, which the
@@ -511,6 +583,15 @@
         - nd_switch_apply | bool
         - (nd_rehome_moves | default([])) | length > 0
       block:
+        - name: Require the pre-delete deployment safety gate for a membership transfer
+          ansible.builtin.assert:
+            that:
+              - nd_switch_predelete_deploy | bool
+              - nd_switch_predelete_timeout_seconds | int > 0
+              - nd_switch_predelete_call_timeout_seconds | int > 0
+              - nd_switch_predelete_poll_seconds | int >= 0
+            fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: an enabled bounded Recalculate & Deploy gate is required; no switch was removed."
+
         # ND refuses to remove a switch that is still half of a vPC pair, so unpair first (the same
         # gather-then-delete idiom reset_fabric.yaml uses). Non-fatal: the removal below fails loudly
         # with ND's own message if a pair could not be torn down.
@@ -551,25 +632,31 @@
             loop_var: _mv
             label: "{{ _mv.name | default(_mv.serial) }}: {{ _mv.from_fabric }} -> {{ _mv.fabric }}"
 
-        # ND holds a PENDING "Leaf-ToR unpairing" config change (left by the nd_manage_tor
-        # integration test) that BLOCKS the leaf delete: ND answers the removal with
-        # "Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before
-        # deleting the leaf switch from the fabric". The vPC unpair above is not enough -
-        # that pending unpair has to be DEPLOYED to the devices first. So Recalculate
-        # (configSave) then Deploy (switchActions/deploy) the leaving switches on each
-        # source fabric, the SAME proven ND 4.x REST idiom the read-only heal below uses.
-        # Best-effort (failed_when: false): a fabric with nothing pending is a no-op and
-        # the immediate removal response stays the authority. Gated by
-        # nd_switch_predelete_deploy.
+        # Flush pending source configuration before any switch removal. Historical
+        # runs included a specific pending Leaf-ToR unpairing refusal; a generic
+        # "check Anomalies" refusal does not establish that same cause. Acceptance
+        # of save/deploy is insufficient: require fresh configSyncStatus=inSync.
         - name: Measure switch lifecycle deploy-settle
-          when: nd_switch_predelete_deploy | bool
           block:
             - name: Start deploy-settle timing
               ansible.builtin.set_fact:
                 _nd_phase_deploy_settle_started: "{{ _nd_switch_clock }}"
                 _nd_phase_deploy_settle_status: failed
+                # Ansible can freeze timeout/delay before its retry loop. Reserve
+                # one final call and gap so our diagnostic precedes the outer kill.
+                _nd_phase_deploy_settle_budget: >-
+                  {{ [nd_switch_predelete_timeout_seconds | float,
+                       (nd_switch_guard_timeout_seconds | default(3600) | float)
+                       - ((_nd_switch_clock | float) - (_nd_switch_guard_started | default(_nd_switch_clock) | float))
+                       - (nd_switch_predelete_call_timeout_seconds | float)
+                       - (nd_switch_predelete_poll_seconds | float) - 30] | min }}
 
-            - name: Recalculate each source fabric (config save) to finalise a pending Leaf-ToR unpairing before delete
+            - name: Require remaining time for the pre-delete gate
+              ansible.builtin.assert:
+                that: _nd_predelete_remaining | float > 0
+                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: the switch guard has no remaining deployment budget; no switch was removed."
+
+            - name: Recalculate each source fabric before removing any switches
               cisco.nd.nd_rest:
                 method: post
                 path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
@@ -579,10 +666,29 @@
                 loop_var: _rf
                 label: "{{ _rf }}"
               register: nd_predelete_save
-              failed_when: false
-              when: nd_switch_predelete_deploy | bool
+              # Preserve module failure and suppress Ansible 2.21's raw exception
+              # heading even on no_log tasks; keep this explicit condition.
+              failed_when: nd_predelete_save.failed | default(false)
+              timeout: "{{ _nd_predelete_call_limit }}"
+              vars:
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              no_log: true
+              when: _nd_predelete_remaining | float > 0
 
-            - name: Deploy the leaving switches (switchActions/deploy) so ND completes the Leaf-ToR unpairing before delete
+            - name: Require source Recalculate acceptance before Deploy
+              ansible.builtin.assert:
+                that: _nd_predelete_response_valid | bool
+                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Recalculate was refused or its response was unverified; no switch was removed."
+              vars:
+                _predelete_operation: config-save
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _predelete_reply._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_save.results }}"
+              loop_control:
+                loop_var: _predelete_reply
+                label: "{{ _predelete_reply._rf }}"
+              no_log: true
+
+            - name: Deploy all leaving switches before removing any switches
               cisco.nd.nd_rest:
                 method: post
                 path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
@@ -596,26 +702,77 @@
                 loop_var: _rf
                 label: "{{ _rf }}"
               register: nd_predelete_deploy
-              failed_when: false
-              when: nd_switch_predelete_deploy | bool
+              failed_when: nd_predelete_deploy.failed | default(false)
+              timeout: "{{ _nd_predelete_call_limit }}"
+              vars:
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              no_log: true
+              when: _nd_predelete_remaining | float > 0
 
-            - name: Give ND a moment to finish the pre-delete deploy before removing the switches
-              ansible.builtin.wait_for:
-                timeout: "{{ nd_switch_settle_seconds | int }}"
-              delegate_to: localhost
-              run_once: true
-              when:
-                - nd_switch_predelete_deploy | bool
-                - (nd_switch_settle_seconds | int) > 0
+            - name: Require acceptance of every leaving-switch Deploy before polling
+              ansible.builtin.assert:
+                that: _nd_predelete_response_valid | bool
+                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Deploy was refused or its response was unverified; no switch was removed."
+              vars:
+                _predelete_operation: deploy
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _predelete_reply._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_deploy.results }}"
+              loop_control:
+                loop_var: _predelete_reply
+                label: "{{ _predelete_reply._rf }}"
+              no_log: true
+
+            - name: Wait for every leaving switch to have fresh inSync configuration before removal
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ _rf }}/switches"
+              register: nd_predelete_inventory
+              failed_when: nd_predelete_inventory.failed | default(false)
+              until: >-
+                (_nd_predelete_inventory_ready | bool)
+                or (nd_predelete_inventory.status | default(0) | int not in [0, 200, 408, 429]
+                    and nd_predelete_inventory.status | default(0) | int < 500)
+                or (nd_predelete_inventory.msg | default('') is search('(?i)authentication|authorization|unauthorized|forbidden|invalid credentials'))
+                or ((nd_predelete_inventory.current | default({})).switches | default([])
+                    | select('mapping') | selectattr('switchId', 'defined') | selectattr('switchId', 'in', _predelete_requested_ids)
+                    | selectattr('additionalData.configSyncStatus', 'defined')
+                    | selectattr('additionalData.configSyncStatus', 'equalto', 'failed') | list | length > 0)
+                or (_nd_predelete_remaining | float) <= 0
+              retries: "{{ nd_switch_predelete_timeout_seconds | int + 1 }}"
+              delay: "{{ [nd_switch_predelete_poll_seconds | int, [0, _nd_predelete_remaining | float] | max] | min | int }}"
+              timeout: "{{ _nd_predelete_call_limit }}"
+              vars:
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rf) | map(attribute='serial') | list }}"
+                _predelete_inventory_reply: "{{ nd_predelete_inventory }}"
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _rf
+                label: "{{ _rf }}"
+              no_log: true
+              when: _nd_predelete_remaining | float > 0
+
+            - name: Require fresh inSync evidence for every leaving switch before removal
+              ansible.builtin.assert:
+                that:
+                  - _nd_predelete_remaining | float > 0
+                  - _nd_predelete_inventory_ready | bool
+                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: fresh inventory did not confirm configSyncStatus=inSync for every requested switch; no switch was removed."
+              vars:
+                _predelete_inventory_reply: "{{ _predelete_final }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _predelete_final._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_inventory.results }}"
+              loop_control:
+                loop_var: _predelete_final
+                label: "{{ _predelete_final._rf }}"
+              no_log: true
 
             - name: Report the pre-delete Recalculate & Deploy
               ansible.builtin.debug:
                 msg: >-
-                  NDP_SWITCH_PREDELETE_DEPLOY Recalculate & Deploy issued on
+                  NDP_SWITCH_PREDELETE_DEPLOY_CONFIRMED Recalculate & Deploy accepted on
                   {{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}
-                  for switches {{ nd_rehome_moves | map(attribute='serial') | list }}
-                  to finalise any pending Leaf-ToR unpairing before removal.
-              when: nd_switch_predelete_deploy | bool
+                  and fresh configSyncStatus=inSync verified for all {{ nd_rehome_moves | length }} leaving switches.
 
             # Use the same non-force endpoint/payload as the collection's delete
             # workflow, but inspect its immediate response before any absence wait.
@@ -624,6 +781,12 @@
             - name: Complete deploy-settle timing
               ansible.builtin.set_fact:
                 _nd_phase_deploy_settle_status: success
+          rescue:
+            - name: Stop the transfer when Recalculate Deploy or fresh convergence is unconfirmed
+              ansible.builtin.fail:
+                msg: >-
+                  NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: {{ ansible_failed_task.name }} failed;
+                  no switch removal or destination onboarding was attempted.
           always:
             - name: Report deploy-settle duration without replacing its result
               ansible.builtin.debug:
@@ -768,7 +931,7 @@
                 fail_msg: >-
                   NDP_SWITCH_REMOVE_REJECTED fabric={{ _report.fabric }} http={{ _report.http_status }}
                   attempts={{ _report.attempts }} classification={{ _report.classification }}
-                  items={{ _report.items }}; no source-absence polling or destination add will run.
+                  items={{ _report['items'] }}; no source-absence polling or destination add will run.
                 success_msg: >-
                   NDP_SWITCH_REMOVE_ACCEPTED fabric={{ _report.fabric }} http={{ _report.http_status }};
                   fresh source absence is still required before onboarding.

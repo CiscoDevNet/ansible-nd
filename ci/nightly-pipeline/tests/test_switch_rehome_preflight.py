@@ -32,11 +32,44 @@ def fail(**result):
     p.write_text(json.dumps(s)); m.fail_json(**result)
 if a['method']:
     if a['method'] == 'get':
+        if a['path'].endswith('/switches'):
+            s['predelete_polls'] = s.get('predelete_polls', 0) + 1
+            if scenario == 'predelete_call_timeout':
+                import time
+                time.sleep(3)
+            rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4),
+                     'additionalData':{'systemMode':'normal','configSyncStatus':'inSync'}}
+                    for index in range(len(s['original']))]
+            if scenario == 'predelete_pending_then_ready' and s['predelete_polls'] == 1 or scenario == 'predelete_pending_forever':
+                rows[-1]['additionalData']['configSyncStatus'] = 'pending'
+            if scenario == 'predelete_deployment_failed': rows[-1]['additionalData']['configSyncStatus'] = 'failed'
+            if scenario == 'predelete_missing_switch': rows = rows[:-1]
+            if scenario == 'predelete_missing_status': rows[-1]['additionalData'].pop('configSyncStatus')
+            if scenario == 'predelete_duplicate_switch': rows[-1] = dict(rows[0])
+            body = {'switches':rows}
+            if scenario == 'predelete_bad_inventory': body = {'switches':None}
+            if scenario == 'predelete_inventory_module_failure': fail(status=200, current=body, msg='password=DO_NOT_PRINT_ME')
+            finish(changed=False, status=403 if scenario == 'predelete_inventory_403' else 200, current=body)
         code = 500 if scenario == 'destination_http_error' else 200
         kind = 'externalConnectivity' if scenario == 'external' else 'vxlanCampus' if scenario == 'campus' else 'vxlanEbgp'
         finish(changed=False, status=code, current={'management':{'type':kind}})
     s['rest_writes'].append(a['path'])
     if not a['path'].endswith('/switchActions/remove'):
+        if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_400':
+            fail(status=400, msg='Save refused password=DO_NOT_PRINT_ME', current={'error':'RAW_PAYLOAD'})
+        if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_module_failure':
+            fail(status=200, current={}, msg='password=DO_NOT_PRINT_ME')
+        if a['path'].endswith('/switchActions/deploy'):
+            if scenario == 'predelete_deploy_403': fail(status=403, msg='Deploy denied password=DO_NOT_PRINT_ME')
+            if scenario == 'predelete_deploy_207_refused':
+                finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'failed','message':'password=DO_NOT_PRINT_ME'} for identity in a['content']['switchIds']]})
+            if scenario == 'predelete_deploy_207_items':
+                finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'success'} for identity in a['content']['switchIds']]})
+            if scenario == 'predelete_deploy_207_message':
+                finish(changed=True, status=207, current={'status':'Configuration deployment completed for ['+', '.join(a['content']['switchIds'])+'].'})
+            if scenario == 'predelete_deploy_207_partial_message':
+                finish(changed=True, status=207, current={'status':'Configuration deployment completed for ['+a['content']['switchIds'][0]+'].'})
+            if scenario == 'predelete_deploy_bad_body': finish(changed=True, status=207, current={})
         finish(changed=True, status=200, current={})
     requested = a['content']['switchIds']; s['selected_calls'].append(requested)
     attempt = len(s['selected_calls'])
@@ -192,6 +225,16 @@ def execute(tmp_path, scenario, remove_retries=2):
               "nd_switch_predelete_deploy": True, "nd_switch_settle_seconds": 0,
               "nd_switch_rehome_force_delete": False, "nd_switch_remove_retries": remove_retries,
               "nd_switch_remove_delay": 0, "nd_switch_rehome_retries": 1, "nd_switch_rehome_delay": 0}
+    values.update({key: value for key, value in guard()['vars'].items()
+                   if key.startswith('_nd_predelete_') or key.startswith('nd_switch_predelete_')})
+    values.update(nd_switch_predelete_timeout_seconds=20,
+                  nd_switch_predelete_call_timeout_seconds=1, nd_switch_predelete_poll_seconds=0,
+                  nd_switch_predelete_deploy=True)
+    if scenario in {'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
+                    'predelete_duplicate_switch', 'predelete_bad_inventory'}:
+        values['nd_switch_predelete_timeout_seconds'] = 3
+    if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
+    if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1
     tasks = move_tasks() + [{"name": "Destination add becomes eligible", "ansible.builtin.debug": {"msg": "DESTINATION_ADD_REACHED"}}]
     # Keep production no_log: assertions verify only sanitized diagnostics escape.
     play = tmp_path / "play.yaml"

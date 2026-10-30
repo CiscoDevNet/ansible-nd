@@ -69,7 +69,10 @@ def run(tmp_path, tasks, values=None):
     play = tmp_path / "play.yaml"
     play.write_text(yaml.safe_dump([{"hosts": "localhost", "connection": "local", "gather_facts": False,
         "vars": {"ansible_python_interpreter": sys.executable, "nd_switch_apply": True, "nd_switch_predelete_deploy": True,
-                 "_nd_switch_clock": source()["vars"]["_nd_switch_clock"], **(values or {})},
+                 "_nd_switch_clock": source()["vars"]["_nd_switch_clock"],
+                 **{key: value for key, value in source()["vars"].items()
+                    if key.startswith("nd_switch_predelete_") or key.startswith("_nd_predelete_")},
+                 **(values or {})},
         "tasks": tasks}], sort_keys=False))
     config = tmp_path / "ansible.cfg"
     config.write_text("[defaults]\nretry_files_enabled=False\nhost_key_checking=False\n")
