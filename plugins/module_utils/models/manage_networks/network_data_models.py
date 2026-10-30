@@ -732,6 +732,30 @@ class CustomNetworkModel(NetworkBaseModel):
     l2_data: dict[str, Any] | None = Field(default=None, alias="l2Data")
     l3_data: dict[str, Any] | None = Field(default=None, alias="l3Data")
 
+    @property
+    def _uses_private_secondary_template(self) -> bool:
+        return self.network_template_name == "Pvlan_Secondary_Network" and self.vlan_network_type in (
+            VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value,
+            VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value,
+        )
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Compare secondary PVLAN public fields, not their duplicate shipping-template encoding."""
+        data = super().to_diff_dict(**kwargs)
+        if self._uses_private_secondary_template:
+            data.pop("networkTemplateConfig", None)
+            if not kwargs.get("exclude_unset", False):
+                data.setdefault("l2Data", {}).setdefault("vlanName", "")
+        return data
+
+    def _scrub_reverse_diff_dict(self, data: dict[str, Any]) -> None:
+        """Keep controller-allocated secondary multicast when the task omits it."""
+        super()._scrub_reverse_diff_dict(data)
+        if self._uses_private_secondary_template:
+            fabric_data = (data.get("l2Data") or {}).get("fabricData")
+            if isinstance(fabric_data, dict):
+                fabric_data.pop("multicastGroup", None)
+
 
 class VxlanAciNetworkModel(NetworkBaseModel):
     """VXLAN ACI network model."""

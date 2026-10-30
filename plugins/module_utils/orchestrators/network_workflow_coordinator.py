@@ -28,7 +28,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkChildConfigModel, NetworkConfigModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer, VlanNetworkType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
     NetworkAttachmentManager,
@@ -672,7 +672,7 @@ class NetworkWorkflowCoordinator:
         """
         # Summary
 
-        Resolve operational-only definitions, existing identity, and sparse merged layers from cached inventory in one pass.
+        Resolve operational-only definitions, existing identity, and sparse layers/templates from cached inventory in one pass.
 
         ## Raises
 
@@ -686,6 +686,7 @@ class NetworkWorkflowCoordinator:
         """
         if state in ("gathered", "deleted"):
             return
+        secondary_types = (VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value, VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value)
         for entry in config:
             name = entry["network_name"]
             current = sm.existing.get(name)
@@ -702,6 +703,17 @@ class NetworkWorkflowCoordinator:
                     proposed.network_id = current.network_id
                 if proposed.vlan_id is None and current.vlan_id is not None:
                     proposed.vlan_id = current.vlan_id
+            effective_type = entry.get("vlan_network_type") or (current.vlan_network_type if current is not None and state == "merged" else None)
+            if (
+                not strategy.is_child
+                and not strategy.is_multicluster
+                and current is not None
+                and current.vlan_network_type in secondary_types
+                and effective_type in secondary_types
+            ):
+                proposed = sm.model_orchestrator.prepare_private_secondary_update(entry, current, proposed, state)
+                sm.proposed.replace(proposed)
+                continue
             if state != "merged" or strategy.is_child or not NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
                 continue
             context = {"state": "merged", "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}

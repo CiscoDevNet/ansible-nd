@@ -910,6 +910,7 @@ def test_private_secondary_network_requires_primary_id_and_rejects_l3_fields(vla
 
 def test_private_secondary_network_payload_is_generated_from_primary_id():
     orchestrator = _orchestrator()
+    orchestrator.strategy.fabric_data["manageFabricDetails"] = {"management": {"replicationMode": "multicast"}}
     transformed = orchestrator.prepare_config_data(
         _validated_network_config(
             [
@@ -936,7 +937,7 @@ def test_private_secondary_network_payload_is_generated_from_primary_id():
     assert payload["networkTemplateName"] == "Pvlan_Secondary_Network"
     assert payload["networkExtensionTemplateName"] == "Pvlan_Secondary_Network"
     assert payload["networkTemplateConfig"] == {
-        "enableIR": "true",
+        "enableIR": "false",
         "isLayer2Only": "true",
         "networkMode": "layer2",
         "networkName": "PVLAN_COMMUNITY",
@@ -956,6 +957,7 @@ def test_private_secondary_network_payload_is_generated_from_primary_id():
 
 def test_private_secondary_readback_is_idempotent_after_template_defaults():
     orchestrator = _orchestrator()
+    orchestrator.strategy.fabric_data["manageFabricDetails"] = {"management": {"replicationMode": "ingress"}}
 
     existing = orchestrator.model_class.from_response(
         orchestrator._normalize_query_network_item(
@@ -2503,8 +2505,12 @@ class _LayerValidationNetworkOrchestrator(NDNetworkOrchestrator):
         return {}
 
 
-def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=StandaloneNetworkStrategy, network_type="vxlanIbgp", state="merged"):
+def _layer_validation_state_machine(
+    config, inventory, check_mode, strategy_cls=StandaloneNetworkStrategy, network_type="vxlanIbgp", state="merged", *, management=None
+):
     strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": network_type})
+    if management is not None:
+        strategy.fabric_data["manageFabricDetails"] = {"management": management}
     module = _Module({"state": state, "config": config, "output_level": "normal"})
     module.check_mode = check_mode
     coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
@@ -2512,6 +2518,191 @@ def _layer_validation_state_machine(config, inventory, check_mode, strategy_cls=
     orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy, inventory=inventory)
     sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
     return coordinator, sm, parsed, orchestrator
+
+
+def _secondary_pvlan_readback(role, *, multicast=False):
+    orchestrator = _orchestrator()
+    entry = {
+        "network_name": "SECONDARY",
+        "display_name": "STORED",
+        "network_id": 30102,
+        "vlan_id": 2102,
+        "vlan_network_type": role,
+        "primary_network_id": 30101,
+        "vlan_name": "OLD",
+    }
+    if multicast:
+        entry["multicast_group_address"] = "239.1.1.102"
+    model = orchestrator.model_class.from_config(orchestrator.prepare_config_data([entry])[0])
+    return orchestrator._normalize_query_network_item(orchestrator._create_or_update_payload(model))
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("explicit_role", [False, True])
+@pytest.mark.parametrize("change", [False, True])
+def test_secondary_pvlan_sparse_merged_preserves_template_fields_and_converges(
+    role, strategy_cls, network_type, check_mode, controller_version, explicit_role, change
+):
+    inventory = [_secondary_pvlan_readback(role, multicast=True)]
+    inventory[0]["networkTemplateConfig"]["controllerField"] = "retained"
+    entry = {"network_name": "SECONDARY", "vlan_name": "NEW" if change else "OLD"}
+    if explicit_role:
+        entry.update(vlan_network_type=role, primary_network_id=30101)
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], inventory, check_mode, strategy_cls, network_type)
+    orchestrator.rest_send.controller_version = controller_version
+    original_intent = deepcopy(parsed)
+    original_before = sm.before.get("SECONDARY").to_payload()
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    assert parsed == original_intent
+    assert sm.before.get("SECONDARY").to_payload() == original_before
+    sm.manage_state()
+
+    assert sm.output.format()["changed"] is change
+    assert len(orchestrator.written_payloads) == (1 if change and not check_mode else 0)
+    assert orchestrator.query_count == 1
+    if not change:
+        assert not list(sm.sent)
+        return
+    payload = orchestrator._create_or_update_payload(sm.sent.get("SECONDARY"))
+    assert payload["networkType"] == "userDefined"
+    assert payload["vlanNetworkType"] == inventory[0]["vlanNetworkType"]
+    assert payload["primaryNetworkId"] == 30101
+    assert payload["networkId"] == 30102
+    assert payload["displayName"] == "STORED"
+    assert not {"vlanId", "l2Data", "l3Data"} & payload.keys()
+    expected_template = {**inventory[0]["networkTemplateConfig"], "vlanName": "NEW"}
+    if strategy_cls is MultisiteParentNetworkStrategy:
+        expected_template.pop("enableIR", None)
+        expected_template.pop("mcastGroup", None)
+    assert payload["networkTemplateConfig"] == expected_template
+
+    readback = orchestrator._normalize_query_network_item(payload)
+    coordinator, repeat, parsed, orchestrator = _layer_validation_state_machine([entry], [readback], check_mode, strategy_cls, network_type)
+    orchestrator.rest_send.controller_version = controller_version
+    coordinator._resolve_proposed_networks(repeat, parsed, "merged", orchestrator.strategy)
+    repeat.manage_state()
+    assert repeat.output.format()["changed"] is False
+    assert orchestrator.written_payloads == []
+    assert orchestrator.query_count == 1
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("change", [False, True])
+def test_secondary_pvlan_authoritative_omitted_ids_preserve_template_identity(role, strategy_cls, network_type, state, check_mode, controller_version, change):
+    state = crud_module_args({"state": state})["state"]
+    entry = {
+        "network_name": "SECONDARY",
+        "display_name": "STORED",
+        "vlan_network_type": role,
+        "primary_network_id": 30101,
+        "vlan_name": "NEW" if change else "OLD",
+    }
+    inventory = [_secondary_pvlan_readback(role)]
+    for repeat in (False, True):
+        coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], inventory, check_mode, strategy_cls, network_type, state)
+        orchestrator.rest_send.controller_version = controller_version
+        original_intent = deepcopy(parsed)
+        coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+        assert parsed == original_intent
+        sm.manage_state()
+        changed = change and not repeat
+        assert sm.output.format()["changed"] is changed
+        assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+        assert orchestrator.query_count == 1
+        model = sm.sent.get("SECONDARY") if changed else sm.existing.get("SECONDARY")
+        payload = orchestrator._create_or_update_payload(model)
+        assert payload["networkId"] == 30102
+        assert payload["primaryNetworkId"] == 30101
+        assert payload["networkTemplateConfig"]["segmentId"] == "30102"
+        assert payload["networkTemplateConfig"]["vlanId"] == "2102"
+        assert payload["networkTemplateConfig"]["vlanName"] == entry["vlan_name"]
+        inventory = [orchestrator._normalize_query_network_item(payload)]
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_secondary_pvlan_explicit_identity_is_not_replaced_by_cached_ids(role, state):
+    state = crud_module_args({"state": state})["state"]
+    entry = {
+        "network_name": "SECONDARY",
+        "vlan_network_type": role,
+        "primary_network_id": 30103,
+        "network_id": 30104,
+        "vlan_id": 2104,
+    }
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [_secondary_pvlan_readback(role)], True, state=state)
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    sm.manage_state()
+    payload = orchestrator._create_or_update_payload(sm.sent.get("SECONDARY"))
+    assert payload["networkId"] == 30104
+    assert payload["primaryNetworkId"] == 30103
+    assert payload["networkTemplateConfig"]["segmentId"] == "30104"
+    assert payload["networkTemplateConfig"]["vlanId"] == "2104"
+    assert orchestrator.query_count == 1
+    assert orchestrator.written_payloads == []
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+def test_secondary_pvlan_inherited_role_does_not_accept_l3_definition(role):
+    entry = {"network_name": "SECONDARY", "layer": "layer3", "vrf_name": "BLUE", "gateway_ipv4_address": "192.0.2.1/24"}
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [_secondary_pvlan_readback(role)], False)
+    with pytest.raises(ValueError, match="do not support layer3 intent"):
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    assert orchestrator.query_count == 1
+    assert orchestrator.written_payloads == []
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_secondary_pvlan_explicit_normal_role_retains_incompatible_model_guard(role, check_mode):
+    entry = {"network_name": "SECONDARY", "vlan_network_type": "normal", "vlan_name": "NEW"}
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [_secondary_pvlan_readback(role)], check_mode)
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    with pytest.raises(NDStateMachineError, match="Both must be the same type"):
+        sm.manage_state()
+    assert orchestrator.written_payloads == []
+    assert orchestrator.query_count == 1
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_secondary_pvlan_new_definition_does_not_invent_ids(role, state):
+    state = crud_module_args({"state": state})["state"]
+    entry = {"network_name": "SECONDARY", "vlan_network_type": role, "primary_network_id": 30101}
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], [], True, state=state)
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    sm.manage_state()
+    assert sm.output.format()["changed"] is True
+    proposed = sm.proposed.get("SECONDARY")
+    assert proposed.network_id is None
+    assert proposed.vlan_id is None
+    assert proposed.network_template_config["segmentId"] == ""
+    assert proposed.network_template_config["vlanId"] == ""
+    assert orchestrator.query_count == 1
+    assert orchestrator.written_payloads == []
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_primary_pvlan_role_only_is_a_network_definition(state):
+    state = crud_module_args({"state": state})["state"]
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+        [{"network_name": "PRIMARY", "vlan_network_type": "primary"}], [], True, state=state
+    )
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    sm.manage_state()
+    proposed = sm.proposed.get("PRIMARY")
+    assert proposed.vlan_network_type == "privatePrimary"
+    assert proposed.layer == "layer2"
+    assert sm.output.format()["changed"] is True
+    assert orchestrator.query_count == 1
+    assert orchestrator.written_payloads == []
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
@@ -4407,8 +4598,13 @@ def test_mcfg_parent_network_create_uses_onemanage_manage_schema_payload():
 
 
 @pytest.mark.parametrize("vlan_network_type", ["primary", "community", "isolated"])
-def test_mcfg_parent_pvlan_network_create_is_rejected(vlan_network_type):
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.135.51166"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_mcfg_parent_pvlan_network_create_is_rejected(vlan_network_type, state, controller_version, check_mode):
     orchestrator = _mcfg_parent_orchestrator()
+    orchestrator.rest_send.params.update(state=crud_module_args({"state": state})["state"], check_mode=check_mode)
+    orchestrator.rest_send.controller_version = controller_version
     config = {
         "network_name": f"PVLAN_{vlan_network_type.upper()}",
         "network_id": 901031,
@@ -4420,8 +4616,10 @@ def test_mcfg_parent_pvlan_network_create_is_rejected(vlan_network_type):
     if vlan_network_type in ("community", "isolated"):
         config["primary_network_id"] = 901030
 
-    with pytest.raises(ValueError, match="primary, community, and isolated are not supported on Multicluster parent fabrics"):
-        orchestrator.prepare_config_data([config])
+    with patch.object(NDNetworkOrchestrator, "_request") as request:
+        with pytest.raises(ValueError, match="primary, community, and isolated are not supported on Multicluster parent fabrics"):
+            orchestrator.prepare_config_data([config])
+        request.assert_not_called()
 
 
 def test_mcfg_parent_workflow_rejects_pvlan_networks_before_requests():
@@ -7281,29 +7479,21 @@ def test_network_state_machine_setup_restores_params_on_constructor_failure(monk
 
 
 def test_network_merged_layer_resolution_updates_cached_proposal():
-    from types import SimpleNamespace
-
-    strategy = _orchestrator().strategy
-    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), strategy)
-    proposed = SimpleNamespace(layer=None)
-    sm = SimpleNamespace(
-        existing={"N": SimpleNamespace(layer="layer2", vrf_name="NA")},
-        proposed={"N": proposed},
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+        [{"network_name": "N", "vlan_name": "NEW"}],
+        [{"networkName": "N", "networkType": "vxlanIbgp", "networkMode": "layer2", "vrfName": "NA"}],
+        True,
     )
-    coordinator._resolve_proposed_networks(sm, [{"network_name": "N", "vlan_name": "NEW"}], "merged", strategy)
-    assert proposed.layer == "layer2"
+    assert sm.proposed.get("N").layer is None
+    coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    assert sm.proposed.get("N").layer == "layer2"
 
 
 def test_network_merged_layer_resolution_leaves_unresolved_proposal_unchanged():
-    from types import SimpleNamespace
-
-    coordinator = NetworkWorkflowCoordinator(_Module({"state": "merged", "config": []}), _orchestrator().strategy)
-    proposed = SimpleNamespace(layer=None)
-    snapshot = SimpleNamespace(existing={}, proposed={"N": proposed})
-    model_cls = SimpleNamespace(from_config=lambda *_args, **_kwargs: SimpleNamespace(layer=None))
-    strategy = SimpleNamespace(config_model_cls=model_cls, fabric_data={"managementType": "vxlanIbgp"}, is_child=False)
-    coordinator._resolve_proposed_networks(snapshot, [{"network_name": "N", "vlan_id": 100}], "merged", strategy)
-    assert proposed.layer is None
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([{"network_name": "N", "vlan_id": 100}], [], True)
+    with patch.object(orchestrator.strategy.config_model_cls, "from_config", return_value=SimpleNamespace(layer=None)):
+        coordinator._resolve_proposed_networks(sm, parsed, "merged", orchestrator.strategy)
+    assert sm.proposed.get("N").layer is None
 
 
 def test_network_child_task_retains_explicit_child_layer():
@@ -7372,6 +7562,152 @@ def test_private_secondary_payload_omits_unrequested_optional_fields():
     assert "mcastGroup" not in data["network_template_config"]
     assert "primary_network_id" not in data
     assert "l2_data" not in data
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy])
+@pytest.mark.parametrize("replication", ["multicast", "ingress", None, "unknown"])
+def test_private_secondary_replication_uses_only_cached_owning_fabric_settings(role, strategy_cls, replication):
+    orchestrator = _orchestrator()
+    management = {} if replication is None else {"replicationMode": replication}
+    fabric_data = {"managementType": "vxlanIbgp", "manageFabricDetails": {"management": management}}
+    orchestrator.strategy = strategy_cls(fabric_name="fab1", fabric_data=fabric_data)
+    before = deepcopy(fabric_data)
+    entry = {"network_name": "N", "vlan_network_type": role, "primary_network_id": 30000}
+    if replication != "ingress":
+        entry["multicast_group_address"] = "239.1.1.78"
+    data = orchestrator.prepare_config_data([entry])[0]
+    template = data["network_template_config"]
+    if strategy_cls is StandaloneNetworkStrategy and replication in ("ingress", "multicast"):
+        assert template["enableIR"] == str(replication == "ingress").lower()
+    else:
+        assert "enableIR" not in template
+    if strategy_cls is MultisiteParentNetworkStrategy or replication == "ingress":
+        assert "mcastGroup" not in template
+        assert "fabricData" not in data.get("l2_data", {})
+    else:
+        assert template["mcastGroup"] == "239.1.1.78"
+    assert fabric_data == before
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("replication", ["multicast", "ingress"])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.135.51166"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_secondary_pvlan_fabric_derived_template_values_converge_without_hiding_public_updates(
+    role, strategy_cls, network_type, state, replication, controller_version, check_mode
+):
+    state = crud_module_args({"state": state})["state"]
+    readback = _secondary_pvlan_readback(role, multicast=replication == "multicast")
+    readback["networkTemplateConfig"].update(nveId="7", rtBothAuto="true", MULTISITE_CONN='[{"IF_NAME":"Ethernet1/1"}]')
+    if strategy_cls is StandaloneNetworkStrategy:
+        readback["networkTemplateConfig"]["enableIR"] = str(replication == "ingress").lower()
+    else:
+        readback["networkTemplateConfig"].pop("mcastGroup", None)
+        readback.get("l2Data", {}).pop("fabricData", None)
+    entry = {"network_name": "SECONDARY", "display_name": "STORED", "vlan_name": "OLD", "deploy": False}
+    if state != "merged":
+        entry.update(vlan_network_type=role, primary_network_id=30101)
+    for change in (False, True):
+        if change:
+            entry["vlan_name"] = "NEW"
+        for repeat in (False, True):
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+                [entry], [readback], check_mode, strategy_cls, network_type, state, management={"replicationMode": replication}
+            )
+            orchestrator.rest_send.controller_version = controller_version
+            original = deepcopy(parsed)
+            coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+            sm.manage_state()
+            changed = change and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert orchestrator.query_count == 1
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            assert parsed == original
+            if changed:
+                payload = orchestrator._create_or_update_payload(sm.sent.get("SECONDARY"))
+                template = payload["networkTemplateConfig"]
+                assert template["vlanName"] == "NEW"
+                assert template["nveId"] == "7"  # Observed fixture retention, not live acceptance of a non-default NVE.
+                assert template["rtBothAuto"] == "true"
+                assert template["MULTISITE_CONN"] == readback["networkTemplateConfig"]["MULTISITE_CONN"]
+                if strategy_cls is StandaloneNetworkStrategy:
+                    assert template["enableIR"] == str(replication == "ingress").lower()
+                    if replication == "multicast":
+                        assert template["mcastGroup"] == "239.1.1.102"
+                else:
+                    assert not {"enableIR", "mcastGroup"} & template.keys()
+                readback = orchestrator._normalize_query_network_item(payload)
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("field,value", [("multicast_group_address", "239.1.1.79"), ("vlan_id", 2103), ("primary_network_id", 30103)])
+def test_secondary_pvlan_public_template_fields_remain_managed(role, state, field, value):
+    state = crud_module_args({"state": state})["state"]
+    readback = _secondary_pvlan_readback(role, multicast=True)
+    entry = {"network_name": "SECONDARY", "display_name": "STORED", "vlan_name": "OLD", field: value}
+    if state != "merged" or field == "primary_network_id":
+        entry.update(vlan_network_type=role, primary_network_id=entry.get("primary_network_id", 30101))
+    coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+        [entry], [readback], False, state=state, management={"replicationMode": "multicast"}
+    )
+    coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+    sm.manage_state()
+    assert sm.output.format()["changed"] is True
+    assert len(orchestrator.written_payloads) == 1
+    payload = orchestrator.written_payloads[0]
+    if field == "primary_network_id":
+        assert payload["primaryNetworkId"] == value
+    else:
+        assert payload["networkTemplateConfig"]["mcastGroup" if field == "multicast_group_address" else "vlanId"] == str(value)
+
+
+@pytest.mark.parametrize("template_name,role", [("Other_Template", "privateSecondaryCommunity"), ("Pvlan_Secondary_Network", "normal")])
+def test_non_shipping_secondary_template_differences_are_not_ignored(template_name, role):
+    current = NDNetworkOrchestrator.model_class.from_response(
+        {
+            "networkName": "N",
+            "networkType": "userDefined",
+            "networkTemplateName": template_name,
+            "vlanNetworkType": role,
+            "networkTemplateConfig": {"enableIR": "false"},
+        }
+    )
+    proposed = current.model_copy(deep=True)
+    proposed.network_template_config = {"enableIR": "true"}
+    assert current.get_diff(proposed, exclude_unset=True) is False
+    assert current.get_diff(proposed, exclude_unset=False) is False
+
+
+@pytest.mark.parametrize("role", ["community", "isolated"])
+@pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_secondary_pvlan_vlan_name_clear_and_authoritative_omission_converge(role, strategy_cls, network_type, state, check_mode):
+    state = crud_module_args({"state": state})["state"]
+    readback = _secondary_pvlan_readback(role, multicast=strategy_cls is StandaloneNetworkStrategy)
+    entry = {"network_name": "SECONDARY", "display_name": "STORED", "deploy": False}
+    if state == "merged":
+        entry["vlan_name"] = ""
+    else:
+        entry.update(vlan_network_type=role, primary_network_id=30101)
+    for repeat in (False, True):
+        coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(
+            [entry], [readback], check_mode, strategy_cls, network_type, state, management={"replicationMode": "multicast"}
+        )
+        coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+        sm.manage_state()
+        assert sm.output.format()["changed"] is not repeat
+        assert len(orchestrator.written_payloads) == (1 if not repeat and not check_mode else 0)
+        assert orchestrator.query_count == 1
+        if not repeat:
+            payload = orchestrator._create_or_update_payload(sm.sent.get("SECONDARY"))
+            assert payload["networkTemplateConfig"]["vlanName"] == ""
+            readback["networkTemplateConfig"].pop("vlanName", None)
+            readback.get("l2Data", {}).pop("vlanName", None)
 
 
 def test_mcfg_parent_preserves_explicit_nonempty_l2_fabric_data():

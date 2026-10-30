@@ -389,7 +389,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         transformed: dict[str, Any],
     ) -> dict[str, Any]:
         template_config = {
-            "enableIR": "true",
             "isLayer2Only": "true",
             "networkMode": NetworkLayer.LAYER2.value,
             "networkName": self._value(config, "network_name", "networkName"),
@@ -400,11 +399,16 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "vlanId": self._template_config_string(self._value(config, "vlan_id", "vlanId")),
             "vrfName": "NA",
         }
+        if not self.strategy.is_parent:
+            management = (self.strategy.fabric_data.get("manageFabricDetails") or {}).get("management") or {}
+            replication = management.get("replicationMode")
+            if replication in ("ingress", "multicast"):
+                template_config["enableIR"] = self._template_config_string(replication == "ingress")
         vlan_name = self._value(config, "vlan_name", "vlanName")
         if vlan_name is not None:
             template_config["vlanName"] = self._template_config_string(vlan_name)
         multicast_group = self._value(config, "multicast_group_address", "multicastGroup")
-        if multicast_group is not None:
+        if multicast_group is not None and not self.strategy.is_parent:
             template_config["mcastGroup"] = self._template_config_string(multicast_group)
 
         result: dict[str, Any] = {
@@ -427,7 +431,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             result["primary_network_id"] = primary_network_id
         if vlan_name is not None:
             l2_data["vlanName"] = vlan_name
-        if multicast_group is not None:
+        if multicast_group is not None and not self.strategy.is_parent:
             l2_data["fabricData"] = {"multicastGroup": multicast_group}
         if l2_data:
             result["l2_data"] = l2_data
@@ -440,6 +444,47 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if isinstance(value, bool):
             return "true" if value else "false"
         return str(value)
+
+    def prepare_private_secondary_update(self, config: dict[str, Any], current: NDNetworkModel, proposed: NDNetworkModel, state: str) -> NDNetworkModel:
+        """
+        # Summary
+
+        Rebuild the shipping secondary template using effective fields and cached controller-owned values.
+
+        ## Raises
+
+        ### ValidationError
+
+        - Supplied settings conflict with the inherited secondary role.
+        """
+        resolved = current.to_gathered_config() if state == "merged" else {}
+        resolved.update(config)
+        if state == "merged":
+            # Validate supplied intent with its inherited role, not child-owned readback echoes.
+            self.strategy.config_model_cls.from_config(
+                {
+                    **config,
+                    "vlan_network_type": resolved["vlan_network_type"],
+                    "primary_network_id": resolved.get("primary_network_id"),
+                    "layer": resolved.get("layer"),
+                },
+                context={"state": state},
+            )
+        else:
+            resolved.update(network_id=proposed.network_id, vlan_id=proposed.vlan_id)
+        prepared = self._transform_config_to_payload_model_data(resolved, self.strategy.fabric_name)
+        observed_template = current.network_template_config or {}
+        template_config = prepared["network_template_config"]
+        if state != "merged":
+            template_config.setdefault("vlanName", "")
+        if "nveId" in observed_template:
+            template_config["nveId"] = observed_template["nveId"]
+        template_config = {**observed_template, **template_config}
+        if self.strategy.is_parent:
+            template_config.pop("enableIR", None)
+            template_config.pop("mcastGroup", None)
+        prepared["network_template_config"] = template_config
+        return self.model_class.from_config(prepared, context={"state": state})
 
     @classmethod
     def has_network_definition_intent(cls, config: dict[str, Any]) -> bool:
