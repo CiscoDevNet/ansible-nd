@@ -161,6 +161,8 @@ class VrfWorkflowCoordinator:
         rest_send = RestSend(rest_send_params)
         rest_send.sender = sender
         rest_send.response_handler = ResponseHandler()
+        if hasattr(self, "_controller_version"):
+            rest_send.controller_version = self._controller_version
         if timeout is not None:
             rest_send.timeout = timeout
         if send_interval is not None:
@@ -340,6 +342,8 @@ class VrfWorkflowCoordinator:
             identifier = (entry["vrf_name"], strategy.fabric_name)
             proposed = sm.proposed.get(identifier)
             current = sm.existing.get(identifier)
+            if proposed is not None:
+                sm.model_orchestrator.configure_write_models(proposed, current)
             if proposed is not None and proposed.vrf_id is None and current is not None and current.vrf_id is not None:
                 proposed.vrf_id = current.vrf_id
             if state != "merged" and proposed is not None and proposed.vlan_id is None and current is not None and current.vlan_id is not None:
@@ -362,6 +366,7 @@ class VrfWorkflowCoordinator:
             if proposed is None:
                 continue
             current = sm.existing.get(identifier)
+            sm.model_orchestrator.configure_write_models(proposed, current)
             if proposed.vrf_id is None and current is not None and current.vrf_id is not None:
                 proposed.vrf_id = current.vrf_id
             if proposed.vrf_type in (VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value):
@@ -430,6 +435,7 @@ class VrfWorkflowCoordinator:
                 model_data["vrfType"] = (current.vrf_type if current is not None else None) or NDVrfOrchestrator.default_vrf_type(strategy.fabric_data)
                 proposed = VrfDataModel.from_config(model_data, context={"state": state})
                 sm.proposed.replace(proposed)
+            sm.model_orchestrator.configure_write_models(proposed, current)
             if proposed.vrf_id is None and current is not None and current.vrf_id is not None:
                 proposed.vrf_id = current.vrf_id
             if proposed.vrf_type in VXLAN_VRF_TYPES:
@@ -741,6 +747,10 @@ class VrfWorkflowCoordinator:
 
             rest_send_params = dict(self.module.params)
             rest_send = self._new_rest_send(rest_send_params)
+            if state in ("merged", "replaced", "overridden", "staged"):
+                if not hasattr(self, "_controller_version"):
+                    self._controller_version = rest_send.controller_version
+                rest_send.controller_version = self._controller_version
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=active_strategy,

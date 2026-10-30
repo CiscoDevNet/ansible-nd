@@ -222,11 +222,14 @@ options:
           - Defaults to C(false) for definition creation and replacement.
         type: bool
       route_distinguisher_id:
-        description: VRF route distinguisher ID (0-65535) on IOS XE standalone and parent fabrics. If omitted, ND generates one.
+        description:
+          - VRF route distinguisher ID (0-65535) on IOS XE standalone and parent fabrics. If omitted, ND generates one.
+          - Supported on ND 4.3.1 and later; not applicable to earlier releases.
         type: int
       enable_vrf_vpn_route_leaking:
         description:
           - Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches of a standalone or child fabric.
+          - Supported on ND 4.3.1 and later; not applicable to earlier releases.
           - Defaults to C(false) for definition creation and replacement.
         type: bool
       disable_rt_auto:
@@ -515,7 +518,9 @@ options:
             description: Enable BGP best-path AS-path multipath-relax; NX-OS only.
             type: bool
           enable_vrf_vpn_route_leaking:
-            description: Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches.
+            description:
+              - Enable bidirectional VRF-to-VPN route leaking on NX-OS border and border-gateway switches.
+              - Supported on ND 4.3.1 and later; not applicable to earlier releases.
             type: bool
           bgp_log_neighbor_change:
             description: Log BGP neighbor up/down events.

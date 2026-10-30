@@ -40,6 +40,7 @@ import json
 import time
 
 from typing import Any, Callable, ClassVar
+from functools import cached_property
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import (
@@ -57,6 +58,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_da
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
     VrfType,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
@@ -122,6 +124,17 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
             raise ValueError("NDVrfOrchestrator requires a strategy instance.")
+
+    @cached_property
+    def write_capabilities(self) -> VrfWriteCapabilities:
+        """Reuse the cached connection release for every fabric topology."""
+        return VrfWriteCapabilities(self.rest_send.controller_version)
+
+    def configure_write_models(self, proposed: NDVrfModel, current: NDVrfModel | None) -> None:
+        """Use the same policy for both sides of the existing reconciliation pass."""
+        proposed.set_write_capabilities(self.write_capabilities)
+        if current is not None:
+            current.set_write_capabilities(self.write_capabilities)
 
     # ── Config preprocessing ──────────────────────────────────────
 
@@ -474,8 +487,11 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         supplied = get_raw_module_args().get("config") if external else None
         explicit_entries = supplied if isinstance(supplied, list) and len(supplied) == len(raw_config) else None
         result = []
+        writing = self.rest_send.params.get("state", "merged") in ("merged", "replaced", "overridden", "staged")
         for index, entry in enumerate(raw_config):
             if isinstance(entry, dict):
+                if writing and not external:
+                    self.write_capabilities.validate_config(entry, fabric_name)
                 if self.strategy.is_child:
                     result.append(self._transform_child_config_to_payload_model_data(entry, fabric_name))
                 else:
@@ -484,6 +500,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                     result.append(self._transform_config_to_payload_model_data(entry, fabric_name))
             else:
                 result.append(entry)
+            if writing and not external and isinstance(result[-1], dict):
+                self.write_capabilities.filter_fields(result[-1], by_alias=False)
         return result
 
     # ── Endpoint factory ──────────────────────────────────────────
@@ -1020,6 +1038,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             self.validate_external_vrf_write(model_instance, updating=updating)
             payload = model_instance.to_payload()
             return {key: payload[key] for key in ("fabricName", "vrfName", "vrfType", "description") if key in payload}
+        if model_instance.write_capabilities is None:
+            intent = model_instance.to_payload()
+            if self.strategy.is_parent:
+                intent.pop("fabricData", None)
+            self.write_capabilities.validate_payload(intent, self.strategy.fabric_name)
+        model_instance.set_write_capabilities(self.write_capabilities)
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
             return self._mcfg_parent_vrf_payload(model_instance)
         payload = model_instance.to_payload()

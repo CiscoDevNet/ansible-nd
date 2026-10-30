@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
@@ -25,6 +26,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.standalone_vrf import StandaloneVrfStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import VrfWorkflowCoordinator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import NDVrfOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
 class _Module:
@@ -83,6 +86,7 @@ def vrf_controller(monkeypatch):
         core_update = payload.pop("coreData", {})
         if not _orchestrator.strategy.is_parent and not _orchestrator.strategy.is_child:
             core = core_update
+            current["fabricData"] = payload.get("fabricData", {})
         else:
             core = {**current.get("coreData", {}), **core_update}
         current.update(payload)
@@ -99,12 +103,13 @@ def vrf_controller(monkeypatch):
     return controller
 
 
-def _run(strategy, entry, state="merged", check_mode=False):
+def _run(strategy, entry, state="merged", check_mode=False, version="4.3.1.175"):
     spec = {**vrf_parent_argument_spec(), **vrf_standalone_argument_spec()}
     accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": spec}}).validate({"config": [entry]})
     assert not accepted.error_messages
     module = _Module({"fabric_name": "FAB", "state": state, "config": accepted.validated_parameters["config"]}, check_mode)
     coordinator = VrfWorkflowCoordinator(module, strategy)
+    coordinator._controller_version = version
     model = VrfParentConfigModel if strategy.is_parent else VrfChildConfigModel if strategy.is_child else VrfConfigModel
     if strategy.is_child:
         module.params["config"][0]["fabric_name"] = strategy.fabric_name
@@ -118,6 +123,213 @@ def _run(strategy, entry, state="merged", check_mode=False):
         return sm
     finally:
         coordinator._restore_state_machine_params(original_config, original_state)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("exists", [False, True])
+@pytest.mark.parametrize("version", ["4.2.1.10", None, "unknown", "4.3.0.1"])
+@pytest.mark.parametrize(
+    "strategy_cls,field,value",
+    [
+        (StandaloneVrfStrategy, "route_distinguisher_id", 0),
+        (StandaloneVrfStrategy, "enable_vrf_vpn_route_leaking", False),
+        (MultisiteParentVrfStrategy, "route_distinguisher_id", 0),
+        (ChildVrfStrategy, "enable_vrf_vpn_route_leaking", False),
+        (MulticlusterParentVrfStrategy, "route_distinguisher_id", 0),
+    ],
+)
+def test_unsupported_explicit_release_fields_fail_before_inventory_or_write(strategy_cls, field, value, version, state, check_mode, exists, vrf_controller):
+    strategy = strategy_cls(fabric_name="FAB", fabric_data={"managementType": "vxlan" if strategy_cls is MulticlusterParentVrfStrategy else "vxlanIbgp"})
+    if not exists:
+        vrf_controller["row"] = None
+    with pytest.raises(ValueError, match=field + ".*requires ND 4.3.1"):
+        _run(strategy, {"vrf_name": "BLUE", field: value}, state, check_mode, version)
+    assert not vrf_controller["reads"]
+    assert not vrf_controller["writes"]
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("version", ["4.2.1.10", None])
+@pytest.mark.parametrize("strategy_cls", [StandaloneVrfStrategy, MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy, ChildVrfStrategy])
+def test_omitted_unsupported_fields_do_not_diff_or_leak_into_writes(strategy_cls, version, state, vrf_controller):
+    strategy = strategy_cls(fabric_name="FAB", fabric_data={"managementType": "vxlan" if "Parent" in strategy_cls.__name__ else "vxlanIbgp"})
+    vrf_controller["row"] = None
+    seed = {"vrf_name": "BLUE", "vrf_id": 50000}
+    _run(strategy, seed, state, version=version)
+    # An older or unknown API can still echo fields that this workflow cannot write.
+    vrf_controller["row"].setdefault("coreData", {})["routeDistinguisherId"] = 73
+    vrf_controller["row"].setdefault("fabricData", {})["enableVrfVpnRouteLeaking"] = True
+    observed = deepcopy(vrf_controller["row"])
+    for check_mode in (False, True):
+        sm = _run(strategy, seed, state, check_mode, version)
+        assert not len(sm.sent)
+        gathered = next(iter(sm.before)).to_gathered_config()
+        assert gathered["route_distinguisher_id"] == 73
+        assert gathered["enable_vrf_vpn_route_leaking"] is True
+    assert vrf_controller["row"] == observed
+    for call in vrf_controller["writes"]:
+        payload = call["data"].get("vrfs", [call["data"]])[0]
+        assert "routeDistinguisherId" not in payload.get("coreData", {})
+        assert "enableVrfVpnRouteLeaking" not in payload.get("fabricData", {})
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls,cluster_name", [(StandaloneVrfStrategy, None), (ChildVrfStrategy, None), (ChildVrfStrategy, "REMOTE")])
+def test_supported_explicit_false_disables_leaking_and_converges(strategy_cls, cluster_name, state, vrf_controller):
+    strategy = strategy_cls(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp", "clusterName": cluster_name})
+    vrf_controller["row"] = None
+    _run(strategy, {"vrf_name": "BLUE", "enable_vrf_vpn_route_leaking": True}, state)
+    writes = len(vrf_controller["writes"])
+    for index, check_mode in enumerate((True, False, False, True)):
+        sm = _run(strategy, {"vrf_name": "BLUE", "enable_vrf_vpn_route_leaking": False}, state, check_mode)
+        assert bool(len(sm.sent)) is (index < 2)
+        assert len(vrf_controller["writes"]) == writes + (index > 0)
+    assert vrf_controller["writes"][-1]["data"]["fabricData"]["enableVrfVpnRouteLeaking"] is False
+    endpoint = urlsplit(vrf_controller["writes"][-1]["path"])
+    assert endpoint.path == "/api/v1/manage/fabrics/FAB/vrfs/BLUE"
+    assert parse_qs(endpoint.query) == ({"clusterName": [cluster_name]} if cluster_name else {})
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+def test_supported_leaking_omission_restores_controller_default(state, vrf_controller):
+    strategy = StandaloneVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp"})
+    vrf_controller["row"] = None
+    _run(strategy, {"vrf_name": "BLUE", "enable_vrf_vpn_route_leaking": True})
+    for index, check_mode in enumerate((True, False, False, True)):
+        sm = _run(strategy, {"vrf_name": "BLUE"}, state, check_mode)
+        assert bool(len(sm.sent)) is (index < 2)
+    assert vrf_controller["row"].get("fabricData", {}).get("enableVrfVpnRouteLeaking", False) is False
+
+
+@pytest.mark.parametrize("version", [None, "4.2.1.10"])
+@pytest.mark.parametrize("section,field,value", [("coreData", "routeDistinguisherId", 0), ("fabricData", "enableVrfVpnRouteLeaking", False)])
+def test_direct_payload_builder_rejects_unprepared_unsupported_intent(version, section, field, value):
+    rest = RestSend({"state": "merged"})
+    rest.controller_version = version
+    strategy = StandaloneVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp"})
+    orchestrator = NDVrfOrchestrator(rest_send=rest, strategy=strategy)
+    model = VrfDataModel.from_response({"fabricName": "FAB", "vrfName": "BLUE", "vrfType": "vxlanIbgp", section: {field: value}})
+    original = model.model_dump()
+    with pytest.raises(ValueError, match="requires ND 4.3.1"):
+        orchestrator._create_or_update_payload(model)
+    assert model.model_dump() == original
+    assert model.write_capabilities is None
+
+
+@pytest.mark.parametrize("state", ["gathered", "deleted"])
+def test_release_gates_do_not_apply_to_read_or_delete_selectors(state, monkeypatch):
+    rest = RestSend({"state": state})
+    strategy = StandaloneVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp"})
+    orchestrator = NDVrfOrchestrator(rest_send=rest, strategy=strategy)
+    monkeypatch.setattr(RestSend, "controller_version", property(lambda _self: pytest.fail("Read/delete must not look up release capability")))
+    prepared = orchestrator.prepare_config_data([{"vrf_name": "BLUE", "route_distinguisher_id": 0, "enable_vrf_vpn_route_leaking": False}])
+    assert prepared[0]["vrf_name"] == "BLUE"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [StandaloneVrfStrategy, MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("rd_id", [0, 65535])
+def test_supported_rd_boundaries_survive_create_update_and_repeat(strategy_cls, state, rd_id, vrf_controller):
+    strategy = strategy_cls(
+        fabric_name="FAB",
+        fabric_data={
+            "managementType": "vxlanCampus" if strategy_cls is StandaloneVrfStrategy else "vxlan",
+            "members": [{"fabricName": "CHILD", "fabricState": "member", "clusterName": "REMOTE"}],
+        },
+    )
+    vrf_controller["row"] = None
+    entry = {"vrf_name": "BLUE", "route_distinguisher_id": rd_id}
+    for index, check_mode in enumerate((True, False, False, True)):
+        sm = _run(strategy, entry, state, check_mode)
+        assert bool(len(sm.sent)) is (index < 2)
+        assert len(vrf_controller["writes"]) == (index > 0)
+    assert vrf_controller["row"]["coreData"]["routeDistinguisherId"] == rd_id
+    updated = 65535 if rd_id == 0 else 0
+    for index, check_mode in enumerate((True, False, False, True)):
+        sm = _run(strategy, {"vrf_name": "BLUE", "route_distinguisher_id": updated}, state, check_mode)
+        assert bool(len(sm.sent)) is (index < 2)
+        assert len(vrf_controller["writes"]) == (1 if index == 0 else 2)
+    assert vrf_controller["row"]["coreData"]["routeDistinguisherId"] == updated
+    prefix = "/api/v1/oneManage/manage" if strategy.is_multicluster else "/api/v1/manage"
+    assert vrf_controller["writes"][0]["path"] == f"{prefix}/fabrics/FAB/vrfs"
+    assert vrf_controller["writes"][1]["path"] == f"{prefix}/fabrics/FAB/vrfs/BLUE"
+    for request, expected in zip(vrf_controller["writes"], (rd_id, updated)):
+        payload = request["data"].get("vrfs", [request["data"]])[0]
+        assert payload["coreData"]["routeDistinguisherId"] == expected
+        if strategy.is_parent:
+            assert not payload.get("fabricData")
+
+
+@pytest.mark.parametrize(
+    "version,supported", [(None, False), ("unknown", False), ("4.2.1.10", False), ("4.3.0.1", False), ("4.3.1.175", True), ("5.0.1", True)]
+)
+def test_vrf_release_capability_uses_the_controller_release(version, supported):
+    policy = VrfWriteCapabilities(version)
+    assert policy.supported is supported
+    config = {"route_distinguisher_id": 0, "enable_vrf_vpn_route_leaking": False}
+    if supported:
+        policy.validate_config(config, "FAB")
+    else:
+        with pytest.raises(ValueError, match="requires ND 4.3.1"):
+            policy.validate_config(config, "FAB")
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("parent_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("version", ["4.2.1.10", None])
+def test_child_release_guard_precedes_parent_writes_even_for_explicit_false(parent_cls, version, state, check_mode, monkeypatch, vrf_controller):
+    member = {"fabricName": "CHILD", "managementType": "vxlanIbgp", "fabricState": "member"}
+    if parent_cls is MulticlusterParentVrfStrategy:
+        member["clusterName"] = "REMOTE"
+    strategy = parent_cls(fabric_name="FAB", fabric_data={"managementType": "vxlan", "members": [member]})
+    args = {
+        "fabric_name": "FAB",
+        "state": state,
+        "config": [{"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "CHILD", "enable_vrf_vpn_route_leaking": False}]}],
+    }
+    module = _Module(deepcopy(args), check_mode)
+    coordinator = VrfWorkflowCoordinator(module, strategy)
+    coordinator._controller_version = version
+
+    def rest_send(params):
+        rest = RestSend(params)
+        rest.controller_version = version
+        return rest
+
+    parent_calls = []
+    monkeypatch.setattr(coordinator, "_new_rest_send", rest_send)
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", lambda *_args, **_kwargs: parent_calls.append(True))
+    with pytest.raises(ValueError, match="enable_vrf_vpn_route_leaking.*requires ND 4.3.1"):
+        coordinator._handle_parent_workflow(args, strategy.fabric_type)
+    assert not parent_calls
+    assert not vrf_controller["reads"]
+    assert not vrf_controller["writes"]
+    assert module.params == args
+
+
+@pytest.mark.parametrize("version", [None, "4.2.1.10", "4.3.1.175"])
+def test_workflow_version_lookup_does_not_scale_with_vrfs_or_child_tasks(version, monkeypatch, vrf_controller):
+    strategy = StandaloneVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp"})
+    module = _Module({"fabric_name": "FAB", "state": "merged", "config": []}, False)
+    coordinator = VrfWorkflowCoordinator(module, strategy)
+    calls = []
+
+    def get_version(_sender):
+        calls.append(True)
+        return version
+
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Sender.get_version", get_version)
+    strategies = [
+        strategy,
+        ChildVrfStrategy(fabric_name="CHILD", fabric_data={"clusterName": "REMOTE", "managementType": "vxlanIbgp"}),
+        MultisiteParentVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlan"}),
+    ]
+    for active_strategy in strategies:
+        _sm, original_config, original_state = coordinator._new_state_machine({"state": "merged", "config": [{"vrf_name": "BLUE"}]}, active_strategy)
+        coordinator._restore_state_machine_params(original_config, original_state)
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])

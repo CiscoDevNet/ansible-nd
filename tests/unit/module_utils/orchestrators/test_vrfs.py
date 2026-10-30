@@ -77,6 +77,8 @@ class _Strategy:
 def _resolve_standalone(sm, entries, state, l3vni_default=None):
     fabric_data = {"management": {"l3VniNoVlanDefaultOption": l3vni_default}} if l3vni_default is not None else {}
     coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    if not hasattr(sm, "model_orchestrator"):
+        sm.model_orchestrator = _orchestrator_for_request_tests({"state": state})
     coordinator._resolve_standalone_vrf_intent(sm, entries, state, _Strategy(fabric_data=fabric_data))
 
 
@@ -96,7 +98,9 @@ def _validate_child_effective(intent, existing=None, state="merged", vrf_type="v
         else None
     )
     key = ("BLUE", "AK-VXLAN")
-    sm = SimpleNamespace(proposed={key: proposed}, existing={key: current} if current is not None else {})
+    sm = SimpleNamespace(
+        proposed={key: proposed}, existing={key: current} if current is not None else {}, model_orchestrator=_orchestrator_for_request_tests({"state": state})
+    )
     fabric_data = {"management": {"l3VniNoVlanDefaultOption": fabric_default}} if fabric_default is not None else {}
     VrfWorkflowCoordinator._validate_child_vrf_intent(sm, [entry], state, _Strategy(fabric_data=fabric_data, is_child=True, is_multicluster=is_multicluster))
     return proposed, current
@@ -218,8 +222,7 @@ def test_standalone_l3vni_without_vlan_omits_svi_defaults():
 
 
 def test_standalone_no_vlan_transition_does_not_resend_inherited_svi_fields():
-    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
-    object.__setattr__(orchestrator, "strategy", _Strategy())
+    orchestrator = _orchestrator_for_request_tests({"state": "merged"})
     model = VrfDataModel.from_config(
         {
             "fabric_name": "AK-VXLAN",
@@ -270,6 +273,7 @@ def test_parent_route_map_fallback_uses_ipv4_for_new_vrf():
     proposed = VrfDataModel.from_config(_transform(config, is_parent=True))
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel), proposed=NDConfigCollection(VrfDataModel, [proposed]))
     strategy = SimpleNamespace(fabric_name="AK-VXLAN")
+    sm.model_orchestrator = _orchestrator_for_request_tests({"state": "merged"})
     VrfWorkflowCoordinator._resolve_parent_vrf_intent(sm, [config], "merged", strategy)
     payload = proposed.to_payload()
     assert payload["coreData"]["vrfRouteMap"] == "CUSTOM-V4"
@@ -280,6 +284,7 @@ def test_mcfg_parent_route_map_fallback_uses_ipv4_for_new_vrf():
     config = VrfParentConfigModel.from_config({"vrf_name": "BLUE", "redist_direct_rmap": "CUSTOM-V4"}).to_config(exclude_unset=True)
     proposed = VrfDataModel.from_config(_transform(config, is_parent=True, is_multicluster=True, fabric_data={"managementType": "vxlan"}))
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel), proposed=NDConfigCollection(VrfDataModel, [proposed]))
+    sm.model_orchestrator = _orchestrator_for_request_tests({"state": "merged"})
     VrfWorkflowCoordinator._resolve_parent_vrf_intent(sm, [config], "merged", SimpleNamespace(fabric_name="AK-VXLAN"))
     assert proposed.to_payload()["coreData"]["v6VrfRouteMap"] == "CUSTOM-V4"
 
@@ -292,6 +297,7 @@ def test_parent_route_map_fallback_respects_sparse_and_authoritative_states(stat
         {"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vrfType": "vxlanIbgp", "coreData": {"vrfRouteMap": "OLD-V4", "v6VrfRouteMap": "OLD-V6"}}
     )
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel, [current]), proposed=NDConfigCollection(VrfDataModel, [proposed]))
+    sm.model_orchestrator = _orchestrator_for_request_tests({"state": state})
     VrfWorkflowCoordinator._resolve_parent_vrf_intent(sm, [config], state, SimpleNamespace(fabric_name="AK-VXLAN"))
     effective = current.model_copy(deep=True).merge(proposed) if state == "merged" else proposed
     assert effective.to_payload()["coreData"]["v6VrfRouteMap"] == expected
@@ -755,8 +761,7 @@ def test_standalone_sparse_no_vlan_rejects_explicit_svi_and_drops_readback_echo(
         proposed=NDConfigCollection(VrfDataModel, [VrfDataModel.from_config(_transform({"vrf_name": "BLUE", "vrf_description": "updated"}))]),
     )
     _resolve_standalone(sm, [{"vrf_name": "BLUE", "vrf_description": "updated"}], "merged")
-    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
-    object.__setattr__(orchestrator, "strategy", _Strategy())
+    orchestrator = _orchestrator_for_request_tests({"state": "merged"})
     payload = orchestrator._create_or_update_payload(_effective_vrf(sm))
     assert payload["coreData"] == {"vrfDescription": "updated"}
     assert "vlanId" not in payload
@@ -1591,6 +1596,7 @@ def test_vrfs_00021_transform_mcfg_parent_uses_schema_payload_not_template_paylo
 
     orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
     object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+    object.__setattr__(orchestrator, "rest_send", RestSend({"state": state}))
     mcfg_payload = orchestrator._create_or_update_payload(VrfDataModel.from_config(transformed))
 
     assert mcfg_payload["fabricName"] == "MCFG_FAB"

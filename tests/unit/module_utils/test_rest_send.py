@@ -17,6 +17,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -35,6 +36,28 @@ def responses_rest_send(key: str):
     Load fixture data for rest_send tests
     """
     return load_fixture("test_rest_send")[key]
+
+
+@pytest.mark.parametrize("version", [None, "unknown", "4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_controller_version_caches_success_and_unknown(version, fails):
+    """Connection failures and missing releases must not cause per-resource retries."""
+    calls = []
+
+    def get_version():
+        calls.append(True)
+        if fails:
+            raise ValueError("unavailable")
+        return version
+
+    rest = RestSend({})
+    rest._sender = SimpleNamespace(get_version=get_version)
+    for _index in range(3):
+        assert rest.controller_version == (None if fails else version)
+    assert len(calls) == 1
+    rest.controller_version = None
+    assert rest.controller_version is None
+    assert len(calls) == 1
 
 
 # =============================================================================

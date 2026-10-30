@@ -119,6 +119,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._check_mode: bool = False
         self._committed_payload: Optional[Union[dict, list]] = None
         self._controller_version: Optional[str] = None
+        self._controller_version_resolved: bool = False
         self._path: Optional[str] = None
         self._payload: Optional[Union[dict, list]] = None
         self._response: list[dict[str, Any]] = []
@@ -815,7 +816,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
         senders expose a connection (the file-based test sender does not), so callers
         may also set this directly to drive version-gated behaviour in unit tests.
         """
-        if self._controller_version is None:
+        if not self._controller_version_resolved:
+            self._controller_version_resolved = True
             getter = getattr(self._sender, "get_version", None)
             if callable(getter):
                 try:
@@ -827,6 +829,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
     @controller_version.setter
     def controller_version(self, value: Optional[str]):
         self._controller_version = value
+        self._controller_version_resolved = True
 
     @property
     def timeout(self) -> int:

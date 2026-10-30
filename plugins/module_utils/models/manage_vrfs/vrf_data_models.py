@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -40,6 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.validators import (
     VrfValidators,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
 
 # =============================================================================
 # Nested / shared nested models
@@ -483,6 +485,23 @@ class VrfDataModel(NDBaseModel):
     payload_exclude_fields: ClassVar[set[str]] = {"vrf_status"}
     reverse_diff_exclude: ClassVar[set[str]] = {"defaultSecurityGroupTag"}
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {"defaultSecurityAction": "unenforcedOrNone"}
+    _write_capabilities: VrfWriteCapabilities | None = PrivateAttr(default=None)
+
+    @property
+    def write_capabilities(self) -> VrfWriteCapabilities | None:
+        """The runtime write contract; absent on models used outside a workflow."""
+        return self._write_capabilities
+
+    def set_write_capabilities(self, capabilities: VrfWriteCapabilities) -> None:
+        """Bind cached capability metadata without changing observed field values."""
+        self._write_capabilities = capabilities
+
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Export only fields writable on this target's known release."""
+        data = super().to_payload(**kwargs)
+        if self._write_capabilities is not None:
+            self._write_capabilities.filter_fields(data)
+        return data
 
     # vrfCommon required fields
     fabric_name: str = Field(
@@ -660,6 +679,8 @@ class VrfDataModel(NDBaseModel):
                 if trm.get(key) is None:
                     trm[key] = []
         self.normalize_no_vlan(data)
+        if self._write_capabilities is not None:
+            self._write_capabilities.filter_fields(data)
         return data
 
     @staticmethod

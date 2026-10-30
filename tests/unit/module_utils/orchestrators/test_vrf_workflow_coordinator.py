@@ -14,6 +14,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from copy import deepcopy
+from urllib.parse import parse_qs, urlsplit
 from typing import Literal
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs import vrf_data_models
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import vrf_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
@@ -289,6 +291,7 @@ def child_vrf_trm_controller(monkeypatch):
         ],
         "queries": [],
         "writes": [],
+        "requests": [],
         "parents": [],
     }
 
@@ -300,6 +303,7 @@ def child_vrf_trm_controller(monkeypatch):
         assert orchestrator.strategy.is_child
         assert kwargs["verb"] == HttpVerbEnum.PUT
         payload = kwargs["data"]
+        controller["requests"].append(deepcopy(kwargs))
         controller["writes"].append(payload)
         controller["inventory"][0].update(deepcopy(payload))
         return {}
@@ -366,6 +370,41 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
     assert controller["inventory"][0]["vrfId"] == 50000
     assert controller["inventory"][0]["vlanId"] == 2001
     assert all("rp_address" not in task["config"][0] and "trm_enable" not in task["config"][0] for task in controller["parents"])
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_parent_child_leaking_uses_controller_release_and_converges(strategy_cls, state, enabled, child_vrf_trm_controller):
+    controller = child_vrf_trm_controller
+    controller["inventory"][0]["fabricData"] = {"enableVrfVpnRouteLeaking": not enabled}
+    multicluster = strategy_cls is MulticlusterParentVrfStrategy
+    member = {"fabricName": "c1", "fabricState": "member", "managementType": "vxlanIbgp"}
+    if multicluster:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    validated = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}}).validate(
+        {"config": [{"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "c1", "enable_vrf_vpn_route_leaking": enabled}]}]}
+    )
+    assert not validated.error_messages
+
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
+        coordinator._controller_version = "4.3.1.175"
+        result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert not result["failed"]
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["queries"] == [("c1", multicluster)] * (run + 1)
+
+    payload = controller["writes"][0]
+    assert set(payload) == {"fabricName", "vrfName", "vrfType", "fabricData"}
+    assert payload["fabricData"]["enableVrfVpnRouteLeaking"] is enabled
+    assert all("enable_vrf_vpn_route_leaking" not in task["config"][0] for task in controller["parents"])
+    endpoint = urlsplit(controller["requests"][0]["path"])
+    assert endpoint.path == "/api/v1/manage/fabrics/c1/vrfs/BLUE"
+    assert parse_qs(endpoint.query) == ({"clusterName": ["cluster1"]} if multicluster else {})
 
 
 class _ConcreteVxlanVrfModel(VrfDataModel):
@@ -3774,7 +3813,7 @@ def test_vrf_orchestrator_creation_keeps_parent_queries_at_parent_scope(state, m
             return config
 
     monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
-    monkeypatch.setattr(coordinator, "_new_rest_send", lambda _params: object())
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
     coordinator._new_vrf_orchestrator({"state": state, "config": []}, coordinator.strategy)
     snapshot = SimpleNamespace(existing={}, proposed={})
     monkeypatch.setattr(coordinator_mod, "NDStateMachine", lambda **_kwargs: snapshot)
@@ -3815,8 +3854,10 @@ def test_vrf_sparse_ipv4_map_preserves_existing_ipv6_override(monkeypatch, state
     )
 
     class Orchestrator:
+        configure_write_models = coordinator_mod.NDVrfOrchestrator.configure_write_models
+
         def __init__(self, **_kwargs):
-            pass
+            self.write_capabilities = VrfWriteCapabilities("4.3.1.175")
 
         @staticmethod
         def prepare_config_data(config):
@@ -3832,13 +3873,14 @@ def test_vrf_sparse_ipv4_map_preserves_existing_ipv6_override(monkeypatch, state
             ]
 
     class StateMachine:
-        def __init__(self, module, **_kwargs):
+        def __init__(self, module, model_orchestrator):
+            self.model_orchestrator = model_orchestrator
             self.existing = NDConfigCollection(VrfDataModel, existing_models)
             self.proposed = NDConfigCollection.from_ansible_config(module.params["config"], VrfDataModel)
 
     monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
     monkeypatch.setattr(coordinator_mod, "NDStateMachine", StateMachine)
-    monkeypatch.setattr(coordinator, "_new_rest_send", lambda _params: object())
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
     entry = {"vrf_name": "BLUE", "redist_direct_rmap": "NEW-V4"}
     if explicit_v6:
         entry["v6_redist_direct_rmap"] = "CUSTOM-V6"
@@ -3864,21 +3906,24 @@ def test_standalone_effective_validation_failure_restores_module_params(monkeypa
     coordinator = VrfWorkflowCoordinator(_Module(original.copy()), _StandaloneStrategy())
 
     class Orchestrator:
+        configure_write_models = coordinator_mod.NDVrfOrchestrator.configure_write_models
+
         def __init__(self, **_kwargs):
-            pass
+            self.write_capabilities = VrfWriteCapabilities("4.3.1.175")
 
         @staticmethod
         def prepare_config_data(_config):
             return [{"fabric_name": "AK-VXLAN", "vrf_name": "BLUE", "fabric_data": {"trmData": {"v4RpAddress": "192.0.2.9"}}}]
 
     class StateMachine:
-        def __init__(self, module, **_kwargs):
+        def __init__(self, module, model_orchestrator):
+            self.model_orchestrator = model_orchestrator
             self.existing = NDConfigCollection(VrfDataModel)
             self.proposed = NDConfigCollection.from_ansible_config(module.params["config"], VrfDataModel)
 
     monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
     monkeypatch.setattr(coordinator_mod, "NDStateMachine", StateMachine)
-    monkeypatch.setattr(coordinator, "_new_rest_send", lambda _params: object())
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
     with pytest.raises(ValidationError, match="require trm_enable=True"):
         coordinator._new_state_machine({"state": "merged", "config": [{"vrf_name": "BLUE", "rp_address": "192.0.2.9"}]})
     assert coordinator.module.params == original
