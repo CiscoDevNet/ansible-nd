@@ -605,8 +605,9 @@ class NetworkConfigModel(NDBaseModel):
             raise ValueError("vrf_name is required for layer3 and layer2WithVrf networks")
         self._check_trm_rules(defer_omitted=context.get("state") == "merged")
         self._check_netflow_rules(defer_omitted=context.get("state") == "merged")
-        self._check_vlan_network_type_rules()
-        self._check_attachment_interface_modes()
+        if self.vlan_network_type is not None or not context.get("defer_omitted_vlan_network_type"):
+            self._check_vlan_network_type_rules()
+            self._check_attachment_interface_modes()
         if not read_only_or_delete and self.layer == NetworkLayer.LAYER2.value:
             rejected_fields = [
                 field

@@ -459,18 +459,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         """
         resolved = current.to_gathered_config() if state == "merged" else {}
         resolved.update(config)
-        if state == "merged":
-            # Validate supplied intent with its inherited role, not child-owned readback echoes.
-            self.strategy.config_model_cls.from_config(
-                {
-                    **config,
-                    "vlan_network_type": resolved["vlan_network_type"],
-                    "primary_network_id": resolved.get("primary_network_id"),
-                    "layer": resolved.get("layer"),
-                },
-                context={"state": state},
-            )
-        else:
+        if state != "merged":
             resolved.update(network_id=proposed.network_id, vlan_id=proposed.vlan_id)
         prepared = self._transform_config_to_payload_model_data(resolved, self.strategy.fabric_name)
         observed_template = current.network_template_config or {}
@@ -499,8 +488,6 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return False
         if state in ("deleted", "gathered"):
             return True
-        if state != "merged":
-            return False
         if not cls.has_network_definition_intent(config):
             return False
         vlan_network_type = config.get("vlan_network_type") or config.get("vlanNetworkType")
@@ -508,7 +495,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
         if vlan_network_type in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             return False
-        return True
+        return state == "merged" or vlan_network_type is None
 
     def preflight_create(self, model_instances: Sequence[NDNetworkModel]) -> None:
         """

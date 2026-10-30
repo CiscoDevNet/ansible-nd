@@ -244,6 +244,8 @@ options:
       vlan_network_type:
         description:
           - VLAN network type.
+          - New Networks default to C(normal). Omission preserves an existing Network's type in all write states,
+            including C(replaced), C(overridden), and C(staged).
           - C(primary) is mapped to the ND private primary Network type.
           - C(primary) supports Layer 2 and Layer 3. When its layer is derived, VRF or L3-specific properties select Layer 3
             and require O(config.vrf_name); otherwise it uses Layer 2.
@@ -258,7 +260,9 @@ options:
         type: str
         choices: [ normal, primary, community, isolated ]
       primary_network_id:
-        description: Primary Network ID used by C(community) and C(isolated) Networks.
+        description:
+          - Primary Network ID used by C(community) and C(isolated) Networks.
+          - When O(config.vlan_network_type) is omitted, an existing secondary Network retains its primary binding unless this option is supplied.
         type: int
       vlan_name:
         description: VLAN name; names over 32 characters require switch support for long VLAN names.

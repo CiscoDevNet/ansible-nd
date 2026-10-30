@@ -312,7 +312,7 @@ class NetworkWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        State context defers sparse merged layer validation until current
+        State context defers omitted role/layer validation until current
         inventory is available and exempts read/delete selectors from
         definition-only layer requirements.
 
@@ -322,6 +322,8 @@ class NetworkWorkflowCoordinator:
         for idx, entry in enumerate(config):
             try:
                 context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(self.strategy.fabric_data)}
+                if state not in ("gathered", "deleted"):
+                    context["defer_omitted_vlan_network_type"] = True
                 if NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
                     context["defer_omitted_layer"] = True
                 model = model_cls.from_config(entry, context=context)
@@ -682,7 +684,7 @@ class NetworkWorkflowCoordinator:
 
         ### ValidationError
 
-        - A sparse merged definition conflicts with its effective layer.
+        - Supplied intent conflicts with its effective role or layer.
         """
         if state in ("gathered", "deleted"):
             return
@@ -690,11 +692,30 @@ class NetworkWorkflowCoordinator:
         for entry in config:
             name = entry["network_name"]
             current = sm.existing.get(name)
-            if not NDNetworkOrchestrator.has_network_definition_intent(entry):
+            operational_only = not NDNetworkOrchestrator.has_network_definition_intent(entry)
+            if operational_only:
                 if current is None:
                     raise NDStateMachineError(f"Network '{name}' must already exist for an operational-only task.")
                 if getattr(current, "is_unsupported_policy", False):
                     raise NDStateMachineError(current.describe_unsupported_policy() + "; this module cannot modify it.")
+            # Keep inherited role/binding values out of the original sparse intent.
+            effective_entry = entry
+            if (
+                current is not None
+                and not strategy.is_child
+                and entry.get("vlan_network_type") is None
+                and NDNetworkOrchestrator.is_pvlan_network_type(current.vlan_network_type)
+            ):
+                effective_entry = {**entry, "vlan_network_type": current.vlan_network_type}
+                if current.vlan_network_type in secondary_types and entry.get("primary_network_id") is None:
+                    effective_entry["primary_network_id"] = current.primary_network_id
+            validated = None
+            if not strategy.is_child and (entry.get("vlan_network_type") is None or NDNetworkOrchestrator.should_defer_omitted_layer(entry, state)):
+                context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
+                if current is not None and state == "merged":
+                    context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
+                validated = strategy.config_model_cls.from_config(effective_entry, context=context)
+            if operational_only:
                 sm.proposed.replace(current.model_copy(deep=True))
                 continue
             proposed = sm.proposed.get(name)
@@ -703,7 +724,9 @@ class NetworkWorkflowCoordinator:
                     proposed.network_id = current.network_id
                 if proposed.vlan_id is None and current.vlan_id is not None:
                     proposed.vlan_id = current.vlan_id
-            effective_type = entry.get("vlan_network_type") or (current.vlan_network_type if current is not None and state == "merged" else None)
+                if entry.get("vlan_network_type") is None:
+                    proposed.vlan_network_type = current.vlan_network_type
+            effective_type = effective_entry.get("vlan_network_type")
             if (
                 not strategy.is_child
                 and not strategy.is_multicluster
@@ -711,16 +734,10 @@ class NetworkWorkflowCoordinator:
                 and current.vlan_network_type in secondary_types
                 and effective_type in secondary_types
             ):
-                proposed = sm.model_orchestrator.prepare_private_secondary_update(entry, current, proposed, state)
+                proposed = sm.model_orchestrator.prepare_private_secondary_update(effective_entry, current, proposed, state)
                 sm.proposed.replace(proposed)
                 continue
-            if state != "merged" or strategy.is_child or not NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
-                continue
-            context = {"state": "merged", "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
-            if current is not None:
-                context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
-            validated = strategy.config_model_cls.from_config(entry, context=context)
-            if validated.layer is not None:
+            if validated is not None and validated.layer is not None:
                 proposed.layer = validated.layer
                 if current is None and validated.layer == NetworkLayer.LAYER2.value and proposed.vrf_name is None:
                     proposed.vrf_name = "NA"
