@@ -252,8 +252,6 @@ options:
           - PVLAN definition and attachment changes require a Data Center VXLAN EVPN fabric with private VLAN enabled.
           - For Fabric groups, every member fabric must meet these requirements. PVLAN configuration is not supported on
             Campus VXLAN fabrics or Fabric groups containing Campus VXLAN members.
-          - A disabled or unavailable private VLAN fabric setting causes prerequisite validation to fail.
-          - This prerequisite check is skipped for unchanged Network entries and for V(gathered) and V(deleted).
           - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
           - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous) attachment interface modes.
           - C(community) and C(isolated) Networks allow C(pvlan_host) and C(trunk_secondary) attachment interface modes.
