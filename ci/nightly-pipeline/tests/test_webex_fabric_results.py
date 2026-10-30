@@ -131,7 +131,9 @@ assert rows.find { it[1] == 'nd_manage_networks' && it[2] == 'eBGP' } ==
 assert rows.findAll { it[0] != 'NOT_RUN' }.collect { it[3] as int }.sum() == 628
 assert rows.findAll { it[0] != 'NOT_RUN' }.collect { it[4] as int }.sum() == 1
 assert summary == original
-assert table.contains('Passed/Failed/Skipped = Ansible tasks')
+assert !table.contains('Passed/Failed/Skipped =')
+assert !table.contains('Mixed/shared rows')
+assert !table.contains('? = case count')
 """)
 
 

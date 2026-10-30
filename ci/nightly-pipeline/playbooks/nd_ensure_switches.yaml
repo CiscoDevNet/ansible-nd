@@ -197,12 +197,12 @@
            [1, _nd_predelete_remaining | float] | max]
          | min | round(0, 'ceil') | int }}
     # Interpret response data like the pinned SDK: embedded errors are failures.
-    # A Deploy completion need not echo every requested ID; fresh inventory below
-    # independently proves all requested switches are inSync before any removal.
+    # An accepted asynchronous request is only permission to poll, not proof of
+    # completion. Fresh inventory below must prove every requested switch inSync.
     _nd_predelete_response_report: >-
       {%- set http = _predelete_reply.status | default(0) | int -%}
       {%- set body = _predelete_reply.jsondata if _predelete_reply.jsondata is defined else _predelete_reply.current | default(none) -%}
-      {%- set ns = namespace(error=false, bounded=true, nodes=0, ids=[], items=0, category='ACCEPTED_HTTP') -%}
+      {%- set ns = namespace(error=false, bounded=true, nodes=0, ids=[], items=0, category='ACCEPTED_FOR_POLLING' if http == 207 else 'ACCEPTED_HTTP') -%}
       {%- set ignored_walk -%}
       {%- for node in [body] recursive -%}
         {%- set ns.nodes = ns.nodes + 1 -%}
@@ -217,19 +217,14 @@
       {%- endset -%}
       {%- set status = body.get('status', '') if body is mapping else '' -%}
       {%- if status is string and status | length > 1024 -%}{%- set ns.bounded = false -%}{%- endif -%}
-      {%- set status_text = status[:1024] | regex_replace('\\[[^]]*\\]', ' ') | regex_replace('(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ') | lower if status is string else '' -%}
-      {%- set words = (status_text | regex_replace('[^a-z]+', ' ')).split() -%}
-      {%- set failed = status_text is search('fail|error|denied|reject|unauthori|forbid|unsuccess|refus|cancel|abort|incomplete') -%}
-      {%- set terminal = status | lower | trim in ['success', 'successful', 'complete', 'completed', 'deployed'] if status is string else false -%}
-      {%- set action_words = ['deploy', 'deployment'] if _predelete_operation == 'deploy' else ['save', 'saved', 'recalculate', 'recalculation'] -%}
-      {%- set terminal = terminal or (words | intersect(action_words) | length > 0 and words | intersect(['complete', 'completed', 'success', 'successful', 'successfully']) | length > 0) -%}
-      {%- set pending = words | intersect(['pending', 'queued', 'inprogress', 'progress', 'waiting', 'scheduled', 'not', 'no', 'cannot', 'unable', 'skipped']) | length > 0 -%}
+      {%- set status_text = status[:1024] | regex_replace('\\[[^]]*\\]', ' ') | lower if status is string else '' -%}
+      {%- set failure_status = 'fail|error|denied|reject|unauthori|forbid|unsuccess|refus|cancel|abort|incomplete|cannot|unable' -%}
       {%- if _predelete_reply.failed | default(false) -%}{%- set ns.category = 'MODULE_FAILURE' -%}
       {%- elif http not in [200, 201, 202, 204, 207] -%}{%- set ns.category = 'HTTP_REJECTED' -%}
       {%- elif ns.error -%}{%- set ns.category = 'EMBEDDED_ERROR' -%}
-      {%- elif not ns.bounded or (body is not mapping and body is not none) or status is not string -%}{%- set ns.category = 'BODY_UNVERIFIED' -%}
-      {%- elif failed -%}{%- set ns.category = 'STATUS_FAILURE' -%}
-      {%- elif pending -%}{%- set ns.category = 'STATUS_UNVERIFIED' -%}
+      {%- elif not ns.bounded or (body is not mapping and body is not none) or status is not string
+            or http == 207 and (body is not mapping or body | length == 0) -%}{%- set ns.category = 'BODY_UNVERIFIED' -%}
+      {%- elif status_text is search(failure_status) -%}{%- set ns.category = 'STATUS_FAILURE' -%}
       {%- elif body is mapping and 'items' in body -%}
         {%- set items = body.get('items') -%}
         {%- if items is not sequence or items is string or items is mapping or items | length == 0 -%}
@@ -239,20 +234,20 @@
           {%- for item in items -%}
             {%- if item is not mapping -%}{%- set ns.category = 'ITEMS_UNVERIFIED' -%}
             {%- elif item.get('switchId') not in _predelete_requested_ids or item.get('switchId') in ns.ids -%}{%- set ns.category = 'ITEM_IDENTITY_UNVERIFIED' -%}
-            {%- elif item.get('status', '') | string | trim | lower != 'success' or item.get('errorCode', item.get('error_code', '0')) | string not in ['', '0'] -%}
+            {%- elif item.get('status') is not string or not item.get('status') or item.get('status') | length > 1024
+                  or item.get('status') | lower is search(failure_status) -%}
               {%- set ns.category = 'ITEM_FAILURE_OR_UNVERIFIED' -%}
             {%- endif -%}
             {%- if item is mapping -%}{%- set ns.ids = ns.ids + [item.get('switchId')] -%}{%- endif -%}
           {%- endfor -%}
-          {%- if ns.category == 'ACCEPTED_HTTP' -%}{%- set ns.category = 'ACCEPTED_ITEMS' -%}{%- endif -%}
         {%- endif -%}
-      {%- elif status or http == 207 -%}
-        {%- set ns.category = 'ACCEPTED_COMPLETION' if terminal else 'STATUS_UNVERIFIED' -%}
       {%- endif -%}
       {{- {'operation': _predelete_operation, 'http_status': http if 0 <= http <= 599 else 0,
            'body_kind': 'mapping' if body is mapping else 'null' if body is none else 'other',
+           'response_field': 'jsondata' if _predelete_reply.jsondata is defined else 'current',
+           'status_present': body is mapping and 'status' in body, 'status_kind': 'string' if status is string else 'other',
            'has_embedded_error': ns.error, 'requested_count': _predelete_requested_ids | length, 'item_count': ns.items,
-           'category': ns.category, 'accepted': ns.category in ['ACCEPTED_HTTP', 'ACCEPTED_ITEMS', 'ACCEPTED_COMPLETION']} -}}
+           'category': ns.category, 'accepted': ns.category in ['ACCEPTED_HTTP', 'ACCEPTED_FOR_POLLING']} -}}
     _nd_predelete_inventory_error: >-
       {%- set body = _predelete_inventory_reply.current | default(none) -%}
       {{- body is mapping and ('code' in body or (not not body.get('error')) or (not not body.get('errors'))

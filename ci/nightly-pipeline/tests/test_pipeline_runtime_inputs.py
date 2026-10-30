@@ -67,21 +67,24 @@ if (!sourceOk) {
     assert context.REQUIRED_FILES_READY != 'true'
 } else {
 assert failure == null : failure
-assert requests.size() == 36 : requests.size()
+assert requests.size() == 37 : requests.size()
 script.runNDFCVersionTests(config)
-assert requests.size() == 36
-def releaseRequests = requests.findAll { it.url.contains('/releases/predelete-response-compatible-20261030/') }
+assert requests.size() == 37
+def releaseRequests = requests.findAll { it.url.contains('/releases/predelete-readiness-20261030/') }
 assert releaseRequests.size() == 2
 assert releaseRequests.any { it.url.endsWith('/nd_ensure_switches.yaml?raw') }
 assert releaseRequests.any { it.url.endsWith('/action_plugins/nd_switch_discovery.py?raw') }
-assert new File(context.ND_RUNTIME_INPUTS, 'nd_ensure_switches.yaml').text.contains('/releases/predelete-response-compatible-20261030/')
-assert new File(context.ND_RUNTIME_INPUTS, 'action_plugins/nd_switch_discovery.py').text.contains('/releases/predelete-response-compatible-20261030/')
+assert new File(context.ND_RUNTIME_INPUTS, 'nd_ensure_switches.yaml').text.contains('/releases/predelete-readiness-20261030/')
+assert new File(context.ND_RUNTIME_INPUTS, 'action_plugins/nd_switch_discovery.py').text.contains('/releases/predelete-readiness-20261030/')
 assert !new File(context.ND_RUNTIME_INPUTS, 'releases').exists()
 assert phases == ['render', 'inventory', 'pre', 'tests', 'post'] * 2
 assert new File(workspace, 'source-checks').text == 'verifiedverified'
 assert new File(context.ND_RUNTIME_INPUTS, 'integration_config.yml').text.startsWith('canonical input:')
 assert !new File(context.COLLECTIONS_DIRECTORY, 'requirements.txt').exists()
 assert !new File(context.COLLECTIONS_DIRECTORY, 'nd_report.py').exists()
+assert new File(context.ND_RUNTIME_INPUTS, 'compat_action_plugins/normal.py').text.startsWith('canonical input:')
+assert requests.count { it.url.endsWith('/compat_action_plugins/normal.py?raw') } == 1
+assert !new File(context.COLLECTIONS_DIRECTORY, 'compat_action_plugins').exists()
 assert requests.every { !it.url.contains('requirements.') }
 }
 ''', setup=setup, jenkinsfile=ROOT / variant)

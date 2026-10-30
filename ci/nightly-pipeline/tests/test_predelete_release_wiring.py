@@ -9,7 +9,7 @@ import pytest
 from test_five_issue_pipeline_fixes import PRELUDE
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ('Jenkinsfile_nd_jenkins_script',)
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
@@ -26,7 +26,7 @@ script.metaClass.downloadFromConsul = { Object key, Object target ->
 }
 script.prepareRuntimeInputs()
 assert script.binding.env.ND_RUNTIME_INPUTS_READY == 'true'
-def release = 'releases/predelete-response-compatible-20261030/'
+def release = 'releases/predelete-readiness-20261030/'
 def guarded = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 assert downloads.findAll { it.key.startsWith(release) }.size() == 2
 guarded.each { name ->
@@ -36,8 +36,11 @@ guarded.each { name ->
 }
 assert !downloads.any { it.key.contains('bounded-switch-lifecycle-20261029') }
 assert !downloads.any { it.key.contains('predelete-deploy-verified-20261030') }
+assert !downloads.any { it.key.contains('predelete-response-compatible-20261030') }
 // The release changes switch prerequisites only; authored collection sources are untouched.
 assert downloads.every { !it.key.endsWith('.md') && !it.key.endsWith('.doc') }
+assert downloads.count { it.key == 'compat_action_plugins/normal.py' } == 1
+assert downloads.find { it.key == 'compat_action_plugins/normal.py' }.target == 'fixture-reports/runtime-inputs/compat_action_plugins/normal.py'
 println('CHECK_PASSED')
 ''')
     result = subprocess.run([str(java), "-cp", str(jar), "groovy.ui.GroovyMain",

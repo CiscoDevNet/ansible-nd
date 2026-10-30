@@ -139,6 +139,8 @@ assert sent.size() == 1
 assert sent[0].contains('Test cases passed: 0')
 assert sent[0].contains('Test cases failed: 0')
 assert sent[0].contains('Build result: FAILURE')
-assert sent[0].contains('Execution/reporting notes:\n' + notes.trim())
+assert !sent[0].contains('Execution/reporting notes:')
+assert !sent[0].contains(notes.trim())
+assert sent[0].contains('DETAILED TEST RESULTS:')
 '''
     groovy_runner(body)

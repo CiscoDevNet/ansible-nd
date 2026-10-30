@@ -40,11 +40,11 @@ if a['method']:
             rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4),
                      'additionalData':{'systemMode':'normal','configSyncStatus':'inSync'}}
                     for index in range(len(s['original']))]
-            if scenario == 'predelete_pending_then_ready' and s['predelete_polls'] == 1 or scenario == 'predelete_pending_forever':
+            if scenario == 'predelete_pending_then_ready' and s['predelete_polls'] == 1 or scenario in ('predelete_pending_forever', 'predelete_deploy_async_not_ready'):
                 rows[-1]['additionalData']['configSyncStatus'] = 'pending'
             if scenario == 'predelete_deployment_failed': rows[-1]['additionalData']['configSyncStatus'] = 'failed'
             if scenario == 'predelete_missing_switch': rows = rows[:-1]
-            if scenario in ('predelete_missing_status', 'predelete_subset_missing_status'): rows[-1]['additionalData'].pop('configSyncStatus')
+            if scenario in ('predelete_missing_status', 'predelete_subset_missing_status', 'predelete_deploy_unknown_missing_status'): rows[-1]['additionalData'].pop('configSyncStatus')
             if scenario == 'predelete_duplicate_switch': rows[-1] = dict(rows[0])
             body = {'switches':rows}
             if scenario == 'predelete_inventory_code': body.update(code=400, message='password=DO_NOT_PRINT_ME RAW_PAYLOAD')
@@ -73,10 +73,19 @@ if a['method']:
                 'predelete_deploy_nested_code': (207, {'status':'Configuration deployment completed', 'details':{'error':{'code':400, 'message':'password=DO_NOT_PRINT_ME'}}}),
                 'predelete_deploy_mixed_items': (207, {'items':[{'switchId':identity, 'status':'failed' if index else 'success', 'message':'password=DO_NOT_PRINT_ME'} for index,identity in enumerate(a['content']['switchIds'])]}),
                 'predelete_deploy_unknown': (207, {'status':'arbitrary unknown reply', 'message':'RAW_PAYLOAD'}),
+                'predelete_deploy_unknown_mapping': (207, {'requestId':'RAW_PAYLOAD'}),
+                'predelete_deploy_unknown_missing_status': (207, {'status':'arbitrary unknown reply'}),
+                'predelete_deploy_async_not_ready': (207, {'status':'Deployment in progress'}),
+                'predelete_deploy_207_pending_items': (207, {'items':[{'switchId':identity, 'status':'queued'} for identity in a['content']['switchIds']]}),
+                'predelete_deploy_failed_status': (207, {'status':'DeploymentFailed'}),
                 'predelete_deploy_not_completed': (207, {'status':'Configuration deployment not completed'}),
                 'predelete_deploy_unsuccessful': (207, {'status':'Configuration deployment completed unsuccessfully'}),
                 'predelete_deploy_in_progress': (207, {'status':'Configuration deployment in progress'}),
             }
+            if scenario == 'predelete_deploy_jsondata_pending':
+                finish(changed=True, status=207, jsondata={'status':'Deployment queued', 'requestId':'RAW_PAYLOAD'}, current={})
+            if scenario == 'predelete_deploy_jsondata_error':
+                finish(changed=True, status=207, jsondata={'error':{'code':400, 'message':'password=DO_NOT_PRINT_ME'}}, current={})
             if scenario in responses:
                 http,body = responses[scenario]
                 finish(changed=True,status=http,current=body)
@@ -177,7 +186,7 @@ def expression_environment():
     (207, {"items":"success"}, "invalid-response"), (207, [], "invalid-response"),
     (207, {"items":[{"switchId":"FIXTURE0001","status":"success"}]}, "invalid-response"),
     (207, {"items":[{"switchId":"FIXTURE0001","status":"success"},{"switchId":"FIXTURE0001","status":"success"}]}, "invalid-response"),
-    (207, {"items":[{"switchId":"FIXTURE0001","status":"success"},{"switchId":"FIXTURE0001","status":"success"}]}, "invalid-response"),
+    (207, {"items":[{"switchId":"FIXTURE0001","status":"success"},{"switchId":"UNREQUESTED","status":"success"}]}, "invalid-response"),
     (200, {}, "accepted"), (202, {"jobId":"queued"}, "accepted"), (204, None, "accepted"),
     (200, [], "invalid-response"), (500, {}, "request-failed"), (400, {}, "request-failed"),
 ])
@@ -251,7 +260,8 @@ def execute(tmp_path, scenario, remove_retries=2):
                   nd_switch_predelete_call_timeout_seconds=1, nd_switch_predelete_poll_seconds=0,
                   nd_switch_predelete_deploy=True)
     if scenario in {'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
-                    'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_subset_missing_status'}:
+                    'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_subset_missing_status',
+                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status'}:
         values['nd_switch_predelete_timeout_seconds'] = 3
     if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
     if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1

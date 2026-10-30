@@ -8,7 +8,7 @@ import groovy.transform.Field
 @Field String SKIPLIST_DETAILS_BUF = ''
 @Field String BUILD_FAILURE_REASON_BUF = ''
 @Field String LINT_SUMMARY_BUF = ''
-@Field String ND_REPORTING_REVISION = 'build129-status-separation-20261030'
+@Field String ND_REPORTING_REVISION = 'build131-execution-fixes-20261030'
 
 // ============================================================================
 // WEBEX NOTIFICATION TARGET - both Webex space room IDs live here so the
@@ -220,7 +220,7 @@ def SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'
 @Field
 def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 @Field
-def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-response-compatible-20261030'
+def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-readiness-20261030'
 
 @Field
 def CONSUL_PREREQUISITE_FILES = [
@@ -255,7 +255,8 @@ def CONSUL_PREREQUISITE_SUPPORT_FILES = [
     'nd_prerequisite_orchestrator.py',
     'validate_nd_prerequisites.py',
     'nd_prerequisite_profiles.yaml',
-    'fixtures/nd_prerequisite/valid_state.yaml'
+    'fixtures/nd_prerequisite/valid_state.yaml',
+    'compat_action_plugins/normal.py'
 ]
 
 pipeline {
@@ -1008,8 +1009,8 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     def selectedBranch = (env.ND_GIT_SELECTION ?: env.ND_GIT_BRANCH ?: params.ND_GIT_BRANCH ?: 'develop').trim() ?: 'develop'
                     def selectedCommit = (env.ND_GIT_COMMIT ?: '').trim() ?: 'unavailable'
                     def caseTotals = moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList())
-                    def totalPassed = caseTotals.passed
-                    def totalFailed = caseTotals.failed
+                    def totalPassed = caseTotals.passed == '?' ? 'N/A' : caseTotals.passed.toString().replace('?', 'unknown')
+                    def totalFailed = caseTotals.failed == '?' ? 'N/A' : caseTotals.failed.toString().replace('?', 'unknown')
                     def resultTable = formatResultsTable(moduleCaseSummaryRows(), 'module test cases')
                     def artifactLinks = formatArtifactLinks(TEST_RESULT_ARTIFACTS_BUF)
                     def skippedTestLinks = formatSkippedTestLinks(SKIPLIST_FILES_BUF)
@@ -1028,9 +1029,6 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     message += "Test cases passed: ${totalPassed}\n"
                     message += "Test cases failed: ${totalFailed}\n"
                     message += "Build result: ${currentBuild.currentResult}\n"
-                    if (BUILD_FAILURE_REASON_BUF.trim()) {
-                        message += "\nExecution/reporting notes:\n${BUILD_FAILURE_REASON_BUF.trim().take(1200)}\n"
-                    }
                     message += "\n📝 DETAILED TEST RESULTS:\n\n"
                     message += "${resultTable}\n"
                     message += "\n**Artifact links:**\n"
@@ -2168,6 +2166,11 @@ def formatResultsTable(rawSummary, countUnit = 'Ansible tasks') {
         def noExecution = record.status == 'NOT_RUN'
         row.addAll([noExecution ? '-' : record.passed, noExecution ? '-' : record.failed,
                     noExecution ? '-' : record.skipped, record.duration])
+        if (countUnit == 'module test cases') {
+            for (int index = showNd ? 4 : 3; index < row.size() - 1; index++) {
+                row[index] = row[index] == '?' ? 'N/A' : row[index].toString().replace('?', 'unknown')
+            }
+        }
         row.collect { cleanCell(it) }
     }
     def widths = tableColumnWidths(headers, rows)
@@ -2182,13 +2185,30 @@ def formatResultsTable(rawSummary, countUnit = 'Ansible tasks') {
     def skipNotes = records.findAll { it.status == 'SKIP' && it.note }
         .collect { "  ${it.module} (${it.scope}): ${it.note}" }
     def skipBlock = skipNotes ? "\n\nSKIPPED - lab substrate unavailable:\n${skipNotes.join('\n')}" : ''
-    def caseNotes = records.findAll { it.status != 'SKIP' && it.note }
-        .collect { "  ${it.module} (${it.scope}): ${it.note}" }
-    def caseBlock = caseNotes ? "\n\nCASE COVERAGE / APPLICABILITY NOTES:\n${caseNotes.join('\n')}" : ''
-    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${rows.collect { renderRow(it) }.join('\n')}${skipBlock}${caseBlock}\n```" +
-        "\nPassed/Failed/Skipped = ${countUnit}. NOT_RUN = no execution for that fabric." +
-        '\nMixed/shared rows contain one combined result; counts are included once.' +
-        (countUnit == 'module test cases' ? '\n? = case count unavailable or incomplete; setup and cleanup are excluded.' : '')
+    def caseNotes = records.findAll { it.status != 'SKIP' && it.note }.collect { record ->
+        def note = record.note
+        if (countUnit == 'module test cases') {
+            if (record.status == 'NOT_RUN') {
+                def preparationFailed = note.toLowerCase().contains('preflight') || note.toLowerCase().contains('pre-flight') || note.contains('Switch membership')
+                note = preparationFailed ? 'Not run: switch preparation failed' : 'Not run: earlier execution stopped'
+            } else if (note.contains('Unsupported module parameter: timeout')) {
+                def phase = note.contains('Setup/Base failed') ? 'Setup failed: ' : note.contains('Cleanup failed') ? 'Cleanup failed: ' : ''
+                note = phase + 'unsupported parameter timeout'
+            } else {
+                note = note.split('; ').findAll { !it.startsWith('case coverage ') &&
+                    !(it in ['case outcomes are separate', 'earlier case results are retained']) }.collect {
+                    it.replace('Setup/Base failed', 'Setup failed')
+                      .replace('Failure / reason: ', '')
+                }.join('; ')
+            }
+            if (note && record.status in ['FAIL', 'NOT_RUN', 'ERR', 'UNKNOWN']) {
+                note += " — [Console](${JOB_URL}${BUILD_NUMBER}/console)"
+            }
+        }
+        note ? "  ${record.module} (${record.scope}): ${note}" : ''
+    }.findAll { it }
+    def caseBlock = caseNotes ? "\n\nRESULT DETAILS:\n${caseNotes.join('\n')}" : ''
+    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${rows.collect { renderRow(it) }.join('\n')}\n```${skipBlock}${caseBlock}"
 }
 
 def splitWebexMessage(message, continuationHeader = '', maxLength = 7000) {
@@ -3385,7 +3405,7 @@ def runNDFCVersionTests(ndfcConfig) {
         // Install every Consul-sourced playbook into the collection. The list is
         // derived from the active playbooks plus the required integration runner.
         def preflightInstallFiles = (env.ND_SWITCH_PREFLIGHT_READY == 'true') ? CONSUL_PREFLIGHT_FILES : []
-        def moveFiles = (PLAYBOOK_FILES + CONSUL_RUNNER_FILES + CONSUL_PREREQUISITE_FILES + CONSUL_PREREQUISITE_SUPPORT_FILES + preflightInstallFiles).unique().join(' ')
+        def moveFiles = (PLAYBOOK_FILES + CONSUL_RUNNER_FILES + CONSUL_PREREQUISITE_FILES + CONSUL_PREREQUISITE_SUPPORT_FILES + preflightInstallFiles).findAll { !it.startsWith('compat_action_plugins/') }.unique().join(' ')
         withEnv(["MOVE_FILES=${moveFiles}"]) {
             sh '''#!/bin/bash
                 set -euo pipefail
@@ -3807,7 +3827,16 @@ def runFabricTest(ndfcConfig) {
                                     fi
                                     local result_start result_end result_status
                                     result_start=$(date +%s)
-                                    if "$@"; then result_status=0; else result_status=$?; fi
+                                    local result_compat_env=() result_compat_args=()
+                                    case "${result_module}" in
+                                        nd_manage_community_list|nd_manage_extended_community_list)
+                                            [ -s "${ND_RUNTIME_INPUTS}/compat_action_plugins/normal.py" ] &&
+                                                [ ! -L "${ND_RUNTIME_INPUTS}/compat_action_plugins/normal.py" ] || return 125
+                                            result_compat_env=(env "ANSIBLE_ACTION_PLUGINS=${ND_RUNTIME_INPUTS}/compat_action_plugins${ANSIBLE_ACTION_PLUGINS:+:${ANSIBLE_ACTION_PLUGINS}}")
+                                            result_compat_args=(-e '{"nd_pipeline_community_timeout_compat":true,"ansible_command_timeout":300}')
+                                            ;;
+                                    esac
+                                    if "${result_compat_env[@]}" "$@" "${result_compat_args[@]}"; then result_status=0; else result_status=$?; fi
                                     result_end=$(date +%s)
                                     python "${ND_REPORTING_TOOLS}/nd_result_summary.py" record \\
                                         --log "${result_log}" --module "${result_module}" --run-id "${TEST_RUN_MARKER}" \\

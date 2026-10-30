@@ -10,6 +10,9 @@ from test_switch_rehome_preflight import execute, expression_environment, guard,
     'predelete_pending_then_ready', 'predelete_deploy_207_items', 'predelete_deploy_207_message',
     'predelete_deploy_207_partial_message', 'predelete_deploy_207_generic',
     'predelete_deploy_207_terminal', 'predelete_deploy_207_subset_items',
+    'predelete_deploy_unknown', 'predelete_deploy_not_completed', 'predelete_deploy_in_progress',
+    'predelete_deploy_unknown_mapping', 'predelete_deploy_207_pending_items',
+    'predelete_deploy_jsondata_pending',
 ])
 def test_predelete_waits_for_all_six_switches_before_removal(tmp_path, scenario):
     completed, state = execute(tmp_path, scenario)
@@ -27,8 +30,8 @@ def test_predelete_waits_for_all_six_switches_before_removal(tmp_path, scenario)
     'predelete_save_400', 'predelete_save_module_failure', 'predelete_save_code_200', 'predelete_deploy_403',
     'predelete_deploy_207_refused', 'predelete_deploy_bad_body',
     'predelete_deploy_code_200', 'predelete_deploy_code_207', 'predelete_deploy_nested_code',
-    'predelete_deploy_mixed_items', 'predelete_deploy_unknown', 'predelete_deploy_not_completed',
-    'predelete_deploy_unsuccessful', 'predelete_deploy_in_progress',
+    'predelete_deploy_mixed_items', 'predelete_deploy_unsuccessful', 'predelete_deploy_failed_status',
+    'predelete_deploy_jsondata_error', 'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status',
     'predelete_inventory_403', 'predelete_inventory_code', 'predelete_inventory_module_failure', 'predelete_deployment_failed',
     'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
     'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_call_timeout', 'predelete_subset_missing_status',
@@ -49,6 +52,11 @@ def test_unconfirmed_predelete_gate_never_removes_or_onboards(tmp_path, scenario
         assert state['predelete_polls'] == 1
     if scenario in {'predelete_disabled', 'predelete_outer_budget_expired'}:
         assert state['rest_writes'] == []
+    if scenario in {'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status'}:
+        assert state['predelete_polls'] > 0
+        assert 'ACCEPTED_FOR_POLLING' in completed.stdout
+    if scenario in {'predelete_deploy_failed_status', 'predelete_deploy_jsondata_error'}:
+        assert state.get('predelete_polls', 0) == 0
 
 
 def test_late_positive_inventory_cannot_pass_the_final_gate():
@@ -80,10 +88,12 @@ def response_report(response):
 @pytest.mark.parametrize('status', [
     'Configuration deployment completed', 'Configuration deployment completed for [FIXTURE0001].',
     'DEPLOYMENT: COMPLETED', 'Successfully completed deployment', 'DeploymentCompleted', 'success',
+    'Deployment in progress', 'Deployment queued', 'Configuration deployment not completed',
+    'No deployment completed', 'arbitrary response', 'DeploymentNotCompleted',
 ])
-def test_sdk_completion_does_not_require_exact_wording_or_all_ids(status):
+def test_sdk_non_error_response_only_authorizes_fresh_inventory_polling(status):
     result = response_report({'status':207,'current':{'status':status}})
-    assert result['accepted'] is True and result['category'] == 'ACCEPTED_COMPLETION'
+    assert result['accepted'] is True and result['category'] == 'ACCEPTED_FOR_POLLING'
 
 
 @pytest.mark.parametrize('body', [
@@ -99,13 +109,11 @@ def test_embedded_errors_are_rejected_before_inventory_or_removal(http, body):
 
 
 @pytest.mark.parametrize('status', [
-    'Configuration deployment not completed', 'Configuration deployment completed unsuccessfully',
-    'Deployment completed with errors', 'Deployment in progress', 'Deployment queued',
-    'Deployment refused', 'Deployment cancelled', 'No deployment completed', 'arbitrary response',
-    'DeploymentFailed', 'DeployError', 'deploymentfailed', 'DeploymentNotCompleted',
+    'Configuration deployment completed unsuccessfully', 'Deployment completed with errors',
+    'Deployment refused', 'Deployment cancelled', 'DeploymentFailed', 'DeployError', 'deploymentfailed',
 ])
 @pytest.mark.parametrize('http', [200,207])
-def test_negative_pending_and_ambiguous_completion_is_rejected(http, status):
+def test_explicit_failure_status_is_rejected_before_inventory_polling(http, status):
     result = response_report({'status':http,'current':{'status':status}})
     assert result['accepted'] is False
 
@@ -123,9 +131,24 @@ def test_public_diagnostics_contain_only_bounded_categories_and_counts():
     report = response_report({'status':207,'current':{'status':'Configuration deployment completed for [FIXTURE0001].',
         'message':'password=DO_NOT_PRINT_ME', 'private':{'value':'RAW_PAYLOAD'}}})
     encoded = json.dumps(report)
-    assert set(report) == {'operation','http_status','body_kind','has_embedded_error','requested_count','item_count','category','accepted'}
-    assert len(encoded) < 300
+    assert set(report) == {'operation','http_status','body_kind','response_field','status_present','status_kind',
+                           'has_embedded_error','requested_count','item_count','category','accepted'}
+    assert len(encoded) < 400
+    assert report['response_field'] == 'current' and report['status_present'] is True
     assert all(value not in encoded for value in ['FIXTURE0001','FIXTURE0002','DO_NOT_PRINT_ME','RAW_PAYLOAD'])
+
+
+@pytest.mark.parametrize('field', ['jsondata', 'current'])
+def test_sdk_response_envelopes_accept_non_error_207_mapping_for_polling(field):
+    result = response_report({'status':207,field:{'requestId':'RAW_PAYLOAD'}})
+    assert result['accepted'] is True and result['category'] == 'ACCEPTED_FOR_POLLING'
+    assert result['response_field'] == field and result['status_present'] is False
+    assert 'RAW_PAYLOAD' not in json.dumps(result)
+
+
+def test_raw_jsondata_error_cannot_be_hidden_by_sanitized_current():
+    result = response_report({'status':207,'jsondata':{'code':400},'current':{'status':'success'}})
+    assert result['category'] == 'EMBEDDED_ERROR' and result['accepted'] is False
 
 
 @pytest.mark.parametrize('error', [{'code':400},{'error':{'code':400}},{'errors':['controller refusal']},
