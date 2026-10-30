@@ -1,0 +1,64 @@
+---
+
+- name: Require explicit ownership and a single active inventory host
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - nd_test_smart_switches_allow_destructive is sameas true
+      - nd_test_smart_switches_isolated_fabric is sameas true
+      - ansible_play_hosts_all | length == 1
+      - ansible_host is defined
+      - ansible_user is defined
+      - ansible_password is defined
+      - nd_test_smart_switches_fabric_name is string
+      - nd_test_smart_switches_fabric_name | trim | length > 0
+      - nd_test_smart_switches_switch_ids is sequence
+      - nd_test_smart_switches_switch_ids is not string
+      - nd_test_smart_switches_switch_ids | length == 2
+      - nd_test_smart_switches_switch_ids | unique(case_sensitive=true) | length == 2
+      - nd_test_smart_switches_integration_name is string
+      - nd_test_smart_switches_integration_name | trim | length > 0
+      - nd_test_smart_switches_page_size | int > 0
+      - nd_test_smart_switches_max_pages | int > 0
+      - nd_test_smart_switches_poll_attempts | int > 0
+      - nd_test_smart_switches_poll_delay | int >= 0
+    fail_msg: >-
+      Supply two exact switch IDs, a valid integration and an isolated fabric; explicitly enable destructive tests with no concurrent fabric writers.
+      Run this target on exactly one inventory host and without global check mode.
+
+- name: Validate exact fixture identifiers
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item | trim | length > 0
+  loop: "{{ nd_test_smart_switches_switch_ids }}"
+
+- name: Inspect and validate ownership before arming cleanup
+  ansible.builtin.import_tasks: setup.yaml
+
+# TODO: Add update/reassociation tests after live evidence establishes supported behavior.
+- name: Exercise only suite-owned associations
+  block:
+    - name: Exercise safe validation failures
+      ansible.builtin.import_tasks: negative.yaml
+    - name: Exercise replaced
+      ansible.builtin.import_tasks: replaced.yaml
+    - name: Exercise deleted
+      ansible.builtin.import_tasks: deleted.yaml
+    - name: Exercise overridden
+      ansible.builtin.import_tasks: overridden.yaml
+    - name: Exercise optional controller rejection fixtures
+      ansible.builtin.include_tasks: controller_failures.yaml
+      when: nd_test_smart_switches_controller_failures | bool
+  always:
+    - name: Deboard only the two owned fixture IDs
+      cisco.nd.nd_manage_smart_switches_onboarding:
+        fabric_name: "{{ nd_test_smart_switches_fabric_name }}"
+        cluster_name: "{{ nd_test_smart_switches_cluster_name | default(omit, true) }}"
+        state: deleted
+        config: "{{ ss_delete_both }}"
+        output_level: debug
+    - name: Verify cleanup independently
+      ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/verify.yaml"
+      vars:
+        ss_expected_ids: []

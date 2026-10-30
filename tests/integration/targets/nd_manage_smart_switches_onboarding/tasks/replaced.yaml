@@ -1,0 +1,64 @@
+---
+
+- name: REPLACED preview bulk onboarding
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: REPLACED preview bulk onboarding
+      state: replaced
+      config: "{{ ss_both }}"
+      check_mode: true
+      expect:
+        changed: true
+        before_ids: []
+        after_ids: "{{ [ss_a, ss_b] }}"
+        created: "{{ [ss_a, ss_b] }}"
+
+- name: REPLACED onboard both switches in bulk
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: REPLACED onboard both switches in bulk
+      state: replaced
+      config: "{{ ss_both }}"
+      expect:
+        changed: true
+        before_ids: []
+        after_ids: "{{ [ss_a, ss_b] }}"
+        created: "{{ [ss_a, ss_b] }}"
+
+- name: REPLACED repeat is unchanged
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: REPLACED repeat is unchanged
+      state: replaced
+      config: "{{ ss_both }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+
+- name: REPLACED subset retains omitted association
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: REPLACED subset retains omitted association
+      state: replaced
+      config: "{{ ss_both[:1] }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"
+
+- name: REPLACED empty config is unchanged
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/run_case.yaml"
+  vars:
+    ss_case:
+      name: REPLACED empty config is unchanged
+      state: replaced
+      config: "{{ [] }}"
+      expect:
+        changed: false
+        before_ids: "{{ [ss_a, ss_b] }}"
+        after_ids: "{{ [ss_a, ss_b] }}"

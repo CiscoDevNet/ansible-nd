@@ -1,0 +1,39 @@
+---
+
+- name: Initialize independent complete inventory collection
+  ansible.builtin.set_fact:
+    ss_inventory: {}
+    ss_associations: []
+    ss_offset: 0
+    ss_total: -1
+    ss_inventory_done: false
+    ss_inventory_page_number: 0
+    ss_inventory_rows: []
+    ss_seen_ids: {}
+
+- name: Collect bounded independent inventory pages
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/inventory_page.yaml"
+
+- name: Require safe pagination termination
+  ansible.builtin.assert:
+    that:
+      - ss_inventory_done
+    fail_msg: Complete inventory could not be proven within the configured page bound.
+
+- name: Build the exact inventory index once per complete snapshot
+  ansible.builtin.set_fact:
+    ss_inventory: |-
+      {%- set inventory = {} -%}
+      {%- for row in ss_inventory_rows -%}
+      {%- set additional = row.additionalData | default(row.additionalSwitchData | default({})) -%}
+      {%- set _ = inventory.update({row.switchId: {
+        'switch_id': row.switchId,
+        'switch_name': row.hostname | default(none),
+        'smart': additional.smartSwitch | default(false),
+        'integration_name': additional.hypershieldIntegrationName | default('')}}) -%}
+      {%- endfor -%}
+      {{ inventory }}
+
+- name: Project all onboarded associations from the completed independent index
+  ansible.builtin.set_fact:
+    ss_associations: "{{ ss_inventory.values() | rejectattr('integration_name', 'equalto', '') | list }}"
