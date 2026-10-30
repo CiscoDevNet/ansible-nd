@@ -165,7 +165,7 @@
   ansible.builtin.assert:
     that:
       - 'result.failed | default(false) == false'
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
 
 - block:
     - name: iBGP delta pools - Create resources
@@ -190,7 +190,7 @@
           - 'result["api_result"][0]["success"] == true'
           - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
           - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
-          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | rejectattr('RETURN_CODE', 'equalto', 207) | list | length == 0
       when: result.api_response is defined
 
     - name: iBGP delta pools - Create resources idempotence
@@ -223,4 +223,4 @@
       ansible.builtin.assert:
         that:
           - 'result.failed | default(false) == false'
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', (207 if result.changed else 200)) | list | length == 0
