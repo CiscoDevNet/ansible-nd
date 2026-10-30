@@ -7,15 +7,14 @@ from __future__ import absolute_import, annotations, division, print_function
 
 from collections.abc import Sequence
 from functools import wraps
-from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.request_base import NDRequestBase
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
 
@@ -35,18 +34,19 @@ def requires_bulk_support(flag_name: str):
     return decorator
 
 
-class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
-    model_config = ConfigDict(
-        use_enum_values=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        arbitrary_types_allowed=True,
-        # pydantic <2.10 defaults protected_namespaces to the whole `model_` prefix and applies the
-        # check even to ClassVar annotations, so `model_class` would raise NameError at class
-        # construction on user hosts running older pydantic 2.x. Pin pydantic >=2.10's narrower
-        # default rather than () so the collision guard still covers genuinely dangerous names.
-        protected_namespaces=("model_validate", "model_dump"),
-    )
+class NDBaseOrchestrator(NDRequestBase, Generic[ModelType]):
+    """
+    # Summary
+
+    Generic CRUD orchestrator for a resource-backed ND endpoint family. Inherits `rest_send`, `results`, `_request` and
+    `_register_api_call` from `NDRequestBase` and adds the endpoint fields plus the create/update/delete/query operations.
+
+    ## Raises
+
+    ### RuntimeError
+
+    - Via `_request` if the controller returns a non-success result.
+    """
 
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
@@ -66,86 +66,6 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # NOTE: Conditionally required
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = None
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = None
-
-    # REST infrastructure
-    rest_send: RestSend
-    results: Optional[Results] = None
-
-    def _register_api_call(self, path: str, verb: HttpVerbEnum, operation_type: OperationType, payload: Optional[Dict[str, Any]] = None) -> None:
-        """Register the most recent REST call with Results for observability."""
-        if self.results is None:
-            return
-        # ``Results.register_api_call`` resets its current task after every
-        # request. Reapply stable module context for each registration so a
-        # paginated query (or any multi-call workflow) does not lose state and
-        # check-mode metadata after page one.
-        self.results.state = str(self.rest_send.params.get("state") or "")
-        # ``rest_send.check_mode`` can be disabled temporarily for a read-only
-        # POST (for example interface preview).  Metadata describes the module
-        # invocation, not that transport override, so read the immutable input
-        # captured when RestSend was constructed.
-        self.results.check_mode = bool(self.rest_send.params.get("check_mode", False))
-        self.results.action = operation_type.value
-        self.results.operation_type = operation_type
-        self.results.path_current = path
-        self.results.verb_current = verb
-        self.results.payload_current = payload
-        self.results.response_current = self.rest_send.response_current
-        self.results.result_current = self.rest_send.result_current
-        self.results.diff_current = {}
-        # Tag write operations as verbosity 2 (shown at -vv),
-        # read operations as verbosity 3 (shown at -vvv).
-        self.results.verbosity_level_current = 3 if operation_type == OperationType.QUERY else 2
-        self.results.register_api_call()
-
-    def _request(
-        self,
-        path: str,
-        verb: HttpVerbEnum,
-        data: Optional[Dict[str, Any]] = None,
-        not_found_ok: bool = False,
-        operation_type: OperationType = OperationType.QUERY,
-    ) -> ResponseType:
-        """
-        # Summary
-
-        Send a REST request via RestSend and return the response DATA.
-
-        ## Raises
-
-        ### Exception
-
-        - If the request fails (non-success result from the controller).
-        - For any GET that returns 204 (no content); an empty query-all list
-          must be a successful 200 response with an explicit empty result.
-        - For any GET that returns 404 unless `not_found_ok` is True; only
-          callers explicitly requesting optional-not-found semantics get `{}`.
-          This shared contract applies to all Gen3 orchestrators, not just
-          interface inventory reads. Non-GET 204 handling is unchanged.
-        """
-        self.rest_send.path = path
-        self.rest_send.verb = verb
-        if data is not None:
-            self.rest_send.payload = data
-        self.rest_send.commit()
-
-        # Register with Results before success/error checks so that
-        # both successful and failed calls are captured for troubleshooting.
-        self._register_api_call(path, verb, operation_type, self.rest_send.committed_payload)
-
-        # Check not_found_ok before success because ResponseHandler treats
-        # GET 404 as success=True (found=False).  Without this early return,
-        # a GET 404 would fall through and return the raw 404 DATA body.
-        if not_found_ok and self.rest_send.return_code == 404:
-            return {}
-
-        if verb == HttpVerbEnum.GET and self.rest_send.return_code in (204, 404):
-            raise RuntimeError(f"Request failed {self.rest_send.error_summary}")
-
-        if not self.rest_send.success:
-            raise Exception(f"Request failed {self.rest_send.error_summary}")
-
-        return self.rest_send.response_current.get("DATA", {})
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
