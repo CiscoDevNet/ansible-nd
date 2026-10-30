@@ -249,7 +249,11 @@ options:
             and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on Multi-cluster Fabric groups.
-          - Private VLAN Networks require Data Center VXLAN with EVPN overlay and private VLAN enabled.
+          - PVLAN definition and attachment changes require a Data Center VXLAN EVPN fabric with private VLAN enabled.
+          - For Fabric groups, every member fabric must meet these requirements. PVLAN configuration is not supported on
+            Campus VXLAN fabrics or Fabric groups containing Campus VXLAN members.
+          - A disabled or unavailable private VLAN fabric setting causes prerequisite validation to fail.
+          - This prerequisite check is skipped for unchanged Network entries and for V(gathered) and V(deleted).
           - C(normal) Networks allow C(access), C(dot1q_tunnel), and C(trunk) attachment interface modes.
           - C(primary) Networks allow C(promiscuous) and C(trunk_promiscuous) attachment interface modes.
           - C(community) and C(isolated) Networks allow C(pvlan_host) and C(trunk_secondary) attachment interface modes.
