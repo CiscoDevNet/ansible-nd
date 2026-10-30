@@ -1893,8 +1893,8 @@ def test_vrf_workflow_coordinator_00075_deleted_empty_config_deletes_state_machi
     def detach(args, _strategy, vrf_names=None):
         call_order.append("detach")
         assert args["config"] == [
-            {"vrf_name": "ansible-msd-a", "deploy_type": "vrf"},
-            {"vrf_name": "ansible-msd-b", "deploy_type": "vrf"},
+            {"vrf_name": "ansible-msd-a"},
+            {"vrf_name": "ansible-msd-b"},
         ]
         assert module_args["config"] == []
         assert vrf_names == ["ansible-msd-a", "ansible-msd-b"]
@@ -2022,6 +2022,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
         call_order.append("deploy")
         assert payload == {
             "vrfNames": ["ansible-delete-vrf"],
+            "switchIds": ["SERIAL1"],
         }
         return {}
 
@@ -2248,7 +2249,7 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
     assert traces == [{"changed": True, "failed": False}]
 
 
-def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_vrf_deploy_scope():
+def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_shared_action_scope():
     coordinator = VrfWorkflowCoordinator(
         module=_Module({"fabric_name": "MCFG_C", "state": "deleted", "config": []}),
         strategy=_McfgParentStrategy(),
@@ -2259,10 +2260,7 @@ def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_vrf_deploy_scop
         _McfgParentStrategy(),
     )
 
-    assert config == {
-        "vrf_name": "ansible-nd-vrf-mcfg-merged",
-        "deploy_type": "vrf",
-    }
+    assert config == {"vrf_name": "ansible-nd-vrf-mcfg-merged"}
 
 
 def test_vrf_workflow_coordinator_mcfg_parent_uses_manage_deploy_endpoint():
