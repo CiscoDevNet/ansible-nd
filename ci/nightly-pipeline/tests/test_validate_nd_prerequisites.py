@@ -549,15 +549,15 @@ def test_jenkins_runs_vpc_pairs_immediately_after_policy_groups():
     assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
 
 
-def test_jenkins_exposes_restored_branch_notification_and_interface_parameters():
+def test_jenkins_exposes_branch_notification_and_debug_parameters_only():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
     block = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S).group(1)
-    expected = ["DEBUG", "DEBUG_MODULES", "WEBEX_CUSTOM_MESSAGE", "ND_GIT_BRANCH",
-                "ND_INTERFACE_TEST_SWITCH_IP", "ND_SUBIF_ETHERNET_PARENT"]
+    expected = ["DEBUG", "DEBUG_MODULES", "WEBEX_CUSTOM_MESSAGE", "ND_GIT_BRANCH"]
     assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == expected
-    # Coverage remains fixed; interface inputs select only validated profiles.
+    # Topology and coverage remain fixed; no interface selector is read.
     assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == set(expected)
-    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC"):
+    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC",
+                    "ND_INTERFACE_TEST_SWITCH_IP", "ND_SUBIF_ETHERNET_PARENT"):
         assert removed not in jenkins_text, removed
 
 

@@ -266,14 +266,12 @@ pipeline {
         }
     }
 
-    // Branch, interface and debug inputs are user-facing; module selections stay fixed.
+    // Branch, notification and debug inputs are user-facing; module selections stay fixed.
     parameters {
         booleanParam(name: 'DEBUG', defaultValue: false, description: 'Enable debug logging')
         string(name: 'DEBUG_MODULES', defaultValue: '', description: 'With DEBUG enabled, comma-separated module names to debug; empty selects all')
         string(name: 'WEBEX_CUSTOM_MESSAGE', defaultValue: '', description: 'Optional note below the Webex title (up to 1,200 characters).')
         string(name: 'ND_GIT_BRANCH', defaultValue: 'develop', description: 'ansible-nd branch, or GitHub fork as owner:branch. Leave blank to use develop.')
-        string(name: 'ND_INTERFACE_TEST_SWITCH_IP', defaultValue: '', description: 'Single-switch interface-test target IP. Blank uses its profile default; vPC keeps its declared pairs. The chosen leaf must support the profile ports.')
-        string(name: 'ND_SUBIF_ETHERNET_PARENT', defaultValue: '', description: 'Ethernet parent for subinterface tests, for example Ethernet1/35. Blank uses the profile default. The port must be declared and pass live availability checks.')
     }
 
     environment {
@@ -3345,20 +3343,6 @@ def runNDFCVersionTests(ndfcConfig) {
         // The requested branch was validated and installed in the Clone Repository stage.
     }
 
-    def interfaceInputs = [params.ND_INTERFACE_TEST_SWITCH_IP, params.ND_SUBIF_ETHERNET_PARENT]
-    if ((INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + TRAILING_INTEGRATION_MODULES).any {
-            it.startsWith('nd_interface_') && !it.startsWith('nd_interface_vpc_')
-        } && interfaceInputs.any { it?.toString()?.trim() }) {
-        sh '''#!/bin/bash
-            set -e
-            grep -q 'select-interface' "$COLLECTIONS_DIRECTORY/nd_prerequisite_orchestrator.py" &&
-            grep -q 'interface_selection_changed' "$COLLECTIONS_DIRECTORY/run_integration_module.yaml" &&
-            grep -q 'interface_selection_changed' "$COLLECTIONS_DIRECTORY/nd_prerequisite/nd_prerequisite_wrapper.yaml" || {
-                echo 'NDP_INTERFACE_INPUTS_UNSUPPORTED: install the matching local orchestrator, runner and prerequisite wrapper in Consul before using interface overrides' >&2
-                exit 1
-            }
-        '''
-    }
     applyFabricRound(ndfcConfig)
 
     echo "⏱ Stage 'NDFC ${ndfcConfig.version}${roundTag} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
@@ -3683,8 +3667,6 @@ def runFabricTest(ndfcConfig) {
                                  "ND_MODULE_BATCH_STATUS=${reportingLogDirectory}/module_batch.status",
                                  "ND_REPORT_DEBUG_ENABLED=${params.DEBUG == true}",
                                  "ND_REPORT_DEBUG_MODULES=${params.DEBUG_MODULES ?: ''}",
-                                 "ND_INTERFACE_TEST_SWITCH_IP=${params.ND_INTERFACE_TEST_SWITCH_IP?.trim() ?: ''}",
-                                 "ND_SUBIF_ETHERNET_PARENT=${params.ND_SUBIF_ETHERNET_PARENT?.trim() ?: ''}",
                                  "FABRIC_NAME=${ndfcConfig.fabric_name}",
                                  "SECONDARY_FABRIC_NAME=${secondaryFabricName}",
                                  "VERSION_ID=${ndfcConfig.versionId}",
@@ -4024,24 +4006,6 @@ PEERLINK_PROBE_EOF
                                     echo "Running integration module: $m, pwd: $(pwd)"
                                     echo "========================================"
                                     PREREQUISITE_START=$(date +%s)
-                                    INTERFACE_SELECTION_VARS=()
-                                    selected_parent=""
-                                    case "$m" in
-                                        nd_interface_subinterface_*) selected_parent="${ND_SUBIF_ETHERNET_PARENT}" ;;
-                                    esac
-                                    case "$m" in
-                                        nd_interface_vpc_*) ;; # Keep the authored multi-peer topology.
-                                        nd_interface_*)
-                                            if [ -n "${ND_INTERFACE_TEST_SWITCH_IP}${selected_parent}" ]; then
-                                                selection_root="${ND_REPORT_LOG_DIR}/.nd-prerequisite-recovery"
-                                                selection_vars="${selection_root}/vars_${m}.json"
-                                                python "${COLLECTIONS_DIRECTORY}/nd_prerequisite_orchestrator.py" select-interface \
-                                                    --registry "${PROFILE_REGISTRY}" --execution-id "integration.${m}" \
-                                                    --switch-ip "${ND_INTERFACE_TEST_SWITCH_IP}" --ethernet-parent "${selected_parent}" \
-                                                    --output "${selection_root}/profile_${m}.json" --vars-output "${selection_vars}"
-                                                INTERFACE_SELECTION_VARS=(-e "@${selection_vars}")
-                                            fi ;;
-                                    esac
                                     ensure_switches_ready "integration module $m" "$m"
                                     if [ -f "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ] && \
                                        [ ! -L "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ] && \
@@ -4075,7 +4039,7 @@ PEERLINK_PROBE_EOF
                                         INTERFACE_TEST_VARS=""
                                         case "${m}" in
                                             nd_interface_*)
-                                                # Default interface profiles use vxlan_leaf_1; selected profile vars override these defaults last.
+                                                # Interface tests use the declared default switch for this fabric round.
                                                 INTERFACE_TEST_VARS="-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=192.0.2.195"
                                                 ;;
                                         esac
@@ -4089,8 +4053,8 @@ PEERLINK_PROBE_EOF
                                                 # border_1) in migration mode -- every later module then 207s "switches in
                                                 # read-only mode" (live-proven configSave 500, build #27, 2026-09-16).
                                                 # The default parent is the declared inter-fabric cable on leaf_1 Eth1/1.
-                                                # An explicit input selects a run-specific profile; the prerequisite gate
-                                                # validates that exact switch/parent and rejects occupied or undeclared ports.
+                                                # The prerequisite gate validates the declared switch/parent and
+                                                # rejects occupied or undeclared ports.
                                                 # It journals temporary routedHost and memberless L3 Port-channel10 changes
                                                 # and restores them after target cleanup, including failures.
                                                 INTERFACE_TEST_VARS="${INTERFACE_TEST_VARS} -e nd_test_port_channel_parent=Port-channel10"
@@ -4123,7 +4087,7 @@ PEERLINK_PROBE_EOF
                                             -e "nd_prerequisite_only=${ND_PREREQUISITE_ONLY_EFFECTIVE}" \
                                             -e "nd_prerequisite_mode=live" \
                                             -e "nd_prerequisite_run_id=${TEST_RUN_MARKER}_${m}" \
-                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} "${INTERFACE_SELECTION_VARS[@]}" 2>&1 | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
+                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} 2>&1 | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
                                         ANSIBLE_STATUS=${PIPESTATUS[0]}
                                         echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
                                         if [ "${ANSIBLE_STATUS}" -ne 0 ]; then

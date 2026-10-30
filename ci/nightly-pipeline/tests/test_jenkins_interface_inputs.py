@@ -1,4 +1,4 @@
-"""Execute the Jenkins selection shell and Ansible variable precedence offline."""
+"""Exercise Jenkins profile defaults and direct-call lock compatibility offline."""
 import json
 import os
 from pathlib import Path
@@ -13,90 +13,77 @@ VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
-@pytest.mark.parametrize("module,ip,parent,expected", [
-    ("nd_interface_subinterface_managed", "", "", None),
-    ("nd_interface_subinterface_managed", "", "Ethernet1/35", "192.0.2.195"),
-    ("nd_interface_loopback", "192.0.2.196", "Ethernet1/35", "192.0.2.196"),
-    ("nd_interface_svi", "192.0.2.85", "", "192.0.2.85"),
-    ("nd_interface_vpc_access", "192.0.2.196", "Ethernet1/35", None),
-    ("nd_manage_community_list", "192.0.2.196", "Ethernet1/35", None),
-])
-def test_actual_selection_shell_feeds_final_matching_extra_vars(tmp_path, variant, module, ip, parent, expected):
+def test_jenkins_uses_declared_interface_profiles_without_runtime_selectors(variant):
     source = (ROOT / variant).read_text()
-    assert "string(name: 'ND_INTERFACE_TEST_SWITCH_IP', defaultValue: ''" in source
-    assert "string(name: 'ND_SUBIF_ETHERNET_PARENT', defaultValue: ''" in source
-    block = source.split("INTERFACE_SELECTION_VARS=()", 1)[1].split('ensure_switches_ready "integration module $m"', 1)[0]
-    block = "INTERFACE_SELECTION_VARS=()" + block
-    # The real production CLI is used. Only the surrounding module execution is
-    # replaced by recording argv; neither ND nor authored tests are contacted.
-    receipt = tmp_path / "args.json"
-    script = tmp_path / "selection.sh"
-    script.write_text("set -e\n" + block + '''
-python - "$ARGV_FILE" "${INTERFACE_SELECTION_VARS[@]}" <<'PY'
-import json, sys
-from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))
-PY
-''')
-    env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
-               m=module, ND_INTERFACE_TEST_SWITCH_IP=ip, ND_SUBIF_ETHERNET_PARENT=parent,
-               COLLECTIONS_DIRECTORY=str(ROOT / "tests"), PROFILE_REGISTRY=str(ROOT / "tests/nd_prerequisite_profiles.yaml"),
-               ND_REPORT_LOG_DIR=str(tmp_path / "round logs with spaces"), ARGV_FILE=str(receipt))
-    Path(env["ND_REPORT_LOG_DIR"]).mkdir()
-    result = subprocess.run(["bash", str(script)], env=env, text=True, capture_output=True, timeout=20)
-    assert result.returncode == 0, result.stdout + result.stderr
-    arguments = json.loads(receipt.read_text())
-    if expected is None:
-        assert arguments == []
-        assert not list(tmp_path.rglob("vars_*.json"))
-        return
-    assert arguments[0] == "-e" and arguments[1].startswith("@") and len(arguments) == 2
-    variables = json.loads(Path(arguments[1][1:]).read_text())
-    selected = json.loads(Path(variables["nd_prerequisite_registry"]).read_text())
-    runtime = selected["profiles"]["integration." + module]["runtime_vars"]
-    assert variables["nd_test_switch_ip"] == runtime["nd_test_switch_ip"] == expected
-    assert variables["nd_prerequisite_repair_baseline"] is False
-    assert selected["profiles"]["integration." + module]["interface_selection_changed"] is True
-    if "subinterface" in module:
-        assert variables["nd_test_ethernet_parent"] == runtime["nd_test_ethernet_parent"] == parent
-    # Verify the actual -e ordering lets the selected file override the legacy
-    # per-module defaults. It must remain the final vars argument in Jenkins.
-    invocation = next(line for line in source.splitlines() if '${INTERFACE_SELECTION_VARS[@]}' in line)
-    assert invocation.index('${INTERFACE_TEST_VARS}') < invocation.index('${INTERFACE_SELECTION_VARS[@]}')
-    interpreter = os.environ.get("ND_ANSIBLE_COMPAT_PYTHON", sys.executable)
-    check = r'''
-import json, sys
-from ansible import context
-from ansible.module_utils.common.collections import ImmutableDict
-from ansible.parsing.dataloader import DataLoader
-from ansible.utils.vars import load_extra_vars
-context.CLIARGS = ImmutableDict(extra_vars=['nd_test_switch_ip=LEGACY nd_prerequisite_repair_baseline=true', '@' + sys.argv[1]])
-values = load_extra_vars(DataLoader())
-assert values['nd_test_switch_ip'] == sys.argv[2]
-assert values['nd_prerequisite_repair_baseline'] is False
-'''
-    checked = subprocess.run([interpreter, "-c", check, arguments[1][1:], expected],
-                             env=dict(env, ANSIBLE_LOCAL_TEMP=str(tmp_path / "ansible-local"),
-                                      ANSIBLE_LOCAL_TMP=str(tmp_path / "ansible-local")),
-                             text=True, capture_output=True, timeout=20)
-    assert checked.returncode == 0, checked.stdout + checked.stderr
+    for removed in ("ND_INTERFACE_TEST_SWITCH_IP", "ND_SUBIF_ETHERNET_PARENT",
+                    "INTERFACE_SELECTION_VARS", "select-interface"):
+        assert removed not in source
+    assert '-e "nd_prerequisite_repair_baseline=true"' in source
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
-def test_interface_selection_failure_cannot_reach_the_switch_guard(tmp_path, variant):
+@pytest.mark.parametrize("fabric", ("VXLAN_EVPN_Fabric", "VXLAN_EVPN_Fabric_eBGP"))
+@pytest.mark.parametrize("module", ("nd_interface_subinterface_managed", "nd_interface_subinterface_unmanaged",
+                                    "nd_interface_loopback", "nd_interface_port_channel_access",
+                                    "nd_manage_community_list"))
+def test_actual_module_invocation_keeps_profile_defaults_despite_stale_selector_environment(
+        tmp_path, variant, fabric, module):
     source = (ROOT / variant).read_text()
-    block = "INTERFACE_SELECTION_VARS=()" + source.split("INTERFACE_SELECTION_VARS=()", 1)[1].split(
-        'ensure_switches_ready "integration module $m"', 1)[0]
-    marker = tmp_path / "guard-reached"
-    script = tmp_path / "selection.sh"
-    script.write_text("set -e\n" + block + '\nprintf guard > "$MARKER"\n')
-    result = subprocess.run(["bash", str(script)], env=dict(os.environ,
-        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
-        m="nd_interface_subinterface_managed", ND_INTERFACE_TEST_SWITCH_IP="", ND_SUBIF_ETHERNET_PARENT="Ethernet1/3",
-        COLLECTIONS_DIRECTORY=str(ROOT / "tests"), PROFILE_REGISTRY=str(ROOT / "tests/nd_prerequisite_profiles.yaml"),
-        ND_REPORT_LOG_DIR=str(tmp_path / "logs"), MARKER=str(marker)), text=True, capture_output=True, timeout=20)
-    assert result.returncode != 0
-    assert not marker.exists()
+    defaults = 'INTERFACE_TEST_VARS=""' + source.split('INTERFACE_TEST_VARS=""', 1)[1].split(
+        "# Switch prep gets a longer cap", 1)[0]
+    marker = ('run_reported_playbook "$m" "${ND_REPORT_LOG_DIR}/'
+              'test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" prerequisites ')
+    invocation = marker + source.split(marker, 1)[1].split('ANSIBLE_STATUS=${PIPESTATUS[0]}', 1)[0]
+    receipt = tmp_path / "arguments.json"
+    script = tmp_path / "default-module.sh"
+    script.write_text("set -e\n" + r'''
+run_reported_playbook() {
+    python - "$ARGV_FILE" "$@" <<'PYREC'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))
+PYREC
+}
+''' + defaults + "\n" + invocation)
+    environment = dict(os.environ,
+        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"], m=module,
+        FABRIC_NAME=fabric, SECONDARY_FABRIC_NAME="External_Connectivity_Fabric", VERSION_ID="fixture",
+        COLLECTIONS_DIRECTORY=str(ROOT / "tests"), ND_REPORT_LOG_DIR=str(tmp_path), ARGV_FILE=str(receipt),
+        INVENTORY_FILE="fixture-inventory.yaml", INVENTORY_VARS_FILE="fixture-vars.json", TEST_RUN_MARKER="fixture",
+        ND_PREREQUISITE_ENABLE_EFFECTIVE="true", ND_PREREQUISITE_APPLY_EFFECTIVE="true",
+        ND_PREREQUISITE_ONLY_EFFECTIVE="false", MOD_TIMEOUT_CMD="", NETWORK_EXTRA_VARS="", MODULE_TOPOLOGY_VARS="",
+        # Old agent environments cannot silently retarget the ordinary Jenkins path.
+        ND_INTERFACE_TEST_SWITCH_IP="198.51.100.254", ND_SUBIF_ETHERNET_PARENT="Ethernet1/999")
+    completed = subprocess.run(["bash", str(script)], env=environment, capture_output=True, text=True, timeout=20)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    arguments = json.loads(receipt.read_text())
+    extra = {}
+    for index, argument in enumerate(arguments[:-1]):
+        if argument == "-e" and not arguments[index + 1].startswith("@"):
+            key, value = arguments[index + 1].split("=", 1)
+            extra[key] = value
+    assert extra["test_module"] == module
+    assert extra["fabric_name"] == fabric
+    assert extra["nd_prerequisite_repair_baseline"] == "true"
+    assert "nd_prerequisite_registry" not in extra
+    assert "nd_interface_selection_changed" not in extra
+    assert "198.51.100.254" not in arguments and "Ethernet1/999" not in arguments
+    registry = yaml.safe_load((ROOT / "tests/nd_prerequisite_profiles.yaml").read_text())
+    if module.startswith("nd_interface_"):
+        profile = registry["profiles"]["integration." + module]
+        runtime = dict(profile["runtime_vars"], nd_test_fabric_name=fabric)
+        assert not profile.get("interface_selection_changed", False)
+        for key in ("nd_test_fabric_name", "nd_test_switch_ip", "nd_test_port_channel_parent",
+                    "nd_test_pc_member_a", "nd_test_pc_member_b", "nd_test_pc_member_c", "nd_test_pc_member_d"):
+            if key in runtime:
+                assert extra[key] == runtime[key]
+        # Ethernet parent comes from the unchanged declared profile, with no final override file.
+        assert "nd_test_ethernet_parent" not in extra
+        if "subinterface" in module:
+            assert runtime["nd_test_ethernet_parent"] == "Ethernet1/1"
+    else:
+        assert "nd_test_switch_ip" not in extra
+        assert "nd_test_port_channel_parent" not in extra
 
 
 @pytest.mark.parametrize("custom,baseline,occupied", [(True, False, False), (False, True, False),
