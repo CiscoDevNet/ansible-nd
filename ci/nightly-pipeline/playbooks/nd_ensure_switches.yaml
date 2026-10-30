@@ -196,52 +196,73 @@
       {{ [nd_switch_predelete_call_timeout_seconds | int,
            [1, _nd_predelete_remaining | float] | max]
          | min | round(0, 'ceil') | int }}
-    # Shared save/deploy response check. A 207 can contain per-switch results or
-    # the completion message documented by the collection's switch deploy endpoint.
-    # Only the boolean escapes no_log; controller bodies/credentials stay private.
-    _nd_predelete_response_valid: >-
+    # Interpret response data like the pinned SDK: embedded errors are failures.
+    # A Deploy completion need not echo every requested ID; fresh inventory below
+    # independently proves all requested switches are inSync before any removal.
+    _nd_predelete_response_report: >-
       {%- set http = _predelete_reply.status | default(0) | int -%}
       {%- set body = _predelete_reply.jsondata if _predelete_reply.jsondata is defined else _predelete_reply.current | default(none) -%}
-      {%- set ns = namespace(ok=http in [200, 201, 202, 204, 207] and not _predelete_reply.failed | default(false), ids=[]) -%}
-      {%- if body is not mapping and body is not none -%}{%- set ns.ok = false -%}{%- endif -%}
-      {%- if body is mapping -%}
-        {%- if body.get('error') or body.get('errors') -%}{%- set ns.ok = false -%}{%- endif -%}
-        {%- set status = body.get('status', '') -%}
-        {%- if status is not string or status is search('(?i)fail|error|denied|reject|unauthori|forbidden') -%}
-          {%- set ns.ok = false -%}
+      {%- set ns = namespace(error=false, bounded=true, nodes=0, ids=[], items=0, category='ACCEPTED_HTTP') -%}
+      {%- set ignored_walk -%}
+      {%- for node in [body] recursive -%}
+        {%- set ns.nodes = ns.nodes + 1 -%}
+        {%- if loop.depth > 8 or ns.nodes > 256 or (node is mapping or (node is sequence and node is not string)) and node | length > 256 -%}
+          {%- set ns.bounded = false -%}
+        {%- elif node is mapping -%}
+          {%- if 'code' in node or node.get('error') or node.get('errors')
+                or node.get('errorCode', node.get('error_code', '0')) | string not in ['', '0'] -%}{%- set ns.error = true -%}{%- endif -%}
+          {%- set ignored = loop(node.values()) -%}
+        {%- elif node is sequence and node is not string -%}{%- set ignored = loop(node) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- endset -%}
+      {%- set status = body.get('status', '') if body is mapping else '' -%}
+      {%- if status is string and status | length > 1024 -%}{%- set ns.bounded = false -%}{%- endif -%}
+      {%- set status_text = status[:1024] | regex_replace('\\[[^]]*\\]', ' ') | regex_replace('(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ') | lower if status is string else '' -%}
+      {%- set words = (status_text | regex_replace('[^a-z]+', ' ')).split() -%}
+      {%- set failed = status_text is search('fail|error|denied|reject|unauthori|forbid|unsuccess|refus|cancel|abort|incomplete') -%}
+      {%- set terminal = status | lower | trim in ['success', 'successful', 'complete', 'completed', 'deployed'] if status is string else false -%}
+      {%- set action_words = ['deploy', 'deployment'] if _predelete_operation == 'deploy' else ['save', 'saved', 'recalculate', 'recalculation'] -%}
+      {%- set terminal = terminal or (words | intersect(action_words) | length > 0 and words | intersect(['complete', 'completed', 'success', 'successful', 'successfully']) | length > 0) -%}
+      {%- set pending = words | intersect(['pending', 'queued', 'inprogress', 'progress', 'waiting', 'scheduled', 'not', 'no', 'cannot', 'unable', 'skipped']) | length > 0 -%}
+      {%- if _predelete_reply.failed | default(false) -%}{%- set ns.category = 'MODULE_FAILURE' -%}
+      {%- elif http not in [200, 201, 202, 204, 207] -%}{%- set ns.category = 'HTTP_REJECTED' -%}
+      {%- elif ns.error -%}{%- set ns.category = 'EMBEDDED_ERROR' -%}
+      {%- elif not ns.bounded or (body is not mapping and body is not none) or status is not string -%}{%- set ns.category = 'BODY_UNVERIFIED' -%}
+      {%- elif failed -%}{%- set ns.category = 'STATUS_FAILURE' -%}
+      {%- elif pending -%}{%- set ns.category = 'STATUS_UNVERIFIED' -%}
+      {%- elif body is mapping and 'items' in body -%}
+        {%- set items = body.get('items') -%}
+        {%- if items is not sequence or items is string or items is mapping or items | length == 0 -%}
+          {%- set ns.category = 'ITEMS_UNVERIFIED' -%}
+        {%- else -%}
+          {%- set ns.items = items | length -%}
+          {%- for item in items -%}
+            {%- if item is not mapping -%}{%- set ns.category = 'ITEMS_UNVERIFIED' -%}
+            {%- elif item.get('switchId') not in _predelete_requested_ids or item.get('switchId') in ns.ids -%}{%- set ns.category = 'ITEM_IDENTITY_UNVERIFIED' -%}
+            {%- elif item.get('status', '') | string | trim | lower != 'success' or item.get('errorCode', item.get('error_code', '0')) | string not in ['', '0'] -%}
+              {%- set ns.category = 'ITEM_FAILURE_OR_UNVERIFIED' -%}
+            {%- endif -%}
+            {%- if item is mapping -%}{%- set ns.ids = ns.ids + [item.get('switchId')] -%}{%- endif -%}
+          {%- endfor -%}
+          {%- if ns.category == 'ACCEPTED_HTTP' -%}{%- set ns.category = 'ACCEPTED_ITEMS' -%}{%- endif -%}
         {%- endif -%}
-        {%- if 'items' in body -%}
-          {%- set items = body.get('items') -%}
-          {%- if items is not sequence or items is string or items is mapping or items | length == 0 -%}
-            {%- set ns.ok = false -%}
-          {%- else -%}
-            {%- for item in items -%}
-              {%- if item is not mapping or item.get('switchId') not in _predelete_requested_ids
-                    or item.get('switchId') in ns.ids or item.get('status', '') | string | lower != 'success'
-                    or item.get('error') or item.get('errors')
-                    or item.get('errorCode', '0') | string not in ['', '0'] -%}
-                {%- set ns.ok = false -%}
-              {%- endif -%}
-              {%- if item is mapping -%}{%- set ns.ids = ns.ids + [item.get('switchId')] -%}{%- endif -%}
-            {%- endfor -%}
-          {%- endif -%}
-          {%- if ns.ids | length != _predelete_requested_ids | length -%}{%- set ns.ok = false -%}{%- endif -%}
-        {%- elif http == 207 -%}
-          {%- set groups = status | regex_findall('^Configuration deployment completed for \\[([^]]*)\\]\\.$') if status is string else [] -%}
-          {%- set ids = groups[0].split(',') | map('trim') | list if groups | length == 1 else [] -%}
-          {%- if _predelete_operation != 'deploy' or ids | length != _predelete_requested_ids | length
-                or ids | unique | list | length != ids | length or ids | difference(_predelete_requested_ids) | length > 0 -%}
-            {%- set ns.ok = false -%}
-          {%- endif -%}
-        {%- endif -%}
-      {%- elif http == 207 -%}{%- set ns.ok = false -%}{%- endif -%}
-      {{- ns.ok -}}
+      {%- elif status or http == 207 -%}
+        {%- set ns.category = 'ACCEPTED_COMPLETION' if terminal else 'STATUS_UNVERIFIED' -%}
+      {%- endif -%}
+      {{- {'operation': _predelete_operation, 'http_status': http if 0 <= http <= 599 else 0,
+           'body_kind': 'mapping' if body is mapping else 'null' if body is none else 'other',
+           'has_embedded_error': ns.error, 'requested_count': _predelete_requested_ids | length, 'item_count': ns.items,
+           'category': ns.category, 'accepted': ns.category in ['ACCEPTED_HTTP', 'ACCEPTED_ITEMS', 'ACCEPTED_COMPLETION']} -}}
+    _nd_predelete_inventory_error: >-
+      {%- set body = _predelete_inventory_reply.current | default(none) -%}
+      {{- body is mapping and ('code' in body or (not not body.get('error')) or (not not body.get('errors'))
+           or body.get('errorCode', body.get('error_code', '0')) | string not in ['', '0']) -}}
     _nd_predelete_inventory_ready: >-
       {%- set body = _predelete_inventory_reply.current | default(none) -%}
       {%- set rows = body.get('switches') if body is mapping else none -%}
       {%- set ns = namespace(ok=_predelete_inventory_reply.status | default(0) | int == 200
            and not _predelete_inventory_reply.failed | default(false), ids=[]) -%}
-      {%- if body is mapping and (body.get('error') or body.get('errors')) -%}{%- set ns.ok = false -%}{%- endif -%}
+      {%- if _nd_predelete_inventory_error | bool -%}{%- set ns.ok = false -%}{%- endif -%}
       {%- if rows is not sequence or rows is string or rows is mapping -%}
         {%- set ns.ok = false -%}
       {%- else -%}
@@ -642,6 +663,8 @@
               ansible.builtin.set_fact:
                 _nd_phase_deploy_settle_started: "{{ _nd_switch_clock }}"
                 _nd_phase_deploy_settle_status: failed
+                _nd_predelete_save_checks: []
+                _nd_predelete_deploy_checks: []
                 # Ansible can freeze timeout/delay before its retry loop. Reserve
                 # one final call and gap so our diagnostic precedes the outer kill.
                 _nd_phase_deploy_settle_budget: >-
@@ -675,10 +698,9 @@
               no_log: true
               when: _nd_predelete_remaining | float > 0
 
-            - name: Require source Recalculate acceptance before Deploy
-              ansible.builtin.assert:
-                that: _nd_predelete_response_valid | bool
-                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Recalculate was refused or its response was unverified; no switch was removed."
+            - name: Classify Recalculate replies without publishing controller payloads
+              ansible.builtin.set_fact:
+                _nd_predelete_save_checks: "{{ _nd_predelete_save_checks + [_nd_predelete_response_report] }}"
               vars:
                 _predelete_operation: config-save
                 _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _predelete_reply._rf) | map(attribute='serial') | list }}"
@@ -687,6 +709,21 @@
                 loop_var: _predelete_reply
                 label: "{{ _predelete_reply._rf }}"
               no_log: true
+
+            - name: Report bounded Recalculate response diagnostics
+              ansible.builtin.debug:
+                msg: "NDP_SWITCH_PREDELETE_RESPONSE {{ _nd_predelete_check }}"
+              loop: "{{ _nd_predelete_save_checks }}"
+              loop_control:
+                loop_var: _nd_predelete_check
+
+            - name: Require source Recalculate acceptance before Deploy
+              ansible.builtin.assert:
+                that: _nd_predelete_check.accepted | bool
+                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Recalculate reply {{ _nd_predelete_check.category }}; no switch was removed."
+              loop: "{{ _nd_predelete_save_checks }}"
+              loop_control:
+                loop_var: _nd_predelete_check
 
             - name: Deploy all leaving switches before removing any switches
               cisco.nd.nd_rest:
@@ -709,10 +746,9 @@
               no_log: true
               when: _nd_predelete_remaining | float > 0
 
-            - name: Require acceptance of every leaving-switch Deploy before polling
-              ansible.builtin.assert:
-                that: _nd_predelete_response_valid | bool
-                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Deploy was refused or its response was unverified; no switch was removed."
+            - name: Classify Deploy replies without publishing controller payloads
+              ansible.builtin.set_fact:
+                _nd_predelete_deploy_checks: "{{ _nd_predelete_deploy_checks + [_nd_predelete_response_report] }}"
               vars:
                 _predelete_operation: deploy
                 _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _predelete_reply._rf) | map(attribute='serial') | list }}"
@@ -722,6 +758,21 @@
                 label: "{{ _predelete_reply._rf }}"
               no_log: true
 
+            - name: Report bounded Deploy response diagnostics
+              ansible.builtin.debug:
+                msg: "NDP_SWITCH_PREDELETE_RESPONSE {{ _nd_predelete_check }}"
+              loop: "{{ _nd_predelete_deploy_checks }}"
+              loop_control:
+                loop_var: _nd_predelete_check
+
+            - name: Require acceptance of every leaving-switch Deploy before polling
+              ansible.builtin.assert:
+                that: _nd_predelete_check.accepted | bool
+                fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Deploy reply {{ _nd_predelete_check.category }}; no switch was removed."
+              loop: "{{ _nd_predelete_deploy_checks }}"
+              loop_control:
+                loop_var: _nd_predelete_check
+
             - name: Wait for every leaving switch to have fresh inSync configuration before removal
               cisco.nd.nd_rest:
                 method: get
@@ -730,6 +781,7 @@
               failed_when: nd_predelete_inventory.failed | default(false)
               until: >-
                 (_nd_predelete_inventory_ready | bool)
+                or (_nd_predelete_inventory_error | bool)
                 or (nd_predelete_inventory.status | default(0) | int not in [0, 200, 408, 429]
                     and nd_predelete_inventory.status | default(0) | int < 500)
                 or (nd_predelete_inventory.msg | default('') is search('(?i)authentication|authorization|unauthorized|forbidden|invalid credentials'))

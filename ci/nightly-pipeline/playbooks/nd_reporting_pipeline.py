@@ -595,13 +595,16 @@ def close_execution(root, job, args):
     return {"id": job["id"], "closed": True, "summary_ready": (root / "results" / (job["id"] + ".json")).exists()}
 
 
-def finish(root, config, status):
+def finish(root, config, status, home_recovery_status="unverified"):
+    if home_recovery_status not in {"confirmed", "failed", "not_required", "unverified"}:
+        raise ValueError("invalid home recovery status")
     path = root / "producer.json"
     with lock(root, "finish"):
         value = read_json(path, missing=True)
         if value is None:
             value = {"schema_version": SCHEMA_VERSION, "run_id": config["run_id"], "status": status,
-                     "finished_at": time.time(), "restoration_scope": "execution branch has finished its recovery attempts"}
+                     "status_scope": "execution_branch", "execution_status": status,
+                     "home_recovery_status": home_recovery_status, "finished_at": time.time()}
             atomic_json(path, value)
         return value
 
@@ -804,15 +807,23 @@ def module_skip_report(root, job, result):
     catalog = frozen["catalog"]
     activity = result["activity"]
     cases = activity.get("case_results", [])
+    not_run = activity.get("result") == "NOT_RUN"
     with readable_file(destination) as output:
         output.write(readable_header(job))
         output.write("RESULT: %s | COVERAGE: %s | BASE: %s | CLEANUP: %s\n" % (
-            activity.get("result", "UNKNOWN"), activity.get("coverage", "UNKNOWN"),
+            activity.get("result", "UNKNOWN"), "N/A" if not_run else activity.get("coverage", "UNKNOWN"),
             activity.get("base", "Not observed"), activity.get("cleanup", "Not observed")))
+        if not_run:
+            reason = " ".join(str(value) for value in activity.get("failure", [])).lower()
+            blocked = "preflight blocked" if "preflight" in reason or "pre-flight" in reason else "earlier execution stopped"
+            output.write("Not executed—" + blocked + ".\n")
         totals = activity.get("testcase_totals", {})
-        output.write("Authored case totals: " + "; ".join("%s=%s" % (key,
-            totals[key] if isinstance(totals.get(key), int) and not isinstance(totals[key], bool) else "unknown")
-            for key in ("started", "passed", "failed", "skipped", "incomplete")) + "\n")
+        if not_run:
+            output.write("Authored case totals: N/A (no module execution)\n")
+        else:
+            output.write("Authored case totals: " + "; ".join("%s=%s" % (key,
+                totals[key] if isinstance(totals.get(key), int) and not isinstance(totals[key], bool) else "unknown")
+                for key in ("started", "passed", "failed", "skipped", "incomplete")) + "\n")
         if not catalog["cases"]:
             output.write("Authored case inventory unavailable: case-level skips and unreached cases cannot be enumerated; task skips below are separate observations.\n")
         if activity.get("failure"):
@@ -1154,11 +1165,15 @@ def aggregate(root, config, args):
     value = {"schema_version": SCHEMA_VERSION, "build": config["build"], "run_id": config["run_id"],
              "rows": rows, "reporting_errors": errors[:MAX_JOBS], "selected_executions": len(rows),
              "producer_status": (producer or {}).get("status", "missing"),
+             "status_scope": "execution_branch",
+             "execution_status": (producer or {}).get("execution_status", (producer or {}).get("status", "missing")),
+             "home_recovery_status": (producer or {}).get("home_recovery_status", "unverified"),
              "reporting_tail_seconds": max(0, max(archive_times) - producer["finished_at"]) if archive_times and producer else None,
              "summary_sources": {name: sum(row["summary_source"] == name for row in rows)
                                  for name in ("structured_events", "raw_log_recovery", "unavailable")},
              "failed": bool(errors or any(row["result"] in {"FAIL", "UNKNOWN", "NOT_RUN"} for row in rows)
-                            or (producer or {}).get("status") != "success"),
+                            or (producer or {}).get("status") != "success"
+                            or (producer or {}).get("home_recovery_status") == "failed"),
              "skiplist_file": skiplist_path.name}
     destination = within(root, args.output) if args.output else root / "aggregate.json"
     atomic_json(destination, value, limit=MAX_OUTPUT)
@@ -1179,6 +1194,7 @@ def main():
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--duration-seconds", type=int)
     parser.add_argument("--status", choices=("success", "failed", "interrupted"), default="success")
+    parser.add_argument("--home-recovery-status", choices=("confirmed", "failed", "not_required", "unverified"), default="unverified")
     parser.add_argument("--id")
     parser.add_argument("--seconds", type=float, default=0)
     parser.add_argument("--attempt", type=int)
@@ -1228,7 +1244,7 @@ def main():
                     parser.error("ack requires execution id and success/failed status")
                 value = acknowledge(root, args)
             elif args.command == "finish":
-                value = finish(root, config, args.status)
+                value = finish(root, config, args.status, args.home_recovery_status)
             elif args.command == "aggregate":
                 value = aggregate(root, config, args)
             elif args.command == "check-space":

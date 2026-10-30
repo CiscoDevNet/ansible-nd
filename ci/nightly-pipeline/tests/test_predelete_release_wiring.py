@@ -26,7 +26,7 @@ script.metaClass.downloadFromConsul = { Object key, Object target ->
 }
 script.prepareRuntimeInputs()
 assert script.binding.env.ND_RUNTIME_INPUTS_READY == 'true'
-def release = 'releases/predelete-deploy-verified-20261030/'
+def release = 'releases/predelete-response-compatible-20261030/'
 def guarded = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 assert downloads.findAll { it.key.startsWith(release) }.size() == 2
 guarded.each { name ->
@@ -35,6 +35,7 @@ guarded.each { name ->
     assert !downloads.any { it.key == name }
 }
 assert !downloads.any { it.key.contains('bounded-switch-lifecycle-20261029') }
+assert !downloads.any { it.key.contains('predelete-deploy-verified-20261030') }
 // The release changes switch prerequisites only; authored collection sources are untouched.
 assert downloads.every { !it.key.endsWith('.md') && !it.key.endsWith('.doc') }
 println('CHECK_PASSED')

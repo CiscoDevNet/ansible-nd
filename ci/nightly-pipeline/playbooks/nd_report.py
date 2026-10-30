@@ -25,6 +25,7 @@ MAX_EVENT_BYTES = 8192
 MAX_JOURNAL_BYTES = 32 * 1024 * 1024
 MAX_FAILURE_LABELS = 20
 REASON_PATTERNS = (
+    (re.compile(r"Unsupported module parameter:\s*timeout|Unsupported parameters for.{0,200}?module:\s*timeout\b", re.I), "Unsupported module parameter: timeout"),
     (re.compile(r"No Commands to execute", re.I), "No Commands to execute"),
     (re.compile(r"Assertion failed", re.I), "Assertion failed"),
     (re.compile(r"unexpected link neighbor", re.I), "Unexpected link neighbor"),

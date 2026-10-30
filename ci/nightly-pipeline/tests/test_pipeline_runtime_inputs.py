@@ -70,12 +70,12 @@ assert failure == null : failure
 assert requests.size() == 36 : requests.size()
 script.runNDFCVersionTests(config)
 assert requests.size() == 36
-def releaseRequests = requests.findAll { it.url.contains('/releases/predelete-deploy-verified-20261030/') }
+def releaseRequests = requests.findAll { it.url.contains('/releases/predelete-response-compatible-20261030/') }
 assert releaseRequests.size() == 2
 assert releaseRequests.any { it.url.endsWith('/nd_ensure_switches.yaml?raw') }
 assert releaseRequests.any { it.url.endsWith('/action_plugins/nd_switch_discovery.py?raw') }
-assert new File(context.ND_RUNTIME_INPUTS, 'nd_ensure_switches.yaml').text.contains('/releases/predelete-deploy-verified-20261030/')
-assert new File(context.ND_RUNTIME_INPUTS, 'action_plugins/nd_switch_discovery.py').text.contains('/releases/predelete-deploy-verified-20261030/')
+assert new File(context.ND_RUNTIME_INPUTS, 'nd_ensure_switches.yaml').text.contains('/releases/predelete-response-compatible-20261030/')
+assert new File(context.ND_RUNTIME_INPUTS, 'action_plugins/nd_switch_discovery.py').text.contains('/releases/predelete-response-compatible-20261030/')
 assert !new File(context.ND_RUNTIME_INPUTS, 'releases').exists()
 assert phases == ['render', 'inventory', 'pre', 'tests', 'post'] * 2
 assert new File(workspace, 'source-checks').text == 'verifiedverified'

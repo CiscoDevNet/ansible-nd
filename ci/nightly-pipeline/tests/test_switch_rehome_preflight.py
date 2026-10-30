@@ -44,9 +44,10 @@ if a['method']:
                 rows[-1]['additionalData']['configSyncStatus'] = 'pending'
             if scenario == 'predelete_deployment_failed': rows[-1]['additionalData']['configSyncStatus'] = 'failed'
             if scenario == 'predelete_missing_switch': rows = rows[:-1]
-            if scenario == 'predelete_missing_status': rows[-1]['additionalData'].pop('configSyncStatus')
+            if scenario in ('predelete_missing_status', 'predelete_subset_missing_status'): rows[-1]['additionalData'].pop('configSyncStatus')
             if scenario == 'predelete_duplicate_switch': rows[-1] = dict(rows[0])
             body = {'switches':rows}
+            if scenario == 'predelete_inventory_code': body.update(code=400, message='password=DO_NOT_PRINT_ME RAW_PAYLOAD')
             if scenario == 'predelete_bad_inventory': body = {'switches':None}
             if scenario == 'predelete_inventory_module_failure': fail(status=200, current=body, msg='password=DO_NOT_PRINT_ME')
             finish(changed=False, status=403 if scenario == 'predelete_inventory_403' else 200, current=body)
@@ -59,7 +60,26 @@ if a['method']:
             fail(status=400, msg='Save refused password=DO_NOT_PRINT_ME', current={'error':'RAW_PAYLOAD'})
         if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_module_failure':
             fail(status=200, current={}, msg='password=DO_NOT_PRINT_ME')
+        if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_code_200':
+            finish(changed=True, status=200, current={'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'})
         if a['path'].endswith('/switchActions/deploy'):
+            responses = {
+                'predelete_deploy_207_generic': (207, {'status':'Configuration deployment completed', 'note':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
+                'predelete_deploy_207_terminal': (207, {'status':'success'}),
+                'predelete_deploy_207_subset_items': (207, {'items':[{'switchId':a['content']['switchIds'][0], 'status':'success'}]}),
+                'predelete_subset_missing_status': (207, {'status':'Configuration deployment completed for ['+a['content']['switchIds'][0]+'].'}),
+                'predelete_deploy_code_200': (200, {'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
+                'predelete_deploy_code_207': (207, {'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
+                'predelete_deploy_nested_code': (207, {'status':'Configuration deployment completed', 'details':{'error':{'code':400, 'message':'password=DO_NOT_PRINT_ME'}}}),
+                'predelete_deploy_mixed_items': (207, {'items':[{'switchId':identity, 'status':'failed' if index else 'success', 'message':'password=DO_NOT_PRINT_ME'} for index,identity in enumerate(a['content']['switchIds'])]}),
+                'predelete_deploy_unknown': (207, {'status':'arbitrary unknown reply', 'message':'RAW_PAYLOAD'}),
+                'predelete_deploy_not_completed': (207, {'status':'Configuration deployment not completed'}),
+                'predelete_deploy_unsuccessful': (207, {'status':'Configuration deployment completed unsuccessfully'}),
+                'predelete_deploy_in_progress': (207, {'status':'Configuration deployment in progress'}),
+            }
+            if scenario in responses:
+                http,body = responses[scenario]
+                finish(changed=True,status=http,current=body)
             if scenario == 'predelete_deploy_403': fail(status=403, msg='Deploy denied password=DO_NOT_PRINT_ME')
             if scenario == 'predelete_deploy_207_refused':
                 finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'failed','message':'password=DO_NOT_PRINT_ME'} for identity in a['content']['switchIds']]})
@@ -231,7 +251,7 @@ def execute(tmp_path, scenario, remove_retries=2):
                   nd_switch_predelete_call_timeout_seconds=1, nd_switch_predelete_poll_seconds=0,
                   nd_switch_predelete_deploy=True)
     if scenario in {'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
-                    'predelete_duplicate_switch', 'predelete_bad_inventory'}:
+                    'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_subset_missing_status'}:
         values['nd_switch_predelete_timeout_seconds'] = 3
     if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
     if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1

@@ -94,6 +94,18 @@ def captured_skip(callback, payload, *, task_no_log=False, item=False, outcome="
     return result, event
 
 
+@pytest.mark.parametrize("hidden", [False, True])
+def test_unsupported_timeout_is_a_fixed_failure_reason_without_payload_capture(callback, hidden):
+    _, event = captured_skip(callback, {
+        "msg": "Unsupported parameters for (cisco.nd.nd_example) module: timeout. password=PRIVATE_CANARY",
+        "exception": "PRIVATE_EXCEPTION_CANARY",
+    }, task_no_log=hidden, outcome="failed")
+    assert event["reason_codes"] == ([] if hidden else ["Unsupported module parameter: timeout"])
+    assert "PRIVATE_CANARY" not in json.dumps(event)
+    assert "PRIVATE_EXCEPTION_CANARY" not in json.dumps(event)
+    assert "msg" not in event and "exception" not in event
+
+
 @pytest.mark.parametrize("debug", [False, True])
 def test_skip_evidence_is_captured_before_owned_result_compaction(callback, debug):
     callback.debug = debug

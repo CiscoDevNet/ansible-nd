@@ -61,6 +61,7 @@ MODULE_ALIASES = {
     "nd_manage_resource_manager": "nd_resource_manager",
 }
 FAILURE_REASONS = (
+    (re.compile(r"Unsupported module parameter:\s*timeout|Unsupported parameters for.{0,200}?module:\s*timeout\b", re.I), "Unsupported module parameter: timeout"),
     (re.compile(r"No Commands to execute", re.I), "No Commands to execute"),
     (re.compile(r"Assertion failed", re.I), "Assertion failed"),
     (re.compile(r"unexpected link neighbor", re.I), "Unexpected link neighbor"),

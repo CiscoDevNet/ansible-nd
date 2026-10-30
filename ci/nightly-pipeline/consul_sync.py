@@ -7,20 +7,24 @@ throwaway temp directory, PUT to Consul, roundtrip-verified (re-GET + md5),
 then the temp copy is deleted.
 
   status              read-only: md5+size compare of all keys  (DEFAULT)
+  audit               read-only: check every current nightly input, including missing keys
   push --yes          stage->PUT->verify->clean the changed files
   push                dry-run of push (prints the plan, writes nothing)
 
   --only a,b,c        restrict to keys/basenames matching any token
 
-The key<->file map is driven by the LIVE Consul key list, so files that are not
+For status/push, the key<->file map is driven by the LIVE Consul key list, so files that are not
 Consul keys (nd_25aug/, nd_30aug/, _deleted/, temp _*.yaml probes, local-only
-tests) are never touched. Stdlib only; runs on /usr/bin/python3.
+tests) are never touched. Audit instead reads the current Jenkins manifest so
+deleted required keys remain visible. Stdlib only; runs on /usr/bin/python3.
 """
 import argparse
+import ast
 import concurrent.futures as cf
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,8 +35,8 @@ import urllib.request
 CONSUL = os.environ.get(
     "ND_CONSUL_BASE", "http://198.51.100.155:8500/v1/kv/ansible-nd"
 )
-WORKSPACE = "/home/runner/Library/CloudStorage/OneDrive-Cisco/2/Ansible work/NX_ansible/jenkins/jenkins_nd"
-ROOT = os.environ.get("ND_LOCAL_ROOT", WORKSPACE)
+PIPELINE_ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.environ.get("ND_LOCAL_ROOT", PIPELINE_ROOT)
 READ_TIMEOUT = int(os.environ.get("ND_READ_TIMEOUT", "12"))  # per-file hydrate cap
 NET_TIMEOUT = int(os.environ.get("ND_NET_TIMEOUT", "20"))
 WORKERS = int(os.environ.get("ND_WORKERS", "8"))
@@ -54,16 +58,16 @@ TESTS_KEYS = {
 def key_to_local(key):
     """Map a Consul key (base already stripped) to its canonical local path."""
     if key.startswith("nd_prerequisite/"):
-        return os.path.join(ROOT, "nd_pipeline", "playbooks", key)
+        return os.path.join(ROOT, "playbooks", key)
     if key.startswith("fixtures/nd_prerequisite/"):
-        return os.path.join(ROOT, "nd_pipeline", "tests", key)
+        return os.path.join(ROOT, "tests", key)
     if key == "webex-notification-jenkins.py":
         return os.path.join(ROOT, key)
     if key in CONFIG_KEYS:
-        return os.path.join(ROOT, "nd_pipeline", "consul", key)
+        return os.path.join(ROOT, "consul", key)
     if key in TESTS_KEYS:
-        return os.path.join(ROOT, "nd_pipeline", "tests", key)
-    return os.path.join(ROOT, "nd_pipeline", "playbooks", key)
+        return os.path.join(ROOT, "tests", key)
+    return os.path.join(ROOT, "playbooks", key)
 
 
 def md5(b):
@@ -114,15 +118,15 @@ def read_local(path, timeout=READ_TIMEOUT):
     return p.stdout, None
 
 
-def evaluate(key):
-    local = key_to_local(key)
+def evaluate(key, local=None):
+    local = local or key_to_local(key)
     cbytes, cerr = consul_get(key)
     row = {
         "key": key, "local": local,
         "csize": len(cbytes) if cbytes is not None else None,
         "cmd5": md5(cbytes) if cbytes else None,
         "lsize": os.path.getsize(local) if os.path.exists(local) else None,
-        "lmd5": None, "lbytes": None, "lerr": None,
+        "lmd5": None, "lbytes": None, "lerr": None, "cerr": cerr,
     }
     if row["lsize"] is None:
         row["status"] = "LOCAL-MISSING"
@@ -130,7 +134,9 @@ def evaluate(key):
     lbytes, lerr = read_local(local)
     if lbytes is None:
         row["lerr"] = lerr
-        if cbytes is None:
+        if cbytes is None and cerr != "404":
+            row["status"] = "CONSUL-ERROR"
+        elif cbytes is None:
             row["status"] = "CONSUL-MISSING"
         elif row["lsize"] == row["csize"]:
             row["status"] = "SIZE-MATCH?"      # readable failed; sizes equal
@@ -139,7 +145,10 @@ def evaluate(key):
         return row
     row["lmd5"] = md5(lbytes)
     row["lbytes"] = lbytes
-    if cbytes is None:
+    if cbytes is None and cerr != "404":
+        # An unreadable baseline is not a deleted key and must never be pushed.
+        row["status"] = "CONSUL-ERROR"
+    elif cbytes is None:
         row["status"] = "CONSUL-MISSING"
     elif row["lmd5"] == row["cmd5"]:
         row["status"] = "SAME"
@@ -148,10 +157,10 @@ def evaluate(key):
     return row
 
 
-def gather(keys):
+def gather(keys, sources=None):
     rows = []
     with cf.ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        rows = list(ex.map(evaluate, keys))
+        rows = list(ex.map(lambda key: evaluate(key, (sources or {}).get(key)), keys))
     return sorted(rows, key=lambda r: r["key"])
 
 
@@ -177,6 +186,9 @@ def print_table(rows):
 
 
 def do_push(rows, execute):
+    if any(r["status"] == "CONSUL-ERROR" or r.get("cerr") not in (None, "404") for r in rows):
+        print("\nPush blocked: a Consul baseline could not be read; no files were written.")
+        return 1
     changed = [r for r in rows
                if r["status"] in ("DIFF", "CONSUL-MISSING")
                and r["lbytes"] is not None]
@@ -240,11 +252,40 @@ def filter_rows(keys, only):
     return sel
 
 
+def required_runtime_sources():
+    """Derive required keys from Jenkins, independently of surviving Consul keys."""
+    source, error = read_local(os.path.join(ROOT, "Jenkinsfile_nd_jenkins_script"))
+    if source is None:
+        raise ValueError("Cannot read the canonical Jenkinsfile: " + str(error))
+    source = source.decode("utf-8")
+
+    def field(name):
+        match = re.search(r"^def\s+" + name + r"\s*=\s*\[(.*?)\]", source, re.M | re.S)
+        if not match:
+            raise ValueError("Missing runtime manifest field: " + name)
+        return ast.literal_eval("[" + re.sub(r"//[^\n]*", "", match.group(1)) + "]")
+
+    groups = ("CONSUL_CONFIG_FILES", "PLAYBOOK_FILES", "CONSUL_RUNNER_FILES",
+              "CONSUL_PREREQUISITE_FILES", "CONSUL_PREREQUISITE_SUPPORT_FILES", "CONSUL_PREFLIGHT_FILES")
+    prefix = re.search(r"^def\s+SWITCH_LIFECYCLE_CONSUL_PREFIX\s*=\s*['\"]([^'\"]+)['\"]", source, re.M)
+    if not prefix or not re.fullmatch(r"releases/[A-Za-z0-9_-]+", prefix.group(1)):
+        raise ValueError("Missing or unsafe switch lifecycle release prefix")
+    preflight = field("CONSUL_PREFLIGHT_FILES")
+    sources = {}
+    for name in dict.fromkeys(name for group in groups for name in field(group)):
+        if (not isinstance(name, str) or name.startswith("/") or ".." in name.split("/")
+                or not name.endswith((".py", ".yaml", ".yml", ".cfg"))):
+            raise ValueError("Unsupported runtime manifest entry")
+        key = prefix.group(1) + "/" + name if name in preflight else name
+        sources[key] = key_to_local(name)
+    return sources
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
-    for name in ("status", "push"):
+    for name in ("status", "audit", "push"):
         sp = sub.add_parser(name)
         sp.add_argument("--only", help="comma-separated keys/basenames to include")
         if name == "push":
@@ -255,11 +296,23 @@ def main(argv):
 
     print("Consul : %s" % CONSUL)
     print("Local  : %s" % ROOT)
-    keys = list_keys()
+    sources = required_runtime_sources() if cmd == "audit" else None
+    keys = sorted(sources) if sources is not None else list_keys()
     keys = filter_rows(keys, getattr(args, "only", None))
     print("Keys   : %d\n" % len(keys))
-    rows = gather(keys)
+    if cmd == "audit" and not keys:
+        print("No required runtime inputs matched; completeness was not checked.")
+        return 1
+    rows = gather(keys, sources)
+    if cmd == "audit":
+        for row in rows:
+            if row["lsize"] == 0:
+                row["status"] = "LOCAL-EMPTY"
+            elif row["csize"] == 0:
+                row["status"] = "CONSUL-EMPTY"
     print_table(rows)
+    if cmd == "audit":
+        return int(any(row["status"] != "SAME" for row in rows))
     if cmd == "push":
         return do_push(rows, execute=getattr(args, "yes", False))
     return 0

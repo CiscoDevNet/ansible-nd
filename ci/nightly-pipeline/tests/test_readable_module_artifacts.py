@@ -188,4 +188,6 @@ def test_unstarted_execution_does_not_get_a_fabricated_public_log(tmp_path):
     assert aggregate["rows"][0]["artifact"] == ""
     assert not (workspace / reporting.public_log_name(job)).exists()
     text = (workspace / aggregate["skiplist_file"]).read_text()
-    assert "NOT_RUN" in text and "started=unknown" in text
+    assert "NOT_RUN" in text and "Authored case totals: N/A (no module execution)" in text
+    assert "started=unknown" not in text
+    assert "COVERAGE: N/A" in text and "Not executed—earlier execution stopped" in text
